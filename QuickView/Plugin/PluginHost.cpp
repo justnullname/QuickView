@@ -643,47 +643,67 @@ void PluginHost::SaveConfig(const wchar_t* iniPath) const {
 
     std::lock_guard<std::recursive_mutex> lock(m_srMutex);
 
-    WritePrivateProfileStringW(L"SuperResolution", L"EnableSrPlugin", m_enableSrPlugin.load(std::memory_order_relaxed) ? L"1" : L"0", iniPath);
+    std::wstring buf;
+    buf.reserve(1024);
+    auto appendEntry = [&buf](std::wstring_view key, std::wstring_view val) {
+        buf.append(key);
+        buf.push_back(L'=');
+        buf.append(val);
+        buf.push_back(L'\0');
+    };
+    auto flushSection = [&buf, iniPath](const wchar_t* section) {
+        buf.push_back(L'\0');
+        if (buf.size() == 1) buf.push_back(L'\0');
+        WritePrivateProfileSectionW(section, buf.data(), iniPath);
+        buf.clear();
+    };
+
+    appendEntry(L"EnableSrPlugin", m_enableSrPlugin.load(std::memory_order_relaxed) ? L"1" : L"0");
 
     std::wstring relativeForIni;
     ResolveEffectiveSrPluginPath(&relativeForIni);
-    WritePrivateProfileStringW(L"SuperResolution", L"SrPluginPath", relativeForIni.c_str(), iniPath);
+    appendEntry(L"SrPluginPath", relativeForIni);
 
     wchar_t modelWide[128] = { 0 };
     QuickView::Utf8ToWide(m_srModelId, modelWide);
-    WritePrivateProfileStringW(L"SuperResolution", L"SrModelId", modelWide, iniPath);
+    appendEntry(L"SrModelId", modelWide);
 
-    WritePrivateProfileStringW(L"SuperResolution", L"SrAutoTrigger", m_srAutoTrigger.load(std::memory_order_relaxed) ? L"1" : L"0", iniPath);
-    WritePrivateProfileStringW(L"SuperResolution", L"SrOpenInCompareMode", m_srOpenInCompareMode.load(std::memory_order_relaxed) ? L"1" : L"0", iniPath);
-    WritePrivateProfileStringW(L"SuperResolution", L"SrPromptModelOnHotkey", m_srPromptModelOnHotkey.load(std::memory_order_relaxed) ? L"1" : L"0", iniPath);
+    appendEntry(L"SrAutoTrigger", m_srAutoTrigger.load(std::memory_order_relaxed) ? L"1" : L"0");
+    appendEntry(L"SrOpenInCompareMode", m_srOpenInCompareMode.load(std::memory_order_relaxed) ? L"1" : L"0");
+    appendEntry(L"SrPromptModelOnHotkey", m_srPromptModelOnHotkey.load(std::memory_order_relaxed) ? L"1" : L"0");
 
     wchar_t numBuf[32];
     swprintf_s(numBuf, L"%.2f", m_srDenoise.load(std::memory_order_relaxed));
-    WritePrivateProfileStringW(L"SuperResolution", L"SrDenoise", numBuf, iniPath);
+    appendEntry(L"SrDenoise", numBuf);
 
     swprintf_s(numBuf, L"%d", m_srDebounceDelayMs.load(std::memory_order_relaxed));
-    WritePrivateProfileStringW(L"SuperResolution", L"SrDebounceDelayMs", numBuf, iniPath);
+    appendEntry(L"SrDebounceDelayMs", numBuf);
 
     swprintf_s(numBuf, L"%.2f", m_srAutoTriggerMaxSourceMp.load(std::memory_order_relaxed));
-    WritePrivateProfileStringW(L"SuperResolution", L"SrAutoTriggerMaxSourceMp", numBuf, iniPath);
+    appendEntry(L"SrAutoTriggerMaxSourceMp", numBuf);
 
     swprintf_s(numBuf, L"%u", m_srAutoTriggerMaxWidth.load(std::memory_order_relaxed));
-    WritePrivateProfileStringW(L"SuperResolution", L"SrAutoTriggerMaxWidth", numBuf, iniPath);
+    appendEntry(L"SrAutoTriggerMaxWidth", numBuf);
 
     swprintf_s(numBuf, L"%u", m_srAutoTriggerMaxHeight.load(std::memory_order_relaxed));
-    WritePrivateProfileStringW(L"SuperResolution", L"SrAutoTriggerMaxHeight", numBuf, iniPath);
+    appendEntry(L"SrAutoTriggerMaxHeight", numBuf);
+
+    flushSection(L"SuperResolution");
 
     // Save all dynamic params under active plugin ID section
     const char* pluginId = (m_srHeader && m_srHeader->plugin_id) ? m_srHeader->plugin_id : "sr_ncnn_vulkan";
     wchar_t section[128] = { 0 };
     QuickView::Utf8ToWide(pluginId, section);
     std::wstring fullSection = L"Plugin." + std::wstring(section);
-    for (const auto& kv : m_dynamicParams) {
-        wchar_t keyWide[64] = { 0 };
-        wchar_t valWide[32] = { 0 };
-        QuickView::Utf8ToWide(kv.first, keyWide);
-        swprintf_s(valWide, L"%.4f", kv.second);
-        WritePrivateProfileStringW(fullSection.c_str(), keyWide, valWide, iniPath);
+    if (!m_dynamicParams.empty()) {
+        for (const auto& kv : m_dynamicParams) {
+            wchar_t keyWide[64] = { 0 };
+            wchar_t valWide[32] = { 0 };
+            QuickView::Utf8ToWide(kv.first, keyWide);
+            swprintf_s(valWide, L"%.4f", kv.second);
+            appendEntry(keyWide, valWide);
+        }
+        flushSection(fullSection.c_str());
     }
 }
 

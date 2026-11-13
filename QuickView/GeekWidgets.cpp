@@ -424,12 +424,87 @@ void DrawPillSlider(
     }
 }
 
+static IDWriteFactory* GetSharedDWriteFactory() {
+    static ComPtr<IDWriteFactory> s_factory;
+    if (!s_factory) {
+        DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), &s_factory);
+    }
+    return s_factory.Get();
+}
+
+void DrawMarqueeText(
+    ID2D1DeviceContext* dc,
+    const D2D1_RECT_F& visibleRect,
+    std::wstring_view text,
+    bool isHovered,
+    bool isDisabled,
+    IDWriteTextFormat* textFormat,
+    ID2D1Brush* brush,
+    float uiScale,
+    IDWriteFactory* dwriteFactory) {
+    if (!dc || !textFormat || !brush || text.empty()) return;
+    const float s = uiScale > 0.0f ? uiScale : 1.0f;
+    const float visibleW = visibleRect.right - visibleRect.left;
+    const float visibleH = visibleRect.bottom - visibleRect.top;
+    if (visibleW <= 0.0f || visibleH <= 0.0f) return;
+
+    textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    const DWRITE_WORD_WRAPPING origWrap = textFormat->GetWordWrapping();
+    textFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+
+    // Zero-allocation fast path when not hovered or when disabled
+    if (!isHovered || isDisabled) {
+        dc->PushAxisAlignedClip(visibleRect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        dc->DrawText(text.data(), static_cast<UINT32>(text.length()), textFormat, visibleRect, brush);
+        dc->PopAxisAlignedClip();
+        textFormat->SetWordWrapping(origWrap);
+        return;
+    }
+
+    IDWriteFactory* factory = dwriteFactory ? dwriteFactory : GetSharedDWriteFactory();
+    float scrollOffset = 0.0f;
+
+    ComPtr<IDWriteTextLayout> layout;
+    if (factory) {
+        if (SUCCEEDED(factory->CreateTextLayout(
+            text.data(), static_cast<UINT32>(text.length()), textFormat, 4000.0f, visibleH, &layout))) {
+            DWRITE_TEXT_METRICS m = {};
+            if (SUCCEEDED(layout->GetMetrics(&m)) && m.width > visibleW) {
+                float overflow = m.width - visibleW;
+                float rawPhase = fmodf((float)GetTickCount() * 0.0010f, 2.4f);
+                float t = 0.0f;
+                if (rawPhase < 0.4f) {
+                    t = 0.0f;
+                } else if (rawPhase < 1.2f) {
+                    float prog = (rawPhase - 0.4f) / 0.8f;
+                    t = 0.5f - 0.5f * cosf(prog * 3.14159265f);
+                } else if (rawPhase < 1.6f) {
+                    t = 1.0f;
+                } else {
+                    float prog = (rawPhase - 1.6f) / 0.8f;
+                    t = 0.5f + 0.5f * cosf(prog * 3.14159265f);
+                }
+                scrollOffset = t * (overflow + 14.0f * s);
+            }
+        }
+    }
+
+    dc->PushAxisAlignedClip(visibleRect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    if (layout) {
+        dc->DrawTextLayout(D2D1::Point2F(visibleRect.left - scrollOffset, visibleRect.top), layout.Get(), brush);
+    } else {
+        dc->DrawText(text.data(), static_cast<UINT32>(text.length()), textFormat, visibleRect, brush);
+    }
+    dc->PopAxisAlignedClip();
+    textFormat->SetWordWrapping(origWrap);
+}
+
 void DrawPillComboBox(
     ID2D1DeviceContext* dc,
     const D2D1_RECT_F& rect,
     std::wstring_view text,
     bool isOpen,
-    [[maybe_unused]] bool isHovered,
+    bool isHovered,
     bool isDisabled,
     IDWriteTextFormat* textFormat,
     float uiScale,
@@ -444,19 +519,13 @@ void DrawPillComboBox(
 
     dc->FillRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), brush.Get());
 
-    brush->SetColor(isOpen ? palette.accent : palette.border);
+    brush->SetColor(isOpen ? palette.accent : (isHovered ? palette.accent : palette.border));
     dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), brush.Get(), (isOpen ? 1.5f : 1.0f) * s);
 
     if (textFormat) {
         D2D1_RECT_F textRect = D2D1::RectF(rect.left + 14.0f * s, rect.top, rect.right - 30.0f * s, rect.bottom);
-        textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        const DWRITE_WORD_WRAPPING origWrap = textFormat->GetWordWrapping();
-        textFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         brush->SetColor(isDisabled ? palette.textDim : palette.text);
-        dc->PushAxisAlignedClip(textRect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-        dc->DrawText(text.data(), static_cast<UINT32>(text.length()), textFormat, textRect, brush.Get());
-        dc->PopAxisAlignedClip();
-        textFormat->SetWordWrapping(origWrap);
+        DrawMarqueeText(dc, textRect, text, isHovered, isDisabled, textFormat, brush.Get(), s);
     }
 
     D2D1_RECT_F arrowRect = D2D1::RectF(rect.right - 28.0f * s, rect.top, rect.right - 4.0f * s, rect.bottom);

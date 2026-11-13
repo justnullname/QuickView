@@ -121,6 +121,177 @@ enum class MouseAction {
     None, WindowDrag, PanImage, ExitApp, FitWindow
 };
 
+// ============================================================================
+// Mouse Gesture & Input Action System
+// ============================================================================
+enum class MouseModifier : uint8_t {
+    None = 0,
+    Ctrl = 1,
+    Shift = 2,
+    Alt = 3
+};
+
+namespace MouseModMask {
+    constexpr uint8_t None  = 0;
+    constexpr uint8_t Ctrl  = 1;
+    constexpr uint8_t Shift = 2;
+    constexpr uint8_t Alt   = 4;
+}
+
+enum class MouseTrigger : uint8_t {
+    LeftDrag = 0,
+    MiddleDrag,
+    RightDrag,
+    LeftDblClick,
+    MiddleClick,
+    RightClick,
+    XButton1Click,   // Mouse Back (Button 4)
+    XButton2Click,   // Mouse Forward (Button 5)
+    VerticalWheel,   // Standard Wheel
+    HorizontalWheel, // Tilt / Thumb Wheel
+    RightHoldWheel,  // Wheel while holding Right Button
+    Count
+};
+
+enum class MouseActionTarget : int {
+    None = 0,
+    WindowDrag,          // Drag Window
+    PanImage,            // Pan Image
+    Zoom,                // Zoom (Drag or Wheel depending on trigger)
+    ZoomDrag = Zoom,     // Backward compatibility alias
+    ZoomWheel = Zoom,    // Backward compatibility alias
+    ContextMenu,         // Show Context Menu
+    ExitApp,             // Exit QuickView
+    SmartZoom,           // Smart Zoom (Fit / 100%)
+    Navigate,            // Navigate Next/Prev (Wheel or Button)
+    NavWheel = Navigate, // Backward compatibility alias
+    LockWindowZoomWheel, // Zoom while locking window size
+    AdjustZoomSpeedWheel,// Scroll to adjust zoom speed
+    CropRegionDrag,      // Define/drag crop region
+    
+    // Command Shortcuts (Aligned with HotkeyAction)
+    NavNext,             // Next Image
+    NavPrev,             // Previous Image
+    NavFirst,            // First Image
+    NavLast,             // Last Image
+    ZoomIn,              // Zoom In
+    ZoomOut,             // Zoom Out
+    Zoom100,             // Zoom 100%
+    ZoomFit,             // Zoom to Fit
+    ZoomFitWindow,       // Zoom Fit (Keep Window)
+    ZoomFill,            // Zoom Fill (Keep Window)
+    RotateCW,            // Rotate 90 CW
+    RotateCCW,           // Rotate 90 CCW
+    FlipH,               // Flip Horizontal
+    FlipV,               // Flip Vertical
+    ToggleFullscreen,    // Toggle Fullscreen
+    ToggleGallery,       // Toggle Gallery
+    ToggleFilmstrip,     // Toggle Filmstrip
+    ToggleInfoPanel,     // Toggle Info Panel
+    ToggleExifPanel,     // Toggle EXIF Panel
+    ToggleCompare,       // Toggle Compare Mode
+    OpenFile,            // Open File
+    EditFile,            // Edit in external editor
+    CopyPixels,          // Copy Pixels to Clipboard
+    CopyFilePath,        // Copy File Path
+    ShowInExplorer,      // Reveal in Explorer
+    EnterCropMode,       // Enter Crop Mode
+    Loupe,               // Magnifier Loupe
+    Count
+};
+
+struct MouseGestureRule {
+    uint8_t mod1 = 0;    // 0=None, 1=Ctrl, 2=Shift, 3=Alt
+    uint8_t mod2 = 0;    // 0=None, 1=Ctrl, 2=Shift, 3=Alt
+    uint8_t trigger = 0; // MouseTrigger
+    int action = 0;      // MouseActionTarget
+
+    bool operator==(const MouseGestureRule& other) const noexcept = default;
+
+    uint8_t GetModifiers() const noexcept {
+        uint8_t m = 0;
+        auto mapMod = [](uint8_t v) -> uint8_t {
+            if (v == static_cast<uint8_t>(MouseModifier::Ctrl)) return MouseModMask::Ctrl;
+            if (v == static_cast<uint8_t>(MouseModifier::Shift)) return MouseModMask::Shift;
+            if (v == static_cast<uint8_t>(MouseModifier::Alt)) return MouseModMask::Alt;
+            return MouseModMask::None;
+        };
+        m |= mapMod(mod1);
+        m |= mapMod(mod2);
+        return m;
+    }
+
+    static void ModifiersToMods(uint8_t mask, uint8_t& m1, uint8_t& m2) noexcept {
+        m1 = 0; m2 = 0;
+        if (mask & MouseModMask::Ctrl) {
+            m1 = static_cast<uint8_t>(MouseModifier::Ctrl);
+            if (mask & MouseModMask::Shift) m2 = static_cast<uint8_t>(MouseModifier::Shift);
+            else if (mask & MouseModMask::Alt) m2 = static_cast<uint8_t>(MouseModifier::Alt);
+        } else if (mask & MouseModMask::Shift) {
+            m1 = static_cast<uint8_t>(MouseModifier::Shift);
+            if (mask & MouseModMask::Alt) m2 = static_cast<uint8_t>(MouseModifier::Alt);
+        } else if (mask & MouseModMask::Alt) {
+            m1 = static_cast<uint8_t>(MouseModifier::Alt);
+        }
+    }
+};
+
+inline std::vector<MouseGestureRule> GetDefaultMouseGestures() {
+    return {
+        // Default unmodified operations (100% QuickView signature feel)
+        { 0, 0, (uint8_t)MouseTrigger::LeftDrag,        (int)MouseActionTarget::WindowDrag },
+        { 0, 0, (uint8_t)MouseTrigger::MiddleDrag,      (int)MouseActionTarget::PanImage },
+        { 0, 0, (uint8_t)MouseTrigger::RightDrag,       (int)MouseActionTarget::Zoom },
+        { 0, 0, (uint8_t)MouseTrigger::LeftDblClick,    (int)MouseActionTarget::SmartZoom },
+        { 0, 0, (uint8_t)MouseTrigger::MiddleClick,     (int)MouseActionTarget::ExitApp },
+        { 0, 0, (uint8_t)MouseTrigger::RightClick,      (int)MouseActionTarget::ContextMenu },
+        { 0, 0, (uint8_t)MouseTrigger::VerticalWheel,   (int)MouseActionTarget::Zoom },
+        { 0, 0, (uint8_t)MouseTrigger::HorizontalWheel, (int)MouseActionTarget::Navigate },
+        { 0, 0, (uint8_t)MouseTrigger::XButton1Click,   (int)MouseActionTarget::NavPrev },
+        { 0, 0, (uint8_t)MouseTrigger::XButton2Click,   (int)MouseActionTarget::NavNext },
+        
+        // Modifier gestures (Resolve historical conflicts cleanly)
+        { 1, 0, (uint8_t)MouseTrigger::LeftDrag,        (int)MouseActionTarget::CropRegionDrag },
+        { 1, 0, (uint8_t)MouseTrigger::VerticalWheel,   (int)MouseActionTarget::LockWindowZoomWheel },
+        { 2, 0, (uint8_t)MouseTrigger::VerticalWheel,   (int)MouseActionTarget::Navigate },
+        { 3, 0, (uint8_t)MouseTrigger::VerticalWheel,   (int)MouseActionTarget::AdjustZoomSpeedWheel },
+    };
+}
+
+inline std::vector<MouseGestureRule> GetStandardViewerMouseGestures() {
+    return {
+        { 0, 0, (uint8_t)MouseTrigger::LeftDrag,        (int)MouseActionTarget::PanImage },
+        { 0, 0, (uint8_t)MouseTrigger::MiddleDrag,      (int)MouseActionTarget::WindowDrag },
+        { 0, 0, (uint8_t)MouseTrigger::RightDrag,       (int)MouseActionTarget::Zoom },
+        { 0, 0, (uint8_t)MouseTrigger::LeftDblClick,    (int)MouseActionTarget::ToggleFullscreen },
+        { 0, 0, (uint8_t)MouseTrigger::MiddleClick,     (int)MouseActionTarget::ZoomFit },
+        { 0, 0, (uint8_t)MouseTrigger::RightClick,      (int)MouseActionTarget::ContextMenu },
+        { 0, 0, (uint8_t)MouseTrigger::VerticalWheel,   (int)MouseActionTarget::Navigate },
+        { 0, 0, (uint8_t)MouseTrigger::HorizontalWheel, (int)MouseActionTarget::Navigate },
+        { 0, 0, (uint8_t)MouseTrigger::XButton1Click,   (int)MouseActionTarget::NavPrev },
+        { 0, 0, (uint8_t)MouseTrigger::XButton2Click,   (int)MouseActionTarget::NavNext },
+        { 1, 0, (uint8_t)MouseTrigger::LeftDrag,        (int)MouseActionTarget::CropRegionDrag },
+        { 1, 0, (uint8_t)MouseTrigger::VerticalWheel,   (int)MouseActionTarget::Zoom },
+        { 2, 0, (uint8_t)MouseTrigger::VerticalWheel,   (int)MouseActionTarget::Zoom },
+    };
+}
+
+inline std::vector<MouseGestureRule> GetMinimalBrowserMouseGestures() {
+    return {
+        { 0, 0, (uint8_t)MouseTrigger::LeftDrag,        (int)MouseActionTarget::PanImage },
+        { 0, 0, (uint8_t)MouseTrigger::MiddleDrag,      (int)MouseActionTarget::WindowDrag },
+        { 0, 0, (uint8_t)MouseTrigger::RightDrag,       (int)MouseActionTarget::Zoom },
+        { 0, 0, (uint8_t)MouseTrigger::LeftDblClick,    (int)MouseActionTarget::SmartZoom },
+        { 0, 0, (uint8_t)MouseTrigger::MiddleClick,     (int)MouseActionTarget::ExitApp },
+        { 0, 0, (uint8_t)MouseTrigger::RightClick,      (int)MouseActionTarget::ContextMenu },
+        { 0, 0, (uint8_t)MouseTrigger::VerticalWheel,   (int)MouseActionTarget::Navigate },
+        { 0, 0, (uint8_t)MouseTrigger::HorizontalWheel, (int)MouseActionTarget::Navigate },
+        { 0, 0, (uint8_t)MouseTrigger::XButton1Click,   (int)MouseActionTarget::NavPrev },
+        { 0, 0, (uint8_t)MouseTrigger::XButton2Click,   (int)MouseActionTarget::NavNext },
+        { 1, 0, (uint8_t)MouseTrigger::VerticalWheel,   (int)MouseActionTarget::Zoom },
+    };
+}
+
 // Overlay (Tracing) Mode state machine
 enum class OverlayState {
     Normal,                 // Standard image viewing
@@ -319,6 +490,8 @@ inline HotkeyAction StringToHotkeyAction(std::wstring_view sv) noexcept {
     if (sv == L"ZoomOutFine") return HotkeyAction::ZoomOutFine;
     if (sv == L"Zoom100") return HotkeyAction::Zoom100;
     if (sv == L"ZoomFit") return HotkeyAction::ZoomFit;
+    if (sv == L"ZoomFitWindow") return HotkeyAction::ZoomFitWindow;
+    if (sv == L"ZoomFill") return HotkeyAction::ZoomFill;
     if (sv == L"RotateCW") return HotkeyAction::RotateCW;
     if (sv == L"RotateCCW") return HotkeyAction::RotateCCW;
     if (sv == L"FlipH") return HotkeyAction::FlipH;
@@ -576,6 +749,121 @@ inline std::wstring KeyComboToString(const KeyCombo& combo) {
     return s;
 }
 
+struct HotkeyRule {
+    HotkeyAction action = HotkeyAction::None;
+    KeyCombo combo = { 0, 0 };
+
+    bool operator==(const HotkeyRule& other) const noexcept {
+        return action == other.action && combo == other.combo;
+    }
+};
+
+inline std::vector<HotkeyRule> GetDefaultHotkeyRules() {
+    return {
+        // Exit (Preserve Esc, and add issue requested modern combos: Ctrl+W, Alt+F4, MButton)
+        { HotkeyAction::Exit,                     { VK_ESCAPE, 0 } },
+        { HotkeyAction::Exit,                     { 'W', 1 /* Ctrl */ } },
+        { HotkeyAction::Exit,                     { VK_F4, 4 /* Alt */ } },
+        { HotkeyAction::Exit,                     { VK_MBUTTON, 0 } },
+
+        // Navigation (Strictly match b2d9198: Right/Left arrow, PageDown/PageUp, Home/End)
+        { HotkeyAction::NavNext,                  { VK_RIGHT, 0 } },
+        { HotkeyAction::NavNext,                  { VK_NEXT, 0 /* PageDown */ } },
+        { HotkeyAction::NavPrev,                  { VK_LEFT, 0 } },
+        { HotkeyAction::NavPrev,                  { VK_PRIOR, 0 /* PageUp */ } },
+        { HotkeyAction::NavFirst,                 { VK_HOME, 0 } },
+        { HotkeyAction::NavLast,                  { VK_END, 0 } },
+
+        // Zoom (Strictly match b2d9198: +/-, Numpad +/-, Up/Down, Z for 100%, F for Fit)
+        { HotkeyAction::ZoomIn,                   { VK_OEM_PLUS, 0 } },
+        { HotkeyAction::ZoomIn,                   { VK_ADD, 0 } },
+        { HotkeyAction::ZoomIn,                   { VK_UP, 0 } },
+        { HotkeyAction::ZoomInFine,               { VK_OEM_PLUS, 1 /* Ctrl */ } },
+        { HotkeyAction::ZoomOut,                  { VK_OEM_MINUS, 0 } },
+        { HotkeyAction::ZoomOut,                  { VK_SUBTRACT, 0 } },
+        { HotkeyAction::ZoomOut,                  { VK_DOWN, 0 } },
+        { HotkeyAction::ZoomOutFine,              { VK_OEM_MINUS, 1 /* Ctrl */ } },
+        { HotkeyAction::Zoom100,                  { 'Z', 0 } },
+        { HotkeyAction::ZoomFit,                  { 'F', 0 } },
+        { HotkeyAction::ZoomFitWindow,            { 0, 0 } },
+        { HotkeyAction::ZoomFill,                 { 0, 0 } },
+        { HotkeyAction::Loupe,                    { 'L', 0 } },
+
+        // Transform (Strictly match b2d9198: R, Shift+R, H, V)
+        { HotkeyAction::RotateCW,                 { 'R', 0 } },
+        { HotkeyAction::RotateCCW,                { 'R', 2 /* Shift */ } },
+        { HotkeyAction::FlipH,                    { 'H', 0 } },
+        { HotkeyAction::FlipV,                    { 'V', 0 } },
+
+        // Animation (Strictly match b2d9198: Space, Alt+Right, Alt+Left)
+        { HotkeyAction::ToggleAnimation,          { VK_SPACE, 0 } },
+        { HotkeyAction::AnimNextFrame,            { VK_RIGHT, 4 /* Alt */ } },
+        { HotkeyAction::AnimPrevFrame,            { VK_LEFT, 4 /* Alt */ } },
+
+        // View Modes (Strictly match b2d9198: T, Shift+T, Tab, I, M, F11, Ctrl+F11, F10, S, D)
+        { HotkeyAction::ToggleGallery,            { 'T', 0 } },
+        { HotkeyAction::ToggleFilmstrip,          { 'T', 2 /* Shift */ } },
+        { HotkeyAction::ToggleInfoPanel,          { VK_TAB, 0 } },
+        { HotkeyAction::ToggleExifPanel,          { 'I', 0 } },
+        { HotkeyAction::ToggleMinimap,            { 'M', 0 } },
+        { HotkeyAction::ToggleFullscreen,         { VK_F11, 0 } },
+        { HotkeyAction::ToggleSpan,               { VK_F11, 1 /* Ctrl */ } },
+        { HotkeyAction::ToggleSlideshow,          { VK_F10, 0 } },
+        { HotkeyAction::ToggleSettings,           { 'S', 0 } },
+        { HotkeyAction::RenderRaw,                { 'D', 0 } },
+
+        // Ratings (Numpad 0..5 and Main Keyboard 0..5)
+        { HotkeyAction::Rate0,                    { VK_NUMPAD0, 0 } },
+        { HotkeyAction::Rate1,                    { VK_NUMPAD1, 0 } },
+        { HotkeyAction::Rate2,                    { VK_NUMPAD2, 0 } },
+        { HotkeyAction::Rate3,                    { VK_NUMPAD3, 0 } },
+        { HotkeyAction::Rate4,                    { VK_NUMPAD4, 0 } },
+        { HotkeyAction::Rate5,                    { VK_NUMPAD5, 0 } },
+        { HotkeyAction::Rate0,                    { '0', 0 } },
+        { HotkeyAction::Rate1,                    { '1', 0 } },
+        { HotkeyAction::Rate2,                    { '2', 0 } },
+        { HotkeyAction::Rate3,                    { '3', 0 } },
+        { HotkeyAction::Rate4,                    { '4', 0 } },
+        { HotkeyAction::Rate5,                    { '5', 0 } },
+
+        // File Operations (Strictly match b2d9198: O, E, F2, Del, Ctrl+C, Ctrl+Shift+C, Ctrl+Alt+C, Ctrl+Enter, Ctrl+S, Ctrl+P, Ctrl+Z)
+        { HotkeyAction::OpenFile,                 { 'O', 0 } },
+        { HotkeyAction::EditFile,                 { 'E', 0 } },
+        { HotkeyAction::RenameFile,               { VK_F2, 0 } },
+        { HotkeyAction::DeleteFile,               { VK_DELETE, 0 } },
+        { HotkeyAction::CopyPixels,               { 'C', 1 /* Ctrl */ } },
+        { HotkeyAction::CopyFileItem,             { 'C', 3 /* Ctrl+Shift */ } },
+        { HotkeyAction::CopyPath,                 { 'C', 5 /* Ctrl+Alt */ } },
+        { HotkeyAction::ShowInExplorer,           { VK_RETURN, 1 /* Ctrl */ } },
+        { HotkeyAction::SaveAs,                   { 'S', 1 /* Ctrl */ } },
+        { HotkeyAction::Print,                    { 'P', 1 /* Ctrl */ } },
+        { HotkeyAction::Undo,                     { 'Z', 1 /* Ctrl */ } },
+
+        // Crop, Tools, Plugins (Strictly match b2d9198: X, C, Shift+C, Ctrl+T, F1, Shift+S, A)
+        { HotkeyAction::EnterCropMode,            { 'X', 0 } },
+        { HotkeyAction::ToggleCompare,            { 'C', 0 } },
+        { HotkeyAction::ComparePair,              { 'C', 2 /* Shift */ } },
+        { HotkeyAction::AlwaysOnTop,              { 'T', 1 /* Ctrl */ } },
+        { HotkeyAction::ToggleDebugHud,           { VK_F12, 0 } },
+        { HotkeyAction::ToggleOverlay,            { 'O', 3 /* Ctrl+Shift */ } },
+        { HotkeyAction::OverlayAlphaUp,           { VK_UP, 4 /* Alt */ } },
+        { HotkeyAction::OverlayAlphaDown,         { VK_DOWN, 4 /* Alt */ } },
+        { HotkeyAction::OverlayTogglePassthrough, { VK_ESCAPE, 2 /* Shift */ } },
+        { HotkeyAction::Help,                     { VK_F1, 0 } },
+        { HotkeyAction::SuperResolution,          { 'S', 2 /* Shift */ } },
+        { HotkeyAction::AiAction,                 { 'A', 0 } },
+
+        // Panning (Strictly match b2d9198: Ctrl + Arrows, Ctrl+Shift + Arrows)
+        { HotkeyAction::PanUp,                    { VK_UP, 1 /* Ctrl */ } },
+        { HotkeyAction::PanDown,                  { VK_DOWN, 1 /* Ctrl */ } },
+        { HotkeyAction::PanLeft,                  { VK_LEFT, 1 /* Ctrl */ } },
+        { HotkeyAction::PanRight,                 { VK_RIGHT, 1 /* Ctrl */ } },
+        { HotkeyAction::PanUpFast,                { VK_UP, 3 /* Ctrl+Shift */ } },
+        { HotkeyAction::PanDownFast,              { VK_DOWN, 3 /* Ctrl+Shift */ } },
+        { HotkeyAction::PanLeftFast,              { VK_LEFT, 3 /* Ctrl+Shift */ } },
+        { HotkeyAction::PanRightFast,             { VK_RIGHT, 3 /* Ctrl+Shift */ } },
+    };
+}
 
 /// <summary>
 /// Application configuration (for future settings menu)
@@ -707,10 +995,119 @@ struct AppConfig {
     MouseAction LeftDragAction = MouseAction::WindowDrag;
     MouseAction MiddleDragAction = MouseAction::PanImage;
     MouseAction MiddleClickAction = MouseAction::ExitApp;
-    // Helper indices for Segment controls (synced with actual enum values)
-    int LeftDragIndex = 0;   // 0=Window, 1=Pan
-    int MiddleDragIndex = 1; // 0=Window, 1=Pan
-    int MiddleClickIndex = 1; // 0=None, 1=Exit (default Exit)
+
+    // --- Mouse Gesture Rules Customization ---
+    std::vector<MouseGestureRule> MouseGestures = GetDefaultMouseGestures();
+
+    const MouseGestureRule* FindMouseGesture(uint8_t modifiers, MouseTrigger trigger) const noexcept {
+        for (const auto& rule : MouseGestures) {
+            if (rule.trigger == (uint8_t)trigger && rule.GetModifiers() == modifiers) {
+                return &rule;
+            }
+        }
+        return nullptr;
+    }
+
+    MouseActionTarget GetMouseGestureAction(uint8_t modifiers, MouseTrigger trigger) const noexcept {
+        const auto* rule = FindMouseGesture(modifiers, trigger);
+        return rule ? static_cast<MouseActionTarget>(rule->action) : MouseActionTarget::None;
+    }
+
+    std::vector<MouseGestureRule> GetGesturesForAction(MouseActionTarget act) const {
+        std::vector<MouseGestureRule> res;
+        for (const auto& r : MouseGestures) {
+            if (r.action == static_cast<int>(act)) res.push_back(r);
+        }
+        return res;
+    }
+
+    void SetMouseGesture(uint8_t mod1, uint8_t mod2, MouseTrigger trigger, MouseActionTarget action) {
+        MouseGestureRule newRule{ mod1, mod2, static_cast<uint8_t>(trigger), static_cast<int>(action) };
+        uint8_t mods = newRule.GetModifiers();
+        for (auto& r : MouseGestures) {
+            if (r.trigger == static_cast<uint8_t>(trigger) && r.GetModifiers() == mods) {
+                r = newRule;
+                return;
+            }
+        }
+        MouseGestures.push_back(newRule);
+    }
+
+    void ResetMouseGesturesToDefault() {
+        MouseGestures = GetDefaultMouseGestures();
+    }
+
+    void LoadMouseGesturePreset(int presetIndex) {
+        if (presetIndex == 1) {
+            MouseGestures = GetStandardViewerMouseGestures();
+        } else if (presetIndex == 2) {
+            MouseGestures = GetMinimalBrowserMouseGestures();
+        } else {
+            MouseGestures = GetDefaultMouseGestures();
+        }
+    }
+
+    // --- Dynamic Multi-Binding Hotkey Rules Customization ---
+    std::vector<HotkeyRule> HotkeyRules = GetDefaultHotkeyRules();
+
+    std::vector<KeyCombo> GetCombosForAction(HotkeyAction act) const {
+        std::vector<KeyCombo> res;
+        for (const auto& r : HotkeyRules) {
+            if (r.action == act && !r.combo.IsEmpty()) res.push_back(r.combo);
+        }
+        return res;
+    }
+
+    void AddHotkeyRule(HotkeyAction act, const KeyCombo& combo) {
+        if (combo.IsEmpty()) return;
+        for (const auto& r : HotkeyRules) {
+            if (r.action == act && r.combo == combo) return; // Already exists
+        }
+        HotkeyRules.push_back({ act, combo });
+    }
+
+    void RemoveHotkeyRule(HotkeyAction act, const KeyCombo& combo) {
+        for (auto it = HotkeyRules.begin(); it != HotkeyRules.end(); ) {
+            if (it->action == act && it->combo == combo) {
+                it = HotkeyRules.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    void ResetHotkeyRulesToDefault() {
+        HotkeyRules = GetDefaultHotkeyRules();
+    }
+
+    bool HasMouseGesture(uint8_t modifiers, MouseTrigger trigger) const noexcept {
+        return FindMouseGesture(modifiers, trigger) != nullptr;
+    }
+
+    template <typename HotkeysArray>
+    void SyncLegacyHotkeysArray(HotkeysArray& hotkeys) const noexcept {
+        for (size_t i = 1; i < hotkeys.size(); ++i) {
+            HotkeyAction act = hotkeys[i].action;
+            KeyCombo first{};
+            for (const auto& r : HotkeyRules) {
+                if (r.action == act && !r.combo.IsEmpty()) {
+                    first = r.combo;
+                    break;
+                }
+            }
+            hotkeys[i].combo = first;
+        }
+    }
+
+    void SyncMiddleClickHotkeyFromGestures() {
+        // Keep Exit VK_MBUTTON hotkey rule synchronized with unmodified MiddleClick mouse gesture
+        const auto* mClick = FindMouseGesture(MouseModMask::None, MouseTrigger::MiddleClick);
+        if (mClick && mClick->action == static_cast<int>(MouseActionTarget::ExitApp)) {
+            AddHotkeyRule(HotkeyAction::Exit, { VK_MBUTTON, 0 });
+        } else {
+            RemoveHotkeyRule(HotkeyAction::Exit, { VK_MBUTTON, 0 });
+        }
+    }
     bool EdgeNavClick = false;
     bool DisableEdgeNavInCompare = true;
     int NavIndicator = 0;               // 0=Arrow
@@ -1181,6 +1578,10 @@ extern RuntimeConfig g_runtime;
 bool CheckWritePermission(const std::wstring& dir);
 std::wstring GetConfigPath(bool forcePortableCheck = false);
 void SaveConfig(); // Ensure visible
+void SaveConfigSync();
+void SaveMouseGesturesConfig();
+void SaveHotkeysConfig();
+void DeactivateLoupe();
 void LoadConfig(); // Ensure visible
 void ParseFixedZoomLevels(); // Parse comma-separated fixed zoom levels
 bool IsSystemLightTheme();

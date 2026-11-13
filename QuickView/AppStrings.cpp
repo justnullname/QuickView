@@ -264,6 +264,15 @@ const wchar_t *OSD_PrintJobFinished = nullptr;
 const wchar_t *Context_SpanDisplays = nullptr;
 const wchar_t *Settings_Tab_Visuals = nullptr;
 const wchar_t *Settings_Tab_Controls = nullptr;
+const wchar_t *Settings_ControlSub_Mouse = nullptr;
+const wchar_t *Settings_ControlSub_Keyboard = nullptr;
+const wchar_t *Settings_ControlSub_Behavior = nullptr;
+const wchar_t *Settings_Gesture_Preset = nullptr;
+const wchar_t *Settings_Gesture_Preset_Default = nullptr;
+const wchar_t *Settings_Gesture_Preset_Standard = nullptr;
+const wchar_t *Settings_Gesture_Preset_Browser = nullptr;
+const wchar_t *Settings_Gesture_Add = nullptr;
+const wchar_t *Settings_Gesture_Reset = nullptr;
 const wchar_t *Settings_Tab_Image = nullptr;
 const wchar_t *Settings_Tab_Advanced = nullptr;
 const wchar_t *Settings_Header_Backdrop = nullptr;
@@ -366,8 +375,6 @@ const wchar_t *OSD_WheelMode2_Default = nullptr;
 const wchar_t *Settings_Label_RightDragZoomSpeed = nullptr;
 const wchar_t *Settings_Tooltip_WheelZoomSpeed = nullptr;
 const wchar_t *OSD_WheelZoomSpeed = nullptr;
-const wchar_t *Help_Action_AdjustZoomSpeed = nullptr;
-const wchar_t *Help_Action_LockWindowZoom = nullptr;
 const wchar_t *Settings_Label_InvertButtons = nullptr;
 const wchar_t *Settings_Header_KeyboardPan = nullptr;
 const wchar_t *Settings_Label_PanStepNormal = nullptr;
@@ -562,28 +569,6 @@ const wchar_t *Settings_Option_Auto = nullptr;
 const wchar_t *Settings_Option_Eco = nullptr;
 const wchar_t *Settings_Option_Balanced = nullptr;
 const wchar_t *Settings_Option_Ultra = nullptr;
-const wchar_t *Help_Header_Shortcuts = nullptr;
-const wchar_t *Help_Header_Mouse = nullptr;
-const wchar_t *Help_Item_NextPrev = nullptr;
-const wchar_t *Help_Item_Zoom = nullptr;
-const wchar_t *Help_Item_Pan = nullptr;
-const wchar_t *Help_Item_Rotate = nullptr;
-const wchar_t *Help_Item_Fit = nullptr;
-const wchar_t *Help_Item_Delete = nullptr;
-const wchar_t *Help_Item_Fullscreen = nullptr;
-const wchar_t *Help_Item_Close = nullptr;
-const wchar_t *Help_Mouse_Left = nullptr;
-const wchar_t *Help_Mouse_Middle = nullptr;
-const wchar_t *Help_Mouse_Wheel = nullptr;
-const wchar_t *Help_Mouse_Right = nullptr;
-const wchar_t *Help_Mouse_RightVerticalDrag = nullptr;
-const wchar_t *Help_Action_MoveWindow = nullptr;
-const wchar_t *Help_Action_PanImage = nullptr;
-const wchar_t *Help_Action_ContextMenu = nullptr;
-const wchar_t *Help_Action_NextPrev = nullptr;
-const wchar_t *Help_Action_Zoom = nullptr;
-const wchar_t *Help_Action_SmartZoom = nullptr;
-const wchar_t *Help_Desc_Copy = nullptr;
 const wchar_t *Help_Desc_Edit = nullptr;
 const wchar_t *Help_Header_Tips = nullptr;
 const wchar_t *Help_Tip_ContextScope = nullptr;
@@ -602,8 +587,6 @@ const wchar_t *Dialog_ButtonLater = nullptr;
 const wchar_t *Dialog_ButtonStar = nullptr;
 const wchar_t *Dialog_Update_LoveTitle = nullptr;
 const wchar_t *Dialog_Update_LoveMessage = nullptr;
-const wchar_t *Help_Item_Compare = nullptr;
-const wchar_t *Help_Item_FirstLast = nullptr;
 const wchar_t *HUD_Group_Physical = nullptr;
 const wchar_t *HUD_Group_Scientific = nullptr;
 const wchar_t *HUD_Group_Encoding = nullptr;
@@ -1126,8 +1109,6 @@ struct LanguageTable {
     const wchar_t *OSD_WheelMode2_Default;
     const wchar_t *Settings_Label_RightDragZoomSpeed;
     const wchar_t *OSD_WheelZoomSpeed;
-    const wchar_t *Help_Action_AdjustZoomSpeed;
-    const wchar_t *Help_Action_LockWindowZoom;
     const wchar_t *Settings_Label_InvertButtons;
     const wchar_t *Settings_Label_UseFixedZoom;
     const wchar_t *Settings_Tooltip_UseFixedZoom;
@@ -1318,28 +1299,6 @@ struct LanguageTable {
     const wchar_t *Settings_Option_Eco;
     const wchar_t *Settings_Option_Balanced;
     const wchar_t *Settings_Option_Ultra;
-    const wchar_t *Help_Header_Shortcuts;
-    const wchar_t *Help_Header_Mouse;
-    const wchar_t *Help_Item_NextPrev;
-    const wchar_t *Help_Item_Zoom;
-    const wchar_t *Help_Item_Pan;
-    const wchar_t *Help_Item_Rotate;
-    const wchar_t *Help_Item_Fit;
-    const wchar_t *Help_Item_Delete;
-    const wchar_t *Help_Item_Fullscreen;
-    const wchar_t *Help_Item_Close;
-    const wchar_t *Help_Mouse_Left;
-    const wchar_t *Help_Mouse_Middle;
-    const wchar_t *Help_Mouse_Wheel;
-    const wchar_t *Help_Mouse_Right;
-    const wchar_t *Help_Mouse_RightVerticalDrag;
-    const wchar_t *Help_Action_MoveWindow;
-    const wchar_t *Help_Action_PanImage;
-    const wchar_t *Help_Action_ContextMenu;
-    const wchar_t *Help_Action_NextPrev;
-    const wchar_t *Help_Action_Zoom;
-    const wchar_t *Help_Action_SmartZoom;
-    const wchar_t *Help_Desc_Copy;
     const wchar_t *Help_Desc_Edit;
     const wchar_t *Help_Header_Tips;
     const wchar_t *Help_Tip_ContextScope;
@@ -1358,8 +1317,6 @@ struct LanguageTable {
     const wchar_t *Dialog_ButtonStar;
     const wchar_t *Dialog_Update_LoveTitle;
     const wchar_t *Dialog_Update_LoveMessage;
-    const wchar_t *Help_Item_Compare;
-    const wchar_t *Help_Item_FirstLast;
     const wchar_t *HUD_Group_Physical;
     const wchar_t *HUD_Group_Scientific;
     const wchar_t *HUD_Group_Encoding;
@@ -1886,10 +1843,8 @@ static const LanguageTable Table_EN = {
     L"Main Wheel: Zoom; Thumb/Shift+Wheel: Next/Prev", // OSD_WheelMode1_ZoomNextPrev
     L"Wheel: Pan Mode", // OSD_WheelMode2_Pan
     L"Wheel: Default Mode", // OSD_WheelMode2_Default
-    L"Right Drag Zoom Speed", // Settings_Label_RightDragZoomSpeed
+    L"Mouse Drag Zoom Speed", // Settings_Label_RightDragZoomSpeed
     L"Zoom Speed (Temp): ", // OSD_WheelZoomSpeed
-    L"Temporarily Adjust Zoom Speed", // Help_Action_AdjustZoomSpeed
-    L"Temporarily Lock Window Zoom", // Help_Action_LockWindowZoom
     L"Invert Side Buttons", // Settings_Label_InvertButtons
     L"Use Fixed Zoom Levels", // Settings_Label_UseFixedZoom
     L"When enabled, Alt + Wheel performs regular zoom instead of changing zoom speed.", // Settings_Tooltip_UseFixedZoom
@@ -2080,31 +2035,9 @@ static const LanguageTable Table_EN = {
     L"Eco", // Settings_Option_Eco
     L"Balanced", // Settings_Option_Balanced
     L"Ultra", // Settings_Option_Ultra
-    L"Keyboard Shortcuts", // Help_Header_Shortcuts
-    L"Mouse Actions", // Help_Header_Mouse
-    L"Next / Previous Image", // Help_Item_NextPrev
-    L"Zoom In / Out", // Help_Item_Zoom
-    L"Pan Image", // Help_Item_Pan
-    L"Rotate", // Help_Item_Rotate
-    L"Fit to Screen", // Help_Item_Fit
-    L"Delete Image", // Help_Item_Delete
-    L"Fullscreen", // Help_Item_Fullscreen
-    L"Close", // Help_Item_Close
-    L"Left Button", // Help_Mouse_Left
-    L"Middle Button", // Help_Mouse_Middle
-    L"Wheel", // Help_Mouse_Wheel
-    L"Right Button", // Help_Mouse_Right
-    L"Right Button Vertical Drag", // Help_Mouse_RightVerticalDrag
-    L"Move Window / Exit Fullscreen / Exit Maximized", // Help_Action_MoveWindow
-    L"Pan Image", // Help_Action_PanImage
-    L"Context Menu", // Help_Action_ContextMenu
-    L"Next/Prev Image", // Help_Action_NextPrev
-    L"Zoom", // Help_Action_Zoom
-    L"Smart Zoom (100% / Fit / Restore)", // Help_Action_SmartZoom
-    L"Copy Image", // Help_Desc_Copy
     L"Edit", // Help_Desc_Edit
     L"Tips & Glossary", // Help_Header_Tips
-    L"Note: Shortcuts apply to the current window only. Settings are global.", // Help_Tip_ContextScope
+    L"Tip: QuickView now supports full keyboard shortcut and mouse gesture customization. Please view and configure your bindings in 'Settings -> Controls'. This help panel content will be migrated to online documentation in a future release.", // Help_Tip_ContextScope
     L"Rotation: 'Edge Adapted' means minor cropping to align with codec " L"blocks (lossless). 'Lossy' means re-encoding is required.", // Help_Tip_Rotation
     L"Video Wall (Ctrl+F11): Spans all screens. If the close button is " L"hidden, double-click anywhere to exit.", // Help_Tip_VideoWall
     L"Tracing Mode / Film Mode: Once enabled, the image becomes semi-transparent, revealing underlying elements. You can adjust its size or transparency. Click the Mouse Passthrough toggle in the toolbar to enter Passthrough Mode, where all inputs except Shift+Esc are ignored, turning QuickView into a transparent overlay.", // Help_Tip_DesignerMode
@@ -2120,8 +2053,6 @@ static const LanguageTable Table_EN = {
     L"Star on GitHub", // Dialog_ButtonStar
     L"QuickView is built with love", // Dialog_Update_LoveTitle
     L"I maintain QuickView in my spare time because I believe Windows " L"deserves a faster, cleaner viewer. I don't have a marketing budget or " L"a team. If you enjoy this update, the biggest contribution you can " L"make is to Star us on GitHub or share it with a friend.", // Dialog_Update_LoveMessage
-    L"Compare Mode", // Help_Item_Compare
-    L"First / Last Image", // Help_Item_FirstLast
     L"PHYSICAL ATTRIBUTES", // HUD_Group_Physical
     L"SCIENTIFIC QUALITY", // HUD_Group_Scientific
     L"OPTICS & ENCODING", // HUD_Group_Encoding
@@ -2648,10 +2579,8 @@ static const LanguageTable Table_CN = {
     L"主滚轮：缩放；拇指滚轮/shift+滚轮：切图", // OSD_WheelMode1_ZoomNextPrev
     L"滚轮：平移模式", // OSD_WheelMode2_Pan
     L"滚轮：默认模式", // OSD_WheelMode2_Default
-    L"右键拖拽缩放速度", // Settings_Label_RightDragZoomSpeed
+    L"鼠标拖拽缩放速度", // Settings_Label_RightDragZoomSpeed
     L"缩放速度(临时): ", // OSD_WheelZoomSpeed
-    L"临时调节缩放速度", // Help_Action_AdjustZoomSpeed
-    L"临时锁定窗口缩放", // Help_Action_LockWindowZoom
     L"反转侧键", // Settings_Label_InvertButtons
     L"使用固定的缩放级别", // Settings_Label_UseFixedZoom
     L"启用时，Alt + 滚轮将执行普通缩放而非修改缩放速率。", // Settings_Tooltip_UseFixedZoom
@@ -2842,31 +2771,9 @@ static const LanguageTable Table_CN = {
     L"节能", // Settings_Option_Eco
     L"平衡", // Settings_Option_Balanced
     L"极速", // Settings_Option_Ultra
-    L"键盘快捷键", // Help_Header_Shortcuts
-    L"鼠标操作", // Help_Header_Mouse
-    L"切换图片", // Help_Item_NextPrev
-    L"缩放", // Help_Item_Zoom
-    L"平移图片", // Help_Item_Pan
-    L"旋转", // Help_Item_Rotate
-    L"适应屏幕", // Help_Item_Fit
-    L"删除图片", // Help_Item_Delete
-    L"全屏", // Help_Item_Fullscreen
-    L"关闭", // Help_Item_Close
-    L"左键", // Help_Mouse_Left
-    L"中键", // Help_Mouse_Middle
-    L"滚轮", // Help_Mouse_Wheel
-    L"右键", // Help_Mouse_Right
-    L"右键上下拖动", // Help_Mouse_RightVerticalDrag
-    L"平移窗口/退出全屏/退出最大化", // Help_Action_MoveWindow
-    L"平移图片", // Help_Action_PanImage
-    L"上下文菜单", // Help_Action_ContextMenu
-    L"切换图片", // Help_Action_NextPrev
-    L"缩放", // Help_Action_Zoom
-    L"智能缩放 (100% / 适应窗口 / 恢复)", // Help_Action_SmartZoom
-    L"复制图像", // Help_Desc_Copy
     L"编辑", // Help_Desc_Edit
     L"提示与术语", // Help_Header_Tips
-    L"注意：快捷键仅对当前窗口生效，设置选项为全局永久生效。", // Help_Tip_ContextScope
+    L"提示：QuickView 已支持完整的键盘快捷键与鼠标手势自定义，具体绑定请在「设置 -> 操作」中查看与配置。当前帮助面板内容将在后续版本中迁移至在线帮助文档。", // Help_Tip_ContextScope
     L"旋转说明：'边缘适配' 指为匹配编码块边界进行的微量裁剪(无损)；'有损' " L"指必须要进行重编码。", // Help_Tip_Rotation
     L"跨屏模式 " L"(Ctrl+F11)：合并所有显示器。若关闭按钮不可见(如L型布局)" L"，双击任意处即可退出。", // Help_Tip_VideoWall
     L"临摹模式/薄膜模式：开启后图像将变为半透明并露出底部元素，此时您可调整尺寸或透明度。" L"点击工具栏中的鼠标穿透模式开关，可进入鼠标穿透模式，此时除了退出快捷键 Shift+Esc 外的任何按键和鼠标输入均被忽略，" L"QuickView 将变为一层透明薄膜覆盖层。", // Help_Tip_DesignerMode
@@ -2882,8 +2789,6 @@ static const LanguageTable Table_CN = {
     L"在 GitHub 点星", // Dialog_ButtonStar
     L"QuickView 源自热爱", // Dialog_Update_LoveTitle
     L"我利用业余时间维护 QuickView，只因我相信 Windows " L"值得拥有一个更快、更纯粹的看图工具。 " L"我没有推广预算，也没有团队。如果您喜欢这次更新，在 GitHub " L"上点一颗星或分享给朋友，就是对我最大的支持。", // Dialog_Update_LoveMessage
-    L"对比模式", // Help_Item_Compare
-    L"第一张 / 最后一张图片", // Help_Item_FirstLast
     L"物理属性", // HUD_Group_Physical
     L"科学指标", // HUD_Group_Scientific
     L"光学与编码", // HUD_Group_Encoding
@@ -3410,10 +3315,8 @@ static const LanguageTable Table_TW = {
     L"主滾輪：縮放；拇指滾輪/shift+滾轮：切圖", // OSD_WheelMode1_ZoomNextPrev
     L"滾輪：平移模式", // OSD_WheelMode2_Pan
     L"滾輪：預設模式", // OSD_WheelMode2_Default
-    L"右鍵拖曳縮放速度", // Settings_Label_RightDragZoomSpeed
+    L"滑鼠拖曳縮放速度", // Settings_Label_RightDragZoomSpeed
     L"縮放速度(臨時): ", // OSD_WheelZoomSpeed
-    L"臨時調節縮放速度", // Help_Action_AdjustZoomSpeed
-    L"臨時鎖定視窗縮放", // Help_Action_LockWindowZoom
     L"反轉側鍵", // Settings_Label_InvertButtons
     L"使用固定的縮放級別", // Settings_Label_UseFixedZoom
     L"啟用時，Alt + 滾輪將執行普通縮放而非修改縮放速率。", // Settings_Tooltip_UseFixedZoom
@@ -3604,31 +3507,9 @@ static const LanguageTable Table_TW = {
     L"節能", // Settings_Option_Eco
     L"平衡", // Settings_Option_Balanced
     L"極速", // Settings_Option_Ultra
-    L"鍵盤快速鍵", // Help_Header_Shortcuts
-    L"滑鼠操作", // Help_Header_Mouse
-    L"切換圖片", // Help_Item_NextPrev
-    L"縮放", // Help_Item_Zoom
-    L"平移圖片", // Help_Item_Pan
-    L"旋轉", // Help_Item_Rotate
-    L"適應螢幕", // Help_Item_Fit
-    L"刪除圖片", // Help_Item_Delete
-    L"全螢幕", // Help_Item_Fullscreen
-    L"關閉", // Help_Item_Close
-    L"左鍵", // Help_Mouse_Left
-    L"中鍵", // Help_Mouse_Middle
-    L"滾輪", // Help_Mouse_Wheel
-    L"右鍵", // Help_Mouse_Right
-    L"右鍵上下拖曳", // Help_Mouse_RightVerticalDrag
-    L"平移視窗/退出全屏/退出最大化", // Help_Action_MoveWindow
-    L"平移圖片", // Help_Action_PanImage
-    L"右鍵選單", // Help_Action_ContextMenu
-    L"切換圖片", // Help_Action_NextPrev
-    L"縮放", // Help_Action_Zoom
-    L"智能縮放 (100% / 適應窗口 / 恢復)", // Help_Action_SmartZoom
-    L"復制圖像", // Help_Desc_Copy
     L"編輯", // Help_Desc_Edit
     L"提示與術語", // Help_Header_Tips
-    L"注意：快捷鍵或右鍵操作僅影響當前進程，設置中的配置為程序永久配置。", // Help_Tip_ContextScope
+    L"提示：QuickView 已支援完整的鍵盤快捷鍵與滑鼠手勢自訂，具體綁定請在「設定 -> 操作」中查看與配置。目前說明面板內容將在後續版本中遷移至線上說明文件。", // Help_Tip_ContextScope
     L"旋轉說明：/邊緣適配/有損 " L"是由於某些圖片格式特性造成的無法完整無損操作。邊緣適配通常只損失邊緣N個" L"像素，接近無損。", // Help_Tip_Rotation
     L"電視牆模式 " L"(Ctrl+F11)：將所有顯示器視為一塊屏幕。若關閉按鈕位於顯示區外 " L"(如L型排布)，雙擊即可退出全屏。", // Help_Tip_VideoWall
     L"臨摹模式/薄膜模式：開啟後圖像將變為半透明並露出底部元素，此時您可調整尺寸或透明度。" L"點擊工具列中的滑鼠穿透模式開關，可進入滑鼠穿透模式，此時除了退出快捷鍵 Shift+Esc 外的任何按鍵和滑鼠輸入均被忽略，" L"QuickView 將變為一層透明薄膜覆蓋層。", // Help_Tip_DesignerMode
@@ -3644,8 +3525,6 @@ static const LanguageTable Table_TW = {
     L"在 GitHub 點星", // Dialog_ButtonStar
     L"QuickView 源自熱愛", // Dialog_Update_LoveTitle
     L"我利用業餘時間維護 QuickView，只因我相信 Windows " L"值得擁有一個更快、更純粹的看圖工具。 " L"我沒有推廣預算，也沒有團隊。如果您喜歡這次更新，在 GitHub " L"上點一顆星或分享給朋友，就是對我最大的支持。", // Dialog_Update_LoveMessage
-    L"對比模式", // Help_Item_Compare
-    L"第一張 / 最後一張圖片", // Help_Item_FirstLast
     L"物理屬性", // HUD_Group_Physical
     L"科學指標", // HUD_Group_Scientific
     L"光學與編碼", // HUD_Group_Encoding
@@ -4172,10 +4051,8 @@ static const LanguageTable Table_JA = {
     L"Main Wheel: Zoom; Thumb/Shift+Wheel: Next/Prev", // OSD_WheelMode1_ZoomNextPrev
     L"Wheel: Pan Mode", // OSD_WheelMode2_Pan
     L"Wheel: Default Mode", // OSD_WheelMode2_Default
-    L"右ドラッグズーム速度", // Settings_Label_RightDragZoomSpeed
+    L"マウスドラッグズーム速度", // Settings_Label_RightDragZoomSpeed
     L"ズーム速度 (一時的): ", // OSD_WheelZoomSpeed
-    L"ズーム速度を一時的に調整", // Help_Action_AdjustZoomSpeed
-    L"ウィンドウズームを一時的に固定", // Help_Action_LockWindowZoom
     L"サイドボタンを反転", // Settings_Label_InvertButtons
     L"固定ズーム倍率を使用", // Settings_Label_UseFixedZoom
     L"有効にすると、Alt + ホイールでズーム速度変更ではなく通常のズームを行います。", // Settings_Tooltip_UseFixedZoom
@@ -4366,31 +4243,9 @@ static const LanguageTable Table_JA = {
     L"エコ", // Settings_Option_Eco
     L"バランス", // Settings_Option_Balanced
     L"ウルトラ", // Settings_Option_Ultra
-    L"キーボードショートカット", // Help_Header_Shortcuts
-    L"マウス操作", // Help_Header_Mouse
-    L"次へ / 前の画像", // Help_Item_NextPrev
-    L"拡大 / 縮小", // Help_Item_Zoom
-    L"画像の移動 (パン)", // Help_Item_Pan
-    L"回転", // Help_Item_Rotate
-    L"画面に合わせる", // Help_Item_Fit
-    L"画像を削除", // Help_Item_Delete
-    L"全画面表示", // Help_Item_Fullscreen
-    L"閉じる", // Help_Item_Close
-    L"左ボタン", // Help_Mouse_Left
-    L"中ボタン", // Help_Mouse_Middle
-    L"ホイール", // Help_Mouse_Wheel
-    L"右ボタン", // Help_Mouse_Right
-    L"右ボタン垂直ドラッグ", // Help_Mouse_RightVerticalDrag
-    L"ウィンドウ移動 / 全画面解除 / 最大化解除", // Help_Action_MoveWindow
-    L"画像を移動 (パン)", // Help_Action_PanImage
-    L"コンテキストメニュー", // Help_Action_ContextMenu
-    L"次へ/前の画像", // Help_Action_NextPrev
-    L"ズーム", // Help_Action_Zoom
-    L"スマートズーム (100% / 画面に合わせる / 復元)", // Help_Action_SmartZoom
-    L"画像をコピー", // Help_Desc_Copy
     L"編集", // Help_Desc_Edit
     L"ヒントと用語集", // Help_Header_Tips
-    L"注 : ショートカットは現在のウィンドウにのみ適用されます。設定は全体に適用されます。", // Help_Tip_ContextScope
+    L"ヒント：QuickView はキーボードショートカットとマウスジェスチャーの完全なカスタマイズに対応しました。現在の割り当ては「設定 -> 操作」で確認・変更できます。このヘルプパネルの内容は今後のアップデートでオンラインドキュメントへ移行される予定です。", // Help_Tip_ContextScope
     L"回転 : 「エッジ適合」はコーデックブロックに合わせるためのわずかなクロップ(ロスレス)を意味します。「非可逆」は再エンコードが必要であることを意味します。", // Help_Tip_Rotation
     L"ビデオウォール (Ctrl+F11): すべての画面に展開します。閉じるボタンが隠れている場合は、任意の場所をダブルクリックして終了します。", // Help_Tip_VideoWall
     L"トレースモード / フィルムモード : 有効にすると画像が半透明になり、下の要素が透けて見えます。サイズや透明度を調整できます。ツールバーのマウススルー切替をクリックするとスルーモードに入り、Shift+Esc 以外のすべての入力が無視され、QuickView が透明なオーバーレイになります。", // Help_Tip_DesignerMode
@@ -4406,8 +4261,6 @@ static const LanguageTable Table_JA = {
     L"GitHub で Star をつける", // Dialog_ButtonStar
     L"QuickView は愛を込めて開発されています", // Dialog_Update_LoveTitle
     L"Windowsにはより高速でクリーンなビューアーが必要だと信じているため、" L"余暇を使って QuickView をメンテナンスしています。" L"マーケティング予算もチームもありません。このアップデートを気に入っていただけたら、" L"GitHub で Star をつけるか、友人に共有していただけることが最大の貢献になります。", // Dialog_Update_LoveMessage
-    L"比較モード", // Help_Item_Compare
-    L"最初の画像 / 最後の画像", // Help_Item_FirstLast
     L"物理的特性", // HUD_Group_Physical
     L"科学的解析品質", // HUD_Group_Scientific
     L"光学 & エンコーディング", // HUD_Group_Encoding
@@ -4934,10 +4787,8 @@ static const LanguageTable Table_RU = {
     L"Главное колёсико: Масштаб; Боковое/Shift+колёсико: Следующее/предыдущее", // OSD_WheelMode1_ZoomNextPrev
     L"Колёсико: панорамирование", // OSD_WheelMode2_Pan
     L"Колёсико: стандартный режим", // OSD_WheelMode2_Default
-    L"Скорость масштабирования ПКМ", // Settings_Label_RightDragZoomSpeed
+    L"Скорость масштабирования перетаскиванием мыши", // Settings_Label_RightDragZoomSpeed
     L"Скорость масштабирования (временно): ", // OSD_WheelZoomSpeed
-    L"Временно настроить скорость масштабирования", // Help_Action_AdjustZoomSpeed
-    L"Временно заблокировать масштаб окна", // Help_Action_LockWindowZoom
     L"Инвертировать действие боковых кнопок", // Settings_Label_InvertButtons
     L"Фиксированные уровни масштабирования", // Settings_Label_UseFixedZoom
     L"Если включено, Alt + колёсико выполняет масштабирование, а не изменение скорости масштабирования.", // Settings_Tooltip_UseFixedZoom
@@ -5128,31 +4979,9 @@ static const LanguageTable Table_RU = {
     L"Эко", // Settings_Option_Eco
     L"Баланс", // Settings_Option_Balanced
     L"Ультра", // Settings_Option_Ultra
-    L"Горячие клавиши", // Help_Header_Shortcuts
-    L"Мышь", // Help_Header_Mouse
-    L"След./пред. изображение", // Help_Item_NextPrev
-    L"Масштабирование", // Help_Item_Zoom
-    L"Панорамирование", // Help_Item_Pan
-    L"Поворот", // Help_Item_Rotate
-    L"По размеру экрана", // Help_Item_Fit
-    L"Удалить изображение", // Help_Item_Delete
-    L"Полный экран", // Help_Item_Fullscreen
-    L"Закрыть", // Help_Item_Close
-    L"Левая кнопка", // Help_Mouse_Left
-    L"Средняя кнопка", // Help_Mouse_Middle
-    L"Колёсико", // Help_Mouse_Wheel
-    L"Правая кнопка", // Help_Mouse_Right
-    L"Вертикальное перетаскивание правой кнопкой", // Help_Mouse_RightVerticalDrag
-    L"Перемещение окна / Выход из полноэкранного режима / Выход из максимизированного", // Help_Action_MoveWindow
-    L"Панорамирование", // Help_Action_PanImage
-    L"Контекстное меню", // Help_Action_ContextMenu
-    L"След./Пред.", // Help_Action_NextPrev
-    L"Масштаб", // Help_Action_Zoom
-    L"Умный масштаб (100% / По размеру / Восстановить)", // Help_Action_SmartZoom
-    L"Скопировать изображение", // Help_Desc_Copy
     L"Изменить", // Help_Desc_Edit
     L"Советы и термины", // Help_Header_Tips
-    L"* Горячие клавиши и контекстное меню действуют только на текущий процесс. Настройки не изменяются.", // Help_Tip_ContextScope
+    L"Совет: QuickView поддерживает полную настройку горячих клавиш и жестов мыши. Просмотреть и изменить привязки можно в разделе «Настройки -> Управление». Содержимое этой панели справки будет перенесено в онлайн-документацию в будущих версиях.", // Help_Tip_ContextScope
     L"Поворот: При оптимизации краёв они слегка обрезаются, чтобы вписать в границы блока " L"(без потерь). В режиме с потерями выполняется полное перекодирование изображения.", // Help_Tip_Rotation
     L"Видеостена (Ctrl+F11): Распределение изображения по всем мониторам. Если кнопка закрытия скрыта, " L"для выхода дважды щёлкните мышью.", // Help_Tip_VideoWall
     L"Режим кальки/плёнки: Если включено, изображение становится полупрозрачным, открывая нижележащие элементы. Размер и прозрачность настраиваются. Включите на панели инструментов режим сквозных щелчков мышью, в котором всё, кроме Shift+Esc, игнорируется - QuickView становится прозрачным наложением.", // Help_Tip_DesignerMode
@@ -5168,8 +4997,6 @@ static const LanguageTable Table_RU = {
     L"Звезда на GitHub", // Dialog_ButtonStar
     L"QuickView создан с любовью", // Dialog_Update_LoveTitle
     L"Я разрабатываю QuickView в свободное время и считаю, что " L"в Windows должен быть более быстрый и эффективный просмотрщик. Если вам " L"нравится эта программа, пожалуйста, поставьте звезду на " L"GitHub или расскажите о QuickView другу.", // Dialog_Update_LoveMessage
-    L"Режим сравнения", // Help_Item_Compare
-    L"Первое/последнее изображение", // Help_Item_FirstLast
     L"ФИЗИЧЕСКИЕ АТРИБУТЫ", // HUD_Group_Physical
     L"НАУЧНОЕ КАЧЕСТВО", // HUD_Group_Scientific
     L"ОПТИКА И КОДИРОВАНИЕ", // HUD_Group_Encoding
@@ -5696,10 +5523,8 @@ static const LanguageTable Table_DE = {
     L"Main Wheel: Zoom; Thumb/Shift+Wheel: Next/Prev", // OSD_WheelMode1_ZoomNextPrev
     L"Wheel: Pan Mode", // OSD_WheelMode2_Pan
     L"Wheel: Default Mode", // OSD_WheelMode2_Default
-    L"Rechtszieh-Zoomgeschwindigkeit", // Settings_Label_RightDragZoomSpeed
+    L"Mauszieh-Zoomgeschwindigkeit", // Settings_Label_RightDragZoomSpeed
     L"Zoomgeschwindigkeit (temp): ", // OSD_WheelZoomSpeed
-    L"Zoomgeschwindigkeit temporär anpassen", // Help_Action_AdjustZoomSpeed
-    L"Fensterzoom vorübergehend sperren", // Help_Action_LockWindowZoom
     L"Seitentasten invertieren", // Settings_Label_InvertButtons
     L"Feste Zoomstufen verwenden", // Settings_Label_UseFixedZoom
     L"Wenn aktiviert, führt Alt + Rad einen normalen Zoom aus, anstatt die Zoomgeschwindigkeit zu ändern.", // Settings_Tooltip_UseFixedZoom
@@ -5890,31 +5715,9 @@ static const LanguageTable Table_DE = {
     L"Öko", // Settings_Option_Eco
     L"Ausgewogen", // Settings_Option_Balanced
     L"Ultra", // Settings_Option_Ultra
-    L"Tastenkürzel", // Help_Header_Shortcuts
-    L"Mausaktionen", // Help_Header_Mouse
-    L"Nächstes/Vorheriges Bild", // Help_Item_NextPrev
-    L"Zoomen", // Help_Item_Zoom
-    L"Bild schwenken", // Help_Item_Pan
-    L"Drehen", // Help_Item_Rotate
-    L"An Bildschirm anpassen", // Help_Item_Fit
-    L"Bild löschen", // Help_Item_Delete
-    L"Vollbild", // Help_Item_Fullscreen
-    L"Schließen", // Help_Item_Close
-    L"Linke Taste", // Help_Mouse_Left
-    L"Mittlere Taste", // Help_Mouse_Middle
-    L"Mausrad", // Help_Mouse_Wheel
-    L"Rechte Taste", // Help_Mouse_Right
-    L"Rechte Taste vertikal ziehen", // Help_Mouse_RightVerticalDrag
-    L"Fenster bewegen / Vollbild beenden / Maximierung aufheben", // Help_Action_MoveWindow
-    L"Bild schwenken", // Help_Action_PanImage
-    L"Kontextmenü", // Help_Action_ContextMenu
-    L"Weiter/Zurück", // Help_Action_NextPrev
-    L"Zoom", // Help_Action_Zoom
-    L"Smart-Zoom (100% / Anpassen / Wiederherstellen)", // Help_Action_SmartZoom
-    L"Copy Image", // Help_Desc_Copy
     L"Edit", // Help_Desc_Edit
     L"Tips & Glossary", // Help_Header_Tips
-    L"Note: Shortcuts and context menu actions affect the current process " L"only. Settings are permanent.", // Help_Tip_ContextScope
+    L"Tipp: QuickView unterstützt jetzt die vollständige Anpassung von Tastaturkürzeln und Mausgesten. Bitte prüfen und konfigurieren Sie Ihre Belegungen unter „Einstellungen -> Steuerung“. Die Inhalte dieses Hilfefensters werden in einer zukünftigen Version in die Online-Dokumentation verschoben.", // Help_Tip_ContextScope
     L"Rotation: 'Edge Adapted' means minor cropping to fit block boundaries " L"(lossless data). 'Lossy' means full re-encoding.", // Help_Tip_Rotation
     L"Video Wall (Ctrl+F11): Spans all monitors. If close button is hidden, " L"double-click to exit.", // Help_Tip_VideoWall
     L"Pausmodus / Folienmodus: Sobald aktiviert, wird das Bild halbtransparent und gibt den Blick auf darunter liegende Elemente frei. Sie können die Größe oder Transparenz anpassen. Klicken Sie auf den Maus-Durchlass-Umschalter in der Symbolleiste, um in den Durchlassmodus zu gelangen, in dem alle Eingaben außer Umschalt+Esc ignoriert werden, wodurch QuickView zu einer transparenten Überlagerung wird.", // Help_Tip_DesignerMode
@@ -5930,8 +5733,6 @@ static const LanguageTable Table_DE = {
     L"Stern auf GitHub", // Dialog_ButtonStar
     L"QuickView wird mit Liebe entwickelt", // Dialog_Update_LoveTitle
     L"Ich pflege QuickView in meiner Freizeit, weil ich glaube, dass Windows " L"einen schnelleren und saubereren Viewer verdient. Wenn Ihnen dieses " L"Update gefällt, ist der größte Beitrag, uns auf GitHub einen Stern zu " L"geben.", // Dialog_Update_LoveMessage
-    L"Compare Mode", // Help_Item_Compare
-    L"Erstes / Letztes Bild", // Help_Item_FirstLast
     L"PHYSICAL ATTRIBUTES", // HUD_Group_Physical
     L"SCIENTIFIC QUALITY", // HUD_Group_Scientific
     L"OPTICS & ENCODING", // HUD_Group_Encoding
@@ -6458,10 +6259,8 @@ static const LanguageTable Table_ES = {
     L"Main Wheel: Zoom; Thumb/Shift+Wheel: Next/Prev", // OSD_WheelMode1_ZoomNextPrev
     L"Wheel: Pan Mode", // OSD_WheelMode2_Pan
     L"Wheel: Default Mode", // OSD_WheelMode2_Default
-    L"Velocidad de zoom con arrastre derecho", // Settings_Label_RightDragZoomSpeed
+    L"Velocidad de zoom al arrastrar con ratón", // Settings_Label_RightDragZoomSpeed
     L"Velocidad de zoom (temporal): ", // OSD_WheelZoomSpeed
-    L"Ajustar velocidad de zoom temporalmente", // Help_Action_AdjustZoomSpeed
-    L"Bloquear temporalmente el zoom de la ventana", // Help_Action_LockWindowZoom
     L"Invertir botones laterales", // Settings_Label_InvertButtons
     L"Usar niveles de zoom fijos", // Settings_Label_UseFixedZoom
     L"Cuando está activado, Alt + Rueda realiza un zoom normal en lugar de cambiar la velocidad.", // Settings_Tooltip_UseFixedZoom
@@ -6652,31 +6451,9 @@ static const LanguageTable Table_ES = {
     L"Eco", // Settings_Option_Eco
     L"Equilibrado", // Settings_Option_Balanced
     L"Ultra", // Settings_Option_Ultra
-    L"Atajos de teclado", // Help_Header_Shortcuts
-    L"Acciones del ratón", // Help_Header_Mouse
-    L"Siguiente / Anterior", // Help_Item_NextPrev
-    L"Zoom", // Help_Item_Zoom
-    L"Mover imagen", // Help_Item_Pan
-    L"Girar", // Help_Item_Rotate
-    L"Ajustar a pantalla", // Help_Item_Fit
-    L"Eliminar imagen", // Help_Item_Delete
-    L"Pantalla completa", // Help_Item_Fullscreen
-    L"Cerrar", // Help_Item_Close
-    L"Botón izquierdo", // Help_Mouse_Left
-    L"Botón central", // Help_Mouse_Middle
-    L"Rueda", // Help_Mouse_Wheel
-    L"Botón derecho", // Help_Mouse_Right
-    L"Arrastre vertical con botón derecho", // Help_Mouse_RightVerticalDrag
-    L"Mover ventana / Salir de pantalla completa / Salir de maximizado", // Help_Action_MoveWindow
-    L"Mover imagen", // Help_Action_PanImage
-    L"Menú contextual", // Help_Action_ContextMenu
-    L"Sig./Ant.", // Help_Action_NextPrev
-    L"Zoom", // Help_Action_Zoom
-    L"Zoom inteligente (100% / Ajustar / Restaurar)", // Help_Action_SmartZoom
-    L"Copy Image", // Help_Desc_Copy
     L"Edit", // Help_Desc_Edit
     L"Tips & Glossary", // Help_Header_Tips
-    L"Note: Shortcuts and context menu actions affect the current process " L"only. Settings are permanent.", // Help_Tip_ContextScope
+    L"Consejo: QuickView ahora admite la personalización completa de atajos de teclado y gestos del ratón. Consulte y configure sus asignaciones en «Configuración -> Controles». El contenido de este panel de ayuda se migrará a la documentación en línea en una versión futura.", // Help_Tip_ContextScope
     L"Rotation: 'Edge Adapted' means minor cropping to fit block boundaries " L"(lossless data). 'Lossy' means full re-encoding.", // Help_Tip_Rotation
     L"Video Wall (Ctrl+F11): Spans all monitors. If close button is hidden, " L"double-click to exit.", // Help_Tip_VideoWall
     L"Modo Calco / Modo Película: Una vez activado, la imagen se vuelve semitransparente, revelando los elementos subyacentes. Puede ajustar su tamaño o transparencia. Haga clic en el interruptor de Paso de Mouse en la barra de herramientas para entrar en el Modo de Paso, donde se ignoran todas las entradas excepto Mayús+Esc, convirtiendo QuickView en una superposición transparente.", // Help_Tip_DesignerMode
@@ -6692,8 +6469,6 @@ static const LanguageTable Table_ES = {
     L"Estrella en GitHub", // Dialog_ButtonStar
     L"QuickView está hecho con amor", // Dialog_Update_LoveTitle
     L"Yo mantengo QuickView en mi tiempo libre porque creo que Windows " L"merece un visor más rápido y limpio. Si disfrutas de esta " L"actualización, la mayor contribución es darnos una estrella en GitHub.", // Dialog_Update_LoveMessage
-    L"Compare Mode", // Help_Item_Compare
-    L"Primera / Última imagen", // Help_Item_FirstLast
     L"PHYSICAL ATTRIBUTES", // HUD_Group_Physical
     L"SCIENTIFIC QUALITY", // HUD_Group_Scientific
     L"OPTICS & ENCODING", // HUD_Group_Encoding
@@ -7220,10 +6995,8 @@ static const LanguageTable Table_FR = {
     L"Main Wheel: Zoom; Thumb/Shift+Wheel: Next/Prev", // OSD_WheelMode1_ZoomNextPrev
     L"Wheel: Pan Mode", // OSD_WheelMode2_Pan
     L"Wheel: Default Mode", // OSD_WheelMode2_Default
-    L"Right Drag Zoom Speed", // Settings_Label_RightDragZoomSpeed
+    L"Mouse Drag Zoom Speed", // Settings_Label_RightDragZoomSpeed
     L"Zoom Speed (Temp): ", // OSD_WheelZoomSpeed
-    L"Temporarily Adjust Zoom Speed", // Help_Action_AdjustZoomSpeed
-    L"Temporarily Lock Window Zoom", // Help_Action_LockWindowZoom
     L"Invert Side Buttons", // Settings_Label_InvertButtons
     L"Use Fixed Zoom Levels", // Settings_Label_UseFixedZoom
     L"When enabled, Alt + Wheel performs regular zoom instead of changing zoom speed.", // Settings_Tooltip_UseFixedZoom
@@ -7414,31 +7187,9 @@ static const LanguageTable Table_FR = {
     L"Eco", // Settings_Option_Eco
     L"Balanced", // Settings_Option_Balanced
     L"Ultra", // Settings_Option_Ultra
-    L"Keyboard Shortcuts", // Help_Header_Shortcuts
-    L"Mouse Actions", // Help_Header_Mouse
-    L"Next / Previous Image", // Help_Item_NextPrev
-    L"Zoom In / Out", // Help_Item_Zoom
-    L"Pan Image", // Help_Item_Pan
-    L"Rotate", // Help_Item_Rotate
-    L"Fit to Screen", // Help_Item_Fit
-    L"Delete Image", // Help_Item_Delete
-    L"Fullscreen", // Help_Item_Fullscreen
-    L"Close", // Help_Item_Close
-    L"Left Button", // Help_Mouse_Left
-    L"Middle Button", // Help_Mouse_Middle
-    L"Wheel", // Help_Mouse_Wheel
-    L"Right Button", // Help_Mouse_Right
-    L"Right Button Vertical Drag", // Help_Mouse_RightVerticalDrag
-    L"Move Window / Exit Fullscreen / Exit Maximized", // Help_Action_MoveWindow
-    L"Pan Image", // Help_Action_PanImage
-    L"Context Menu", // Help_Action_ContextMenu
-    L"Next/Prev Image", // Help_Action_NextPrev
-    L"Zoom", // Help_Action_Zoom
-    L"Smart Zoom (100% / Fit / Restore)", // Help_Action_SmartZoom
-    L"Copy Image", // Help_Desc_Copy
     L"Edit", // Help_Desc_Edit
     L"Tips & Glossary", // Help_Header_Tips
-    L"Note: Shortcuts apply to the current window only. Settings are global.", // Help_Tip_ContextScope
+    L"Conseil : QuickView prend désormais en charge la personnalisation complète des raccourcis clavier et des gestes de la souris. Veuillez consulter et configurer vos attributions dans « Paramètres -> Contrôles ». Le contenu de ce panneau d'aide sera migré vers la documentation en ligne dans une prochaine version.", // Help_Tip_ContextScope
     L"Rotation: 'Edge Adapted' means minor cropping to align with codec " L"blocks (lossless). 'Lossy' means re-encoding is required.", // Help_Tip_Rotation
     L"Video Wall (Ctrl+F11): Spans all screens. If the close button is " L"hidden, double-click anywhere to exit.", // Help_Tip_VideoWall
     L"Mode Calque / Mode Pellicule : Une fois activé, l'image devient semi-transparente, révélant les éléments sous-jacents. Vous pouvez ajuster sa taille ou sa transparence. Cliquez sur le commutateur de passage de la souris dans la barre d'outils pour passer en mode passage, où toutes les entrées sauf Shift+Esc sont ignorées, transformant QuickView en une superposition transparente.", // Help_Tip_DesignerMode
@@ -7454,8 +7205,6 @@ static const LanguageTable Table_FR = {
     L"Star on GitHub", // Dialog_ButtonStar
     L"QuickView is built with love", // Dialog_Update_LoveTitle
     L"I maintain QuickView in my spare time because I believe Windows " L"deserves a faster, cleaner viewer. I don't have a marketing budget or " L"a team. If you enjoy this update, the biggest contribution you can " L"make is to Star us on GitHub or share it with a friend.", // Dialog_Update_LoveMessage
-    L"Compare Mode", // Help_Item_Compare
-    L"First / Last Image", // Help_Item_FirstLast
     L"PHYSICAL ATTRIBUTES", // HUD_Group_Physical
     L"SCIENTIFIC QUALITY", // HUD_Group_Scientific
     L"OPTICS & ENCODING", // HUD_Group_Encoding
@@ -7991,8 +7740,6 @@ void Apply(const LanguageTable& t) {
   OSD_WheelMode2_Default = t.OSD_WheelMode2_Default;
   Settings_Label_RightDragZoomSpeed = t.Settings_Label_RightDragZoomSpeed;
   OSD_WheelZoomSpeed = t.OSD_WheelZoomSpeed;
-  Help_Action_AdjustZoomSpeed = t.Help_Action_AdjustZoomSpeed;
-  Help_Action_LockWindowZoom = t.Help_Action_LockWindowZoom;
   Settings_Label_InvertButtons = t.Settings_Label_InvertButtons;
   Settings_Label_UseFixedZoom = t.Settings_Label_UseFixedZoom;
   Settings_Tooltip_UseFixedZoom = t.Settings_Tooltip_UseFixedZoom;
@@ -8182,28 +7929,6 @@ void Apply(const LanguageTable& t) {
   Settings_Option_Eco = t.Settings_Option_Eco;
   Settings_Option_Balanced = t.Settings_Option_Balanced;
   Settings_Option_Ultra = t.Settings_Option_Ultra;
-  Help_Header_Shortcuts = t.Help_Header_Shortcuts;
-  Help_Header_Mouse = t.Help_Header_Mouse;
-  Help_Item_NextPrev = t.Help_Item_NextPrev;
-  Help_Item_Zoom = t.Help_Item_Zoom;
-  Help_Item_Pan = t.Help_Item_Pan;
-  Help_Item_Rotate = t.Help_Item_Rotate;
-  Help_Item_Fit = t.Help_Item_Fit;
-  Help_Item_Delete = t.Help_Item_Delete;
-  Help_Item_Fullscreen = t.Help_Item_Fullscreen;
-  Help_Item_Close = t.Help_Item_Close;
-  Help_Mouse_Left = t.Help_Mouse_Left;
-  Help_Mouse_Middle = t.Help_Mouse_Middle;
-  Help_Mouse_Wheel = t.Help_Mouse_Wheel;
-  Help_Mouse_Right = t.Help_Mouse_Right;
-  Help_Mouse_RightVerticalDrag = t.Help_Mouse_RightVerticalDrag;
-  Help_Action_MoveWindow = t.Help_Action_MoveWindow;
-  Help_Action_PanImage = t.Help_Action_PanImage;
-  Help_Action_ContextMenu = t.Help_Action_ContextMenu;
-  Help_Action_NextPrev = t.Help_Action_NextPrev;
-  Help_Action_Zoom = t.Help_Action_Zoom;
-  Help_Action_SmartZoom = t.Help_Action_SmartZoom;
-  Help_Desc_Copy = t.Help_Desc_Copy;
   Help_Desc_Edit = t.Help_Desc_Edit;
   Help_Header_Tips = t.Help_Header_Tips;
   Help_Tip_ContextScope = t.Help_Tip_ContextScope;
@@ -8222,8 +7947,6 @@ void Apply(const LanguageTable& t) {
   Dialog_ButtonStar = t.Dialog_ButtonStar;
   Dialog_Update_LoveTitle = t.Dialog_Update_LoveTitle;
   Dialog_Update_LoveMessage = t.Dialog_Update_LoveMessage;
-  Help_Item_Compare = t.Help_Item_Compare;
-  Help_Item_FirstLast = t.Help_Item_FirstLast;
   HUD_Group_Physical = t.HUD_Group_Physical;
   HUD_Group_Scientific = t.HUD_Group_Scientific;
   HUD_Group_Encoding = t.HUD_Group_Encoding;
@@ -8474,6 +8197,15 @@ void SetLanguage(Language lang) {
   switch (target) {
   case Language::ChineseSimplified:
     Settings_Tab_Shortcuts = L"快捷键";
+    Settings_ControlSub_Mouse = L"鼠标手势";
+    Settings_ControlSub_Keyboard = L"按键设置";
+    Settings_ControlSub_Behavior = L"高级与偏好";
+    Settings_Gesture_Preset = L"手势预设方案";
+    Settings_Gesture_Preset_Default = L"QuickView 经典模式 (默认)";
+    Settings_Gesture_Preset_Standard = L"标准照片查看器";
+    Settings_Gesture_Preset_Browser = L"极简触控/单手浏览";
+    Settings_Gesture_Add = L"+ 添加手势";
+    Settings_Gesture_Reset = L"恢复默认手势";
     Settings_Hotkey_PressKey = L"请按下按键...";
     Settings_Hotkey_Conflict = L"快捷键冲突";
     Settings_Hotkey_ConflictPrompt = L"已由“%s”占用，继续将清除其快捷键。";
@@ -8487,6 +8219,15 @@ void SetLanguage(Language lang) {
     break;
   case Language::ChineseTraditional:
     Settings_Tab_Shortcuts = L"快捷鍵";
+    Settings_ControlSub_Mouse = L"滑鼠手勢";
+    Settings_ControlSub_Keyboard = L"按鍵設定";
+    Settings_ControlSub_Behavior = L"進階與偏好";
+    Settings_Gesture_Preset = L"手勢預設方案";
+    Settings_Gesture_Preset_Default = L"QuickView 經典模式 (預設)";
+    Settings_Gesture_Preset_Standard = L"標準相片檢視器";
+    Settings_Gesture_Preset_Browser = L"極簡觸控/單手瀏覽";
+    Settings_Gesture_Add = L"+ 新增手勢";
+    Settings_Gesture_Reset = L"恢復預設手勢";
     Settings_Hotkey_PressKey = L"請按下按鍵...";
     Settings_Hotkey_Conflict = L"快捷鍵衝突";
     Settings_Hotkey_ConflictPrompt = L"已由「%s」佔用，繼續將清除其快捷鍵。";
@@ -8500,6 +8241,15 @@ void SetLanguage(Language lang) {
     break;
   case Language::Japanese:
     Settings_Tab_Shortcuts = L"ショートカット";
+    Settings_ControlSub_Mouse = L"マウス操作";
+    Settings_ControlSub_Keyboard = L"キー設定";
+    Settings_ControlSub_Behavior = L"動作と詳細";
+    Settings_Gesture_Preset = L"プリセット";
+    Settings_Gesture_Preset_Default = L"QuickView クラシック (既定)";
+    Settings_Gesture_Preset_Standard = L"標準フォトビューアー";
+    Settings_Gesture_Preset_Browser = L"ミニマル / ブラウザー";
+    Settings_Gesture_Add = L"+ ジェスチャーを追加";
+    Settings_Gesture_Reset = L"既定値にリセット";
     Settings_Hotkey_PressKey = L"キーを押してください...";
     Settings_Hotkey_Conflict = L"キーの競合";
     Settings_Hotkey_ConflictPrompt = L"「%s」で使用中。続行すると割り当てを解除します。";
@@ -8513,6 +8263,15 @@ void SetLanguage(Language lang) {
     break;
   case Language::Russian:
     Settings_Tab_Shortcuts = L"Клавиши";
+    Settings_ControlSub_Mouse = L"Мышь и жесты";
+    Settings_ControlSub_Keyboard = L"Горячие клавиши";
+    Settings_ControlSub_Behavior = L"Поведение";
+    Settings_Gesture_Preset = L"Предустановка";
+    Settings_Gesture_Preset_Default = L"QuickView Классический";
+    Settings_Gesture_Preset_Standard = L"Стандартный просмотрщик";
+    Settings_Gesture_Preset_Browser = L"Минималистичный";
+    Settings_Gesture_Add = L"+ Добавить жест";
+    Settings_Gesture_Reset = L"Сбросить жесты";
     Settings_Hotkey_PressKey = L"Нажмите клавиши...";
     Settings_Hotkey_Conflict = L"Конфликт клавиш";
     Settings_Hotkey_ConflictPrompt = L"Занято \"%s\". Продолжение сбросит привязку.";
@@ -8526,6 +8285,15 @@ void SetLanguage(Language lang) {
     break;
   case Language::German:
     Settings_Tab_Shortcuts = L"Kürzel";
+    Settings_ControlSub_Mouse = L"Mausgesten";
+    Settings_ControlSub_Keyboard = L"Tastenkombinationen";
+    Settings_ControlSub_Behavior = L"Verhalten";
+    Settings_Gesture_Preset = L"Voreinstellung";
+    Settings_Gesture_Preset_Default = L"QuickView Klassisch (Standard)";
+    Settings_Gesture_Preset_Standard = L"Standard-Fotobetrachter";
+    Settings_Gesture_Preset_Browser = L"Minimal / Browser";
+    Settings_Gesture_Add = L"+ Geste hinzufügen";
+    Settings_Gesture_Reset = L"Gesten zurücksetzen";
     Settings_Hotkey_PressKey = L"Tasten drücken...";
     Settings_Hotkey_Conflict = L"Tastenkonflikt";
     Settings_Hotkey_ConflictPrompt = L"Bereits von „%s“ belegt. Fortfahren löscht die Zuweisung.";
@@ -8539,6 +8307,15 @@ void SetLanguage(Language lang) {
     break;
   case Language::Spanish:
     Settings_Tab_Shortcuts = L"Atajos";
+    Settings_ControlSub_Mouse = L"Gestos del ratón";
+    Settings_ControlSub_Keyboard = L"Atajos de teclado";
+    Settings_ControlSub_Behavior = L"Comportamiento";
+    Settings_Gesture_Preset = L"Preajuste";
+    Settings_Gesture_Preset_Default = L"QuickView Clásico";
+    Settings_Gesture_Preset_Standard = L"Visor estándar";
+    Settings_Gesture_Preset_Browser = L"Minimalista";
+    Settings_Gesture_Add = L"+ Añadir gesto";
+    Settings_Gesture_Reset = L"Restablecer gestos";
     Settings_Hotkey_PressKey = L"Presione teclas...";
     Settings_Hotkey_Conflict = L"Conflicto de teclas";
     Settings_Hotkey_ConflictPrompt = L"Usado por \"%s\". Continuar borrará su asignación.";
@@ -8552,6 +8329,15 @@ void SetLanguage(Language lang) {
     break;
   case Language::French:
     Settings_Tab_Shortcuts = L"Raccourcis";
+    Settings_ControlSub_Mouse = L"Gestes de souris";
+    Settings_ControlSub_Keyboard = L"Raccourcis clavier";
+    Settings_ControlSub_Behavior = L"Comportement";
+    Settings_Gesture_Preset = L"Préréglage";
+    Settings_Gesture_Preset_Default = L"QuickView Classique";
+    Settings_Gesture_Preset_Standard = L"Visionneuse standard";
+    Settings_Gesture_Preset_Browser = L"Minimaliste";
+    Settings_Gesture_Add = L"+ Ajouter un geste";
+    Settings_Gesture_Reset = L"Réinitialiser les gestes";
     Settings_Hotkey_PressKey = L"Appuyez sur les touches...";
     Settings_Hotkey_Conflict = L"Conflit de raccourcis";
     Settings_Hotkey_ConflictPrompt = L"Déjà utilisé par « %s ». Continuer effacera son raccourci.";
@@ -8566,6 +8352,15 @@ void SetLanguage(Language lang) {
   case Language::English:
   default:
     Settings_Tab_Shortcuts = L"Shortcuts";
+    Settings_ControlSub_Mouse = L"Mouse Gestures";
+    Settings_ControlSub_Keyboard = L"Shortcuts";
+    Settings_ControlSub_Behavior = L"Behavior";
+    Settings_Gesture_Preset = L"Gesture Preset";
+    Settings_Gesture_Preset_Default = L"QuickView Classic (Default)";
+    Settings_Gesture_Preset_Standard = L"Standard Photo Viewer";
+    Settings_Gesture_Preset_Browser = L"Minimalist / Browser";
+    Settings_Gesture_Add = L"+ Add Gesture";
+    Settings_Gesture_Reset = L"Reset Gestures";
     Settings_Hotkey_PressKey = L"Press keys...";
     Settings_Hotkey_Conflict = L"Hotkey conflict";
     Settings_Hotkey_ConflictPrompt = L"Already used by \"%s\". Continuing will clear its hotkey.";
@@ -8682,14 +8477,14 @@ std::wstring GetHotkeyActionName(HotkeyAction action) {
     case HotkeyAction::Loupe: {
         needsCleaning = false;
         switch (GetActiveLanguage()) {
-        case AppStrings::Language::ChineseSimplified:  raw = L"放大镜 (按住)"; break;
-        case AppStrings::Language::ChineseTraditional: raw = L"放大鏡 (按住)"; break;
-        case AppStrings::Language::Japanese:           raw = L"ルーペ (長押し)"; break;
-        case AppStrings::Language::Russian:            raw = L"Лупа (удерживать)"; break;
-        case AppStrings::Language::German:             raw = L"Lupe (halten)"; break;
-        case AppStrings::Language::Spanish:            raw = L"Lupa (mantener)"; break;
-        case AppStrings::Language::French:             raw = L"Loupe (maintenir)"; break;
-        default:                                       raw = L"Loupe (Hold)"; break;
+        case AppStrings::Language::ChineseSimplified:  raw = L"放大镜"; break;
+        case AppStrings::Language::ChineseTraditional: raw = L"放大鏡"; break;
+        case AppStrings::Language::Japanese:           raw = L"ルーペ"; break;
+        case AppStrings::Language::Russian:            raw = L"Лупа"; break;
+        case AppStrings::Language::German:             raw = L"Lupe"; break;
+        case AppStrings::Language::Spanish:            raw = L"Lupa"; break;
+        case AppStrings::Language::French:             raw = L"Loupe"; break;
+        default:                                       raw = L"Loupe"; break;
         }
         break;
     }
@@ -9139,6 +8934,329 @@ const wchar_t* Settings_Label_SrModel = L"AI Model";
 const wchar_t* Settings_Tooltip_SrModel = L"Select active Super-Resolution neural network model";
 const wchar_t* Settings_Header_PluginParams = L"Plugin Parameters";
 const wchar_t* Settings_Button_Download = L"Download";
+
+std::wstring GetMouseModifierName(uint8_t mod) {
+    switch (mod) {
+    case 1: return L"Ctrl";
+    case 2: return L"Shift";
+    case 3: return L"Alt";
+    default: {
+        switch (GetActiveLanguage()) {
+        case AppStrings::Language::ChineseSimplified:  return L"无";
+        case AppStrings::Language::ChineseTraditional: return L"無";
+        case AppStrings::Language::Japanese:           return L"なし";
+        case AppStrings::Language::Russian:            return L"Нет";
+        case AppStrings::Language::German:             return L"Keine";
+        case AppStrings::Language::Spanish:            return L"Ninguno";
+        case AppStrings::Language::French:             return L"Aucun";
+        default:                                       return L"None";
+        }
+    }
+    }
+}
+
+std::wstring GetMouseTriggerName(::MouseTrigger trigger) {
+    switch (trigger) {
+    case MouseTrigger::LeftDrag: {
+        switch (GetActiveLanguage()) {
+        case AppStrings::Language::ChineseSimplified:  return L"左键拖拽";
+        case AppStrings::Language::ChineseTraditional: return L"左鍵拖曳";
+        case AppStrings::Language::Japanese:           return L"左ドラッグ";
+        case AppStrings::Language::Russian:            return L"Перетаскивание ЛКМ";
+        case AppStrings::Language::German:             return L"Linke Maustaste ziehen";
+        case AppStrings::Language::Spanish:            return L"Arrastrar con botón izq.";
+        case AppStrings::Language::French:             return L"Glisser bouton gauche";
+        default:                                       return L"Left Drag";
+        }
+    }
+    case MouseTrigger::MiddleDrag: {
+        switch (GetActiveLanguage()) {
+        case AppStrings::Language::ChineseSimplified:  return L"中键拖拽";
+        case AppStrings::Language::ChineseTraditional: return L"中鍵拖曳";
+        case AppStrings::Language::Japanese:           return L"中ドラッグ";
+        case AppStrings::Language::Russian:            return L"Перетаскивание СКМ";
+        case AppStrings::Language::German:             return L"Mittlere Maustaste ziehen";
+        case AppStrings::Language::Spanish:            return L"Arrastrar con botón central";
+        case AppStrings::Language::French:             return L"Glisser bouton milieu";
+        default:                                       return L"Middle Drag";
+        }
+    }
+    case MouseTrigger::RightDrag: {
+        switch (GetActiveLanguage()) {
+        case AppStrings::Language::ChineseSimplified:  return L"右键拖拽";
+        case AppStrings::Language::ChineseTraditional: return L"右鍵拖曳";
+        case AppStrings::Language::Japanese:           return L"右ドラッグ";
+        case AppStrings::Language::Russian:            return L"Перетаскивание ПКМ";
+        case AppStrings::Language::German:             return L"Rechte Maustaste ziehen";
+        case AppStrings::Language::Spanish:            return L"Arrastrar con botón der.";
+        case AppStrings::Language::French:             return L"Glisser bouton droit";
+        default:                                       return L"Right Drag";
+        }
+    }
+    case MouseTrigger::LeftDblClick: {
+        switch (GetActiveLanguage()) {
+        case AppStrings::Language::ChineseSimplified:  return L"左键双击";
+        case AppStrings::Language::ChineseTraditional: return L"左鍵按兩下";
+        case AppStrings::Language::Japanese:           return L"左ダブルクリック";
+        case AppStrings::Language::Russian:            return L"Двойной клик ЛКМ";
+        case AppStrings::Language::German:             return L"Doppelklick links";
+        case AppStrings::Language::Spanish:            return L"Doble clic izq.";
+        case AppStrings::Language::French:             return L"Double-clic gauche";
+        default:                                       return L"Left Double Click";
+        }
+    }
+    case MouseTrigger::MiddleClick: {
+        switch (GetActiveLanguage()) {
+        case AppStrings::Language::ChineseSimplified:  return L"中键单击";
+        case AppStrings::Language::ChineseTraditional: return L"中鍵按一下";
+        case AppStrings::Language::Japanese:           return L"中クリック";
+        case AppStrings::Language::Russian:            return L"Клик СКМ";
+        case AppStrings::Language::German:             return L"Mittelklick";
+        case AppStrings::Language::Spanish:            return L"Clic central";
+        case AppStrings::Language::French:             return L"Clic milieu";
+        default:                                       return L"Middle Click";
+        }
+    }
+    case MouseTrigger::RightClick: {
+        switch (GetActiveLanguage()) {
+        case AppStrings::Language::ChineseSimplified:  return L"右键单击";
+        case AppStrings::Language::ChineseTraditional: return L"右鍵按一下";
+        case AppStrings::Language::Japanese:           return L"右クリック";
+        case AppStrings::Language::Russian:            return L"Клик ПКМ";
+        case AppStrings::Language::German:             return L"Rechtsklick";
+        case AppStrings::Language::Spanish:            return L"Clic derecho";
+        case AppStrings::Language::French:             return L"Clic droit";
+        default:                                       return L"Right Click";
+        }
+    }
+    case MouseTrigger::XButton1Click: {
+        switch (GetActiveLanguage()) {
+        case AppStrings::Language::ChineseSimplified:  return L"后退键 (侧键1)";
+        case AppStrings::Language::ChineseTraditional: return L"後退鍵 (側鍵1)";
+        case AppStrings::Language::Japanese:           return L"戻る (サイドボタン1)";
+        case AppStrings::Language::Russian:            return L"Назад (Боковая 1)";
+        case AppStrings::Language::German:             return L"Zurück (Seitentaste 1)";
+        case AppStrings::Language::Spanish:            return L"Atrás (Botón 4)";
+        case AppStrings::Language::French:             return L"Précédent (Bouton 4)";
+        default:                                       return L"Mouse 4 (Back)";
+        }
+    }
+    case MouseTrigger::XButton2Click: {
+        switch (GetActiveLanguage()) {
+        case AppStrings::Language::ChineseSimplified:  return L"前进键 (侧键2)";
+        case AppStrings::Language::ChineseTraditional: return L"前進鍵 (側鍵2)";
+        case AppStrings::Language::Japanese:           return L"進む (サイドボタン2)";
+        case AppStrings::Language::Russian:            return L"Вперед (Боковая 2)";
+        case AppStrings::Language::German:             return L"Vor (Seitentaste 2)";
+        case AppStrings::Language::Spanish:            return L"Adelante (Botón 5)";
+        case AppStrings::Language::French:             return L"Suivant (Bouton 5)";
+        default:                                       return L"Mouse 5 (Forward)";
+        }
+    }
+    case MouseTrigger::VerticalWheel: {
+        switch (GetActiveLanguage()) {
+        case AppStrings::Language::ChineseSimplified:  return L"垂直滚轮";
+        case AppStrings::Language::ChineseTraditional: return L"垂直滾輪";
+        case AppStrings::Language::Japanese:           return L"ホイール回転";
+        case AppStrings::Language::Russian:            return L"Колесико мыши";
+        case AppStrings::Language::German:             return L"Mausrad vertikal";
+        case AppStrings::Language::Spanish:            return L"Rueda vertical";
+        case AppStrings::Language::French:             return L"Molette verticale";
+        default:                                       return L"Vertical Wheel";
+        }
+    }
+    case MouseTrigger::HorizontalWheel: {
+        switch (GetActiveLanguage()) {
+        case AppStrings::Language::ChineseSimplified:  return L"水平/拇指滚轮";
+        case AppStrings::Language::ChineseTraditional: return L"水平/拇指滾輪";
+        case AppStrings::Language::Japanese:           return L"水平/チルトホイール";
+        case AppStrings::Language::Russian:            return L"Горизонт. колесико";
+        case AppStrings::Language::German:             return L"Daumenrad / Kippen";
+        case AppStrings::Language::Spanish:            return L"Rueda horizontal / pulgar";
+        case AppStrings::Language::French:             return L"Molette horizontale";
+        default:                                       return L"Thumb / Tilt Wheel";
+        }
+    }
+    case MouseTrigger::RightHoldWheel: {
+        switch (GetActiveLanguage()) {
+        case AppStrings::Language::ChineseSimplified:  return L"按住右键 + 滚轮";
+        case AppStrings::Language::ChineseTraditional: return L"按住右鍵 + 滾輪";
+        case AppStrings::Language::Japanese:           return L"右ボタンドラッグ + ホイール";
+        case AppStrings::Language::Russian:            return L"Удерживая ПКМ + колесико";
+        case AppStrings::Language::German:             return L"Rechts halten + Rad";
+        case AppStrings::Language::Spanish:            return L"Mantener der. + rueda";
+        case AppStrings::Language::French:             return L"Maintenir droit + molette";
+        default:                                       return L"Right-Hold + Wheel";
+        }
+    }
+    default: return L"Unknown Trigger";
+    }
+}
+
+std::wstring GetMouseActionTargetName(::MouseActionTarget action) {
+    switch (action) {
+    case MouseActionTarget::None: {
+        switch (GetActiveLanguage()) {
+        case AppStrings::Language::ChineseSimplified:  return L"无动作";
+        case AppStrings::Language::ChineseTraditional: return L"無動作";
+        case AppStrings::Language::Japanese:           return L"何もしない";
+        case AppStrings::Language::Russian:            return L"Без действия";
+        case AppStrings::Language::German:             return L"Keine Aktion";
+        case AppStrings::Language::Spanish:            return L"Ninguna acción";
+        case AppStrings::Language::French:             return L"Aucune action";
+        default:                                       return L"None";
+        }
+    }
+    case MouseActionTarget::WindowDrag: {
+        switch (GetActiveLanguage()) {
+        case AppStrings::Language::ChineseSimplified:  return L"拖拽移动窗口";
+        case AppStrings::Language::ChineseTraditional: return L"拖曳移動視窗";
+        case AppStrings::Language::Japanese:           return L"ウィンドウを移動";
+        case AppStrings::Language::Russian:            return L"Перемещение окна";
+        case AppStrings::Language::German:             return L"Fenster verschieben";
+        case AppStrings::Language::Spanish:            return L"Mover ventana";
+        case AppStrings::Language::French:             return L"Déplacer la fenêtre";
+        default:                                       return L"Drag Window";
+        }
+    }
+    case MouseActionTarget::PanImage: {
+        switch (GetActiveLanguage()) {
+        case AppStrings::Language::ChineseSimplified:  return L"平移图片";
+        case AppStrings::Language::ChineseTraditional: return L"平移圖片";
+        case AppStrings::Language::Japanese:           return L"画像をパン";
+        case AppStrings::Language::Russian:            return L"Панорамирование";
+        case AppStrings::Language::German:             return L"Bild verschieben";
+        case AppStrings::Language::Spanish:            return L"Desplazar imagen";
+        case AppStrings::Language::French:             return L"Déplacer l'image";
+        default:                                       return L"Pan Image";
+        }
+    }
+    case MouseActionTarget::Zoom: {
+        switch (GetActiveLanguage()) {
+        case AppStrings::Language::ChineseSimplified:  return L"缩放";
+        case AppStrings::Language::ChineseTraditional: return L"縮放";
+        case AppStrings::Language::Japanese:           return L"ズーム";
+        case AppStrings::Language::Russian:            return L"Масштаб";
+        case AppStrings::Language::German:             return L"Zoom";
+        case AppStrings::Language::Spanish:            return L"Zoom";
+        case AppStrings::Language::French:             return L"Zoom";
+        default:                                       return L"Zoom";
+        }
+    }
+    case MouseActionTarget::ContextMenu: {
+        switch (GetActiveLanguage()) {
+        case AppStrings::Language::ChineseSimplified:  return L"弹出右键菜单";
+        case AppStrings::Language::ChineseTraditional: return L"快顯功能表";
+        case AppStrings::Language::Japanese:           return L"コンテキストメニュー";
+        case AppStrings::Language::Russian:            return L"Контекстное меню";
+        case AppStrings::Language::German:             return L"Kontextmenü anzeigen";
+        case AppStrings::Language::Spanish:            return L"Menú contextual";
+        case AppStrings::Language::French:             return L"Menu contextuel";
+        default:                                       return L"Context Menu";
+        }
+    }
+    case MouseActionTarget::ExitApp: {
+        switch (GetActiveLanguage()) {
+        case AppStrings::Language::ChineseSimplified:  return L"退出软件";
+        case AppStrings::Language::ChineseTraditional: return L"結束程式";
+        case AppStrings::Language::Japanese:           return L"終了";
+        case AppStrings::Language::Russian:            return L"Выход";
+        case AppStrings::Language::German:             return L"Beenden";
+        case AppStrings::Language::Spanish:            return L"Salir";
+        case AppStrings::Language::French:             return L"Quitter";
+        default:                                       return L"Exit QuickView";
+        }
+    }
+    case MouseActionTarget::SmartZoom: {
+        switch (GetActiveLanguage()) {
+        case AppStrings::Language::ChineseSimplified:  return L"智能缩放 (自适应 / 100%)";
+        case AppStrings::Language::ChineseTraditional: return L"智能縮放 (符合視窗 / 100%)";
+        case AppStrings::Language::Japanese:           return L"スマートズーム (100% / フィット)";
+        case AppStrings::Language::Russian:            return L"Умный зум (По размеру / 100%)";
+        case AppStrings::Language::German:             return L"Intelligenter Zoom (Einpassen / 100%)";
+        case AppStrings::Language::Spanish:            return L"Zoom inteligente (Ajustar / 100%)";
+        case AppStrings::Language::French:             return L"Zoom intelligent (Ajuster / 100%)";
+        default:                                       return L"Smart Zoom (Fit / 100%)";
+        }
+    }
+    case MouseActionTarget::Navigate: {
+        switch (GetActiveLanguage()) {
+        case AppStrings::Language::ChineseSimplified:  return L"翻页 (上一张/下一张)";
+        case AppStrings::Language::ChineseTraditional: return L"翻頁 (上一張/下一張)";
+        case AppStrings::Language::Japanese:           return L"移動 (前/次)";
+        case AppStrings::Language::Russian:            return L"Переход (След./Пред.)";
+        case AppStrings::Language::German:             return L"Navigieren (Vor/Zurück)";
+        case AppStrings::Language::Spanish:            return L"Navegar (Siguiente/Anterior)";
+        case AppStrings::Language::French:             return L"Naviguer (Suivant/Précédent)";
+        default:                                       return L"Navigate (Next/Prev)";
+        }
+    }
+    case MouseActionTarget::LockWindowZoomWheel: {
+        switch (GetActiveLanguage()) {
+        case AppStrings::Language::ChineseSimplified:  return L"锁定窗口大小缩放";
+        case AppStrings::Language::ChineseTraditional: return L"鎖定視窗大小縮放";
+        case AppStrings::Language::Japanese:           return L"ウィンドウ固定ズーム";
+        case AppStrings::Language::Russian:            return L"Масштаб с фиксацией окна";
+        case AppStrings::Language::German:             return L"Zoom bei fester Fenstergröße";
+        case AppStrings::Language::Spanish:            return L"Zoom manteniendo ventana";
+        case AppStrings::Language::French:             return L"Zoomer sans redimensionner";
+        default:                                       return L"Zoom (Lock Window Size)";
+        }
+    }
+    case MouseActionTarget::AdjustZoomSpeedWheel: {
+        switch (GetActiveLanguage()) {
+        case AppStrings::Language::ChineseSimplified:  return L"滚轮调节缩放速度";
+        case AppStrings::Language::ChineseTraditional: return L"滾輪調節縮放速度";
+        case AppStrings::Language::Japanese:           return L"ズーム速度を調整";
+        case AppStrings::Language::Russian:            return L"Регулировка скорости зума";
+        case AppStrings::Language::German:             return L"Zoom-Geschwindigkeit anpassen";
+        case AppStrings::Language::Spanish:            return L"Ajustar velocidad de zoom";
+        case AppStrings::Language::French:             return L"Régler la vitesse du zoom";
+        default:                                       return L"Adjust Zoom Speed";
+        }
+    }
+    case MouseActionTarget::CropRegionDrag: {
+        switch (GetActiveLanguage()) {
+        case AppStrings::Language::ChineseSimplified:  return L"框选裁切";
+        case AppStrings::Language::ChineseTraditional: return L"框選裁切";
+        case AppStrings::Language::Japanese:           return L"範囲選択クロップ";
+        case AppStrings::Language::Russian:            return L"Выделение области кадрирования";
+        case AppStrings::Language::German:             return L"Zuschneidebereich aufziehen";
+        case AppStrings::Language::Spanish:            return L"Dibujar área de recorte";
+        case AppStrings::Language::French:             return L"Tracer zone de recadrage";
+        default:                                       return L"Draw Crop Box";
+        }
+    }
+    case MouseActionTarget::NavNext:          return GetHotkeyActionName(HotkeyAction::NavNext);
+    case MouseActionTarget::NavPrev:          return GetHotkeyActionName(HotkeyAction::NavPrev);
+    case MouseActionTarget::NavFirst:         return GetHotkeyActionName(HotkeyAction::NavFirst);
+    case MouseActionTarget::NavLast:          return GetHotkeyActionName(HotkeyAction::NavLast);
+    case MouseActionTarget::ZoomIn:           return GetHotkeyActionName(HotkeyAction::ZoomIn);
+    case MouseActionTarget::ZoomOut:          return GetHotkeyActionName(HotkeyAction::ZoomOut);
+    case MouseActionTarget::Zoom100:          return GetHotkeyActionName(HotkeyAction::Zoom100);
+    case MouseActionTarget::ZoomFit:          return GetHotkeyActionName(HotkeyAction::ZoomFit);
+    case MouseActionTarget::ZoomFitWindow:    return GetHotkeyActionName(HotkeyAction::ZoomFitWindow);
+    case MouseActionTarget::ZoomFill:         return GetHotkeyActionName(HotkeyAction::ZoomFill);
+    case MouseActionTarget::RotateCW:         return GetHotkeyActionName(HotkeyAction::RotateCW);
+    case MouseActionTarget::RotateCCW:        return GetHotkeyActionName(HotkeyAction::RotateCCW);
+    case MouseActionTarget::FlipH:            return GetHotkeyActionName(HotkeyAction::FlipH);
+    case MouseActionTarget::FlipV:            return GetHotkeyActionName(HotkeyAction::FlipV);
+    case MouseActionTarget::ToggleFullscreen: return GetHotkeyActionName(HotkeyAction::ToggleFullscreen);
+    case MouseActionTarget::ToggleGallery:    return GetHotkeyActionName(HotkeyAction::ToggleGallery);
+    case MouseActionTarget::ToggleFilmstrip:  return GetHotkeyActionName(HotkeyAction::ToggleFilmstrip);
+    case MouseActionTarget::ToggleInfoPanel:  return GetHotkeyActionName(HotkeyAction::ToggleInfoPanel);
+    case MouseActionTarget::ToggleExifPanel:  return GetHotkeyActionName(HotkeyAction::ToggleExifPanel);
+    case MouseActionTarget::ToggleCompare:    return GetHotkeyActionName(HotkeyAction::ToggleCompare);
+    case MouseActionTarget::OpenFile:         return GetHotkeyActionName(HotkeyAction::OpenFile);
+    case MouseActionTarget::EditFile:         return GetHotkeyActionName(HotkeyAction::EditFile);
+    case MouseActionTarget::CopyPixels:       return GetHotkeyActionName(HotkeyAction::CopyPixels);
+    case MouseActionTarget::CopyFilePath:     return GetHotkeyActionName(HotkeyAction::CopyPath);
+    case MouseActionTarget::ShowInExplorer:   return GetHotkeyActionName(HotkeyAction::ShowInExplorer);
+    case MouseActionTarget::EnterCropMode:    return GetHotkeyActionName(HotkeyAction::EnterCropMode);
+    case MouseActionTarget::Loupe:            return GetHotkeyActionName(HotkeyAction::Loupe);
+    default: return L"Action";
+    }
+}
 
 }
 

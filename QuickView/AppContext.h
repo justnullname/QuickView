@@ -141,6 +141,7 @@ struct LoupeState {
     bool sizeChanged = false;      // wheel resized the loupe this session -> persist on release
     bool isViewportMode = false;   // Whole-image/viewport magnification mode (LoupeShape == 2)
     ViewState baselineView;        // Snapshot of view state prior to activating viewport loupe
+    uint32_t triggerMouseBtn = 0;  // 0 for keyboard, VK_LBUTTON/VK_RBUTTON/VK_MBUTTON for mouse gesture
 };
 
 enum class MinimapOverride : uint8_t {

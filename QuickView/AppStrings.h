@@ -3,6 +3,8 @@
 #include <string>
 
 enum class HotkeyAction : uint8_t;
+enum class MouseTrigger : uint8_t;
+enum class MouseActionTarget : int;
 
 /// <summary>
 /// Centralized string resources for easy localization
@@ -322,6 +324,15 @@ namespace AppStrings {
     // Tabs
     extern const wchar_t* Settings_Tab_Visuals;
     extern const wchar_t* Settings_Tab_Controls;
+    extern const wchar_t* Settings_ControlSub_Mouse;
+    extern const wchar_t* Settings_ControlSub_Keyboard;
+    extern const wchar_t* Settings_ControlSub_Behavior;
+    extern const wchar_t* Settings_Gesture_Preset;
+    extern const wchar_t* Settings_Gesture_Preset_Default;
+    extern const wchar_t* Settings_Gesture_Preset_Standard;
+    extern const wchar_t* Settings_Gesture_Preset_Browser;
+    extern const wchar_t* Settings_Gesture_Add;
+    extern const wchar_t* Settings_Gesture_Reset;
     extern const wchar_t* Settings_Tab_Image;
     extern const wchar_t* Settings_Tab_Advanced;
 
@@ -408,8 +419,6 @@ namespace AppStrings {
     extern const wchar_t* OSD_WheelMode2_Default;
     extern const wchar_t* Settings_Label_RightDragZoomSpeed;
     extern const wchar_t* OSD_WheelZoomSpeed;
-    extern const wchar_t* Help_Action_AdjustZoomSpeed;
-    extern const wchar_t* Help_Action_LockWindowZoom;
     extern const wchar_t* Settings_Label_InvertButtons;
     extern const wchar_t* Settings_Header_KeyboardPan;
     extern const wchar_t* Settings_Label_PanStepNormal;
@@ -635,30 +644,6 @@ namespace AppStrings {
     extern const wchar_t* OSD_Opacity;
 
     // Help Overlay
-    extern const wchar_t* Help_Header_Shortcuts;
-    extern const wchar_t* Help_Header_Mouse;
-    extern const wchar_t* Help_Item_NextPrev;
-    extern const wchar_t* Help_Item_Zoom;
-    extern const wchar_t* Help_Item_Pan;
-    extern const wchar_t* Help_Item_Rotate;
-    extern const wchar_t* Help_Item_Fit;
-    extern const wchar_t* Help_Item_Delete;
-    extern const wchar_t* Help_Item_Fullscreen;
-    extern const wchar_t* Help_Item_Close;
-    extern const wchar_t* Help_Item_Compare; // New
-    extern const wchar_t* Help_Item_FirstLast;
-    extern const wchar_t* Help_Mouse_Left;
-    extern const wchar_t* Help_Mouse_Middle;
-    extern const wchar_t* Help_Mouse_Wheel;
-    extern const wchar_t* Help_Mouse_Right;
-    extern const wchar_t* Help_Mouse_RightVerticalDrag;
-    extern const wchar_t* Help_Action_MoveWindow;
-    extern const wchar_t* Help_Action_PanImage;
-    extern const wchar_t* Help_Action_ContextMenu;
-    extern const wchar_t* Help_Action_NextPrev;
-    extern const wchar_t* Help_Action_Zoom;
-    extern const wchar_t* Help_Action_SmartZoom;
-    extern const wchar_t* Help_Desc_Copy;
     extern const wchar_t* Help_Desc_Edit;
     
     // Glossary / Tips
@@ -889,5 +874,10 @@ namespace AppStrings {
 
     // Hotkey Action Name resolver
     std::wstring GetHotkeyActionName(::HotkeyAction action);
+
+    // Mouse Gesture Name resolver
+    std::wstring GetMouseModifierName(uint8_t mod);
+    std::wstring GetMouseTriggerName(::MouseTrigger trigger);
+    std::wstring GetMouseActionTargetName(::MouseActionTarget action);
 }
 

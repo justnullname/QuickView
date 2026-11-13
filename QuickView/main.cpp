@@ -170,11 +170,6 @@ bool g_isBootingWithImage = false;
 static const wchar_t* g_szClassName = L"QuickViewClass";
 static const wchar_t* g_szWindowTitle = L"QuickView";
 
-bool g_wheelPanModeActive = false;
-
-void ResetWheelPanMode() {
-    g_wheelPanModeActive = false;
-}
 void HandleAnimFrameStep(HWND hwnd, bool forward); // [v10.5] fwd decl
 void PerformAnimSeek(HWND hwnd, float targetProgress);
 void RequestRepaint(QuickView::PaintLayer layer);
@@ -4822,269 +4817,416 @@ void ParseFixedZoomLevels() {
 }
 
 
-static void WriteConfigInt(const wchar_t* section, const wchar_t* key, int value, const wchar_t* iniPath) {
-    wchar_t buf[32];
-    _itow_s(value, buf, 10);
-    WritePrivateProfileStringW(section, key, buf, iniPath);
-}
+namespace {
+struct IniSectionBuilder {
+    std::wstring buf;
 
-static void WriteConfigFloat(const wchar_t* section, const wchar_t* key, float value, const wchar_t* iniPath) {
-    if (std::isnan(value) || std::isinf(value)) {
-        value = 0.0f;
+    IniSectionBuilder() {
+        buf.reserve(4096);
     }
-    wchar_t buf[64];
-    static _locale_t c_locale = _create_locale(LC_ALL, "C");
-    _swprintf_s_l(buf, 64, L"%.6f", c_locale, value);
-    size_t len = wcslen(buf);
-    while (len > 0 && buf[len - 1] == L'0') {
-        buf[--len] = L'\0';
-    }
-    if (len > 0 && buf[len - 1] == L'.') {
-        buf[--len] = L'\0';
-    }
-    WritePrivateProfileStringW(section, key, buf, iniPath);
-}
 
-static void WriteConfigBool(const wchar_t* section, const wchar_t* key, bool value, const wchar_t* iniPath) {
-    WritePrivateProfileStringW(section, key, value ? L"1" : L"0", iniPath);
-}
+    void Clear() noexcept {
+        buf.clear();
+    }
 
-void SaveConfig() {
-    std::wstring iniPath;
-    
-    if (g_config.PortableMode) {
-        // Force path to Exe Dir
+    void AddString(std::wstring_view key, std::wstring_view val) {
+        buf.append(key);
+        buf.push_back(L'=');
+        buf.append(val);
+        buf.push_back(L'\0');
+    }
+
+    void AddInt(std::wstring_view key, int value) {
+        wchar_t num[32];
+        _itow_s(value, num, 10);
+        AddString(key, num);
+    }
+
+    void AddBool(std::wstring_view key, bool value) {
+        AddString(key, value ? L"1" : L"0");
+    }
+
+    void AddFloat(std::wstring_view key, float value) {
+        if (std::isnan(value) || std::isinf(value)) {
+            value = 0.0f;
+        }
+        wchar_t num[64];
+        static _locale_t c_locale = _create_locale(LC_ALL, "C");
+        _swprintf_s_l(num, 64, L"%.6f", c_locale, value);
+        size_t len = wcslen(num);
+        while (len > 0 && num[len - 1] == L'0') {
+            num[--len] = L'\0';
+        }
+        if (len > 0 && num[len - 1] == L'.') {
+            num[--len] = L'\0';
+        }
+        AddString(key, std::wstring_view(num, len));
+    }
+
+    void Flush(const wchar_t* section, const wchar_t* iniPath) {
+        buf.push_back(L'\0');
+        if (buf.size() == 1) {
+            buf.push_back(L'\0');
+        }
+        WritePrivateProfileSectionW(section, buf.data(), iniPath);
+        buf.clear();
+    }
+};
+
+SRWLOCK s_iniPersistenceLock = SRWLOCK_INIT;
+SRWLOCK s_configSnapshotLock = SRWLOCK_INIT;
+AppConfig s_pendingConfigSnapshot;
+std::array<HotkeyBinding, static_cast<size_t>(HotkeyAction::Count)> s_pendingHotkeysSnapshot = {};
+uint64_t s_configSaveRequestedGen = 0;
+uint64_t s_configSaveCompletedGen = 0;
+bool s_configSaveWorkerRunning = false;
+
+std::wstring ResolveSaveIniPath(bool portableMode) {
+    if (portableMode) {
         wchar_t exePath[MAX_PATH];
         GetModuleFileNameW(nullptr, exePath, MAX_PATH);
         std::wstring exeDir = exePath;
         size_t lastSlash = exeDir.find_last_of(L"\\/");
         if (lastSlash != std::wstring::npos) exeDir = exeDir.substr(0, lastSlash);
-        iniPath = exeDir + L"\\QuickView.ini";
-    } else {
-        // AppData Logic (GetConfigPath handles default logic but we want explicit here)
-        // If switching OFF Portable, we should ensure we save to AppData.
-        wchar_t appDataPath[MAX_PATH];
-        if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appDataPath))) {
-            std::wstring configDir = std::wstring(appDataPath) + L"\\QuickView";
-            CreateDirectoryW(configDir.c_str(), nullptr);
-            iniPath = configDir + L"\\QuickView.ini";
-        } else {
-            iniPath = L"QuickView.ini"; // Fallback
+        return exeDir + L"\\QuickView.ini";
+    }
+    wchar_t appDataPath[MAX_PATH];
+    if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appDataPath))) {
+        std::wstring configDir = std::wstring(appDataPath) + L"\\QuickView";
+        CreateDirectoryW(configDir.c_str(), nullptr);
+        return configDir + L"\\QuickView.ini";
+    }
+    return L"QuickView.ini";
+}
+
+void FlushConfigSnapshotToDisk(
+    const AppConfig& cfg,
+    const std::array<HotkeyBinding, static_cast<size_t>(HotkeyAction::Count)>& hotkeys) {
+    AcquireSRWLockExclusive(&s_iniPersistenceLock);
+
+    const std::wstring iniPath = ResolveSaveIniPath(cfg.PortableMode);
+    const wchar_t* pIni = iniPath.c_str();
+    IniSectionBuilder sec;
+
+    // [General]
+    sec.AddInt(L"Language", cfg.Language);
+    sec.AddBool(L"SingleInstance", cfg.SingleInstance);
+    sec.AddBool(L"CheckUpdates", cfg.CheckUpdates);
+    sec.AddInt(L"UpdateChannel", cfg.UpdateChannel);
+    sec.AddBool(L"NavLoop", cfg.NavLoop);
+    sec.AddBool(L"NavTraverse", cfg.NavTraverse);
+    sec.AddInt(L"SortOrder", cfg.SortOrder);
+    sec.AddBool(L"SortDescending", cfg.SortDescending);
+    sec.AddBool(L"SortArchivesByNameAscending", cfg.SortArchivesByNameAscending);
+    sec.AddBool(L"ConfirmDelete", cfg.ConfirmDelete);
+    sec.AddBool(L"PortableMode", cfg.PortableMode);
+    sec.AddInt(L"UIScalePreset", cfg.UIScalePreset);
+    sec.AddString(L"UIScaleMode", (cfg.UIScalePreset == 0) ? L"0" : L"1");
+    sec.AddBool(L"ShowSavePrompt", cfg.ShowSavePrompt);
+    sec.AddBool(L"AutoSaveOnSwitch", cfg.AutoSaveOnSwitch);
+    sec.Flush(L"General", pIni);
+
+    // [Theme]
+    sec.AddInt(L"ThemeMode", cfg.ThemeMode);
+    sec.AddFloat(L"CustomAccentR", cfg.ThemeCustomAccentR);
+    sec.AddFloat(L"CustomAccentG", cfg.ThemeCustomAccentG);
+    sec.AddFloat(L"CustomAccentB", cfg.ThemeCustomAccentB);
+    sec.AddFloat(L"CustomTextR", cfg.ThemeCustomTextR);
+    sec.AddFloat(L"CustomTextG", cfg.ThemeCustomTextG);
+    sec.AddFloat(L"CustomTextB", cfg.ThemeCustomTextB);
+    sec.Flush(L"Theme", pIni);
+
+    // [GeekGlass]
+    sec.AddBool(L"EnableGeekGlass", cfg.EnableGeekGlass);
+    sec.AddBool(L"GlassShowBorders", cfg.GlassShowBorders);
+    sec.AddBool(L"GlassUIAnimations", cfg.GlassUIAnimations);
+    sec.AddFloat(L"GlassBlurSigma", cfg.GlassBlurSigma);
+    sec.AddFloat(L"GlassTintAlpha", cfg.GlassTintAlpha);
+    sec.AddFloat(L"GlassSpecularOpacity", cfg.GlassSpecularOpacity);
+    sec.AddFloat(L"GlassShadowOpacity", cfg.GlassShadowOpacity);
+    sec.AddFloat(L"GlassOsdOpacity", cfg.GlassOsdOpacity);
+    sec.AddFloat(L"GlassPanelsOpacity", cfg.GlassPanelsOpacity);
+    sec.AddFloat(L"GlassModalsOpacity", cfg.GlassModalsOpacity);
+    sec.AddFloat(L"GlassMenusOpacity", cfg.GlassMenusOpacity);
+    sec.AddInt(L"GlassVectorStrokeWeightIndex", cfg.GlassVectorStrokeWeightIndex);
+    sec.AddInt(L"GlassTintProfile", cfg.GlassTintProfile);
+    sec.AddFloat(L"GlassCustomTintR", cfg.GlassCustomTintR);
+    sec.AddFloat(L"GlassCustomTintG", cfg.GlassCustomTintG);
+    sec.AddFloat(L"GlassCustomTintB", cfg.GlassCustomTintB);
+    sec.AddFloat(L"GlassBlurSigmaBackup", cfg.GlassBlurSigmaBackup);
+    sec.AddFloat(L"GlassTintAlphaBackup", cfg.GlassTintAlphaBackup);
+    sec.AddFloat(L"GlassSpecularOpacityBackup", cfg.GlassSpecularOpacityBackup);
+    sec.AddFloat(L"GlassShadowOpacityBackup", cfg.GlassShadowOpacityBackup);
+    sec.AddFloat(L"GlassOsdOpacityBackup", cfg.GlassOsdOpacityBackup);
+    sec.AddFloat(L"GlassPanelsOpacityBackup", cfg.GlassPanelsOpacityBackup);
+    sec.AddFloat(L"GlassModalsOpacityBackup", cfg.GlassModalsOpacityBackup);
+    sec.AddFloat(L"GlassMenusOpacityBackup", cfg.GlassMenusOpacityBackup);
+    sec.AddBool(L"EnableAmbientDimmer", cfg.EnableAmbientDimmer);
+    sec.Flush(L"GeekGlass", pIni);
+
+    // [View] (Preserve existing LastWindow* geometry keys written during WM_CLOSE)
+    static constexpr const wchar_t* kLastWindowKeys[] = {
+        L"LastWindowWasFullscreen",
+        L"LastWindowWasMaximized",
+        L"LastWindowW",
+        L"LastWindowH",
+        L"LastWindowX",
+        L"LastWindowY"
+    };
+    wchar_t lastWinVals[6][32] = {};
+    for (size_t i = 0; i < 6; ++i) {
+        GetPrivateProfileStringW(L"View", kLastWindowKeys[i], L"", lastWinVals[i], 32, pIni);
+    }
+
+    sec.AddInt(L"MenuBackdropStyle", cfg.MenuBackdropStyle);
+    sec.AddInt(L"CanvasColor", cfg.CanvasColor);
+    sec.AddInt(L"CanvasEffectStyle", cfg.CanvasEffectStyle);
+    sec.AddFloat(L"CanvasCustomR", cfg.CanvasCustomR);
+    sec.AddFloat(L"CanvasCustomG", cfg.CanvasCustomG);
+    sec.AddFloat(L"CanvasCustomB", cfg.CanvasCustomB);
+    sec.AddBool(L"CanvasShowGrid", cfg.CanvasShowGrid);
+    sec.AddBool(L"AlwaysOnTop", cfg.AlwaysOnTop);
+    sec.AddInt(L"OpenFullScreenMode", cfg.OpenFullScreenMode);
+    sec.AddInt(L"FullScreenZoomMode", cfg.FullScreenZoomMode);
+    sec.AddBool(L"LockWindowSize", cfg.LockWindowSize);
+    sec.AddBool(L"ShowOSD", cfg.ShowOSD);
+    sec.AddBool(L"AutoHideWindowControls", cfg.AutoHideWindowControls);
+    sec.AddBool(L"LockBottomToolbar", cfg.LockBottomToolbar);
+    sec.AddInt(L"ShowBorderIndicator", cfg.ShowBorderIndicator);
+    sec.AddFloat(L"BorderIndicatorCustomR", cfg.BorderIndicatorCustomR);
+    sec.AddFloat(L"BorderIndicatorCustomG", cfg.BorderIndicatorCustomG);
+    sec.AddFloat(L"BorderIndicatorCustomB", cfg.BorderIndicatorCustomB);
+    sec.AddInt(L"ShowNavigator", cfg.ShowNavigator);
+    sec.AddFloat(L"NavigatorOffsetX", cfg.NavigatorOffsetX);
+    sec.AddFloat(L"NavigatorOffsetY", cfg.NavigatorOffsetY);
+    sec.AddInt(L"NavigatorAlignX", cfg.NavigatorAlignX);
+    sec.AddInt(L"NavigatorAlignY", cfg.NavigatorAlignY);
+    sec.AddFloat(L"InfoPanelX", cfg.InfoPanelX);
+    sec.AddFloat(L"InfoPanelY", cfg.InfoPanelY);
+    sec.AddInt(L"InfoPanelAlignX", cfg.InfoPanelAlignX);
+    sec.AddInt(L"InfoPanelAlignY", cfg.InfoPanelAlignY);
+    sec.AddFloat(L"WindowMinSize", cfg.WindowMinSize);
+    sec.AddFloat(L"WindowMaxSizePercent", cfg.WindowMaxSizePercent);
+    sec.AddBool(L"KeepWindowSizeOnNav", cfg.KeepWindowSizeOnNav);
+    sec.AddBool(L"RememberLastWindowSizeAndPosition", cfg.RememberLastWindowSizeAndPosition);
+    sec.AddBool(L"UpscaleSmallImagesWhenLocked", cfg.UpscaleSmallImagesWhenLocked);
+    sec.AddInt(L"SlideshowIntervalMs", cfg.SlideshowIntervalMs);
+    sec.AddInt(L"SlideshowImmersiveMode", cfg.SlideshowImmersiveMode);
+    sec.AddInt(L"SlideshowTransitionMode", cfg.SlideshowTransitionMode);
+    sec.AddInt(L"ExifPanelMode", cfg.ExifPanelMode);
+    sec.AddInt(L"ToolbarInfoDefault", cfg.ToolbarInfoDefault);
+    sec.AddInt(L"NavIndicator", cfg.NavIndicator);
+    sec.AddBool(L"EnableCrossMonitor", cfg.EnableCrossMonitor);
+    sec.AddBool(L"RoundedCorners", cfg.RoundedCorners);
+    for (size_t i = 0; i < 6; ++i) {
+        if (lastWinVals[i][0] != L'\0') {
+            sec.AddString(kLastWindowKeys[i], lastWinVals[i]);
+        }
+    }
+    sec.Flush(L"View", pIni);
+
+    // [Controls]
+    sec.AddInt(L"ZoomModeIn", cfg.ZoomModeIn);
+    sec.AddInt(L"ZoomModeOut", cfg.ZoomModeOut);
+    sec.AddFloat(L"FsrSharpness", cfg.FsrSharpness);
+    sec.AddInt(L"SrDebounceDelayMs", cfg.SrDebounceDelayMs);
+    sec.AddFloat(L"SrAutoTriggerMaxSourceMp", cfg.SrAutoTriggerMaxSourceMp);
+    sec.AddInt(L"SrAutoTriggerMaxWidth", cfg.SrAutoTriggerMaxWidth);
+    sec.AddInt(L"SrAutoTriggerMaxHeight", cfg.SrAutoTriggerMaxHeight);
+    sec.AddBool(L"InvertWheel", cfg.InvertWheel);
+    sec.AddInt(L"WheelActionMode", cfg.WheelActionMode);
+    sec.AddInt(L"ThumbWheelMode", cfg.ThumbWheelMode);
+    sec.AddInt(L"DoubleClickMode", cfg.DoubleClickMode);
+    sec.AddBool(L"InvertXButton", cfg.InvertXButton);
+    sec.AddBool(L"MouseAnchoredWindowZoom", cfg.MouseAnchoredWindowZoom);
+    sec.AddBool(L"RightButtonDragZoom", cfg.RightButtonDragZoom);
+    sec.AddFloat(L"WheelZoomSpeed", cfg.WheelZoomSpeed);
+    sec.AddFloat(L"RightDragZoomSpeed", cfg.RightDragZoomSpeed);
+    sec.AddFloat(L"PanStepNormal", cfg.PanStepNormal);
+    sec.AddFloat(L"PanStepFast", cfg.PanStepFast);
+    sec.AddInt(L"LeftDragAction", (int)cfg.LeftDragAction);
+    sec.AddInt(L"MiddleDragAction", (int)cfg.MiddleDragAction);
+    sec.AddInt(L"MiddleClickAction", (int)cfg.MiddleClickAction);
+
+    sec.AddInt(L"MouseGestureCount", (int)cfg.MouseGestures.size());
+    for (size_t i = 0; i < cfg.MouseGestures.size(); ++i) {
+        const auto& g = cfg.MouseGestures[i];
+        wchar_t keyName[32];
+        int keyLen = swprintf_s(keyName, L"MouseGesture_%zu", i);
+        wchar_t val[64];
+        int valLen = swprintf_s(val, L"%u,%u,%u,%d", g.mod1, g.mod2, g.trigger, g.action);
+        if (keyLen > 0 && valLen > 0) {
+            sec.AddString(std::wstring_view(keyName, keyLen), std::wstring_view(val, valLen));
         }
     }
 
-    // General
-    WriteConfigInt(L"General", L"Language", g_config.Language, iniPath.c_str());
-    WriteConfigBool(L"General", L"SingleInstance", g_config.SingleInstance, iniPath.c_str());
-    WriteConfigBool(L"General", L"CheckUpdates", g_config.CheckUpdates, iniPath.c_str());
-    WriteConfigInt(L"General", L"UpdateChannel", g_config.UpdateChannel, iniPath.c_str());
-    WriteConfigBool(L"General", L"NavLoop", g_config.NavLoop, iniPath.c_str());
-    WriteConfigBool(L"General", L"NavTraverse", g_config.NavTraverse, iniPath.c_str());
-    WritePrivateProfileStringW(L"General", L"LoopNavigation", nullptr, iniPath.c_str()); // [Clean] Remove legacy key
-    WritePrivateProfileStringW(L"General", L"NavLoopMode", nullptr, iniPath.c_str());   // [Clean] Remove legacy key
-    WriteConfigInt(L"General", L"SortOrder", g_config.SortOrder, iniPath.c_str());
-    WriteConfigBool(L"General", L"SortDescending", g_config.SortDescending, iniPath.c_str());
-    WriteConfigBool(L"General", L"SortArchivesByNameAscending", g_config.SortArchivesByNameAscending, iniPath.c_str());
-    WriteConfigBool(L"General", L"ConfirmDelete", g_config.ConfirmDelete, iniPath.c_str());
-    WriteConfigBool(L"General", L"PortableMode", g_config.PortableMode, iniPath.c_str());
-    WriteConfigInt(L"General", L"UIScalePreset", g_config.UIScalePreset, iniPath.c_str());
-    // Backward compatibility for older builds that only understand Auto/Manual.
-    WritePrivateProfileStringW(L"General", L"UIScaleMode", (g_config.UIScalePreset == 0) ? L"0" : L"1", iniPath.c_str());
+    sec.AddBool(L"EdgeNavClick", cfg.EdgeNavClick);
+    sec.AddInt(L"GalleryTriggerMode", cfg.GalleryTriggerMode);
+    sec.AddBool(L"GalleryKeepVisibleOnThumbnailClick", cfg.GalleryKeepVisibleOnThumbnailClick);
+    sec.AddBool(L"GalleryExpandOnClickOnly", cfg.GalleryExpandOnClickOnly);
+    sec.AddFloat(L"GalleryTriggerAreaHeight", cfg.GalleryTriggerAreaHeight);
+    sec.AddFloat(L"GalleryDwellTime", cfg.GalleryDwellTime);
+    sec.AddFloat(L"GalleryExitDelay", cfg.GalleryExitDelay);
+    sec.AddInt(L"GalleryThumbnailSize", cfg.GalleryThumbnailSize);
+    sec.AddFloat(L"GalleryFilmstripHeight", cfg.GalleryFilmstripHeight);
+    sec.AddInt(L"GalleryMinSize", (int)std::lround(cfg.GalleryMinSize));
+    sec.AddBool(L"LoupeEnabled", cfg.LoupeEnabled);
+    sec.AddInt(L"LoupeShape", cfg.LoupeShape);
+    sec.AddFloat(L"LoupeSizeRatio", cfg.LoupeSizeRatio);
+    sec.AddFloat(L"LoupeZoom", cfg.LoupeZoom);
+    sec.AddBool(L"UseFixedZoom", cfg.UseFixedZoom);
+    sec.AddString(L"FixedZoomLevels", cfg.FixedZoomLevels);
 
-    // Theme & Geek Glass
-    WriteConfigInt(L"Theme", L"ThemeMode", g_config.ThemeMode, iniPath.c_str());
-    WriteConfigFloat(L"Theme", L"CustomAccentR", g_config.ThemeCustomAccentR, iniPath.c_str());
-    WriteConfigFloat(L"Theme", L"CustomAccentG", g_config.ThemeCustomAccentG, iniPath.c_str());
-    WriteConfigFloat(L"Theme", L"CustomAccentB", g_config.ThemeCustomAccentB, iniPath.c_str());
-    WriteConfigFloat(L"Theme", L"CustomTextR", g_config.ThemeCustomTextR, iniPath.c_str());
-    WriteConfigFloat(L"Theme", L"CustomTextG", g_config.ThemeCustomTextG, iniPath.c_str());
-    WriteConfigFloat(L"Theme", L"CustomTextB", g_config.ThemeCustomTextB, iniPath.c_str());
+    std::wstring wrappedSeparator = L"\"" + cfg.InfoPanelLiteSeparator + L"\"";
+    sec.AddString(L"InfoPanelLiteItemsNormal", cfg.InfoPanelLiteItemsNormal);
+    sec.AddString(L"InfoPanelLiteItemsCompare", cfg.InfoPanelLiteItemsCompare);
+    sec.AddString(L"InfoPanelLiteSeparator", wrappedSeparator);
+    sec.AddString(L"InfoPanelFullItemsNormal", cfg.InfoPanelFullItemsNormal);
+    sec.AddString(L"InfoPanelFullItemsCompare", cfg.InfoPanelFullItemsCompare);
+    sec.AddInt(L"InfoPanelScale", cfg.InfoPanelScale);
+    sec.AddString(L"RatingItemMigrated", L"1");
+    sec.Flush(L"Controls", pIni);
 
-    WriteConfigBool(L"GeekGlass", L"EnableGeekGlass", g_config.EnableGeekGlass, iniPath.c_str());
-    WriteConfigBool(L"GeekGlass", L"GlassShowBorders", g_config.GlassShowBorders, iniPath.c_str());
-    WriteConfigBool(L"GeekGlass", L"GlassUIAnimations", g_config.GlassUIAnimations, iniPath.c_str());
-    WriteConfigFloat(L"GeekGlass", L"GlassBlurSigma", g_config.GlassBlurSigma, iniPath.c_str());
-    WriteConfigFloat(L"GeekGlass", L"GlassTintAlpha", g_config.GlassTintAlpha, iniPath.c_str());
-    WriteConfigFloat(L"GeekGlass", L"GlassSpecularOpacity", g_config.GlassSpecularOpacity, iniPath.c_str());
-    WriteConfigFloat(L"GeekGlass", L"GlassShadowOpacity", g_config.GlassShadowOpacity, iniPath.c_str());
-    WriteConfigFloat(L"GeekGlass", L"GlassOsdOpacity", g_config.GlassOsdOpacity, iniPath.c_str());
-    WriteConfigFloat(L"GeekGlass", L"GlassPanelsOpacity", g_config.GlassPanelsOpacity, iniPath.c_str());
-    WriteConfigFloat(L"GeekGlass", L"GlassModalsOpacity", g_config.GlassModalsOpacity, iniPath.c_str());
-    WriteConfigFloat(L"GeekGlass", L"GlassMenusOpacity", g_config.GlassMenusOpacity, iniPath.c_str());
-    WriteConfigInt(L"GeekGlass", L"GlassVectorStrokeWeightIndex", g_config.GlassVectorStrokeWeightIndex, iniPath.c_str());
-    WriteConfigInt(L"GeekGlass", L"GlassTintProfile", g_config.GlassTintProfile, iniPath.c_str());
-    WriteConfigFloat(L"GeekGlass", L"GlassCustomTintR", g_config.GlassCustomTintR, iniPath.c_str());
-    WriteConfigFloat(L"GeekGlass", L"GlassCustomTintG", g_config.GlassCustomTintG, iniPath.c_str());
-    WriteConfigFloat(L"GeekGlass", L"GlassCustomTintB", g_config.GlassCustomTintB, iniPath.c_str());
+    // [Image]
+    sec.AddInt(L"AutoRotate", cfg.AutoRotate);
+    sec.AddBool(L"ColorManagement", cfg.ColorManagement);
+    sec.AddInt(L"AdvancedColorMode", cfg.AdvancedColorMode);
+    sec.AddInt(L"CmsDefaultFallback", cfg.CmsDefaultFallback);
+    sec.AddInt(L"CmsRenderingIntent", cfg.CmsRenderingIntent);
+    sec.AddInt(L"HdrToneMappingMode", cfg.HdrToneMappingMode);
+    sec.AddFloat(L"HdrSplineKnee", cfg.HdrSplineKnee);
+    sec.AddFloat(L"HdrPeakNitsOverride", cfg.HdrPeakNitsOverride);
+    sec.AddFloat(L"HdrPeakPercentile", cfg.HdrPeakPercentile);
+    sec.AddFloat(L"Exposure", cfg.Exposure);
+    sec.AddFloat(L"HdrDesatThreshold", cfg.HdrDesatThreshold);
+    sec.AddFloat(L"HdrMaxDesat", cfg.HdrMaxDesat);
+    sec.AddString(L"CustomSoftProofProfile", cfg.CustomSoftProofProfile);
+    sec.AddInt(L"GamutWarningMode", cfg.GamutWarningMode);
+    sec.AddBool(L"GamutWarningAutoPrompt", cfg.GamutWarningAutoPrompt);
+    sec.AddFloat(L"GamutWarningColorR", cfg.GamutWarningColorR);
+    sec.AddFloat(L"GamutWarningColorG", cfg.GamutWarningColorG);
+    sec.AddFloat(L"GamutWarningColorB", cfg.GamutWarningColorB);
+    sec.AddString(L"CustomEditorPath", cfg.CustomEditorPath);
+    sec.AddBool(L"ForceRawDecode", cfg.ForceRawDecode);
+    sec.AddBool(L"PairRawJpeg", cfg.PairRawJpeg);
+    sec.AddBool(L"AlwaysSaveLossless", cfg.AlwaysSaveLossless);
+    sec.AddBool(L"AlwaysSaveEdgeAdapted", cfg.AlwaysSaveEdgeAdapted);
+    sec.AddBool(L"AlwaysSaveLossy", cfg.AlwaysSaveLossy);
+    sec.Flush(L"Image", pIni);
 
-    WriteConfigFloat(L"GeekGlass", L"GlassBlurSigmaBackup", g_config.GlassBlurSigmaBackup, iniPath.c_str());
-    WriteConfigFloat(L"GeekGlass", L"GlassTintAlphaBackup", g_config.GlassTintAlphaBackup, iniPath.c_str());
-    WriteConfigFloat(L"GeekGlass", L"GlassSpecularOpacityBackup", g_config.GlassSpecularOpacityBackup, iniPath.c_str());
-    WriteConfigFloat(L"GeekGlass", L"GlassShadowOpacityBackup", g_config.GlassShadowOpacityBackup, iniPath.c_str());
-    WriteConfigFloat(L"GeekGlass", L"GlassOsdOpacityBackup", g_config.GlassOsdOpacityBackup, iniPath.c_str());
-    WriteConfigFloat(L"GeekGlass", L"GlassPanelsOpacityBackup", g_config.GlassPanelsOpacityBackup, iniPath.c_str());
-    WriteConfigFloat(L"GeekGlass", L"GlassModalsOpacityBackup", g_config.GlassModalsOpacityBackup, iniPath.c_str());
-    WriteConfigFloat(L"GeekGlass", L"GlassMenusOpacityBackup", g_config.GlassMenusOpacityBackup, iniPath.c_str());
+    // [Advanced]
+    sec.AddBool(L"EnableDebugFeatures", cfg.EnableDebugFeatures);
+    sec.AddInt(L"PrefetchGear", (int)cfg.PrefetchGear);
+    sec.AddInt(L"MemoryReclaimStrategy", (int)cfg.MemoryReclaimStrategy);
+    sec.AddBool(L"ShowDirtyRectButton", cfg.ShowDirtyRectButton);
+    sec.Flush(L"Advanced", pIni);
 
-    WriteConfigBool(L"GeekGlass", L"EnableAmbientDimmer", g_config.EnableAmbientDimmer, iniPath.c_str());
+    // [Registry]
+    sec.AddString(L"RegVer", cfg.LastRegisteredVersion);
+    sec.AddString(L"RegPath", cfg.LastRegisteredPath);
+    sec.Flush(L"Registry", pIni);
 
-    // View
-    WriteConfigInt(L"View", L"MenuBackdropStyle", g_config.MenuBackdropStyle, iniPath.c_str());
-    WriteConfigInt(L"View", L"CanvasColor", g_config.CanvasColor, iniPath.c_str());
-    WriteConfigInt(L"View", L"CanvasEffectStyle", g_config.CanvasEffectStyle, iniPath.c_str());
-    WriteConfigFloat(L"View", L"CanvasCustomR", g_config.CanvasCustomR, iniPath.c_str());
-    WriteConfigFloat(L"View", L"CanvasCustomG", g_config.CanvasCustomG, iniPath.c_str());
-    WriteConfigFloat(L"View", L"CanvasCustomB", g_config.CanvasCustomB, iniPath.c_str());
-    WriteConfigBool(L"View", L"CanvasShowGrid", g_config.CanvasShowGrid, iniPath.c_str());
-    WriteConfigBool(L"View", L"AlwaysOnTop", g_config.AlwaysOnTop, iniPath.c_str());
-    WriteConfigInt(L"View", L"OpenFullScreenMode", g_config.OpenFullScreenMode, iniPath.c_str());
-    WriteConfigInt(L"View", L"FullScreenZoomMode", g_config.FullScreenZoomMode, iniPath.c_str());
-    WriteConfigBool(L"View", L"LockWindowSize", g_config.LockWindowSize, iniPath.c_str());
-    WriteConfigBool(L"View", L"ShowOSD", g_config.ShowOSD, iniPath.c_str());
-    WriteConfigBool(L"View", L"AutoHideWindowControls", g_config.AutoHideWindowControls, iniPath.c_str());
-    WriteConfigBool(L"View", L"LockBottomToolbar", g_config.LockBottomToolbar, iniPath.c_str());
-    WriteConfigInt(L"View", L"ShowBorderIndicator", g_config.ShowBorderIndicator, iniPath.c_str());
-    WriteConfigFloat(L"View", L"BorderIndicatorCustomR", g_config.BorderIndicatorCustomR, iniPath.c_str());
-    WriteConfigFloat(L"View", L"BorderIndicatorCustomG", g_config.BorderIndicatorCustomG, iniPath.c_str());
-    WriteConfigFloat(L"View", L"BorderIndicatorCustomB", g_config.BorderIndicatorCustomB, iniPath.c_str());
-    WriteConfigInt(L"View", L"ShowNavigator", g_config.ShowNavigator, iniPath.c_str());
-    WriteConfigInt(L"View", L"NavigatorOffsetX", g_config.NavigatorOffsetX, iniPath.c_str());
-    WriteConfigInt(L"View", L"NavigatorOffsetY", g_config.NavigatorOffsetY, iniPath.c_str());
-    WriteConfigInt(L"View", L"NavigatorAlignX", g_config.NavigatorAlignX, iniPath.c_str());
-    WriteConfigInt(L"View", L"NavigatorAlignY", g_config.NavigatorAlignY, iniPath.c_str());
-
-    WriteConfigInt(L"View", L"InfoPanelX", g_config.InfoPanelX, iniPath.c_str());
-    WriteConfigInt(L"View", L"InfoPanelY", g_config.InfoPanelY, iniPath.c_str());
-    WriteConfigInt(L"View", L"InfoPanelAlignX", g_config.InfoPanelAlignX, iniPath.c_str());
-    WriteConfigInt(L"View", L"InfoPanelAlignY", g_config.InfoPanelAlignY, iniPath.c_str());
-
-    // Window Size Limits
-    WriteConfigInt(L"View", L"WindowMinSize", g_config.WindowMinSize, iniPath.c_str());
-    WriteConfigFloat(L"View", L"WindowMaxSizePercent", g_config.WindowMaxSizePercent, iniPath.c_str());
-
-    // Window Lock Behaviors
-    WriteConfigBool(L"View", L"KeepWindowSizeOnNav", g_config.KeepWindowSizeOnNav, iniPath.c_str());
-    WriteConfigBool(L"View", L"RememberLastWindowSizeAndPosition", g_config.RememberLastWindowSizeAndPosition, iniPath.c_str());
-    WriteConfigBool(L"View", L"UpscaleSmallImagesWhenLocked", g_config.UpscaleSmallImagesWhenLocked, iniPath.c_str());
-    WriteConfigInt(L"View", L"SlideshowIntervalMs", g_config.SlideshowIntervalMs, iniPath.c_str());
-    WriteConfigInt(L"View", L"SlideshowImmersiveMode", g_config.SlideshowImmersiveMode, iniPath.c_str());
-    WriteConfigInt(L"View", L"SlideshowTransitionMode", g_config.SlideshowTransitionMode, iniPath.c_str());
-
-    WriteConfigInt(L"View", L"ExifPanelMode", g_config.ExifPanelMode, iniPath.c_str());
-    WriteConfigInt(L"View", L"ToolbarInfoDefault", g_config.ToolbarInfoDefault, iniPath.c_str());
-    // Redundant Alphas Removed (Unified to Geek Glass)
-    WriteConfigInt(L"View", L"NavIndicator", g_config.NavIndicator, iniPath.c_str());
-    WriteConfigBool(L"View", L"EnableCrossMonitor", g_config.EnableCrossMonitor, iniPath.c_str());
-    WriteConfigBool(L"View", L"RoundedCorners", g_config.RoundedCorners, iniPath.c_str());
-
-    // Control
-    WriteConfigInt(L"Controls", L"ZoomModeIn", g_config.ZoomModeIn, iniPath.c_str());
-    WriteConfigInt(L"Controls", L"ZoomModeOut", g_config.ZoomModeOut, iniPath.c_str());
-    WriteConfigFloat(L"Controls", L"FsrSharpness", g_config.FsrSharpness, iniPath.c_str());
-    WriteConfigInt(L"Controls", L"SrDebounceDelayMs", g_config.SrDebounceDelayMs, iniPath.c_str());
-    WriteConfigFloat(L"Controls", L"SrAutoTriggerMaxSourceMp", g_config.SrAutoTriggerMaxSourceMp, iniPath.c_str());
-    WriteConfigInt(L"Controls", L"SrAutoTriggerMaxWidth", g_config.SrAutoTriggerMaxWidth, iniPath.c_str());
-    WriteConfigInt(L"Controls", L"SrAutoTriggerMaxHeight", g_config.SrAutoTriggerMaxHeight, iniPath.c_str());
-    WriteConfigBool(L"Controls", L"InvertWheel", g_config.InvertWheel, iniPath.c_str());
-    WriteConfigInt(L"Controls", L"WheelActionMode", g_config.WheelActionMode, iniPath.c_str());
-    WriteConfigInt(L"Controls", L"ThumbWheelMode", g_config.ThumbWheelMode, iniPath.c_str());
-    WriteConfigInt(L"Controls", L"DoubleClickMode", g_config.DoubleClickMode, iniPath.c_str());
-    WriteConfigBool(L"Controls", L"InvertXButton", g_config.InvertXButton, iniPath.c_str());
-    WriteConfigBool(L"Controls", L"MouseAnchoredWindowZoom", g_config.MouseAnchoredWindowZoom, iniPath.c_str());
-    WriteConfigBool(L"Controls", L"RightButtonDragZoom", g_config.RightButtonDragZoom, iniPath.c_str());
-    WriteConfigFloat(L"Controls", L"WheelZoomSpeed", g_config.WheelZoomSpeed, iniPath.c_str());
-    WriteConfigFloat(L"Controls", L"RightDragZoomSpeed", g_config.RightDragZoomSpeed, iniPath.c_str());
-    WriteConfigFloat(L"Controls", L"PanStepNormal", g_config.PanStepNormal, iniPath.c_str());
-    WriteConfigFloat(L"Controls", L"PanStepFast", g_config.PanStepFast, iniPath.c_str());
-    WriteConfigInt(L"Controls", L"LeftDragAction", (int)g_config.LeftDragAction, iniPath.c_str());
-    WriteConfigInt(L"Controls", L"MiddleDragAction", (int)g_config.MiddleDragAction, iniPath.c_str());
-    WriteConfigInt(L"Controls", L"MiddleClickAction", (int)g_config.MiddleClickAction, iniPath.c_str());
-    WriteConfigBool(L"Controls", L"EdgeNavClick", g_config.EdgeNavClick, iniPath.c_str());
-    WriteConfigInt(L"Controls", L"GalleryTriggerMode", g_config.GalleryTriggerMode, iniPath.c_str());
-    WriteConfigBool(L"Controls", L"GalleryKeepVisibleOnThumbnailClick", g_config.GalleryKeepVisibleOnThumbnailClick, iniPath.c_str());
-    WriteConfigBool(L"Controls", L"GalleryExpandOnClickOnly", g_config.GalleryExpandOnClickOnly, iniPath.c_str());
-    WriteConfigFloat(L"Controls", L"GalleryTriggerAreaHeight", g_config.GalleryTriggerAreaHeight, iniPath.c_str());
-    WriteConfigFloat(L"Controls", L"GalleryDwellTime", g_config.GalleryDwellTime, iniPath.c_str());
-    WriteConfigFloat(L"Controls", L"GalleryExitDelay", g_config.GalleryExitDelay, iniPath.c_str());
-    WriteConfigInt(L"Controls", L"GalleryThumbnailSize", g_config.GalleryThumbnailSize, iniPath.c_str());
-    WriteConfigInt(L"Controls", L"GalleryFilmstripHeight", g_config.GalleryFilmstripHeight, iniPath.c_str());
-    WriteConfigInt(L"Controls", L"GalleryMinSize", (int)std::lround(g_config.GalleryMinSize), iniPath.c_str());
-    // NavIndicator moved to View section
-
-    // Loupe (activation key lives in the [Hotkeys] Loupe binding)
-    WriteConfigBool(L"Controls", L"LoupeEnabled", g_config.LoupeEnabled, iniPath.c_str());
-    WriteConfigInt(L"Controls", L"LoupeShape", g_config.LoupeShape, iniPath.c_str());
-    WriteConfigFloat(L"Controls", L"LoupeSizeRatio", g_config.LoupeSizeRatio, iniPath.c_str());
-    WriteConfigFloat(L"Controls", L"LoupeZoom", g_config.LoupeZoom, iniPath.c_str());
-    
-    // Fixed Zoom Levels
-    WriteConfigBool(L"Controls", L"UseFixedZoom", g_config.UseFixedZoom, iniPath.c_str());
-    WritePrivateProfileStringW(L"Controls", L"FixedZoomLevels", g_config.FixedZoomLevels.c_str(), iniPath.c_str());
-
-    // Customizable Info Panel Lite
-    std::wstring wrappedSeparator = L"\"" + g_config.InfoPanelLiteSeparator + L"\"";
-    WritePrivateProfileStringW(L"Controls", L"InfoPanelLiteItemsNormal", g_config.InfoPanelLiteItemsNormal.c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Controls", L"InfoPanelLiteItemsCompare", g_config.InfoPanelLiteItemsCompare.c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Controls", L"InfoPanelLiteSeparator", wrappedSeparator.c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Controls", L"InfoPanelFullItemsNormal", g_config.InfoPanelFullItemsNormal.c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Controls", L"InfoPanelFullItemsCompare", g_config.InfoPanelFullItemsCompare.c_str(), iniPath.c_str());
-    WriteConfigInt(L"Controls", L"InfoPanelScale", g_config.InfoPanelScale, iniPath.c_str());
-
-    // Image
-    WriteConfigInt(L"Image", L"AutoRotate", g_config.AutoRotate, iniPath.c_str());
-    WriteConfigBool(L"Image", L"ColorManagement", g_config.ColorManagement, iniPath.c_str());
-    WriteConfigInt(L"Image", L"AdvancedColorMode", g_config.AdvancedColorMode, iniPath.c_str());
-    WriteConfigInt(L"Image", L"CmsDefaultFallback", g_config.CmsDefaultFallback, iniPath.c_str());
-    WriteConfigInt(L"Image", L"CmsRenderingIntent", g_config.CmsRenderingIntent, iniPath.c_str());
-    WriteConfigInt(L"Image", L"HdrToneMappingMode", g_config.HdrToneMappingMode, iniPath.c_str());
-    WriteConfigFloat(L"Image", L"HdrSplineKnee", g_config.HdrSplineKnee, iniPath.c_str());
-    WriteConfigFloat(L"Image", L"HdrPeakNitsOverride", g_config.HdrPeakNitsOverride, iniPath.c_str());
-    WriteConfigFloat(L"Image", L"HdrPeakPercentile", g_config.HdrPeakPercentile, iniPath.c_str());
-    WriteConfigFloat(L"Image", L"Exposure", g_config.Exposure, iniPath.c_str());
-    WriteConfigFloat(L"Image", L"HdrDesatThreshold", g_config.HdrDesatThreshold, iniPath.c_str());
-    WriteConfigFloat(L"Image", L"HdrMaxDesat", g_config.HdrMaxDesat, iniPath.c_str());
-    WritePrivateProfileStringW(L"Image", L"CustomSoftProofProfile", g_config.CustomSoftProofProfile.c_str(), iniPath.c_str());
-    WriteConfigInt(L"Image", L"GamutWarningMode", g_config.GamutWarningMode, iniPath.c_str());
-    WriteConfigBool(L"Image", L"GamutWarningAutoPrompt", g_config.GamutWarningAutoPrompt, iniPath.c_str());
-    WriteConfigInt(L"Image", L"GamutWarningColorR", g_config.GamutWarningColorR, iniPath.c_str());
-    WriteConfigInt(L"Image", L"GamutWarningColorG", g_config.GamutWarningColorG, iniPath.c_str());
-    WriteConfigInt(L"Image", L"GamutWarningColorB", g_config.GamutWarningColorB, iniPath.c_str());
-    WritePrivateProfileStringW(L"Image", L"CustomEditorPath", g_config.CustomEditorPath.c_str(), iniPath.c_str());
-    WriteConfigBool(L"Image", L"ForceRawDecode", g_config.ForceRawDecode, iniPath.c_str());
-    WriteConfigBool(L"Image", L"PairRawJpeg", g_config.PairRawJpeg, iniPath.c_str());
-    WriteConfigBool(L"Image", L"AlwaysSaveLossless", g_config.AlwaysSaveLossless, iniPath.c_str());
-    WriteConfigBool(L"Image", L"AlwaysSaveEdgeAdapted", g_config.AlwaysSaveEdgeAdapted, iniPath.c_str());
-    WriteConfigBool(L"Image", L"AlwaysSaveLossy", g_config.AlwaysSaveLossy, iniPath.c_str());
-
-    // Advanced / Debug
-    WriteConfigBool(L"Advanced", L"EnableDebugFeatures", g_config.EnableDebugFeatures, iniPath.c_str());
-    WriteConfigInt(L"Advanced", L"PrefetchGear", (int)g_config.PrefetchGear, iniPath.c_str());
-    WriteConfigInt(L"Advanced", L"MemoryReclaimStrategy", (int)g_config.MemoryReclaimStrategy, iniPath.c_str());
-    WriteConfigBool(L"Advanced", L"ShowDirtyRectButton", g_config.ShowDirtyRectButton, iniPath.c_str());
-    
-    // Internal / Navigation
-    WriteConfigBool(L"General", L"ShowSavePrompt", g_config.ShowSavePrompt, iniPath.c_str());
-    WriteConfigBool(L"General", L"AutoSaveOnSwitch", g_config.AutoSaveOnSwitch, iniPath.c_str());
-    WriteConfigBool(L"General", L"NavLoop", g_config.NavLoop, iniPath.c_str());
-    WriteConfigBool(L"General", L"NavTraverse", g_config.NavTraverse, iniPath.c_str());
-
-    // Registry / Associations persistence
-    WritePrivateProfileStringW(L"Registry", L"RegVer", g_config.LastRegisteredVersion.c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Registry", L"RegPath", g_config.LastRegisteredPath.c_str(), iniPath.c_str());
-
-    WritePrivateProfileStringW(L"General", L"NavLoopMode", nullptr, iniPath.c_str());
-    WritePrivateProfileStringW(L"General", L"LoopNavigation", nullptr, iniPath.c_str());
-
-    // Save Hotkeys
+    // [Hotkeys]
+    sec.AddInt(L"HotkeyRuleCount", static_cast<int>(cfg.HotkeyRules.size()));
+    for (size_t i = 0; i < cfg.HotkeyRules.size(); ++i) {
+        wchar_t keyName[64];
+        int keyLen = swprintf_s(keyName, L"HotkeyRule_%zu", i);
+        const auto& r = cfg.HotkeyRules[i];
+        std::wstring_view actStr = HotkeyActionToString(r.action);
+        std::wstring comboStr = KeyComboToString(r.combo);
+        wchar_t valBuf[128];
+        int valLen = swprintf_s(valBuf, L"%.*s|%s", (int)actStr.length(), actStr.data(), comboStr.c_str());
+        if (keyLen > 0 && valLen > 0) {
+            sec.AddString(std::wstring_view(keyName, keyLen), std::wstring_view(valBuf, valLen));
+        }
+    }
     for (size_t i = 1; i < static_cast<size_t>(HotkeyAction::Count); ++i) {
-        const auto& binding = g_hotkeys[i];
+        const auto& binding = hotkeys[i];
         std::wstring_view actionName = HotkeyActionToString(binding.action);
         std::wstring valStr = KeyComboToString(binding.combo);
-        WritePrivateProfileStringW(L"Hotkeys", std::wstring(actionName).c_str(), valStr.c_str(), iniPath.c_str());
+        sec.AddString(actionName, valStr);
     }
+    sec.Flush(L"Hotkeys", pIni);
 
     // Super-Resolution Plugins
-    QuickView::PluginHost::Instance().SaveConfig(iniPath.c_str());
+    QuickView::PluginHost::Instance().SaveConfig(pIni);
+
+    ReleaseSRWLockExclusive(&s_iniPersistenceLock);
+}
+
+void DrainPendingConfigSaves() {
+    for (;;) {
+        AppConfig cfgCopy;
+        std::array<HotkeyBinding, static_cast<size_t>(HotkeyAction::Count)> hkCopy = {};
+        uint64_t targetGen = 0;
+
+        AcquireSRWLockExclusive(&s_configSnapshotLock);
+        if (s_configSaveRequestedGen <= s_configSaveCompletedGen) {
+            s_configSaveWorkerRunning = false;
+            ReleaseSRWLockExclusive(&s_configSnapshotLock);
+            return;
+        }
+        targetGen = s_configSaveRequestedGen;
+        cfgCopy = s_pendingConfigSnapshot;
+        hkCopy = s_pendingHotkeysSnapshot;
+        ReleaseSRWLockExclusive(&s_configSnapshotLock);
+
+        FlushConfigSnapshotToDisk(cfgCopy, hkCopy);
+
+        AcquireSRWLockExclusive(&s_configSnapshotLock);
+        if (s_configSaveCompletedGen < targetGen) {
+            s_configSaveCompletedGen = targetGen;
+        }
+        if (s_configSaveRequestedGen <= s_configSaveCompletedGen) {
+            s_configSaveWorkerRunning = false;
+            ReleaseSRWLockExclusive(&s_configSnapshotLock);
+            return;
+        }
+        ReleaseSRWLockExclusive(&s_configSnapshotLock);
+    }
+}
+} // namespace
+
+void SaveConfig() {
+    bool shouldSpawnWorker = false;
+    AcquireSRWLockExclusive(&s_configSnapshotLock);
+    s_pendingConfigSnapshot = g_config;
+    s_pendingHotkeysSnapshot = g_hotkeys;
+    ++s_configSaveRequestedGen;
+    if (!s_configSaveWorkerRunning) {
+        s_configSaveWorkerRunning = true;
+        shouldSpawnWorker = true;
+    }
+    ReleaseSRWLockExclusive(&s_configSnapshotLock);
+
+    if (shouldSpawnWorker) {
+        QuickView::PostThreadPool([]() {
+            DrainPendingConfigSaves();
+        });
+    }
+}
+
+void SaveConfigSync() {
+    AppConfig cfgCopy;
+    std::array<HotkeyBinding, static_cast<size_t>(HotkeyAction::Count)> hkCopy = {};
+    uint64_t targetGen = 0;
+
+    AcquireSRWLockExclusive(&s_configSnapshotLock);
+    s_pendingConfigSnapshot = g_config;
+    s_pendingHotkeysSnapshot = g_hotkeys;
+    ++s_configSaveRequestedGen;
+    targetGen = s_configSaveRequestedGen;
+    cfgCopy = s_pendingConfigSnapshot;
+    hkCopy = s_pendingHotkeysSnapshot;
+    ReleaseSRWLockExclusive(&s_configSnapshotLock);
+
+    FlushConfigSnapshotToDisk(cfgCopy, hkCopy);
+
+    AcquireSRWLockExclusive(&s_configSnapshotLock);
+    if (s_configSaveCompletedGen < targetGen) {
+        s_configSaveCompletedGen = targetGen;
+    }
+    ReleaseSRWLockExclusive(&s_configSnapshotLock);
 }
 
 void LoadConfig() {
@@ -5342,10 +5484,54 @@ void LoadConfig() {
     g_config.LeftDragAction = (MouseAction)GetPrivateProfileIntW(L"Controls", L"LeftDragAction", (int)MouseAction::WindowDrag, iniPath.c_str());
     g_config.MiddleDragAction = (MouseAction)GetPrivateProfileIntW(L"Controls", L"MiddleDragAction", (int)MouseAction::PanImage, iniPath.c_str());
     g_config.MiddleClickAction = (MouseAction)GetPrivateProfileIntW(L"Controls", L"MiddleClickAction", (int)MouseAction::ExitApp, iniPath.c_str());
-    // Sync helper indices from loaded action values
-    g_config.LeftDragIndex = (g_config.LeftDragAction == MouseAction::WindowDrag) ? 0 : 1;
-    g_config.MiddleDragIndex = (g_config.MiddleDragAction == MouseAction::WindowDrag) ? 0 : 1;
-    g_config.MiddleClickIndex = (g_config.MiddleClickAction == MouseAction::ExitApp) ? 1 : 0;
+
+    // Load Mouse Gestures with seamless backward compatibility
+    int gestureCount = GetPrivateProfileIntW(L"Controls", L"MouseGestureCount", -1, iniPath.c_str());
+    if (gestureCount >= 0) {
+        g_config.MouseGestures.clear();
+        for (int i = 0; i < gestureCount; ++i) {
+            wchar_t keyName[32];
+            swprintf_s(keyName, L"MouseGesture_%d", i);
+            wchar_t val[64];
+            if (GetPrivateProfileStringW(L"Controls", keyName, L"", val, 64, iniPath.c_str()) > 0) {
+                unsigned int m1 = 0, m2 = 0, tr = 0;
+                int act = 0;
+                if (swscanf_s(val, L"%u,%u,%u,%d", &m1, &m2, &tr, &act) == 4) {
+                    g_config.MouseGestures.push_back({ (uint8_t)m1, (uint8_t)m2, (uint8_t)tr, act });
+                }
+            }
+        }
+    } else {
+        // First run or migrated from older version
+        g_config.MouseGestures = GetDefaultMouseGestures();
+        auto mapLegacyDrag = [](MouseAction a) -> MouseActionTarget {
+            if (a == MouseAction::PanImage) return MouseActionTarget::PanImage;
+            if (a == MouseAction::WindowDrag) return MouseActionTarget::WindowDrag;
+            return MouseActionTarget::None;
+        };
+        g_config.SetMouseGesture(0, 0, MouseTrigger::LeftDrag, mapLegacyDrag(g_config.LeftDragAction));
+        g_config.SetMouseGesture(0, 0, MouseTrigger::MiddleDrag, mapLegacyDrag(g_config.MiddleDragAction));
+        if (g_config.WheelActionMode == 1) {
+            g_config.SetMouseGesture(0, 0, MouseTrigger::VerticalWheel, MouseActionTarget::Navigate);
+        }
+        if (g_config.ThumbWheelMode == 1) {
+            g_config.SetMouseGesture(0, 0, MouseTrigger::HorizontalWheel, MouseActionTarget::Zoom);
+            g_config.SetMouseGesture(static_cast<uint8_t>(MouseModifier::Shift), 0, MouseTrigger::VerticalWheel, MouseActionTarget::Zoom);
+        }
+        if (!g_config.RightButtonDragZoom) {
+            g_config.SetMouseGesture(0, 0, MouseTrigger::RightDrag, MouseActionTarget::None);
+        }
+        if (g_config.DoubleClickMode == 3) {
+            g_config.SetMouseGesture(0, 0, MouseTrigger::LeftDblClick, MouseActionTarget::None);
+        }
+        if (g_config.MiddleClickAction == MouseAction::None) {
+            g_config.SetMouseGesture(0, 0, MouseTrigger::MiddleClick, MouseActionTarget::None);
+        } else if (g_config.MiddleClickAction == MouseAction::FitWindow) {
+            g_config.SetMouseGesture(0, 0, MouseTrigger::MiddleClick, MouseActionTarget::ZoomFit);
+        } else if (g_config.MiddleClickAction == MouseAction::PanImage) {
+            g_config.SetMouseGesture(0, 0, MouseTrigger::MiddleClick, MouseActionTarget::PanImage);
+        }
+    }
     g_config.EdgeNavClick = GetPrivateProfileIntW(L"Controls", L"EdgeNavClick", 1, iniPath.c_str()) != 0;
     g_config.GalleryTriggerMode = GetPrivateProfileIntW(L"Controls", L"GalleryTriggerMode", 1, iniPath.c_str());
     g_config.GalleryKeepVisibleOnThumbnailClick = GetPrivateProfileIntW(L"Controls", L"GalleryKeepVisibleOnThumbnailClick", 0, iniPath.c_str()) != 0;
@@ -5510,7 +5696,31 @@ void LoadConfig() {
     g_config.LastRegisteredVersion = bufVer;
     g_config.LastRegisteredPath = bufPath;
 
-    // Load Hotkeys
+    // Load Multi-Rule Hotkeys
+    int hotkeyRuleCount = GetPrivateProfileIntW(L"Hotkeys", L"HotkeyRuleCount", -1, iniPath.c_str());
+    if (hotkeyRuleCount >= 0) {
+        g_config.HotkeyRules.clear();
+        for (int i = 0; i < hotkeyRuleCount; ++i) {
+            wchar_t keyName[64];
+            swprintf_s(keyName, L"HotkeyRule_%d", i);
+            wchar_t valBuf[128] = { 0 };
+            GetPrivateProfileStringW(L"Hotkeys", keyName, L"", valBuf, 128, iniPath.c_str());
+            wchar_t* bar = wcschr(valBuf, L'|');
+            if (bar) {
+                *bar = L'\0';
+                HotkeyAction act = StringToHotkeyAction(valBuf);
+                KeyCombo combo = StringToKeyCombo(bar + 1);
+                if (act != HotkeyAction::None && !combo.IsEmpty()) {
+                    g_config.HotkeyRules.push_back({ act, combo });
+                }
+            }
+        }
+    } else {
+        // Fallback: Populate from legacy g_hotkeys or default
+        g_config.HotkeyRules = GetDefaultHotkeyRules();
+    }
+
+    // Load Legacy Hotkeys
     for (size_t i = 1; i < static_cast<size_t>(HotkeyAction::Count); ++i) {
         auto& binding = g_hotkeys[i];
         std::wstring_view actionName = HotkeyActionToString(binding.action);
@@ -5526,8 +5736,30 @@ void LoadConfig() {
         }
         
         binding.combo = StringToKeyCombo(std::wstring_view(bufCombo));
+        if (hotkeyRuleCount < 0 && !(binding.combo == binding.defaultCombo)) {
+            g_config.AddHotkeyRule(binding.action, binding.combo);
+        }
     }
     ParseFixedZoomLevels();
+    if (hotkeyRuleCount < 0) {
+        for (int digit = 0; digit <= 5; ++digit) {
+            KeyCombo digitCombo{ static_cast<uint16_t>('0' + digit), 0 };
+            bool alreadyBound = false;
+            for (const auto& rule : g_config.HotkeyRules) {
+                if (rule.combo == digitCombo) {
+                    alreadyBound = true;
+                    break;
+                }
+            }
+            if (!alreadyBound) {
+                g_config.AddHotkeyRule(
+                    static_cast<HotkeyAction>(static_cast<size_t>(HotkeyAction::Rate0) + digit),
+                    digitCombo);
+            }
+        }
+        g_config.SyncMiddleClickHotkeyFromGestures();
+    }
+    g_config.SyncLegacyHotkeysArray(g_hotkeys);
 
     // Super-Resolution Plugins
     QuickView::PluginHost::Instance().LoadConfig(iniPath.c_str());
@@ -8396,7 +8628,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCm
     
     UpdateManager::Get().HandleExit();
     
-    SaveConfig();
+    SaveConfigSync();
     
     // Explicitly release globals dependent on COM before CoUninitialize
     // Destroy in reverse order of dependency
@@ -8420,10 +8652,10 @@ static bool TryTriggerCustomMouseHotkey(HWND hwnd, uint16_t vk, bool execute) {
     if (GetKeyState(VK_SHIFT) & 0x8000)   pressed.modifiers |= 2;
     if (GetKeyState(VK_MENU) & 0x8000)    pressed.modifiers |= 4;
 
-    for (const auto& binding : g_hotkeys) {
-        if (!binding.combo.IsEmpty() && binding.combo == pressed) {
+    for (const auto& rule : g_config.HotkeyRules) {
+        if (!rule.combo.IsEmpty() && rule.combo == pressed) {
             if (execute) {
-                return HandleHotkeyAction(hwnd, binding.action);
+                return HandleHotkeyAction(hwnd, rule.action);
             }
             return true;
         }
@@ -10027,7 +10259,7 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
         }
         case IDM_SETTINGS: {
             if (g_settingsOverlay.IsVisible()) {
-                g_settingsOverlay.OpenTab(6);
+                g_settingsOverlay.OpenTab(0);
             } else {
                 if (g_gallery.IsVisible()) {
                     g_gallery.Close();
@@ -10052,9 +10284,362 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
         return 0;
 }
 
+static void ExecuteSmartZoom(HWND hwnd, POINT pt) {
+    if (IsCompareModeActive()) {
+        ComparePane pane = AppContext::GetInstance().CompareCtrl->HitTest(hwnd, pt);
+        auto cyclePane = [&](ComparePane p) {
+            if (p == ComparePane::Left) {
+                if (!GetPaneContext(PaneSlot::Left).valid) return;
+            } else {
+                if (!GetPaneContext(PaneSlot::Primary).resource) return;
+                CompareView right = GetRightCompareView();
+                SetRightCompareView(right);
+            }
+        };
+
+        if (AppContext::GetInstance().Compare.syncZoom) {
+            cyclePane(pane);
+            if (pane == ComparePane::Left) {
+                CompareView right = GetRightCompareView();
+                right.Zoom = GetPaneContext(PaneSlot::Left).view.Zoom;
+                right.PanX = 0; right.PanY = 0;
+                SetRightCompareView(right);
+            } else {
+                GetPaneContext(PaneSlot::Left).view.Zoom = GetRightCompareView().Zoom;
+                GetPaneContext(PaneSlot::Left).view.PanX = 0; GetPaneContext(PaneSlot::Left).view.PanY = 0;
+            }
+        } else {
+            cyclePane(pane);
+        }
+
+        if (AppContext::GetInstance().Compare.syncPan) {
+            if (pane == ComparePane::Left) {
+                GetPaneContext(PaneSlot::Primary).view.PanX = GetPaneContext(PaneSlot::Left).view.PanX;
+                GetPaneContext(PaneSlot::Primary).view.PanY = GetPaneContext(PaneSlot::Left).view.PanY;
+            } else {
+                GetPaneContext(PaneSlot::Left).view.PanX = GetPaneContext(PaneSlot::Primary).view.PanX;
+                GetPaneContext(PaneSlot::Left).view.PanY = GetPaneContext(PaneSlot::Primary).view.PanY;
+            }
+        }
+        MarkCompareDirty();
+        RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic);
+
+        wchar_t leftBuf[32], rightBuf[32];
+        swprintf_s(leftBuf, L"%s%d%%", AppStrings::OSD_ZoomPrefix, (int)std::round(GetPaneContext(PaneSlot::Left).view.Zoom * 100.0f));
+        swprintf_s(rightBuf, L"%s%d%%", AppStrings::OSD_ZoomPrefix, (int)std::round(GetRightCompareView().Zoom * 100.0f));
+        g_osd.ShowCompare(hwnd, leftBuf, rightBuf);
+        return;
+    }
+
+    if (GetPaneContext(PaneSlot::Primary).resource) {
+        float currentRealScale = GetCurrentRealScale(hwnd);
+        bool is100Percent = (fabsf(currentRealScale - 1.0f) < 0.001f);
+
+        HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO mi{}; mi.cbSize = sizeof(mi); GetMonitorInfoW(hMon, &mi);
+        int maxW = mi.rcWork.right - mi.rcWork.left;
+        int maxH = mi.rcWork.bottom - mi.rcWork.top;
+        
+        RECT rcWin; GetWindowRect(hwnd, &rcWin);
+        int winWidth = rcWin.right - rcWin.left;
+        int winHeight = rcWin.bottom - rcWin.top;
+
+        bool isMaximizedOrFullscreen = IsZoomed(hwnd) || g_isFullScreen;
+        bool isWindowFixed = isMaximizedOrFullscreen || g_runtime.LockWindowSize;
+        bool isFitWindow = (winWidth >= maxW - 2 || winHeight >= maxH - 2) || isMaximizedOrFullscreen;
+
+        if (isWindowFixed) {
+            if (is100Percent) {
+                PerformZoomFit(hwnd);
+            } else {
+                PerformZoom100(hwnd);
+            }
+        } else {
+            if (is100Percent) {
+                if (s_restoredWindowRect.right > s_restoredWindowRect.left) {
+                    PerformRestoreWindow(hwnd);
+                } else {
+                    GetWindowRect(hwnd, &s_restoredWindowRect);
+                    PerformZoomFit(hwnd, 1.0f);
+                }
+            } else if (isFitWindow) {
+                PerformZoom100(hwnd);
+            } else {
+                if (s_restoredWindowRect.right == 0) GetWindowRect(hwnd, &s_restoredWindowRect);
+                PerformZoomFit(hwnd, 1.0f);
+            }
+        }
+    }
+}
+
+static void ShowContextMenuAtClientPt(HWND hwnd, POINT ptClient);
+
+static uint8_t GetCurrentMouseModifiers() {
+    uint8_t mods = 0;
+    if (GetKeyState(VK_CONTROL) & 0x8000) mods |= MouseModMask::Ctrl;
+    if (GetKeyState(VK_SHIFT) & 0x8000)   mods |= MouseModMask::Shift;
+    if (GetKeyState(VK_MENU) & 0x8000)    mods |= MouseModMask::Alt;
+    return mods;
+}
+
+static bool ExecuteMouseActionTarget(HWND hwnd, MouseActionTarget action, POINT pt) {
+    switch (action) {
+    case MouseActionTarget::ExitApp:
+        PostMessage(hwnd, WM_CLOSE, 0, 0);
+        return true;
+    case MouseActionTarget::ContextMenu: {
+        ShowContextMenuAtClientPt(hwnd, pt);
+        return true;
+    }
+    case MouseActionTarget::SmartZoom:
+        ExecuteSmartZoom(hwnd, pt);
+        return true;
+    case MouseActionTarget::NavNext:
+        Navigate(hwnd, 1);
+        return true;
+    case MouseActionTarget::NavPrev:
+        Navigate(hwnd, -1);
+        return true;
+    case MouseActionTarget::NavFirst:
+        Navigate(hwnd, -999999);
+        return true;
+    case MouseActionTarget::NavLast:
+        Navigate(hwnd, 999999);
+        return true;
+    case MouseActionTarget::ZoomIn:
+        HandleHotkeyAction(hwnd, HotkeyAction::ZoomIn);
+        return true;
+    case MouseActionTarget::ZoomOut:
+        HandleHotkeyAction(hwnd, HotkeyAction::ZoomOut);
+        return true;
+    case MouseActionTarget::Zoom100:
+        HandleHotkeyAction(hwnd, HotkeyAction::Zoom100);
+        return true;
+    case MouseActionTarget::ZoomFit:
+        HandleHotkeyAction(hwnd, HotkeyAction::ZoomFit);
+        return true;
+    case MouseActionTarget::ZoomFitWindow:
+        HandleHotkeyAction(hwnd, HotkeyAction::ZoomFitWindow);
+        return true;
+    case MouseActionTarget::ZoomFill:
+        HandleHotkeyAction(hwnd, HotkeyAction::ZoomFill);
+        return true;
+    case MouseActionTarget::RotateCW:
+        HandleHotkeyAction(hwnd, HotkeyAction::RotateCW);
+        return true;
+    case MouseActionTarget::RotateCCW:
+        HandleHotkeyAction(hwnd, HotkeyAction::RotateCCW);
+        return true;
+    case MouseActionTarget::FlipH:
+        HandleHotkeyAction(hwnd, HotkeyAction::FlipH);
+        return true;
+    case MouseActionTarget::FlipV:
+        HandleHotkeyAction(hwnd, HotkeyAction::FlipV);
+        return true;
+    case MouseActionTarget::ToggleFullscreen:
+        HandleHotkeyAction(hwnd, HotkeyAction::ToggleFullscreen);
+        return true;
+    case MouseActionTarget::ToggleGallery:
+        HandleHotkeyAction(hwnd, HotkeyAction::ToggleGallery);
+        return true;
+    case MouseActionTarget::ToggleFilmstrip:
+        HandleHotkeyAction(hwnd, HotkeyAction::ToggleFilmstrip);
+        return true;
+    case MouseActionTarget::ToggleInfoPanel:
+        HandleHotkeyAction(hwnd, HotkeyAction::ToggleInfoPanel);
+        return true;
+    case MouseActionTarget::ToggleExifPanel:
+        HandleHotkeyAction(hwnd, HotkeyAction::ToggleExifPanel);
+        return true;
+    case MouseActionTarget::ToggleCompare:
+        HandleHotkeyAction(hwnd, HotkeyAction::ToggleCompare);
+        return true;
+    case MouseActionTarget::OpenFile:
+        HandleHotkeyAction(hwnd, HotkeyAction::OpenFile);
+        return true;
+    case MouseActionTarget::EditFile:
+        HandleHotkeyAction(hwnd, HotkeyAction::EditFile);
+        return true;
+    case MouseActionTarget::CopyPixels:
+        HandleHotkeyAction(hwnd, HotkeyAction::CopyPixels);
+        return true;
+    case MouseActionTarget::CopyFilePath:
+        HandleHotkeyAction(hwnd, HotkeyAction::CopyPath);
+        return true;
+    case MouseActionTarget::ShowInExplorer:
+        HandleHotkeyAction(hwnd, HotkeyAction::ShowInExplorer);
+        return true;
+    case MouseActionTarget::EnterCropMode:
+        HandleHotkeyAction(hwnd, HotkeyAction::EnterCropMode);
+        return true;
+    case MouseActionTarget::Loupe:
+        HandleHotkeyAction(hwnd, HotkeyAction::Loupe);
+        return true;
+    default:
+        return false;
+    }
+}
+
+void DeactivateLoupe() {
+    auto& loupe = AppContext::GetInstance().Loupe;
+    if (!loupe.active) return;
+    if (loupe.isViewportMode) {
+        auto& pane = GetPaneContext(PaneSlot::Primary);
+        pane.view = loupe.baselineView;
+        if (IsCompareModeActive() && AppContext::GetInstance().CompareCtrl) {
+            auto& leftPane = GetPaneContext(PaneSlot::Left);
+            if (leftPane.valid && AppContext::GetInstance().Compare.syncZoom) leftPane.view.Zoom = pane.view.Zoom;
+            if (leftPane.valid && AppContext::GetInstance().Compare.syncPan) {
+                leftPane.view.PanX = pane.view.PanX;
+                leftPane.view.PanY = pane.view.PanY;
+            }
+        }
+        loupe.isViewportMode = false;
+        RequestRepaint(PaintLayer::All);
+    } else {
+        RequestRepaint(PaintLayer::Dynamic);
+    }
+    loupe.active = false;
+    loupe.triggerMouseBtn = 0;
+    SetCursor(g_currentCursor ? g_currentCursor : LoadCursor(nullptr, IDC_ARROW));
+    if (loupe.sizeChanged) {
+        loupe.sizeChanged = false;
+        SaveConfig();
+    }
+}
+
+void SaveMouseGesturesConfig() {
+    SaveConfig();
+}
+
+void SaveHotkeysConfig() {
+    SaveConfig();
+}
+
+struct CustomMouseDragState {
+    bool isPending = false;
+    bool isDragging = false;
+    uint32_t triggerBtn = 0;
+    MouseActionTarget action = MouseActionTarget::None;
+    POINT startPt = { 0, 0 };
+    DWORD startTime = 0;
+};
+static CustomMouseDragState g_customMouseDrag;
+static bool g_rightHoldWheelConsumed = false;
+
+static void FinishCustomMouseDrag(HWND hwnd, MouseActionTarget act) {
+    if (act == MouseActionTarget::Loupe) {
+        DeactivateLoupe();
+    } else if (act == MouseActionTarget::PanImage) {
+        GetPaneContext(PaneSlot::Primary).view.IsDragging = false;
+        GetPaneContext(PaneSlot::Primary).view.IsInteracting = false;
+        SetCursor(g_currentCursor ? g_currentCursor : LoadCursor(nullptr, IDC_ARROW));
+        RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic);
+    } else if (act == MouseActionTarget::Zoom) {
+        GetPaneContext(PaneSlot::Primary).view.IsRightButtonDragZoom = false;
+        GetPaneContext(PaneSlot::Primary).view.IsRightButtonDown = false;
+        GetPaneContext(PaneSlot::Primary).view.RightDragZoomStartScreenPos = { 0, 0 };
+        GetPaneContext(PaneSlot::Primary).view.RightDragZoomStartTotalScale = 1.0f;
+        g_hasRightDragZoomStartViews = false;
+    } else if (act == MouseActionTarget::CropRegionDrag && g_cropState.IsDragging) {
+        g_cropState.IsDragging = false;
+        g_cropState.ActiveHandle = -1;
+        if (g_cropState.CropLeft > g_cropState.CropRight) std::swap(g_cropState.CropLeft, g_cropState.CropRight);
+        if (g_cropState.CropTop > g_cropState.CropBottom) std::swap(g_cropState.CropTop, g_cropState.CropBottom);
+        g_cropState.IsQuickActionVisible = true;
+        g_toolbar.SetCropMode(true);
+        g_toolbar.SetVisible(true);
+        RECT rcWnd; GetClientRect(hwnd, &rcWnd);
+        g_toolbar.UpdateLayout((float)rcWnd.right, (float)rcWnd.bottom);
+        RequestRepaint(PaintLayer::All);
+    }
+}
+
+static void ShowContextMenuAtClientPt(HWND hwnd, POINT ptClient) {
+    POINT pt = ptClient;
+    ClientToScreen(hwnd, &pt);
+
+    if (g_gallery.IsVisible()) {
+        RECT rcClient; GetClientRect(hwnd, &rcClient);
+        float winW = (float)(rcClient.right - rcClient.left);
+        float winH = (float)(rcClient.bottom - rcClient.top);
+        if (g_gallery.HitTestArea(ptClient.x, ptClient.y, winW, winH)) {
+            int idx = g_gallery.HitTestClient(ptClient.x, ptClient.y);
+            if (idx >= 0) {
+                g_galleryContextMenuIndex = idx;
+                ShowGalleryContextMenu(hwnd, pt);
+            }
+            return;
+        }
+    }
+
+    if (IsCompareModeActive()) {
+        AppContext::GetInstance().Compare.contextPane = AppContext::GetInstance().CompareCtrl->HitTest(hwnd, ptClient);
+        AppContext::GetInstance().Compare.activePane = AppContext::GetInstance().Compare.contextPane;
+        AppContext::GetInstance().Compare.selectedPane = AppContext::GetInstance().Compare.contextPane;
+        MarkCompareDirty();
+        RequestRepaint(PaintLayer::Image | PaintLayer::Static);
+    }
+
+    bool hasImage = GetPaneContext(PaneSlot::Primary).resource;
+    bool extensionFixNeeded = false;
+    bool isRaw = false;
+    bool renderRaw = g_runtime.ForceRawDecode;
+    std::wstring targetPath = GetPaneContext(PaneSlot::Primary).path;
+    std::wstring targetFmt = GetPaneContext(PaneSlot::Primary).metadata.Format;
+
+    if (IsCompareModeActive() && AppContext::GetInstance().Compare.contextPane == ComparePane::Left) {
+        hasImage = GetPaneContext(PaneSlot::Left).valid;
+        targetPath = GetPaneContext(PaneSlot::Left).path;
+        targetFmt = GetPaneContext(PaneSlot::Left).metadata.Format;
+    }
+
+    if (IsCompareModeActive()) {
+        bool contextIsRaw = false;
+        bool contextIsFullDecode = false;
+        if (AppContext::GetInstance().CompareCtrl->GetPaneRawState(AppContext::GetInstance().Compare.contextPane, contextIsRaw, contextIsFullDecode) && contextIsRaw) {
+            renderRaw = contextIsFullDecode;
+        }
+    }
+
+    if (hasImage && !targetPath.empty()) {
+        extensionFixNeeded = CheckExtensionMismatch(targetPath, targetFmt);
+        isRaw = QuickView::IsRawPath(targetPath);
+        // [RAW+JPEG Pairing] "Render RAW" also switches a paired item
+        if (!isRaw && !IsCompareModeActive()) {
+            isRaw = GetPaneContext(PaneSlot::Primary).navigator.HasPairedRaw(FileNavigator::PathToImageID(targetPath));
+        }
+    }
+
+    bool isPixelArtMode = GetCurrentPixelArtState(hwnd);
+    const bool contextLeft = IsCompareModeActive() && AppContext::GetInstance().Compare.contextPane == ComparePane::Left;
+    int menuCmsMode = contextLeft ? (GetPaneContext(PaneSlot::Left).CmsModeOverride != -1 ? GetPaneContext(PaneSlot::Left).CmsModeOverride : (g_config.ColorManagement ? 1 : 0)) : g_runtime.GetEffectiveCmsMode(g_config.ColorManagement);
+    bool menuEnableSoftProofing = contextLeft ? GetPaneContext(PaneSlot::Left).EnableSoftProofing : g_runtime.EnableSoftProofing;
+    std::wstring menuSoftProofPath = contextLeft ? GetPaneContext(PaneSlot::Left).SoftProofProfilePath : g_runtime.SoftProofProfilePath;
+
+    // [Fix] Snap any in-progress gallery fade-out before opening the popup menu.
+    // The fade animation drives high-frequency DComp Present() which destabilizes
+    // the menu's DWM Acrylic/Mica backdrop composition, causing a translucent flash.
+    if (g_gallery.IsVisible()) {
+        g_gallery.ForceFinishTransition();
+    }
+
+    ShowContextMenu(hwnd, pt, hasImage, extensionFixNeeded, g_runtime.LockWindowSize, g_runtime.ShowInfoPanel, g_runtime.InfoPanelExpanded, g_config.AlwaysOnTop, renderRaw, isRaw, IsZoomed(hwnd) != 0, g_runtime.CrossMonitorMode, IsCompareModeActive(), isPixelArtMode, menuCmsMode, menuEnableSoftProofing, menuSoftProofPath);
+}
+
 LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
-    // [Loupe] While the loupe is active, intercept and ignore all mouse click and double-click events to prevent accidental zoom, navigation, or split-pane control during this time
+    // [Loupe] While the loupe is active, intercept clicks, but honour button release if loupe was mouse-triggered
     if (AppContext::GetInstance().Loupe.active) {
+        if (AppContext::GetInstance().Loupe.triggerMouseBtn != 0) {
+            if ((message == WM_LBUTTONUP && AppContext::GetInstance().Loupe.triggerMouseBtn == VK_LBUTTON) ||
+                (message == WM_RBUTTONUP && AppContext::GetInstance().Loupe.triggerMouseBtn == VK_RBUTTON) ||
+                (message == WM_MBUTTONUP && AppContext::GetInstance().Loupe.triggerMouseBtn == VK_MBUTTON) ||
+                (message == WM_XBUTTONUP && (AppContext::GetInstance().Loupe.triggerMouseBtn == VK_XBUTTON1 || AppContext::GetInstance().Loupe.triggerMouseBtn == VK_XBUTTON2))) {
+                DeactivateLoupe();
+                ReleaseCapture();
+                return 0;
+            }
+        }
         if (message == WM_LBUTTONDOWN || message == WM_LBUTTONUP || message == WM_LBUTTONDBLCLK ||
             message == WM_RBUTTONDOWN || message == WM_RBUTTONUP || message == WM_RBUTTONDBLCLK ||
             message == WM_MBUTTONDOWN || message == WM_MBUTTONUP || message == WM_MBUTTONDBLCLK ||
@@ -10140,31 +10725,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 g_restoreDesktopOnCleanExit = false;
             }
 
-            // [Loupe] When the window loses focus, ensure the loupe state is reset and mouse pointer is restored, in case the key release event is lost
+            // [Loupe] When the window loses focus, ensure the loupe state is reset
             if (AppContext::GetInstance().Loupe.active) {
-                auto& loupe = AppContext::GetInstance().Loupe;
-                if (loupe.isViewportMode) {
-                    auto& pane = GetPaneContext(PaneSlot::Primary);
-                    pane.view = loupe.baselineView;
-                    if (IsCompareModeActive() && AppContext::GetInstance().CompareCtrl) {
-                        auto& leftPane = GetPaneContext(PaneSlot::Left);
-                        if (leftPane.valid && AppContext::GetInstance().Compare.syncZoom) leftPane.view.Zoom = pane.view.Zoom;
-                        if (leftPane.valid && AppContext::GetInstance().Compare.syncPan) {
-                            leftPane.view.PanX = pane.view.PanX;
-                            leftPane.view.PanY = pane.view.PanY;
-                        }
-                    }
-                    loupe.isViewportMode = false;
-                    RequestRepaint(PaintLayer::All);
-                } else {
-                    RequestRepaint(PaintLayer::Dynamic);
-                }
-                loupe.active = false;
-                SetCursor(g_currentCursor ? g_currentCursor : LoadCursor(nullptr, IDC_ARROW));
-                if (loupe.sizeChanged) {
-                    loupe.sizeChanged = false;
-                    SaveConfig();
-                }
+                DeactivateLoupe();
             }
         }
         break;
@@ -12145,6 +12708,93 @@ SKIP_EDGE_NAV:;
           // Note: Toolbar.OnMouseMove handles hover state changes and 
           // WM_TIMER 997 will refresh if animation is active
 
+          // Custom mouse drag detection for gestures
+          if (g_customMouseDrag.isPending) {
+              const int dx = abs(pt.x - g_customMouseDrag.startPt.x);
+              const int dy = abs(pt.y - g_customMouseDrag.startPt.y);
+              if (dx >= 4 || dy >= 4) {
+                  g_customMouseDrag.isPending = false;
+                  g_customMouseDrag.isDragging = true;
+                  if (g_customMouseDrag.action == MouseActionTarget::Loupe) {
+                      AppContext::GetInstance().Loupe.triggerMouseBtn = g_customMouseDrag.triggerBtn;
+                      ExecuteMouseActionTarget(hwnd, MouseActionTarget::Loupe, pt);
+                  } else if (g_customMouseDrag.action == MouseActionTarget::PanImage) {
+                      if (CanPan(hwnd)) {
+                          GetPaneContext(PaneSlot::Primary).view.IsDragging = true;
+                          GetPaneContext(PaneSlot::Primary).view.IsInteracting = true;
+                          GetPaneContext(PaneSlot::Primary).view.LastMousePos = pt;
+                          SetCursor(LoadCursor(nullptr, IDC_SIZEALL));
+                      }
+                  } else if (g_customMouseDrag.action == MouseActionTarget::WindowDrag) {
+                      if (g_isFullScreen) {
+                          GetPaneContext(PaneSlot::Primary).view.IsPendingFullscreenExitDrag = true;
+                          GetPaneContext(PaneSlot::Primary).view.DragStartPos = pt;
+                      } else if (g_customMouseDrag.triggerBtn == VK_LBUTTON) {
+                          ReleaseCapture();
+                          g_customMouseDrag = {};
+                          SendMessage(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+                          return 0;
+                      } else {
+                          RECT rc;
+                          GetWindowRect(hwnd, &rc);
+                          POINT cursorPos;
+                          GetCursorPos(&cursorPos);
+                          GetPaneContext(PaneSlot::Primary).view.WindowDragStart = { rc.left, rc.top };
+                          GetPaneContext(PaneSlot::Primary).view.CursorDragStart = cursorPos;
+                          GetPaneContext(PaneSlot::Primary).view.IsMiddleDragWindow = true;
+                          g_customMouseDrag = {};
+                      }
+                  } else if (g_customMouseDrag.action == MouseActionTarget::Zoom) {
+                      if (GetPaneContext(PaneSlot::Primary).resource) {
+                          POINT cursorPos{};
+                          GetCursorPos(&cursorPos);
+                          if (IsCompareModeActive()) {
+                              AppContext::GetInstance().Compare.activePane = AppContext::GetInstance().CompareCtrl->HitTest(hwnd, g_customMouseDrag.startPt);
+                          }
+                          GetPaneContext(PaneSlot::Primary).view.IsRightButtonDragZoom = true;
+                          GetPaneContext(PaneSlot::Primary).view.LastMousePos = pt;
+                          GetPaneContext(PaneSlot::Primary).view.DragStartPos = g_customMouseDrag.startPt;
+                          GetPaneContext(PaneSlot::Primary).view.RightDragZoomStartScreenPos = cursorPos;
+                          GetPaneContext(PaneSlot::Primary).view.DragStartTime = g_customMouseDrag.startTime;
+                          GetPaneContext(PaneSlot::Primary).view.RightDragZoomStartTotalScale = GetCurrentTotalScale(hwnd);
+                          if (IsCompareModeActive()) {
+                              g_rightDragZoomStartLeftView = GetPaneContext(PaneSlot::Left).view;
+                              g_rightDragZoomStartRightView = GetRightCompareView();
+                              g_hasRightDragZoomStartViews = true;
+                          } else {
+                              g_hasRightDragZoomStartViews = false;
+                          }
+                      }
+                  } else if (g_customMouseDrag.action == MouseActionTarget::CropRegionDrag) {
+                      float imgX = 0.0f, imgY = 0.0f;
+                      if (ScreenToImageSpace(hwnd, g_customMouseDrag.startPt.x, g_customMouseDrag.startPt.y, imgX, imgY, PaneSlot::Primary)) {
+                          const auto& pane = GetPaneContext(PaneSlot::Primary);
+                          if (pane.metadata.Width > 0 && pane.metadata.Height > 0) {
+                              g_cropState.Reset();
+                              g_cropState.IsActive = true;
+                              g_cropState.IsDragging = true;
+                              g_cropState.ActiveHandle = 5;
+                              g_cropState.DragStartMousePos = g_customMouseDrag.startPt;
+                              int exifOrientation = GetEffectiveExifOrientation(pane.view.ExifOrientation, pane.editState);
+                              D2D1_SIZE_F orientedSize = GetOrientedSize(pane.resource, exifOrientation);
+                              imgX = std::clamp(imgX, 0.0f, orientedSize.width);
+                              imgY = std::clamp(imgY, 0.0f, orientedSize.height);
+                              g_cropState.CropLeft = g_cropState.CropRight = imgX;
+                              g_cropState.CropTop = g_cropState.CropBottom = imgY;
+                              g_cropState.DragStartCropLeft = g_cropState.DragStartCropRight = (int)imgX;
+                              g_cropState.DragStartCropTop = g_cropState.DragStartCropBottom = (int)imgY;
+                              g_cropState.IsQuickActionVisible = true;
+                              g_toolbar.SetCropMode(true);
+                              g_toolbar.SetVisible(true);
+                              RequestRepaint(PaintLayer::All);
+                          }
+                      }
+                  } else {
+                      ExecuteMouseActionTarget(hwnd, g_customMouseDrag.action, pt);
+                  }
+              }
+          }
+
          if (GetPaneContext(PaneSlot::Primary).view.IsRightButtonDown && !GetPaneContext(PaneSlot::Primary).view.IsRightButtonDragZoom) {
              POINT cursorPos{};
              GetCursorPos(&cursorPos);
@@ -12490,134 +13140,10 @@ SKIP_EDGE_NAV:;
             return 0; // Completely block double-click on ANY UI layer, overlay, floating bar, control or hotspot
         }
 
-        if (g_config.DoubleClickMode == 3) {
-            // Option: None
-            return 0;
-        }
-        if (g_config.DoubleClickMode == 1) {
-            // Option: Wheel Mode 1
-            if (g_config.WheelActionMode == 0) {
-                g_config.WheelActionMode = 1;
-                g_config.ThumbWheelMode = 1;
-                g_osd.Show(hwnd, AppStrings::OSD_WheelMode1_NextPrevZoom, false);
-            } else {
-                g_config.WheelActionMode = 0;
-                g_config.ThumbWheelMode = 0;
-                g_osd.Show(hwnd, AppStrings::OSD_WheelMode1_ZoomNextPrev, false);
-            }
-            SaveConfig();
-            if (g_settingsOverlay.IsVisible()) {
-                g_settingsOverlay.RebuildMenu();
-            }
-            return 0;
-        }
-        if (g_config.DoubleClickMode == 2) {
-            // Option: Wheel Mode 2
-            g_wheelPanModeActive = !g_wheelPanModeActive;
-            if (g_wheelPanModeActive) {
-                g_osd.Show(hwnd, AppStrings::OSD_WheelMode2_Pan, false);
-            } else {
-                g_osd.Show(hwnd, AppStrings::OSD_WheelMode2_Default, false);
-            }
-            return 0;
-        }
-
-        // DoubleClickMode == 0 (Smart Double Click / Existing Logic)
-        // Fullscreen and maximized logic unified below
-
-        if (IsCompareModeActive()) {
-            ComparePane pane = AppContext::GetInstance().CompareCtrl->HitTest(hwnd, pt);
-            auto cyclePane = [&](ComparePane p) {
-                if (p == ComparePane::Left) {
-                    if (!GetPaneContext(PaneSlot::Left).valid) return;
-
-                } else {
-                    if (!GetPaneContext(PaneSlot::Primary).resource) return;
-                    CompareView right = GetRightCompareView();
-
-                    SetRightCompareView(right);
-                }
-            };
-
-            if (AppContext::GetInstance().Compare.syncZoom) {
-                cyclePane(pane);
-                // ComparePane other = (pane == ComparePane::Left) ? ComparePane::Right : ComparePane::Left;
-                if (pane == ComparePane::Left) {
-                    CompareView right = GetRightCompareView();
-                    right.Zoom = GetPaneContext(PaneSlot::Left).view.Zoom;
-                    right.PanX = 0; right.PanY = 0;
-                    SetRightCompareView(right);
-                } else {
-                    GetPaneContext(PaneSlot::Left).view.Zoom = GetRightCompareView().Zoom;
-                    GetPaneContext(PaneSlot::Left).view.PanX = 0; GetPaneContext(PaneSlot::Left).view.PanY = 0;
-                }
-            } else {
-                cyclePane(pane);
-            }
-
-            if (AppContext::GetInstance().Compare.syncPan) {
-                if (pane == ComparePane::Left) {
-                    GetPaneContext(PaneSlot::Primary).view.PanX = GetPaneContext(PaneSlot::Left).view.PanX;
-                    GetPaneContext(PaneSlot::Primary).view.PanY = GetPaneContext(PaneSlot::Left).view.PanY;
-                } else {
-                    GetPaneContext(PaneSlot::Left).view.PanX = GetPaneContext(PaneSlot::Primary).view.PanX;
-                    GetPaneContext(PaneSlot::Left).view.PanY = GetPaneContext(PaneSlot::Primary).view.PanY;
-                }
-            }
-            MarkCompareDirty();
-            RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic);
-
-            wchar_t leftBuf[32], rightBuf[32];
-            swprintf_s(leftBuf, L"%s%d%%", AppStrings::OSD_ZoomPrefix, (int)std::round(GetPaneContext(PaneSlot::Left).view.Zoom * 100.0f));
-            swprintf_s(rightBuf, L"%s%d%%", AppStrings::OSD_ZoomPrefix, (int)std::round(GetRightCompareView().Zoom * 100.0f));
-            g_osd.ShowCompare(hwnd, leftBuf, rightBuf);
-            return 0;
-        }
-
-        if (GetPaneContext(PaneSlot::Primary).resource) {
-            float currentRealScale = GetCurrentRealScale(hwnd);
-            // Tightened tolerance to 0.001f (0.1%) to prevent near-fit zoom levels (e.g., 99%) from being falsely treated as 100%
-            bool is100Percent = (fabsf(currentRealScale - 1.0f) < 0.001f);
-
-            HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-            MONITORINFO mi{}; mi.cbSize = sizeof(mi); GetMonitorInfoW(hMon, &mi);
-            int maxW = mi.rcWork.right - mi.rcWork.left;
-            int maxH = mi.rcWork.bottom - mi.rcWork.top;
-            
-            RECT rcWin; GetWindowRect(hwnd, &rcWin);
-            int winWidth = rcWin.right - rcWin.left;
-            int winHeight = rcWin.bottom - rcWin.top;
-
-            bool isMaximizedOrFullscreen = IsZoomed(hwnd) || g_isFullScreen;
-            bool isWindowFixed = isMaximizedOrFullscreen || g_runtime.LockWindowSize;
-            bool isFitWindow = (winWidth >= maxW - 2 || winHeight >= maxH - 2) || isMaximizedOrFullscreen;
-
-            if (isWindowFixed) {
-                // In fullscreen/maximized/locked mode, ONLY toggle between 100% and Fit. No restoring window size.
-                if (is100Percent) {
-                    PerformZoomFit(hwnd);
-                } else {
-                    PerformZoom100(hwnd);
-                }
-            } else {
-                // Windowed mode 3-state toggle: Initial Size (Restore) -> Fit -> 100% -> Initial Size...
-                if (is100Percent) {
-                    // Current is 100%. Next should be Restore (or Fit if no restore point).
-                    if (s_restoredWindowRect.right > s_restoredWindowRect.left) {
-                        PerformRestoreWindow(hwnd);
-                    } else {
-                        GetWindowRect(hwnd, &s_restoredWindowRect);
-                        PerformZoomFit(hwnd, 1.0f);
-                    }
-                } else if (isFitWindow) {
-                    // Current is Fit. Next should be 100%.
-                    PerformZoom100(hwnd);
-                } else {
-                    // Current is Initial Size. Next should be Fit.
-                    if (s_restoredWindowRect.right == 0) GetWindowRect(hwnd, &s_restoredWindowRect);
-                    PerformZoomFit(hwnd, 1.0f);
-                }
-            }
+        uint8_t currentMods = GetCurrentMouseModifiers();
+        MouseActionTarget dblAct = g_config.GetMouseGestureAction(currentMods, MouseTrigger::LeftDblClick);
+        if (dblAct != MouseActionTarget::None) {
+            ExecuteMouseActionTarget(hwnd, dblAct, pt);
         }
         return 0;
     }
@@ -12633,9 +13159,14 @@ SKIP_EDGE_NAV:;
         float winH = (float)(rcClient.bottom - rcClient.top);
         GetPaneContext(PaneSlot::Primary).view.IsRightButtonDown = false;
         GetPaneContext(PaneSlot::Primary).view.IsRightButtonDragZoom = false;
+        g_rightHoldWheelConsumed = false;
+
+        uint8_t currentMods = GetCurrentMouseModifiers();
+        MouseActionTarget rightDragAct = g_config.GetMouseGestureAction(currentMods, MouseTrigger::RightDrag);
+        bool allowRightDragZoom = (rightDragAct == MouseActionTarget::Zoom);
 
         const bool canStartRightDragZoom =
-            g_config.RightButtonDragZoom &&
+            allowRightDragZoom &&
             GetPaneContext(PaneSlot::Primary).resource &&
             (!g_gallery.IsVisible() || !g_gallery.HitTestArea(pt.x, pt.y, winW, winH)) &&
             !g_settingsOverlay.IsVisible() &&
@@ -12672,6 +13203,15 @@ SKIP_EDGE_NAV:;
                 g_hasRightDragZoomStartViews = false;
             }
             SetCapture(hwnd);
+        } else if (rightDragAct != MouseActionTarget::None) {
+            g_customMouseDrag.isPending = true;
+            g_customMouseDrag.isDragging = false;
+            g_customMouseDrag.triggerBtn = VK_RBUTTON;
+            g_customMouseDrag.action = rightDragAct;
+            g_customMouseDrag.startPt = pt;
+            g_customMouseDrag.startTime = GetTickCount();
+            SetCapture(hwnd);
+            return 0;
         }
         return 0;
     }
@@ -12699,11 +13239,6 @@ SKIP_EDGE_NAV:;
             return 0;
         }
 
-        // Check custom hotkeys for VK_MBUTTON
-        if (TryTriggerCustomMouseHotkey(hwnd, VK_MBUTTON, true)) {
-            return 0;
-        }
-
         POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
         // Record start position/time for click vs drag detection
         GetPaneContext(PaneSlot::Primary).view.LastMousePos = pt;
@@ -12714,8 +13249,10 @@ SKIP_EDGE_NAV:;
             AppContext::GetInstance().Compare.activePane = AppContext::GetInstance().CompareCtrl->HitTest(hwnd, pt);
         }
         
-        // Check MiddleDragAction config
-        if (g_config.MiddleDragAction == MouseAction::WindowDrag) {
+        uint8_t currentMods = GetCurrentMouseModifiers();
+        MouseActionTarget gestureDragAct = g_config.GetMouseGestureAction(currentMods, MouseTrigger::MiddleDrag);
+
+        if (gestureDragAct == MouseActionTarget::WindowDrag) {
             // [Fix] Disable Window Drag in Fullscreen
             if (g_isFullScreen) return 0;
 
@@ -12729,7 +13266,7 @@ SKIP_EDGE_NAV:;
             GetPaneContext(PaneSlot::Primary).view.IsMiddleDragWindow = true;
             SetCapture(hwnd);
             return 0;
-        } else if (g_config.MiddleDragAction == MouseAction::PanImage) {
+        } else if (gestureDragAct == MouseActionTarget::PanImage) {
             // Pan Image with middle button
             if (CanPan(hwnd)) {
                 SetCapture(hwnd);
@@ -12739,10 +13276,31 @@ SKIP_EDGE_NAV:;
             } else {
                 GetPaneContext(PaneSlot::Primary).view.IsDragging = false;
             }
+            return 0;
+        } else if (gestureDragAct != MouseActionTarget::None) {
+            g_customMouseDrag.isPending = true;
+            g_customMouseDrag.isDragging = false;
+            g_customMouseDrag.triggerBtn = VK_MBUTTON;
+            g_customMouseDrag.action = gestureDragAct;
+            g_customMouseDrag.startPt = pt;
+            g_customMouseDrag.startTime = GetTickCount();
+            SetCapture(hwnd);
+            return 0;
         }
         return 0;
     }
     case WM_MBUTTONUP: {
+        if (g_customMouseDrag.triggerBtn == VK_MBUTTON) {
+            bool wasDragging = g_customMouseDrag.isDragging;
+            MouseActionTarget act = g_customMouseDrag.action;
+            g_customMouseDrag = {};
+            ReleaseCapture();
+
+            if (wasDragging) {
+                FinishCustomMouseDrag(hwnd, act);
+                return 0;
+            }
+        }
         if (g_settingsOverlay.IsVisible()) {
             if (g_settingsOverlay.IsCapturingHotkey()) {
                 return 0;
@@ -12756,10 +13314,27 @@ SKIP_EDGE_NAV:;
             return 0;
         }
 
-        // Check if matching custom hotkey combination
-        if (TryTriggerCustomMouseHotkey(hwnd, VK_MBUTTON, false)) {
-            return 0; // Intercepted, do not perform default click/drag actions
-        }
+        auto dispatchMiddleClick = [&](POINT clientPt) -> bool {
+            uint8_t currentMods = GetCurrentMouseModifiers();
+            const MouseActionTarget gestureClickAct = g_config.GetMouseGestureAction(currentMods, MouseTrigger::MiddleClick);
+            if (gestureClickAct == MouseActionTarget::PanImage) {
+                // Reset pan to center
+                GetPaneContext(PaneSlot::Primary).view.PanX = 0;
+                GetPaneContext(PaneSlot::Primary).view.PanY = 0;
+                // [DComp] Hardware pan reset
+                if (g_compEngine && g_compEngine->IsInitialized()) {
+                    RECT rc; GetClientRect(hwnd, &rc);
+                    SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
+                }
+                RequestRepaint(PaintLayer::Dynamic);  // Only OSD update needed
+                return false;
+            }
+            if (gestureClickAct != MouseActionTarget::None) {
+                ExecuteMouseActionTarget(hwnd, gestureClickAct, clientPt);
+                return true;
+            }
+            return TryTriggerCustomMouseHotkey(hwnd, VK_MBUTTON, true);
+        };
 
         // Release capture if we were dragging window with middle button
         if (GetPaneContext(PaneSlot::Primary).view.IsMiddleDragWindow) {
@@ -12775,9 +13350,9 @@ SKIP_EDGE_NAV:;
             
             // Check if this was a "click" (short duration, minimal movement)
             if (elapsed < 300 && dx < 5 && dy < 5) {
-                if (g_config.MiddleClickAction == MouseAction::ExitApp) {
-                    PostMessage(hwnd, WM_CLOSE, 0, 0);
-                }
+                POINT clientPt = cursorPos;
+                ScreenToClient(hwnd, &clientPt);
+                dispatchMiddleClick(clientPt);
             }
             return 0;
         }
@@ -12796,38 +13371,8 @@ SKIP_EDGE_NAV:;
         
         // Click threshold: <300ms and <5px movement
         if (elapsed < 300 && dx < 5 && dy < 5) {
-            switch (g_config.MiddleClickAction) {
-                case MouseAction::None:
-                    break;
-                case MouseAction::WindowDrag:
-                    // Start window drag (not applicable for click)
-                    break;
-                case MouseAction::PanImage:
-                    // Reset pan to center
-                    GetPaneContext(PaneSlot::Primary).view.PanX = 0;
-                    GetPaneContext(PaneSlot::Primary).view.PanY = 0;
-                    // [DComp] Hardware pan reset
-                    if (g_compEngine && g_compEngine->IsInitialized()) {
-                        RECT rc; GetClientRect(hwnd, &rc);
-                        SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
-                    }
-                    RequestRepaint(PaintLayer::Dynamic);  // Only OSD update needed
-                    break;
-                case MouseAction::ExitApp:
-                    PostMessage(hwnd, WM_CLOSE, 0, 0);
-                    return 0;
-                case MouseAction::FitWindow:
-                    // Reset zoom to fit
-                    GetPaneContext(PaneSlot::Primary).view.Zoom = 1.0f;
-                    GetPaneContext(PaneSlot::Primary).view.PanX = 0;
-                    GetPaneContext(PaneSlot::Primary).view.PanY = 0;
-                    // [DComp] Hardware transform reset
-                    if (g_compEngine && g_compEngine->IsInitialized()) {
-                        RECT rc; GetClientRect(hwnd, &rc);
-                        SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
-                    }
-                    RequestRepaint(PaintLayer::Dynamic);  // Only OSD update needed
-                    break;
+            if (dispatchMiddleClick(currentPos)) {
+                return 0;
             }
         }
         
@@ -12840,6 +13385,9 @@ SKIP_EDGE_NAV:;
     case WM_XBUTTONDOWN: {
         EnsureBootHydrated(hwnd);
         int button = GET_XBUTTON_WPARAM(wParam);
+        if (g_config.InvertXButton) {
+            button = (button == XBUTTON1) ? XBUTTON2 : XBUTTON1;
+        }
         uint16_t vk = (button == XBUTTON1) ? VK_XBUTTON1 : VK_XBUTTON2;
 
         if (g_settingsOverlay.IsVisible()) {
@@ -12857,20 +13405,18 @@ SKIP_EDGE_NAV:;
             return TRUE;
         }
 
-        // Check custom hotkeys for VK_XBUTTON1 or VK_XBUTTON2
-        if (TryTriggerCustomMouseHotkey(hwnd, vk, true)) {
+        uint8_t currentMods = GetCurrentMouseModifiers();
+        MouseTrigger trig = (button == XBUTTON1) ? MouseTrigger::XButton1Click : MouseTrigger::XButton2Click;
+        const MouseActionTarget gestureAct = g_config.GetMouseGestureAction(currentMods, trig);
+        if (gestureAct != MouseActionTarget::None) {
+            POINT pt;
+            GetCursorPos(&pt);
+            ScreenToClient(hwnd, &pt);
+            ExecuteMouseActionTarget(hwnd, gestureAct, pt);
             return TRUE;
         }
 
-        // Mouse forward/back buttons for navigation
-        int direction = 0;
-        if (button == XBUTTON1) direction = -1; // Back button = previous
-        else if (button == XBUTTON2) direction = 1; // Forward button = next
-        
-        // Invert if configured
-        if (g_config.InvertXButton) direction = -direction;
-        
-        if (direction != 0) Navigate(hwnd, direction);
+        TryTriggerCustomMouseHotkey(hwnd, vk, true);
         return TRUE;
     }
 
@@ -13221,14 +13767,8 @@ SKIP_EDGE_NAV:;
             return 0;
         }
         
-        bool isCtrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
-        
-        // [Feature] Ctrl+Left Drag maps to Middle Drag Action
-        MouseAction effectiveAction = g_config.LeftDragAction;
-        
-        if (isCtrl) {
-            effectiveAction = g_config.MiddleDragAction;
-        }
+        uint8_t currentMods = GetCurrentMouseModifiers();
+        MouseActionTarget gestureLeftDrag = g_config.GetMouseGestureAction(currentMods, MouseTrigger::LeftDrag);
         
         if (g_cropState.IsActive) {
             const auto& pane = GetPaneContext(PaneSlot::Primary);
@@ -13295,8 +13835,8 @@ SKIP_EDGE_NAV:;
                         }
                     }
 
-                    // [Feature] When Ctrl key is held down in Crop Mode, Ctrl + Drag re-defines a new selection box
-                    if ((GetKeyState(VK_CONTROL) & 0x8000) != 0) {
+                    // [Feature] When Ctrl key is held down in Crop Mode or gesture is CropRegionDrag, re-defines a new selection box
+                    if ((GetKeyState(VK_CONTROL) & 0x8000) != 0 || gestureLeftDrag == MouseActionTarget::CropRegionDrag) {
                         float imgX = 0.0f, imgY = 0.0f;
                         if (ScreenToImageSpace(hwnd, pt.x, pt.y, imgX, imgY, PaneSlot::Primary)) {
                             SetCapture(hwnd);
@@ -13391,7 +13931,44 @@ SKIP_EDGE_NAV:;
             }
         }
 
-        if (effectiveAction == MouseAction::WindowDrag) {
+        if (gestureLeftDrag == MouseActionTarget::CropRegionDrag) {
+            float imgX, imgY;
+            if (ScreenToImageSpace(hwnd, pt.x, pt.y, imgX, imgY, PaneSlot::Primary)) {
+                const auto& pane = GetPaneContext(PaneSlot::Primary);
+                const auto& meta = pane.metadata;
+                if (meta.Width > 0 && meta.Height > 0) {
+                    SetCapture(hwnd);
+                    g_cropState.Reset();
+                    g_cropState.IsActive = true;
+                    g_cropState.IsDragging = true;
+                    g_cropState.ActiveHandle = 5; // Special handle for defining initial region
+                    g_cropState.DragStartMousePos = pt;
+                    
+                    int baseExif = pane.view.ExifOrientation;
+                    int exifOrientation = GetEffectiveExifOrientation(baseExif, pane.editState);
+                    D2D1_SIZE_F orientedSize = GetOrientedSize(pane.resource, exifOrientation);
+                    
+                    imgX = (std::max)(0.0f, (std::min)(imgX, orientedSize.width));
+                    imgY = (std::max)(0.0f, (std::min)(imgY, orientedSize.height));
+
+                    g_cropState.CropLeft = imgX;
+                    g_cropState.CropTop = imgY;
+                    g_cropState.CropRight = imgX;
+                    g_cropState.CropBottom = imgY;
+                    g_cropState.DragStartCropLeft = (int)imgX;
+                    g_cropState.DragStartCropTop = (int)imgY;
+                    g_cropState.DragStartCropRight = (int)imgX;
+                    g_cropState.DragStartCropBottom = (int)imgY;
+                    g_cropState.IsQuickActionVisible = true;
+                    
+                    g_toolbar.SetCropMode(true);
+                    g_toolbar.SetVisible(true);
+                    
+                    RequestRepaint(PaintLayer::All);
+                    return 0;
+                }
+            }
+        } else if (gestureLeftDrag == MouseActionTarget::WindowDrag) {
             // [Requirement] Exit fullscreen on drag
             if (g_isFullScreen) {
                 GetPaneContext(PaneSlot::Primary).view.IsPendingFullscreenExitDrag = true;
@@ -13401,54 +13978,10 @@ SKIP_EDGE_NAV:;
             }
             
             // Use HTCAPTION for smooth system window dragging (Left Button only)
-            // Note: Middle button uses manual drag implementation because NCLBUTTONDOWN expects Left Button.
-            // Since we are responding to LBUTTONDOWN here, HTCAPTION works perfectly even if mapped from Middle Setting.
             ReleaseCapture();
             SendMessage(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
             return 0;
-        } else if (effectiveAction == MouseAction::PanImage) {
-            // Regional crop with Ctrl + Left Click
-            if (GetKeyState(VK_CONTROL) < 0 && !g_cropState.IsActive) {
-                float imgX, imgY;
-                if (ScreenToImageSpace(hwnd, pt.x, pt.y, imgX, imgY, PaneSlot::Primary)) {
-                    const auto& pane = GetPaneContext(PaneSlot::Primary);
-                    const auto& meta = pane.metadata;
-                    if (meta.Width > 0 && meta.Height > 0) {
-                        SetCapture(hwnd);
-                        g_cropState.Reset();
-                        g_cropState.IsActive = true;
-                        g_cropState.IsDragging = true;
-                        g_cropState.ActiveHandle = 5; // Special handle for defining initial region
-                        g_cropState.DragStartMousePos = pt;
-                        
-                        // map to un-oriented original dimensions if needed, but for now we clamp to metadata size
-                        // actually, we should clamp to Oriented size
-                        int baseExif = pane.view.ExifOrientation;
-                        int exifOrientation = GetEffectiveExifOrientation(baseExif, pane.editState);
-                        D2D1_SIZE_F orientedSize = GetOrientedSize(pane.resource, exifOrientation);
-                        
-                        imgX = (std::max)(0.0f, (std::min)(imgX, orientedSize.width));
-                        imgY = (std::max)(0.0f, (std::min)(imgY, orientedSize.height));
-
-                        g_cropState.CropLeft = imgX;
-                        g_cropState.CropTop = imgY;
-                        g_cropState.CropRight = imgX;
-                        g_cropState.CropBottom = imgY;
-                        g_cropState.DragStartCropLeft = (int)imgX;
-                        g_cropState.DragStartCropTop = (int)imgY;
-                        g_cropState.DragStartCropRight = (int)imgX;
-                        g_cropState.DragStartCropBottom = (int)imgY;
-                        g_cropState.IsQuickActionVisible = true;
-                        
-                        g_toolbar.SetCropMode(true);
-                        g_toolbar.SetVisible(true);
-                        
-                        RequestRepaint(PaintLayer::All);
-                        return 0;
-                    }
-                }
-            }
-            
+        } else if (gestureLeftDrag == MouseActionTarget::PanImage) {
             bool allowPan = CanPan(hwnd);
             if (IsCompareModeActive()) {
                 allowPan = (AppContext::GetInstance().Compare.activePane == ComparePane::Left) ? GetPaneContext(PaneSlot::Left).valid : (bool)GetPaneContext(PaneSlot::Primary).resource;
@@ -13460,11 +13993,35 @@ SKIP_EDGE_NAV:;
                 GetPaneContext(PaneSlot::Primary).view.LastMousePos = pt;
                 SetCursor(LoadCursor(nullptr, IDC_SIZEALL));
             }
+            return 0;
+        } else if (gestureLeftDrag != MouseActionTarget::None) {
+            g_customMouseDrag.isPending = true;
+            g_customMouseDrag.isDragging = false;
+            g_customMouseDrag.triggerBtn = VK_LBUTTON;
+            g_customMouseDrag.action = gestureLeftDrag;
+            g_customMouseDrag.startPt = pt;
+            g_customMouseDrag.startTime = GetTickCount();
+            SetCapture(hwnd);
+            return 0;
         }
         return 0;
     }
     case WM_LBUTTONUP: {
         POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
+
+        if (g_customMouseDrag.triggerBtn == VK_LBUTTON) {
+            bool wasDragging = g_customMouseDrag.isDragging;
+            MouseActionTarget act = g_customMouseDrag.action;
+            g_customMouseDrag = {};
+            ReleaseCapture();
+
+            if (wasDragging) {
+                FinishCustomMouseDrag(hwnd, act);
+                return 0;
+            }
+            // If wasPending, mouse released before moving beyond drag threshold (pure click)
+            // Capture was released above, allow normal click processing to continue
+        }
 
         if (QuickView::UI::AiActionOverlay::Instance().IsVisible()) {
             return 0;
@@ -14026,49 +14583,13 @@ SKIP_EDGE_NAV:;
         float delta = GET_WHEEL_DELTA_WPARAM(wParam) / 120.0f;
         if (g_config.InvertWheel) delta = -delta;
 
-        if (g_wheelPanModeActive) {
-            float dx = delta * g_config.PanStepNormal;
-            if (IsCompareModeActive()) {
-                if (AppContext::GetInstance().Compare.activePane == ComparePane::Left) {
-                    GetPaneContext(PaneSlot::Left).view.PanX += dx;
-                    if (AppContext::GetInstance().Compare.syncPan) {
-                        GetPaneContext(PaneSlot::Primary).view.PanX += dx;
-                    }
-                } else {
-                    GetPaneContext(PaneSlot::Primary).view.PanX += dx;
-                    if (AppContext::GetInstance().Compare.syncPan) {
-                        GetPaneContext(PaneSlot::Left).view.PanX += dx;
-                    }
-                }
-                MarkCompareDirty();
-                RequestRepaint(PaintLayer::Image | PaintLayer::Static);
-            } else if (GetPaneContext(PaneSlot::Primary).resource) {
-                GetPaneContext(PaneSlot::Primary).view.PanX += dx;
-                RECT rc; GetClientRect(hwnd, &rc);
-                SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
-                if (UseSvgViewportRendering(GetPaneContext(PaneSlot::Primary).resource)) {
-                    RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic | PaintLayer::Static);
-                } else {
-                    RequestRepaint(PaintLayer::Dynamic | PaintLayer::Static);
-                }
-            }
-            return 0;
-        }
-
-        if (g_config.ThumbWheelMode == 0) { // Navigate
-            int direction = (delta > 0.0f) ? 1 : -1; // Positive is usually right, negative is left
-            QuickView::PendingAction pending = (direction > 0) ? QuickView::PendingAction::NavigateNext : QuickView::PendingAction::NavigatePrev;
-            if (delta != 0.0f && CheckUnsavedChanges(hwnd, pending)) {
-                Navigate(hwnd, direction);
-            }
-        } else if (g_config.ThumbWheelMode == 1) { // Zoom
+        uint8_t currentMods = GetCurrentMouseModifiers();
+        MouseActionTarget gestureHWheel = g_config.GetMouseGestureAction(currentMods, MouseTrigger::HorizontalWheel);
+        if (gestureHWheel == MouseActionTarget::Zoom) {
             POINT pt;
             GetCursorPos(&pt);
             ScreenToClient(hwnd, &pt);
-
-            // [Shared Logic] Sync with WM_MOUSEWHEEL behavior
             float newTotalScale = CalculateTargetZoom(hwnd, delta, false);
-            
             if (IsCompareModeActive()) {
                 ComparePane pane = AppContext::GetInstance().CompareCtrl->HitTest(hwnd, pt);
                 AppContext::GetInstance().Compare.activePane = pane;
@@ -14076,8 +14597,18 @@ SKIP_EDGE_NAV:;
             } else {
                 PerformSmartZoom(hwnd, newTotalScale, &pt, false, true);
             }
-
             ShowZoomOsd(hwnd, newTotalScale);
+        } else if (gestureHWheel == MouseActionTarget::Navigate) {
+            int direction = (delta > 0.0f) ? 1 : -1;
+            QuickView::PendingAction pending = (direction > 0) ? QuickView::PendingAction::NavigateNext : QuickView::PendingAction::NavigatePrev;
+            if (delta != 0.0f && CheckUnsavedChanges(hwnd, pending)) {
+                Navigate(hwnd, direction);
+            }
+        } else if (gestureHWheel != MouseActionTarget::None) {
+            POINT pt;
+            GetCursorPos(&pt);
+            ScreenToClient(hwnd, &pt);
+            ExecuteMouseActionTarget(hwnd, gestureHWheel, pt);
         }
         return 0;
     }
@@ -14245,104 +14776,40 @@ SKIP_EDGE_NAV:;
             return 0;
         }
 
-        if (isShift && !isCtrl && !isAlt) {
-            // Shift + Wheel acts as Thumb Wheel (WM_MOUSEHWHEEL)
-            if (g_wheelPanModeActive) {
-                float dx = delta * g_config.PanStepNormal;
-                if (IsCompareModeActive()) {
-                    if (AppContext::GetInstance().Compare.activePane == ComparePane::Left) {
-                        GetPaneContext(PaneSlot::Left).view.PanX += dx;
-                        if (AppContext::GetInstance().Compare.syncPan) {
-                            GetPaneContext(PaneSlot::Primary).view.PanX += dx;
-                        }
-                    } else {
-                        GetPaneContext(PaneSlot::Primary).view.PanX += dx;
-                        if (AppContext::GetInstance().Compare.syncPan) {
-                            GetPaneContext(PaneSlot::Left).view.PanX += dx;
-                        }
-                    }
-                    MarkCompareDirty();
-                    RequestRepaint(PaintLayer::Image | PaintLayer::Static);
-                } else if (GetPaneContext(PaneSlot::Primary).resource) {
-                    GetPaneContext(PaneSlot::Primary).view.PanX += dx;
-                    RECT rc; GetClientRect(hwnd, &rc);
-                    SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
-                    RequestRepaint(PaintLayer::Dynamic | PaintLayer::Static);
-                    RefreshSvgSurfaceAfterZoom(hwnd);
-                }
+        uint8_t currentMods = GetCurrentMouseModifiers();
+        MouseActionTarget wheelAct = MouseActionTarget::None;
+        if ((GetKeyState(VK_RBUTTON) & 0x8000) != 0) {
+            MouseActionTarget rhAct = g_config.GetMouseGestureAction(currentMods, MouseTrigger::RightHoldWheel);
+            if (rhAct == MouseActionTarget::None) {
                 return 0;
             }
-
-            if (g_config.ThumbWheelMode == 0) { // Navigate
-                int direction = (delta > 0.0f) ? 1 : -1;
-                QuickView::PendingAction pending = (direction > 0) ? QuickView::PendingAction::NavigateNext : QuickView::PendingAction::NavigatePrev;
-                if (delta != 0.0f && CheckUnsavedChanges(hwnd, pending)) {
-                    Navigate(hwnd, direction);
-                }
-            } else if (g_config.ThumbWheelMode == 1) { // Zoom
-                POINT pt;
-                GetCursorPos(&pt);
-                ScreenToClient(hwnd, &pt);
-
-                float newTotalScale = CalculateTargetZoom(hwnd, delta, false);
-                
-                if (IsCompareModeActive()) {
-                    ComparePane pane = AppContext::GetInstance().CompareCtrl->HitTest(hwnd, pt);
-                    AppContext::GetInstance().Compare.activePane = pane;
-                    ApplyCompareZoomWithMultiplier(hwnd, pane, ComputeZoomStep(delta), &pt, AppContext::GetInstance().Compare.syncZoom);
-                } else {
-                    PerformSmartZoom(hwnd, newTotalScale, &pt, false, true);
-                }
-
-                ShowZoomOsd(hwnd, newTotalScale);
-            }
+            g_rightHoldWheelConsumed = true;
+            wheelAct = rhAct;
+        } else {
+            wheelAct = g_config.GetMouseGestureAction(currentMods, MouseTrigger::VerticalWheel);
+        }
+        if (wheelAct == MouseActionTarget::None) {
             return 0;
         }
 
-        if (g_wheelPanModeActive && !isCtrl && !isAlt) {
-            float dy = delta * g_config.PanStepNormal;
-            if (IsCompareModeActive()) {
-                if (AppContext::GetInstance().Compare.activePane == ComparePane::Left) {
-                    GetPaneContext(PaneSlot::Left).view.PanY += dy;
-                    if (AppContext::GetInstance().Compare.syncPan) {
-                        GetPaneContext(PaneSlot::Primary).view.PanY += dy;
-                    }
-                } else {
-                    GetPaneContext(PaneSlot::Primary).view.PanY += dy;
-                    if (AppContext::GetInstance().Compare.syncPan) {
-                        GetPaneContext(PaneSlot::Left).view.PanY += dy;
-                    }
-                }
-                MarkCompareDirty();
-                RequestRepaint(PaintLayer::Image | PaintLayer::Static);
-            } else if (GetPaneContext(PaneSlot::Primary).resource) {
-                GetPaneContext(PaneSlot::Primary).view.PanY += dy;
-                RECT rc; GetClientRect(hwnd, &rc);
-                SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
-                RequestRepaint(PaintLayer::Dynamic | PaintLayer::Static);
-                RefreshSvgSurfaceAfterZoom(hwnd);
-            }
+        if (wheelAct == MouseActionTarget::AdjustZoomSpeedWheel) {
+            g_config.WheelZoomSpeed += (delta > 0) ? 5.0f : -5.0f;
+            g_config.WheelZoomSpeed = std::max(5.0f, std::min(50.0f, g_config.WheelZoomSpeed));
+            wchar_t speedBuf[64];
+            swprintf_s(speedBuf, L"%s%.0f%%", AppStrings::OSD_WheelZoomSpeed, g_config.WheelZoomSpeed);
+            g_osd.Show(hwnd, speedBuf, false);
             return 0;
         }
 
-        if (isAlt) {
-            if (!g_config.UseFixedZoom) {
-                g_config.WheelZoomSpeed += (delta > 0) ? 5.0f : -5.0f;
-                g_config.WheelZoomSpeed = std::max(5.0f, std::min(50.0f, g_config.WheelZoomSpeed));
-                wchar_t speedBuf[64];
-                swprintf_s(speedBuf, L"%s%.0f%%", AppStrings::OSD_WheelZoomSpeed, g_config.WheelZoomSpeed);
-                g_osd.Show(hwnd, speedBuf, false);
-                return 0;
-            }
-            // If UseFixedZoom is true, we fall through to perform regular zoom
+        bool shouldNavigate = (wheelAct == MouseActionTarget::Navigate);
+        bool isLockZoom = (wheelAct == MouseActionTarget::LockWindowZoomWheel);
+        bool isZoomWheel = (wheelAct == MouseActionTarget::Zoom) || isLockZoom;
+        if (!shouldNavigate && !isZoomWheel) {
+            POINT mousePt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+            ScreenToClient(hwnd, &mousePt);
+            ExecuteMouseActionTarget(hwnd, wheelAct, mousePt);
+            return 0;
         }
-
-        // [Fix] Resolve conflict between WheelActionMode and Ctrl modifier.
-        // Rule: Ctrl + Wheel ALWAYS means "Locked-Window Zoom".
-        // Alt + Wheel (when UseFixedZoom is true) ALWAYS means "Regular Zoom".
-        // If WheelActionMode is Navigate (1), then Wheel (without Ctrl/Alt) means Navigate.
-        // If WheelActionMode is Zoom (0), then Wheel (without Ctrl/Alt) means Smart Zoom.
-        bool shouldNavigate = (g_config.WheelActionMode == 1) && !isCtrl && !isAlt;
         if (g_cropState.IsActive) shouldNavigate = false;
 
         if (IsCompareModeActive()) {
@@ -14387,7 +14854,7 @@ SKIP_EDGE_NAV:;
         // Use Centralized Helper
         POINT mousePt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
         ShowZoomOsd(hwnd, newTotalScale);
-        PerformSmartZoom(hwnd, newTotalScale, &mousePt, isCtrl, true);
+        PerformSmartZoom(hwnd, newTotalScale, &mousePt, isLockZoom, true);
         return 0;
     }
 
@@ -14463,35 +14930,21 @@ SKIP_EDGE_NAV:;
                 RequestRepaint(PaintLayer::All);
             }
         }
-        // [Loupe] Releasing the loupe key hides the magnifier. The key is the
-        // rebindable HotkeyAction::Loupe binding (default 'L'), so this honours
-        // user remapping rather than a hardcoded key.
-        if (AppContext::GetInstance().Loupe.active
-            && wParam == g_hotkeys[static_cast<size_t>(HotkeyAction::Loupe)].combo.virtualKey) {
-            auto& loupe = AppContext::GetInstance().Loupe;
-            if (loupe.isViewportMode) {
-                auto& pane = GetPaneContext(PaneSlot::Primary);
-                pane.view = loupe.baselineView;
-                if (IsCompareModeActive() && AppContext::GetInstance().CompareCtrl) {
-                    auto& leftPane = GetPaneContext(PaneSlot::Left);
-                    if (leftPane.valid && AppContext::GetInstance().Compare.syncZoom) leftPane.view.Zoom = pane.view.Zoom;
-                    if (leftPane.valid && AppContext::GetInstance().Compare.syncPan) {
-                        leftPane.view.PanX = pane.view.PanX;
-                        leftPane.view.PanY = pane.view.PanY;
+        // [Loupe] Releasing the loupe key hides the magnifier
+        if (AppContext::GetInstance().Loupe.active) {
+            bool isLoupeKey = (wParam == 'L');
+            if (!isLoupeKey) {
+                for (const auto& c : g_config.GetCombosForAction(HotkeyAction::Loupe)) {
+                    if (c.virtualKey == wParam) {
+                        isLoupeKey = true;
+                        break;
                     }
                 }
-                loupe.isViewportMode = false;
-                RequestRepaint(PaintLayer::All);
-            } else {
-                RequestRepaint(PaintLayer::Dynamic);
             }
-            loupe.active = false;
-            SetCursor(g_currentCursor ? g_currentCursor : LoadCursor(nullptr, IDC_ARROW)); // restore now
-            if (loupe.sizeChanged) {
-                loupe.sizeChanged = false;
-                SaveConfig(); // persist the wheel-adjusted loupe size or zoom
+            if (isLoupeKey) {
+                DeactivateLoupe();
+                return 0;
             }
-            return 0;
         }
         if (wParam == VK_MENU) return 0; // Intercept Alt release to prevent entering the menu loop and losing focus
         break;
@@ -14688,46 +15141,9 @@ SKIP_EDGE_NAV:;
             if (QuickView::ExportPanel::GetInstance().OnKeyDown(wParam)) return 0;
             if (QuickView::ExportPanel::GetInstance().IsInputFocused()) return 0; // Natively block all hotkeys when ExportPanel text input is focused!
         }
-        // Verification Control (Phase 5 - Ctrl+1..5)
-        if (GetKeyState(VK_CONTROL) & 0x8000) {
-            bool handled = false;
-            switch(wParam) {
-                case '1': g_runtime.EnableScout = !g_runtime.EnableScout; handled = true; break;
-                case '2': g_runtime.EnableHeavy = !g_runtime.EnableHeavy; handled = true; break;
-                case '4': 
-                    g_showTileGrid = !g_showTileGrid; 
-                    QV_LOG("Main_DebugToggle", TraceLoggingBool(g_showTileGrid, "TileGrid"));
-                    if (g_uiRenderer) g_uiRenderer->SetTileGridVisible(g_showTileGrid);
-                    handled = true; 
-                    break;
-                case '5':
-                    g_runtime.ForceHdrSimulation = !g_runtime.ForceHdrSimulation;
-                    QV_LOG("Main_DebugToggle", TraceLoggingBool(g_runtime.ForceHdrSimulation, "ForceHDR"));
-                    handled = true;
-                    // Re-evaluate display color state to trigger FP16/8-bit UNORM surface swap in CompositionEngine
-                    RefreshDisplayColorPipeline(hwnd, false);
-                    RefreshImageDisplay(hwnd);
-                    break;
-                case 'Y': // Ctrl+Y: Toggle Soft Proofing
-                    SendMessageW(hwnd, WM_COMMAND, IDM_SOFT_PROOF_TOGGLE, 0);
-                    handled = true;
-                    break;
-            }
-            if (handled) {
-                g_imageEngine->UpdateConfig(g_runtime); // Push to engine
-                if (g_uiRenderer) {
-                    g_uiRenderer->SetRuntimeConfig(g_runtime); // Push to HUD
-                }
-            }
-        }
 
         // 1. If settings is visible and capturing a hotkey, intercept it
         if (g_settingsOverlay.IsVisible() && g_settingsOverlay.IsCapturingHotkey()) {
-            if (wParam == VK_ESCAPE) {
-                g_settingsOverlay.CancelHotkeyCapture();
-                RequestRepaint(PaintLayer::Static);
-                return 0;
-            }
             if (wParam == VK_CONTROL || wParam == VK_SHIFT || wParam == VK_MENU ||
                 wParam == VK_LCONTROL || wParam == VK_RCONTROL || wParam == VK_LSHIFT || wParam == VK_RSHIFT ||
                 wParam == VK_LMENU || wParam == VK_RMENU) {
@@ -14747,7 +15163,7 @@ SKIP_EDGE_NAV:;
 
         // Settings handling
         if (g_settingsOverlay.IsVisible()) {
-            if (g_settingsOverlay.IsInputFocused()) {
+            if (g_settingsOverlay.IsInputFocused() || g_settingsOverlay.HasActiveDropdown()) {
                 if (g_settingsOverlay.OnKeyDown(wParam)) {
                     RequestRepaint(PaintLayer::Static);
                     return 0;
@@ -14842,15 +15258,35 @@ SKIP_EDGE_NAV:;
         bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
         bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
 
-        // [Fix] Add exclusion for VK_MENU to prevent the Alt key from being handed to DefWindowProc and triggering the menu system
-        if (message == WM_SYSKEYDOWN && wParam != VK_F10 && wParam != VK_LEFT && wParam != VK_RIGHT && wParam != VK_UP && wParam != VK_DOWN && wParam != VK_MENU) {
-            break; // Hand other system keys to default processing
+        // Hardcoded layered dismissal for ESC key:
+        // Even if the user unbinds or deletes ESC from global hotkeys, pressing pure ESC MUST
+        // safely dismiss/exit active transient overlays or special view modes without killing the app.
+        if (wParam == VK_ESCAPE && !ctrl && !shift && !alt) {
+            if (AppContext::GetInstance().Loupe.active) {
+                DeactivateLoupe();
+                RequestRepaint(PaintLayer::All);
+                return 0;
+            }
+            if (IsOverlayModeActive()) {
+                ExitOverlayMode(hwnd);
+                RequestRepaint(PaintLayer::All);
+                return 0;
+            }
+            if (IsCompareModeActive()) {
+                if (CheckUnsavedChanges(hwnd)) {
+                    AppContext::GetInstance().CompareCtrl->ExitMode(hwnd);
+                    RequestRepaint(PaintLayer::All);
+                }
+                return 0;
+            }
         }
-        
 
-
-        // Intercept Alt key press to prevent Alt menu loop
-        if (wParam == VK_MENU) return 0;
+        // Ignore standalone modifier key presses (and prevent Alt menu loop)
+        if (wParam == VK_MENU || wParam == VK_CONTROL || wParam == VK_SHIFT ||
+            wParam == VK_LCONTROL || wParam == VK_RCONTROL || wParam == VK_LSHIFT || wParam == VK_RSHIFT ||
+            wParam == VK_LMENU || wParam == VK_RMENU) {
+            return 0;
+        }
 
         // Construct KeyCombo for dynamic lookup
         KeyCombo pressed;
@@ -14862,9 +15298,9 @@ SKIP_EDGE_NAV:;
 
         // Perform linear scan to match Hotkey
         HotkeyAction action = HotkeyAction::None;
-        for (const auto& binding : g_hotkeys) {
-            if (!binding.combo.IsEmpty() && binding.combo == pressed) {
-                action = binding.action;
+        for (const auto& rule : g_config.HotkeyRules) {
+            if (!rule.combo.IsEmpty() && rule.combo == pressed) {
+                action = rule.action;
                 break;
             }
         }
@@ -14874,26 +15310,41 @@ SKIP_EDGE_NAV:;
             if (HandleHotkeyAction(hwnd, action)) {
                 return 0; // Handled
             }
-        } else {
-            // Fallback matching for unmapped keys
-            if (!shift && !alt) {
-                if (wParam == VK_UP) {
-                    if (HandleHotkeyAction(hwnd, HotkeyAction::ZoomIn)) return 0;
-                } else if (wParam == VK_DOWN) {
-                    if (HandleHotkeyAction(hwnd, HotkeyAction::ZoomOut)) return 0;
-                }
-            }
-            if (!ctrl && !shift && !alt) {
-                if (wParam >= '0' && wParam <= '5') {
-                    const auto rateAction = static_cast<HotkeyAction>(
-                        static_cast<size_t>(HotkeyAction::Rate0) + (wParam - '0'));
-                    if (HandleHotkeyAction(hwnd, rateAction)) return 0;
-                }
-            }
         }
 
-        if (message == WM_SYSKEYDOWN) {
-            break; // Other system keys go to default processing
+        // Debug & Verification shortcuts (only if not consumed by user hotkeys)
+        if (ctrl && !shift && !alt) {
+            bool handled = false;
+            if (g_config.EnableDebugFeatures) {
+                switch (wParam) {
+                    case '1': g_runtime.EnableScout = !g_runtime.EnableScout; handled = true; break;
+                    case '2': g_runtime.EnableHeavy = !g_runtime.EnableHeavy; handled = true; break;
+                    case '4':
+                        g_showTileGrid = !g_showTileGrid;
+                        QV_LOG("Main_DebugToggle", TraceLoggingBool(g_showTileGrid, "TileGrid"));
+                        if (g_uiRenderer) g_uiRenderer->SetTileGridVisible(g_showTileGrid);
+                        handled = true;
+                        break;
+                    case '5':
+                        g_runtime.ForceHdrSimulation = !g_runtime.ForceHdrSimulation;
+                        QV_LOG("Main_DebugToggle", TraceLoggingBool(g_runtime.ForceHdrSimulation, "ForceHDR"));
+                        handled = true;
+                        RefreshDisplayColorPipeline(hwnd, false);
+                        RefreshImageDisplay(hwnd);
+                        break;
+                }
+            }
+            if (wParam == 'Y') {
+                SendMessageW(hwnd, WM_COMMAND, IDM_SOFT_PROOF_TOGGLE, 0);
+                handled = true;
+            }
+            if (handled) {
+                g_imageEngine->UpdateConfig(g_runtime);
+                if (g_uiRenderer) {
+                    g_uiRenderer->SetRuntimeConfig(g_runtime);
+                }
+                return 0;
+            }
         }
         return 0;
     }
@@ -14906,6 +15357,31 @@ SKIP_EDGE_NAV:;
         }
         if (g_settingsOverlay.IsVisible()) {
             return 0;
+        }
+
+        if (g_customMouseDrag.triggerBtn == VK_RBUTTON) {
+            bool wasDragging = g_customMouseDrag.isDragging;
+            MouseActionTarget act = g_customMouseDrag.action;
+            g_customMouseDrag = {};
+            ReleaseCapture();
+
+            if (wasDragging) {
+                FinishCustomMouseDrag(hwnd, act);
+                return 0;
+            }
+        }
+
+        if (GetPaneContext(PaneSlot::Primary).view.IsMiddleDragWindow) {
+            ReleaseCapture();
+            GetPaneContext(PaneSlot::Primary).view.IsMiddleDragWindow = false;
+            POINT cursorPos{};
+            GetCursorPos(&cursorPos);
+            DWORD elapsed = GetTickCount() - GetPaneContext(PaneSlot::Primary).view.DragStartTime;
+            int dx = abs(cursorPos.x - GetPaneContext(PaneSlot::Primary).view.CursorDragStart.x);
+            int dy = abs(cursorPos.y - GetPaneContext(PaneSlot::Primary).view.CursorDragStart.y);
+            if (elapsed >= 300 || dx >= 5 || dy >= 5) {
+                return 0;
+            }
         }
 
         const bool wasRightDragZoom = GetPaneContext(PaneSlot::Primary).view.IsRightButtonDragZoom;
@@ -14922,81 +15398,37 @@ SKIP_EDGE_NAV:;
             GetPaneContext(PaneSlot::Primary).view.RightDragZoomStartCompareSecondaryZoom = 1.0f;
             g_hasRightDragZoomStartViews = false;
             if (wasRightDragZoom) {
+                g_rightHoldWheelConsumed = false;
                 return 0;
             }
         }
 
-        // Show context menu
+        if (g_rightHoldWheelConsumed) {
+            g_rightHoldWheelConsumed = false;
+            return 0;
+        }
+
         POINT ptClient = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
-        POINT pt = ptClient;
-        ClientToScreen(hwnd, &pt);
 
-        if (g_gallery.IsVisible()) {
-            RECT rcClient; GetClientRect(hwnd, &rcClient);
-            float winW = (float)(rcClient.right - rcClient.left);
-            float winH = (float)(rcClient.bottom - rcClient.top);
-            if (g_gallery.HitTestArea(ptClient.x, ptClient.y, winW, winH)) {
-                int idx = g_gallery.HitTestClient(ptClient.x, ptClient.y);
-                if (idx >= 0) {
-                    g_galleryContextMenuIndex = idx;
-                    ShowGalleryContextMenu(hwnd, pt);
-                }
+        uint8_t currentMods = GetCurrentMouseModifiers();
+        const auto* rClickRule = g_config.FindMouseGesture(currentMods, MouseTrigger::RightClick);
+        if (rClickRule) {
+            MouseActionTarget rightClickAct = static_cast<MouseActionTarget>(rClickRule->action);
+            if (rightClickAct != MouseActionTarget::ContextMenu && rightClickAct != MouseActionTarget::None) {
+                ExecuteMouseActionTarget(hwnd, rightClickAct, ptClient);
                 return 0;
             }
-        }
-
-        if (IsCompareModeActive()) {
-            AppContext::GetInstance().Compare.contextPane = AppContext::GetInstance().CompareCtrl->HitTest(hwnd, ptClient);
-            AppContext::GetInstance().Compare.activePane = AppContext::GetInstance().Compare.contextPane;
-            AppContext::GetInstance().Compare.selectedPane = AppContext::GetInstance().Compare.contextPane;
-            MarkCompareDirty();
-            RequestRepaint(PaintLayer::Image | PaintLayer::Static);
-        }
-        
-        bool hasImage = GetPaneContext(PaneSlot::Primary).resource;
-        bool extensionFixNeeded = false;
-        bool isRaw = false;
-        bool renderRaw = g_runtime.ForceRawDecode;
-        std::wstring targetPath = GetPaneContext(PaneSlot::Primary).path;
-        std::wstring targetFmt = GetPaneContext(PaneSlot::Primary).metadata.Format;
-
-        if (IsCompareModeActive() && AppContext::GetInstance().Compare.contextPane == ComparePane::Left) {
-            hasImage = GetPaneContext(PaneSlot::Left).valid;
-            targetPath = GetPaneContext(PaneSlot::Left).path;
-            targetFmt = GetPaneContext(PaneSlot::Left).metadata.Format;
-        }
-
-        if (IsCompareModeActive()) {
-            bool contextIsRaw = false;
-            bool contextIsFullDecode = false;
-            if (AppContext::GetInstance().CompareCtrl->GetPaneRawState(AppContext::GetInstance().Compare.contextPane, contextIsRaw, contextIsFullDecode) && contextIsRaw) {
-                renderRaw = contextIsFullDecode;
+            if (rightClickAct == MouseActionTarget::None) {
+                return 0; // Explicitly configured as None: do not show context menu!
             }
+            ShowContextMenuAtClientPt(hwnd, ptClient);
+            return 0;
         }
 
-        if (hasImage && !targetPath.empty()) {
-             extensionFixNeeded = CheckExtensionMismatch(targetPath, targetFmt);
-             isRaw = QuickView::IsRawPath(targetPath);
-             // [RAW+JPEG Pairing] "Render RAW" also switches a paired item
-             if (!isRaw && !IsCompareModeActive()) {
-                 isRaw = GetPaneContext(PaneSlot::Primary).navigator.HasPairedRaw(FileNavigator::PathToImageID(targetPath));
-             }
+        // Only unmodified Right-Click falls back to opening the Context Menu
+        if (currentMods == 0) {
+            ShowContextMenuAtClientPt(hwnd, ptClient);
         }
-        
-        bool isPixelArtMode = GetCurrentPixelArtState(hwnd);
-        const bool contextLeft = IsCompareModeActive() && AppContext::GetInstance().Compare.contextPane == ComparePane::Left;
-        int menuCmsMode = contextLeft ? (GetPaneContext(PaneSlot::Left).CmsModeOverride != -1 ? GetPaneContext(PaneSlot::Left).CmsModeOverride : (g_config.ColorManagement ? 1 : 0)) : g_runtime.GetEffectiveCmsMode(g_config.ColorManagement);
-        bool menuEnableSoftProofing = contextLeft ? GetPaneContext(PaneSlot::Left).EnableSoftProofing : g_runtime.EnableSoftProofing;
-        std::wstring menuSoftProofPath = contextLeft ? GetPaneContext(PaneSlot::Left).SoftProofProfilePath : g_runtime.SoftProofProfilePath;
-
-        // [Fix] Snap any in-progress gallery fade-out before opening the popup menu.
-        // The fade animation drives high-frequency DComp Present() which destabilizes
-        // the menu's DWM Acrylic/Mica backdrop composition, causing a translucent flash.
-        if (g_gallery.IsVisible()) {
-            g_gallery.ForceFinishTransition();
-        }
-
-        ShowContextMenu(hwnd, pt, hasImage, extensionFixNeeded, g_runtime.LockWindowSize, g_runtime.ShowInfoPanel, g_runtime.InfoPanelExpanded, g_config.AlwaysOnTop, renderRaw, isRaw, IsZoomed(hwnd) != 0, g_runtime.CrossMonitorMode, IsCompareModeActive(), isPixelArtMode, menuCmsMode, menuEnableSoftProofing, menuSoftProofPath);
         return 0;
     }
     
@@ -18427,12 +18859,11 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
 
     case HotkeyAction::ZoomIn:
         if (IsCompareModeActive()) {
-            float mult = ctrl ? 1.05f : 1.10f;
-            ApplyCompareZoomWithMultiplier(hwnd, AppContext::GetInstance().Compare.activePane, mult, nullptr, AppContext::GetInstance().Compare.syncZoom);
+            ApplyCompareZoomWithMultiplier(hwnd, AppContext::GetInstance().Compare.activePane, 1.10f, nullptr, AppContext::GetInstance().Compare.syncZoom);
             return true;
         }
         if (GetPaneContext(PaneSlot::Primary).resource) {
-            float newTotalScale = CalculateTargetZoom(hwnd, 1.0f, ctrl);
+            float newTotalScale = CalculateTargetZoom(hwnd, 1.0f, false);
             PerformSmartZoom(hwnd, newTotalScale, nullptr, false, false);
             GetPaneContext(PaneSlot::Primary).view.IsInteracting = true;
             SetTimer(hwnd, IDT_INTERACTION, 150, nullptr);
@@ -18456,12 +18887,11 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
 
     case HotkeyAction::ZoomOut:
         if (IsCompareModeActive()) {
-            float mult = ctrl ? (1.0f / 1.05f) : (1.0f / 1.10f);
-            ApplyCompareZoomWithMultiplier(hwnd, AppContext::GetInstance().Compare.activePane, mult, nullptr, AppContext::GetInstance().Compare.syncZoom);
+            ApplyCompareZoomWithMultiplier(hwnd, AppContext::GetInstance().Compare.activePane, 1.0f / 1.10f, nullptr, AppContext::GetInstance().Compare.syncZoom);
             return true;
         }
         if (GetPaneContext(PaneSlot::Primary).resource) {
-            float newTotalScale = CalculateTargetZoom(hwnd, -1.0f, ctrl);
+            float newTotalScale = CalculateTargetZoom(hwnd, -1.0f, false);
             PerformSmartZoom(hwnd, newTotalScale, nullptr, false, false);
             GetPaneContext(PaneSlot::Primary).view.IsInteracting = true;
             SetTimer(hwnd, IDT_INTERACTION, 150, nullptr);
@@ -18765,11 +19195,7 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
         return true;
 
     case HotkeyAction::ToggleFullscreen:
-        if (GetKeyState(VK_CONTROL) < 0) {
-            SendMessage(hwnd, WM_COMMAND, IDM_TOGGLE_SPAN, 0);
-        } else {
-            SendMessage(hwnd, WM_COMMAND, IDM_FULLSCREEN, 0);
-        }
+        SendMessage(hwnd, WM_COMMAND, IDM_FULLSCREEN, 0);
         return true;
 
     case HotkeyAction::ToggleSpan:

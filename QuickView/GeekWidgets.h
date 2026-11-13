@@ -150,6 +150,18 @@ void DrawPillComboBox(
     float uiScale,
     const WidgetPalette& palette);
 
+// 5.1 Universal Marquee Clipped Text with Smooth Hover Auto-Scroll
+void DrawMarqueeText(
+    ID2D1DeviceContext* dc,
+    const D2D1_RECT_F& visibleRect,
+    std::wstring_view text,
+    bool isHovered,
+    bool isDisabled,
+    IDWriteTextFormat* textFormat,
+    ID2D1Brush* brush,
+    float uiScale,
+    IDWriteFactory* dwriteFactory = nullptr);
+
 // 6. Standalone Reset Button (Placed on the left outside)
 void DrawResetButton(
     ID2D1DeviceContext* dc,

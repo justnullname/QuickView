@@ -45,6 +45,7 @@ enum class OptionType {
     InfoLabel,        
     CopyrightLabel,
     HotkeyBindRow,
+    MouseGestureRow,
     TagCloud
 };
 
@@ -89,6 +90,7 @@ struct SettingsItem {
     DWORD statusSetTime = 0; 
     
     HotkeyAction hotkeyAction = HotkeyAction::None;
+    int gestureIndex = -1;
     std::vector<D2D1_RECT_F> optionRects = {}; 
     bool isNewOption = false; // Flag to indicate if this is a newly added option in this version
     float step = 0.0f; // If 0.0f, defaults to 1% of the (maxVal - minVal) range.
@@ -137,6 +139,7 @@ public:
     void OnVScroll(WPARAM wParam, LPARAM lParam);
 
     bool IsInputFocused() const { return m_pFocusedSlider != nullptr; }
+    bool HasActiveDropdown() const { return m_pActiveCombo != nullptr || m_activeGestureDropdown.gestureIndex >= 0; }
     void CommitInput();
     void CancelInput();
 
@@ -332,5 +335,24 @@ private:
     int m_borderStrokeOption = 0; // [UX Fix] 3-state border options (0=None, 1=Fine, 2=Standard)
     int m_separatorPresetIndex = 0;
     int m_galleryExpandTriggerIndex = 0; // 0=Click, 1=Hover
+
+    struct ActiveGestureDropdown {
+        int gestureIndex = -1;
+        int column = -1; // 0=Mod1, 1=Mod2, 2=Trigger, 3=Action
+        D2D1_RECT_F anchorRect = {};
+        std::vector<std::wstring> options;
+        std::vector<int> optionValues;
+        int selectedIdx = -1;
+    };
+    ActiveGestureDropdown m_activeGestureDropdown;
+    int m_gestureDropdownHoverIdx = -1;
+    int m_gestureDropdownScrollOffset = 0;
+
+    void CloseGestureDropdown();
+    D2D1_RECT_F GetGestureDropdownRect() const;
+    void DrawGestureDropdown(ID2D1DeviceContext* pRT);
+
+    static int s_controlSubTab;
+    static int s_gesturePresetIdx;
 };
 

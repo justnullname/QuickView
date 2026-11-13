@@ -88,89 +88,10 @@ void HelpOverlay::CreateResources(ID2D1RenderTarget* pRT) {
 void HelpOverlay::RebuildList() {
     m_items.clear();
 
-    // 1. Prepare dynamic localized strings in class-level caches
-    m_strCtrlLeft = L"Ctrl + " + std::wstring(AppStrings::Settings_Label_LeftDrag);
-    
-    m_strHudText = AppStrings::Context_HUDGallery;
-    size_t tabPos = m_strHudText.find(L'\t');
-    if (tabPos != std::wstring::npos) {
-        m_strHudText = m_strHudText.substr(0, tabPos);
-    }
-    
-    m_strHudTopCombined = m_strHudText + L" / " + AppStrings::Settings_Label_AlwaysOnTop;
-    
-    m_strOverlayText = AppStrings::Context_OverlayMode;
-    size_t oTab = m_strOverlayText.find(L'\t');
-    if (oTab != std::wstring::npos) {
-        m_strOverlayText = m_strOverlayText.substr(0, oTab);
-    }
-    
-    m_strOverlayAlpha = std::wstring(AppStrings::Toolbar_Tooltip_OverlayAlphaUp) + L" / " + AppStrings::Toolbar_Tooltip_OverlayAlphaDown;
-    
-    m_strOpenText = AppStrings::Context_Open;
-    size_t openTab = m_strOpenText.find(L'\t');
-    if (openTab != std::wstring::npos) {
-        m_strOpenText = m_strOpenText.substr(0, openTab);
-    }
-
-    // 2. Build list with safe pointer assignments
+    // Top notice directing users to customizable Controls & future online help docs
     m_items.push_back({ false, AppStrings::Help_Tip_ContextScope, L"" });
 
-    m_items.push_back({ true, AppStrings::Help_Header_Mouse, L"" });
-    m_items.push_back({ false, L"\x2190 / \x2192 (Space)", AppStrings::Help_Action_NextPrev });
-    m_items.push_back({ false, L"Home / End", AppStrings::Help_Item_FirstLast });
-    bool wheelPrimaryNavigate = (g_config.WheelActionMode == 1);
-    m_items.push_back({ false, AppStrings::Help_Mouse_Wheel, wheelPrimaryNavigate ? AppStrings::Help_Action_NextPrev : AppStrings::Help_Action_Zoom });
-    m_items.push_back({ false, L"Ctrl + Scroll", AppStrings::Help_Action_LockWindowZoom });
-    m_items.push_back({ false, L"Alt + Scroll", AppStrings::Help_Action_AdjustZoomSpeed });
-    m_items.push_back({ false, AppStrings::Help_Mouse_RightVerticalDrag, AppStrings::Help_Action_Zoom });
-    m_items.push_back({ false, AppStrings::Help_Mouse_Right, AppStrings::Help_Action_ContextMenu });
-    m_items.push_back({ false, AppStrings::Settings_Label_LeftDrag, AppStrings::Help_Action_MoveWindow });
-    m_items.push_back({ false, AppStrings::Settings_Label_MiddleDrag, AppStrings::Help_Action_PanImage });
-    m_items.push_back({ false, m_strCtrlLeft.c_str(), L"Same as Middle Drag" });
-    
-    m_items.push_back({ false, L"Double Click", AppStrings::Help_Action_SmartZoom });
-    m_items.push_back({ false, L"Middle Click", AppStrings::Help_Item_Close });
-
-    m_items.push_back({ true, AppStrings::Context_View, L"" });
-    m_items.push_back({ false, L"F1", L"Help" });
-    m_items.push_back({ false, L"F11 / Enter", AppStrings::Help_Item_Fullscreen });
-    m_items.push_back({ false, L"F12", L"Debug HUD (Enable in Settings)" });
-    
-    m_items.push_back({ false, L"T / Ctrl+T", m_strHudTopCombined.c_str() });
-    m_items.push_back({ false, L"Z", AppStrings::OSD_Zoom100 });
-    m_items.push_back({ false, L"F", AppStrings::OSD_ZoomFit });
-    m_items.push_back({ false, L"+ (\x2191) / - (\x2193)", L"Zoom (+/- 10%)" });
-    m_items.push_back({ false, L"Ctrl + (+/-)", L"Zoom (+/- 1%)" });
-    
-    m_items.push_back({ false, L"I / Tab", L"Info Panel (Full / Lite)" });
-    m_items.push_back({ false, L"0-5 / Numpad 0-5", L"Star Rating (0 clears)" });
-    m_items.push_back({ false, L"C", AppStrings::Help_Item_Compare });
-    m_items.push_back({ false, L"Ctrl + F11", AppStrings::Settings_Label_SpanDisplays });
-
-    m_items.push_back({ true, m_strOverlayText.c_str(), L"" });
-    m_items.push_back({ false, L"Ctrl + Shift + O", m_strOverlayText.c_str() });
-    m_items.push_back({ false, L"Alt + \x2191 / \x2193", m_strOverlayAlpha.c_str() });
-    m_items.push_back({ false, L"Shift + Esc", AppStrings::Menu_ExitPassthrough });
-
-    m_items.push_back({ true, L"File Operations", L"" });
-    
-    m_items.push_back({ false, L"O / Ctrl+O", m_strOpenText.c_str() });
-    m_items.push_back({ false, L"F2", L"Rename" });
-    m_items.push_back({ false, L"Del", L"Delete" });
-    m_items.push_back({ false, L"Ctrl + C", AppStrings::Help_Desc_Copy });
-    m_items.push_back({ false, L"Ctrl+Alt+C", L"Copy File Path" });
-    m_items.push_back({ false, L"Ctrl+P", L"Print" });
-
-    m_items.push_back({ true, AppStrings::Context_Transform, L"" });
-    m_items.push_back({ false, L"R / Shift+R", L"Rotate 90\u00B0 CW / CCW" });
-    m_items.push_back({ false, L"H", L"Flip Horizontal" });
-    m_items.push_back({ false, L"V", L"Flip Vertical" });
-    m_items.push_back({ false, L"E", AppStrings::Help_Desc_Edit });
-
-    m_items.push_back({ true, L"Interface", L"" });
-    m_items.push_back({ false, L"Esc", AppStrings::Help_Item_Close });
-
+    // Tips & Glossary
     m_items.push_back({ true, AppStrings::Help_Header_Tips, L"" });
     m_items.push_back({ false, AppStrings::Help_Tip_Rotation, L"" });
     m_items.push_back({ false, AppStrings::Help_Tip_VideoWall, L"" });

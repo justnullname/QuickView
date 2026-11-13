@@ -38,6 +38,9 @@ extern ImageEngine* g_pImageEngine;
 extern AppConfig g_config;
 extern RuntimeConfig g_runtime;
 extern std::wstring& g_imagePath;
+
+int SettingsOverlay::s_controlSubTab = 0;
+int SettingsOverlay::s_gesturePresetIdx = 0;
 extern FileNavigator& g_navigator;
 extern Toolbar g_toolbar; // [Fix] Allow Settings to update toolbar state directly
 extern HelpOverlay g_helpOverlay;
@@ -2306,10 +2309,10 @@ void SettingsOverlay::BuildGeneralTab(SettingsTab& tabGeneral) {
                     CopyFileW(appDataAiJson.c_str(), exeAiJson.c_str(), FALSE);
                     DeleteFileW(appDataAiJson.c_str());
                 }
-                SaveConfig(); // Update to ensure PortableMode=true is saved
+                SaveConfigSync(); // Update to ensure PortableMode=true is saved immediately before reload
             } else if (!exeExists) {
                 // 2. Both missing: Generate default config in ExeDir
-                SaveConfig();
+                SaveConfigSync();
             }
             // 3. AppData missing, ExeDir exists: Do NOT overwrite (preserve existing portable config)
             
@@ -2342,7 +2345,7 @@ void SettingsOverlay::BuildGeneralTab(SettingsTab& tabGeneral) {
             }
             
             // Save current config to AppData (ensures PortableMode=false is correctly persisted)
-            SaveConfig();
+            SaveConfigSync();
             QuickView::AI::AiActionManager::Instance().ReloadConfig();
             
             // Use deferred rebuild to update File Association button state
@@ -3044,207 +3047,239 @@ void SettingsOverlay::BuildVisualsTab(SettingsTab& tabVisuals) {
 void SettingsOverlay::BuildControlTab(SettingsTab& tabControl) {
     tabControl.name = AppStrings::Settings_Tab_Controls;
     tabControl.icon = Icons::Control;
-    
-    tabControl.items.push_back({ AppStrings::Settings_Header_Mouse, OptionType::Header });
-    tabControl.items.push_back({ AppStrings::Settings_Label_InvertWheel, OptionType::Toggle, &g_config.InvertWheel });
-    tabControl.items.push_back({ AppStrings::Help_Mouse_Wheel, OptionType::Segment, nullptr, nullptr, &g_config.WheelActionMode, nullptr, 0, 0, {AppStrings::Help_Action_Zoom, AppStrings::Help_Action_NextPrev} });
-    
-    // Thumb Wheel with Tooltip
-    SettingsItem itemThumbWheel = { AppStrings::Settings_Label_ThumbWheel, OptionType::Segment, nullptr, nullptr, &g_config.ThumbWheelMode, nullptr, 0, 0, {AppStrings::Help_Action_NextPrev, AppStrings::Help_Action_Zoom} };
-    itemThumbWheel.tooltipText = AppStrings::Settings_Tooltip_ThumbWheel;
-    tabControl.items.push_back(itemThumbWheel);
 
-    // Double-Click mode (NEW - Dropdown ComboBox)
-    SettingsItem itemDoubleClick = { AppStrings::Settings_Label_DoubleClick, OptionType::ComboBox, nullptr, nullptr, &g_config.DoubleClickMode };
-    itemDoubleClick.options = {
-        AppStrings::Settings_Option_DoubleClick_Smart,
-        AppStrings::Settings_Option_DoubleClick_WheelMode1,
-        AppStrings::Settings_Option_DoubleClick_WheelMode2,
-        AppStrings::Settings_Option_None
+    // Top Segmented Tabs: [ 鼠标手势 | 按键设置 | 高级与偏好 ] (Horizontally Centered)
+    SettingsItem itemSegment = { L"", OptionType::Segment, nullptr, nullptr, &s_controlSubTab, nullptr, 0, 0,
+        { std::wstring_view(AppStrings::Settings_ControlSub_Mouse),
+          std::wstring_view(AppStrings::Settings_ControlSub_Keyboard),
+          std::wstring_view(AppStrings::Settings_ControlSub_Behavior) } };
+    itemSegment.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        if (overlay) overlay->BuildMenu();
     };
-    itemDoubleClick.tooltipText = AppStrings::Settings_Tooltip_DoubleClick;
-    itemDoubleClick.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-        extern void ResetWheelPanMode();
-        ResetWheelPanMode();
-        SaveConfig();
-    };
-    tabControl.items.push_back(itemDoubleClick);
+    tabControl.items.push_back(itemSegment);
 
-    tabControl.items.push_back({ AppStrings::Settings_Label_MouseAnchorZoom, OptionType::Toggle, &g_config.MouseAnchoredWindowZoom });
-    tabControl.items.push_back({ AppStrings::Settings_Label_RightButtonDragZoom, OptionType::Toggle, &g_config.RightButtonDragZoom });
-    tabControl.items.push_back({ AppStrings::Settings_Label_RightDragZoomSpeed, OptionType::Slider, nullptr, &g_config.RightDragZoomSpeed, nullptr, nullptr, 0.1f, 3.0f, {}, L"%.1fx" });
-    SettingsItem itemWheelZoomSpeed = { AppStrings::Settings_Label_WheelZoomSpeed, OptionType::Slider, nullptr, &g_config.WheelZoomSpeed, nullptr, nullptr, 5.0f, 50.0f, {}, L"%.0f%%" };
-    itemWheelZoomSpeed.tooltipText = AppStrings::Settings_Tooltip_WheelZoomSpeed;
-    tabControl.items.push_back(itemWheelZoomSpeed);
-    
-    // Use Fixed Zoom Levels
-    SettingsItem itemUseFixedZoom = { AppStrings::Settings_Label_UseFixedZoom, OptionType::Toggle, &g_config.UseFixedZoom };
-    itemUseFixedZoom.tooltipText = AppStrings::Settings_Tooltip_UseFixedZoom;
-    itemUseFixedZoom.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
-    tabControl.items.push_back(itemUseFixedZoom);
-    
-    // Fixed Zoom Levels Input
-    SettingsItem itemFixedZoomLevels;
-    itemFixedZoomLevels.label = AppStrings::Settings_Label_FixedZoomLevels;
-    itemFixedZoomLevels.type = OptionType::Input;
-    itemFixedZoomLevels.pStrVal = &g_config.FixedZoomLevels;
-    itemFixedZoomLevels.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-        ParseFixedZoomLevels();
-        SaveConfig();
-    };
-    itemFixedZoomLevels.onReset = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-        g_config.FixedZoomLevels = L"0.05,0.1,0.125,0.166,0.25,0.333,0.5,0.66,1,1.5,2,3,4,5,6,7,8,12,16,32,64,128";
-        ParseFixedZoomLevels();
-        SaveConfig();
-        overlay->RebuildMenu();
-    };
-    tabControl.items.push_back(itemFixedZoomLevels);
-
-    tabControl.items.push_back({ AppStrings::Settings_Label_InvertButtons, OptionType::Toggle, &g_config.InvertXButton });
-    
-    // Left Drag
-    SettingsItem itemLeftDrag = { AppStrings::Settings_Label_LeftDrag, OptionType::Segment, nullptr, nullptr, &g_config.LeftDragIndex, nullptr, 0, 0, {AppStrings::Settings_Option_Window, AppStrings::Settings_Option_Pan} };
-    itemLeftDrag.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-        if (g_config.LeftDragIndex == 0) {
-            g_config.LeftDragAction = MouseAction::WindowDrag;
-            g_config.MiddleDragAction = MouseAction::PanImage;
-            g_config.MiddleDragIndex = 1;
-        } else {
-            g_config.LeftDragAction = MouseAction::PanImage;
-            g_config.MiddleDragAction = MouseAction::WindowDrag;
-            g_config.MiddleDragIndex = 0;
+    if (s_controlSubTab == 0) {
+        // --- Sub-Tab 0: Mouse Gestures ---
+        if (g_config.MouseGestures == GetDefaultMouseGestures()) {
+            s_gesturePresetIdx = 0;
+        } else if (g_config.MouseGestures == GetStandardViewerMouseGestures()) {
+            s_gesturePresetIdx = 1;
+        } else if (g_config.MouseGestures == GetMinimalBrowserMouseGestures()) {
+            s_gesturePresetIdx = 2;
         }
-    };
-    tabControl.items.push_back(itemLeftDrag);
-    
-    // Middle Drag with Tooltip
-    SettingsItem itemMiddleDrag = { AppStrings::Settings_Label_MiddleDrag, OptionType::Segment, nullptr, nullptr, &g_config.MiddleDragIndex, nullptr, 0, 0, {AppStrings::Settings_Option_Window, AppStrings::Settings_Option_Pan} };
-    itemMiddleDrag.tooltipText = AppStrings::Settings_Tooltip_MiddleDrag;
-    itemMiddleDrag.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-        if (g_config.MiddleDragIndex == 0) {
-            g_config.MiddleDragAction = MouseAction::WindowDrag;
-            g_config.LeftDragAction = MouseAction::PanImage;
-            g_config.LeftDragIndex = 1;
-        } else {
-            g_config.MiddleDragAction = MouseAction::PanImage;
-            g_config.LeftDragAction = MouseAction::WindowDrag;
-            g_config.LeftDragIndex = 0;
-        }
-    };
-    tabControl.items.push_back(itemMiddleDrag);
-    
-    // Middle Click
-    SettingsItem itemMiddleClick = { AppStrings::Settings_Label_MiddleClick, OptionType::Segment, nullptr, nullptr, &g_config.MiddleClickIndex, nullptr, 0, 0, {AppStrings::Settings_Option_None, AppStrings::Settings_Option_Exit} };
-    itemMiddleClick.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-        if (g_config.MiddleClickIndex == 0) {
-            g_config.MiddleClickAction = MouseAction::None;
-        } else {
-            g_config.MiddleClickAction = MouseAction::ExitApp;
-        }
-    };
-    tabControl.items.push_back(itemMiddleClick);
-    
-    tabControl.items.push_back({ AppStrings::Settings_Header_KeyboardPan, OptionType::Header });
-    
-    SettingsItem itemPanNormal = { AppStrings::Settings_Label_PanStepNormal, OptionType::Slider, nullptr, &g_config.PanStepNormal, nullptr, nullptr, 1.0f, 600.0f, {}, L"%.0f px" };
-    itemPanNormal.tooltipText = AppStrings::Settings_Tooltip_PanStepNormal;
-    tabControl.items.push_back(itemPanNormal);
 
-    SettingsItem itemPanFast = { AppStrings::Settings_Label_PanStepFast, OptionType::Slider, nullptr, &g_config.PanStepFast, nullptr, nullptr, 10.0f, 1000.0f, {}, L"%.0f px" };
-    itemPanFast.step = 1.0f;
-    tabControl.items.push_back(itemPanFast);
-
-    tabControl.items.push_back({ AppStrings::Settings_Header_Edge, OptionType::Header });
-    tabControl.items.push_back({ AppStrings::Settings_Label_EdgeNavClick, OptionType::Toggle, &g_config.EdgeNavClick });
-    tabControl.items.push_back({ AppStrings::Settings_Label_DisableEdgeNavInCompare, OptionType::Toggle, &g_config.DisableEdgeNavInCompare });
-    tabControl.items.push_back({ AppStrings::Settings_Label_NavIndicator, OptionType::Segment, nullptr, nullptr, BindEnum(&g_config.NavIndicator), nullptr, 0, 0, {AppStrings::Settings_Option_Arrow, AppStrings::Settings_Option_Cursor} });
- 
-    // Gallery Trigger Mode
-    {
-        tabControl.items.push_back({ AppStrings::Settings_Header_GalleryTrigger, OptionType::Header });
-
-        SettingsItem itemGalleryTrigger = { AppStrings::Settings_Label_GalleryTriggerMode, OptionType::ComboBox, nullptr, nullptr, &g_config.GalleryTriggerMode };
-        itemGalleryTrigger.options = {
-            AppStrings::Settings_Option_GalleryTriggerAuto,
-            AppStrings::Settings_Option_GalleryTriggerDelay,
-            AppStrings::Settings_Option_GalleryTriggerClick,
-            AppStrings::Settings_Option_GalleryTriggerDisable
+        SettingsItem itemPreset = { AppStrings::Settings_Gesture_Preset, OptionType::ComboBox, nullptr, nullptr, &s_gesturePresetIdx };
+        itemPreset.options = {
+            AppStrings::Settings_Gesture_Preset_Default,
+            AppStrings::Settings_Gesture_Preset_Standard,
+            AppStrings::Settings_Gesture_Preset_Browser
         };
-        itemGalleryTrigger.tooltipText = AppStrings::Settings_Tooltip_GalleryTrigger;
-        itemGalleryTrigger.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { 
-            SaveConfig(); 
-            overlay->BuildMenu();
+        itemPreset.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+            g_config.LoadMouseGesturePreset(s_gesturePresetIdx);
+            g_config.SyncMiddleClickHotkeyFromGestures();
+            g_config.SyncLegacyHotkeysArray(g_hotkeys);
+            SaveMouseGesturesConfig();
+            SaveHotkeysConfig();
+            if (overlay) overlay->BuildMenu();
         };
-        tabControl.items.push_back(itemGalleryTrigger);
+        tabControl.items.push_back(itemPreset);
 
-        SettingsItem itemKeepVisible = { AppStrings::Settings_Label_KeepGalleryVisibleOnThumbnailClick, OptionType::Toggle, &g_config.GalleryKeepVisibleOnThumbnailClick };
-        itemKeepVisible.tooltipText = AppStrings::Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick;
-        itemKeepVisible.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-            if (g_config.GalleryKeepVisibleOnThumbnailClick) {
-                g_config.LockWindowSize = true;
-                extern void SetLockWindowSize(HWND hwnd, bool locked);
-                extern HWND g_mainHwnd;
-                SetLockWindowSize(g_mainHwnd, true);
-                g_config.KeepWindowSizeOnNav = true;
-                if (overlay) {
-                    overlay->BuildMenu();
+        SettingsItem itemReset = { L"", OptionType::ActionButton };
+        itemReset.buttonText = AppStrings::Settings_Gesture_Reset;
+        itemReset.isDestructive = true;
+        itemReset.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+            g_config.ResetMouseGesturesToDefault();
+            g_config.SyncMiddleClickHotkeyFromGestures();
+            g_config.SyncLegacyHotkeysArray(g_hotkeys);
+            s_gesturePresetIdx = 0;
+            SaveMouseGesturesConfig();
+            SaveHotkeysConfig();
+            if (overlay) overlay->BuildMenu();
+        };
+        tabControl.items.push_back(itemReset);
+
+        tabControl.items.push_back({ AppStrings::Settings_ControlSub_Mouse, OptionType::Header });
+
+        for (size_t i = 0; i < g_config.MouseGestures.size(); ++i) {
+            SettingsItem rowItem;
+            rowItem.label = L"";
+            rowItem.type = OptionType::MouseGestureRow;
+            rowItem.gestureIndex = static_cast<int>(i);
+            tabControl.items.push_back(rowItem);
+        }
+
+        SettingsItem itemAdd = { L"", OptionType::ActionButton };
+        itemAdd.buttonText = AppStrings::Settings_Gesture_Add;
+        itemAdd.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+            MouseGestureRule candidate{ 0, 0, (uint8_t)MouseTrigger::LeftDrag, (int)MouseActionTarget::None };
+            bool foundUnused = false;
+            for (uint8_t m = 0; m <= 3 && !foundUnused; ++m) {
+                for (int t = 0; t < (int)MouseTrigger::Count; ++t) {
+                    MouseGestureRule probe{ m, 0, static_cast<uint8_t>(t), (int)MouseActionTarget::None };
+                    if (!g_config.HasMouseGesture(probe.GetModifiers(), static_cast<MouseTrigger>(t))) {
+                        candidate = probe;
+                        foundUnused = true;
+                        break;
+                    }
                 }
             }
-            SaveConfig();
-        };
-        tabControl.items.push_back(itemKeepVisible);
-
-        m_galleryExpandTriggerIndex = g_config.GalleryExpandOnClickOnly ? 0 : 1;
-        SettingsItem itemExpandTrigger = { 
-            AppStrings::Settings_Label_GalleryExpandOnClickOnly, 
-            OptionType::Segment, 
-            nullptr, 
-            nullptr, 
-            &m_galleryExpandTriggerIndex, 
-            nullptr, 0, 0, 
-            { AppStrings::Settings_Option_TriggerClick, AppStrings::Settings_Option_TriggerHover } 
-        };
-        itemExpandTrigger.isNewOption = true;
-        itemExpandTrigger.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-            if (overlay) {
-                g_config.GalleryExpandOnClickOnly = (overlay->m_galleryExpandTriggerIndex == 0);
+            if (!foundUnused) {
+                // Check two-modifier combinations as fallback
+                for (uint8_t m1 = 1; m1 <= 3 && !foundUnused; ++m1) {
+                    for (uint8_t m2 = m1 + 1; m2 <= 3 && !foundUnused; ++m2) {
+                        for (int t = 0; t < (int)MouseTrigger::Count; ++t) {
+                            MouseGestureRule probe{ m1, m2, static_cast<uint8_t>(t), (int)MouseActionTarget::None };
+                            if (!g_config.HasMouseGesture(probe.GetModifiers(), static_cast<MouseTrigger>(t))) {
+                                candidate = probe;
+                                foundUnused = true;
+                                break;
+                            }
+                        }
+                    }
+                }
             }
+            g_config.MouseGestures.push_back(candidate);
+            SaveMouseGesturesConfig();
+            if (overlay) overlay->BuildMenu();
+        };
+        tabControl.items.push_back(itemAdd);
+    } else if (s_controlSubTab == 1) {
+        // --- Sub-Tab 1: Keyboard Shortcuts ---
+        BuildKeysTab(tabControl);
+    } else {
+        // --- Sub-Tab 2: Behavior & Advanced Preferences ---
+        tabControl.items.push_back({ AppStrings::Settings_Header_Mouse, OptionType::Header });
+        tabControl.items.push_back({ AppStrings::Settings_Label_InvertWheel, OptionType::Toggle, &g_config.InvertWheel });
+        tabControl.items.push_back({ AppStrings::Settings_Label_InvertButtons, OptionType::Toggle, &g_config.InvertXButton });
+        tabControl.items.push_back({ AppStrings::Settings_Label_MouseAnchorZoom, OptionType::Toggle, &g_config.MouseAnchoredWindowZoom });
+        tabControl.items.push_back({ AppStrings::Settings_Label_RightDragZoomSpeed, OptionType::Slider, nullptr, &g_config.RightDragZoomSpeed, nullptr, nullptr, 0.1f, 3.0f, {}, L"%.1fx" });
+        SettingsItem itemWheelZoomSpeed = { AppStrings::Settings_Label_WheelZoomSpeed, OptionType::Slider, nullptr, &g_config.WheelZoomSpeed, nullptr, nullptr, 5.0f, 50.0f, {}, L"%.0f%%" };
+        itemWheelZoomSpeed.tooltipText = AppStrings::Settings_Tooltip_WheelZoomSpeed;
+        tabControl.items.push_back(itemWheelZoomSpeed);
+        
+        // Use Fixed Zoom Levels
+        SettingsItem itemUseFixedZoom = { AppStrings::Settings_Label_UseFixedZoom, OptionType::Toggle, &g_config.UseFixedZoom };
+        itemUseFixedZoom.tooltipText = AppStrings::Settings_Tooltip_UseFixedZoom;
+        itemUseFixedZoom.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
+        tabControl.items.push_back(itemUseFixedZoom);
+        
+        // Fixed Zoom Levels Input
+        SettingsItem itemFixedZoomLevels;
+        itemFixedZoomLevels.label = AppStrings::Settings_Label_FixedZoomLevels;
+        itemFixedZoomLevels.type = OptionType::Input;
+        itemFixedZoomLevels.pStrVal = &g_config.FixedZoomLevels;
+        itemFixedZoomLevels.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+            ParseFixedZoomLevels();
             SaveConfig();
         };
-        tabControl.items.push_back(itemExpandTrigger);
+        itemFixedZoomLevels.onReset = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+            g_config.FixedZoomLevels = L"0.05,0.1,0.125,0.166,0.25,0.333,0.5,0.66,1,1.5,2,3,4,5,6,7,8,12,16,32,64,128";
+            ParseFixedZoomLevels();
+            SaveConfig();
+            overlay->RebuildMenu();
+        };
+        tabControl.items.push_back(itemFixedZoomLevels);
 
-        if (g_config.GalleryTriggerMode == 0) {
-            SettingsItem itemAreaHeight = { AppStrings::Settings_Label_GalleryTriggerAreaHeight, OptionType::Slider, nullptr, &g_config.GalleryTriggerAreaHeight };
-            itemAreaHeight.minVal = 5.0f;
-            itemAreaHeight.maxVal = 100.0f;
-            itemAreaHeight.step = 1.0f;
-            itemAreaHeight.displayFormat = L"%.0f px";
-            itemAreaHeight.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
-            tabControl.items.push_back(itemAreaHeight);
-        } else if (g_config.GalleryTriggerMode == 1) {
-            SettingsItem itemDwell = { AppStrings::Settings_Label_GalleryDwellTime, OptionType::Slider, nullptr, &g_config.GalleryDwellTime };
-            itemDwell.minVal = 0.05f;
-            itemDwell.maxVal = 2.00f;
-            itemDwell.step = 0.01f;
-            itemDwell.displayFormat = L"%.2f s";
-            itemDwell.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
-            tabControl.items.push_back(itemDwell);
+        tabControl.items.push_back({ AppStrings::Settings_Header_KeyboardPan, OptionType::Header });
+        
+        SettingsItem itemPanNormal = { AppStrings::Settings_Label_PanStepNormal, OptionType::Slider, nullptr, &g_config.PanStepNormal, nullptr, nullptr, 1.0f, 600.0f, {}, L"%.0f px" };
+        itemPanNormal.tooltipText = AppStrings::Settings_Tooltip_PanStepNormal;
+        tabControl.items.push_back(itemPanNormal);
+
+        SettingsItem itemPanFast = { AppStrings::Settings_Label_PanStepFast, OptionType::Slider, nullptr, &g_config.PanStepFast, nullptr, nullptr, 10.0f, 1000.0f, {}, L"%.0f px" };
+        itemPanFast.step = 1.0f;
+        tabControl.items.push_back(itemPanFast);
+
+        tabControl.items.push_back({ AppStrings::Settings_Header_Edge, OptionType::Header });
+        tabControl.items.push_back({ AppStrings::Settings_Label_EdgeNavClick, OptionType::Toggle, &g_config.EdgeNavClick });
+        tabControl.items.push_back({ AppStrings::Settings_Label_DisableEdgeNavInCompare, OptionType::Toggle, &g_config.DisableEdgeNavInCompare });
+        tabControl.items.push_back({ AppStrings::Settings_Label_NavIndicator, OptionType::Segment, nullptr, nullptr, BindEnum(&g_config.NavIndicator), nullptr, 0, 0, {AppStrings::Settings_Option_Arrow, AppStrings::Settings_Option_Cursor} });
+     
+        // Gallery Trigger Mode
+        {
+            tabControl.items.push_back({ AppStrings::Settings_Header_GalleryTrigger, OptionType::Header });
+
+            SettingsItem itemGalleryTrigger = { AppStrings::Settings_Label_GalleryTriggerMode, OptionType::ComboBox, nullptr, nullptr, &g_config.GalleryTriggerMode };
+            itemGalleryTrigger.options = {
+                AppStrings::Settings_Option_GalleryTriggerAuto,
+                AppStrings::Settings_Option_GalleryTriggerDelay,
+                AppStrings::Settings_Option_GalleryTriggerClick,
+                AppStrings::Settings_Option_GalleryTriggerDisable
+            };
+            itemGalleryTrigger.tooltipText = AppStrings::Settings_Tooltip_GalleryTrigger;
+            itemGalleryTrigger.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { 
+                SaveConfig(); 
+                overlay->BuildMenu();
+            };
+            tabControl.items.push_back(itemGalleryTrigger);
+
+            SettingsItem itemKeepVisible = { AppStrings::Settings_Label_KeepGalleryVisibleOnThumbnailClick, OptionType::Toggle, &g_config.GalleryKeepVisibleOnThumbnailClick };
+            itemKeepVisible.tooltipText = AppStrings::Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick;
+            itemKeepVisible.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+                if (g_config.GalleryKeepVisibleOnThumbnailClick) {
+                    g_config.LockWindowSize = true;
+                    extern void SetLockWindowSize(HWND hwnd, bool locked);
+                    extern HWND g_mainHwnd;
+                    SetLockWindowSize(g_mainHwnd, true);
+                    g_config.KeepWindowSizeOnNav = true;
+                    if (overlay) {
+                        overlay->BuildMenu();
+                    }
+                }
+                SaveConfig();
+            };
+            tabControl.items.push_back(itemKeepVisible);
+
+            m_galleryExpandTriggerIndex = g_config.GalleryExpandOnClickOnly ? 0 : 1;
+            SettingsItem itemExpandTrigger = {
+                AppStrings::Settings_Label_GalleryExpandOnClickOnly,
+                OptionType::Segment,
+                nullptr,
+                nullptr,
+                &m_galleryExpandTriggerIndex,
+                nullptr, 0, 0,
+                { AppStrings::Settings_Option_TriggerClick, AppStrings::Settings_Option_TriggerHover }
+            };
+            itemExpandTrigger.isNewOption = true;
+            itemExpandTrigger.tooltipText = AppStrings::Settings_Tooltip_GalleryExpandOnClickOnly;
+            itemExpandTrigger.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+                if (overlay) {
+                    g_config.GalleryExpandOnClickOnly = (overlay->m_galleryExpandTriggerIndex == 0);
+                }
+                SaveConfig();
+            };
+            tabControl.items.push_back(itemExpandTrigger);
+
+            if (g_config.GalleryTriggerMode == 0) {
+                SettingsItem itemAreaHeight = { AppStrings::Settings_Label_GalleryTriggerAreaHeight, OptionType::Slider, nullptr, &g_config.GalleryTriggerAreaHeight };
+                itemAreaHeight.minVal = 5.0f;
+                itemAreaHeight.maxVal = 100.0f;
+                itemAreaHeight.step = 1.0f;
+                itemAreaHeight.displayFormat = L"%.0f px";
+                itemAreaHeight.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
+                tabControl.items.push_back(itemAreaHeight);
+            } else if (g_config.GalleryTriggerMode == 1) {
+                SettingsItem itemDwell = { AppStrings::Settings_Label_GalleryDwellTime, OptionType::Slider, nullptr, &g_config.GalleryDwellTime };
+                itemDwell.minVal = 0.05f;
+                itemDwell.maxVal = 2.00f;
+                itemDwell.step = 0.01f;
+                itemDwell.displayFormat = L"%.2f s";
+                itemDwell.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
+                tabControl.items.push_back(itemDwell);
+            }
+
+            SettingsItem itemExitDelay = { AppStrings::Settings_Label_GalleryExitDelay, OptionType::Slider, nullptr, &g_config.GalleryExitDelay };
+            itemExitDelay.minVal = 0.10f;
+            itemExitDelay.maxVal = 3.00f;
+            itemExitDelay.step = 0.05f;
+            itemExitDelay.displayFormat = L"%.2f s";
+            itemExitDelay.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
+            tabControl.items.push_back(itemExitDelay);
         }
-
-        SettingsItem itemExitDelay = { AppStrings::Settings_Label_GalleryExitDelay, OptionType::Slider, nullptr, &g_config.GalleryExitDelay };
-        itemExitDelay.minVal = 0.10f;
-        itemExitDelay.maxVal = 3.00f;
-        itemExitDelay.step = 0.05f;
-        itemExitDelay.displayFormat = L"%.2f s";
-        itemExitDelay.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
-        tabControl.items.push_back(itemExitDelay);
     }
 }
 
 void SettingsOverlay::BuildKeysTab(SettingsTab& tabKeys) {
-    tabKeys.name = AppStrings::Settings_Tab_Shortcuts;
-    tabKeys.icon = Icons::Keyboard;
- 
     tabKeys.items.push_back({ AppStrings::Settings_Tab_Shortcuts, OptionType::Header });
     tabKeys.items.push_back({ AppStrings::Settings_Hotkey_MouseTip, OptionType::InfoLabel });
  
@@ -3255,11 +3290,10 @@ void SettingsOverlay::BuildKeysTab(SettingsTab& tabKeys) {
     itemRestoreKeys.buttonActivatedText = AppStrings::Settings_Hotkey_Restored;
     itemRestoreKeys.isDestructive = true;
     itemRestoreKeys.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-        for (auto& binding : g_hotkeys) {
-            binding.combo = binding.defaultCombo;
-        }
-        SaveConfig();
-        overlay->m_pendingRebuild = true;
+        g_config.ResetHotkeyRulesToDefault();
+        g_config.SyncMiddleClickHotkeyFromGestures();
+        g_config.SyncLegacyHotkeysArray(g_hotkeys);
+        SaveHotkeysConfig();
         overlay->m_pendingResetFeedback = true;
         if (overlay->m_hwnd) InvalidateRect(overlay->m_hwnd, NULL, FALSE);
     };
@@ -3267,15 +3301,17 @@ void SettingsOverlay::BuildKeysTab(SettingsTab& tabKeys) {
  
     for (size_t i = 1; i < static_cast<size_t>(HotkeyAction::Count); ++i) {
         HotkeyAction action = static_cast<HotkeyAction>(i);
-        if (action == HotkeyAction::Help || action == HotkeyAction::Exit || action == HotkeyAction::ToggleDebugHud) {
-            continue; // Exclude F1, Esc, and F12 from customization
+        if (action == HotkeyAction::ToggleDebugHud) {
+            continue;
         }
         if (action == HotkeyAction::Undo) {
             continue; // Placed manually under EditFile
         }
 
         // Category Group Headers
-        if (action == HotkeyAction::NavNext) {
+        if (action == HotkeyAction::Exit) {
+            tabKeys.items.push_back({ isChinese ? L"通用控制" : L"General", OptionType::Header });
+        } else if (action == HotkeyAction::NavNext) {
             tabKeys.items.push_back({ isChinese ? L"图片导航" : L"Navigation", OptionType::Header });
         } else if (action == HotkeyAction::PanUp) {
             tabKeys.items.push_back({ isChinese ? L"图片平移" : L"Image Panning", OptionType::Header });
@@ -4710,13 +4746,15 @@ void SettingsOverlay::BuildAdvancedTab(SettingsTab& tabAdvanced) {
          int preservedUpdateChannel = g_config.UpdateChannel;
          g_config = AppConfig(); 
          g_config.UpdateChannel = preservedUpdateChannel;
+         s_gesturePresetIdx = 0;
+         for (auto& binding : g_hotkeys) {
+             binding.combo = binding.defaultCombo;
+         }
+         g_config.SyncLegacyHotkeysArray(g_hotkeys);
          QuickView::PluginHost::Instance().ResetToDefaults();
          QuickView::AI::AiActionManager::Instance().ResetToDefaults();
          extern void SaveConfig();
          SaveConfig();
-         for (auto& binding : g_hotkeys) {
-             binding.combo = binding.defaultCombo;
-         }
          
          // 3. Sync Runtime & Refresh UI
          g_runtime.SyncFrom(g_config);
@@ -4842,9 +4880,19 @@ void SettingsOverlay::BuildAboutTab(SettingsTab& tabAbout) {
     tabAbout.items.push_back(itemCopy);
 }
 
+void SettingsOverlay::CloseGestureDropdown() {
+    m_activeGestureDropdown.gestureIndex = -1;
+    m_activeGestureDropdown.column = -1;
+    m_activeGestureDropdown.options.clear();
+    m_activeGestureDropdown.optionValues.clear();
+    m_gestureDropdownHoverIdx = -1;
+    m_gestureDropdownScrollOffset = 0;
+}
+
 void SettingsOverlay::BuildMenu() {
     m_pActiveCombo = nullptr;
     m_comboHoverIdx = -1;
+    CloseGestureDropdown();
     m_pActiveSlider = nullptr;
     m_pHoverItem = nullptr;
     m_tabs.clear();
@@ -4863,7 +4911,7 @@ void SettingsOverlay::BuildMenu() {
         m_borderStrokeOption = (g_config.GlassVectorStrokeWeightIndex == 1) ? 1 : 2; // 1=Fine, 2=Standard
     }
 
-    m_tabs.reserve(10);
+    m_tabs.reserve(9);
 
     // --- 1. General ---
     SettingsTab tabGeneral;
@@ -4880,38 +4928,34 @@ void SettingsOverlay::BuildMenu() {
     BuildVisualsTab(tabVisuals);
     m_tabs.push_back(std::move(tabVisuals));
 
-    // --- 4. Control ---
+    // --- 4. Control (Unified Mouse, Keyboard Shortcuts & Behavior) ---
     SettingsTab tabControl;
     BuildControlTab(tabControl);
+    tabControl.isNew = true;
     m_tabs.push_back(std::move(tabControl));
 
-    // --- 5. Keys ---
-    SettingsTab tabKeys;
-    BuildKeysTab(tabKeys);
-    m_tabs.push_back(std::move(tabKeys));
-
-    // --- 6. Image ---
+    // --- 5. Image ---
     SettingsTab tabImage;
     BuildImageTab(tabImage);
     m_tabs.push_back(std::move(tabImage));
 
-    // --- 7. Plugins ---
+    // --- 6. Plugins ---
     SettingsTab tabPlugins;
     BuildPluginsTab(tabPlugins);
     m_tabs.push_back(std::move(tabPlugins));
 
-    // --- 8. AI Actions ---
+    // --- 7. AI Actions ---
     SettingsTab tabAiActions;
     BuildAiActionsTab(tabAiActions, this);
     tabAiActions.isNew = true;
     m_tabs.push_back(std::move(tabAiActions));
 
-    // --- 9. Advanced ---
+    // --- 8. Advanced ---
     SettingsTab tabAdvanced;
     BuildAdvancedTab(tabAdvanced);
     m_tabs.push_back(std::move(tabAdvanced));
 
-    // --- 10. About ---
+    // --- 9. About ---
     SettingsTab tabAbout;
     BuildAboutTab(tabAbout);
     m_tabs.push_back(std::move(tabAbout));
@@ -4960,6 +5004,7 @@ void SettingsOverlay::SwitchTab(int delta) {
     if (m_pFocusedSlider) CommitInput();
     m_pActiveCombo = nullptr;
     m_comboHoverIdx = -1;
+    CloseGestureDropdown();
     m_pActiveSlider = nullptr;
     m_pHoverItem = nullptr;
 
@@ -4975,6 +5020,7 @@ void SettingsOverlay::SwitchTab(int delta) {
 
 void SettingsOverlay::FocusNextItem(bool forward) {
     if (m_activeTab < 0 || m_activeTab >= (int)m_tabs.size()) return;
+    CloseGestureDropdown();
     auto& items = m_tabs[m_activeTab].items;
     if (items.empty()) return;
 
@@ -5036,6 +5082,7 @@ void SettingsOverlay::SetVisible(bool visible) {
     m_visible = visible;
     m_pActiveCombo = nullptr;
     m_comboHoverIdx = -1;
+    CloseGestureDropdown();
     m_pActiveSlider = nullptr;
     m_pHoverItem = nullptr;
     
@@ -5345,6 +5392,9 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                 auto& item = currentTab.items[itemIdx];
                 bool isFocused = m_isKeyboardNavActive && (static_cast<int>(itemIdx) == m_focusedItemIdx);
                 float rowHeight = itemH;
+                if (item.type == OptionType::HotkeyBindRow) {
+                    rowHeight = 34.0f * s;
+                }
                 
                 // Pinned Check
                 bool isPinned = (item.type == OptionType::AboutSystemInfo || item.type == OptionType::CopyrightLabel);
@@ -6081,7 +6131,8 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
             float controlX = rowContentX + controlOffset;
             float controlW = rowContentW - controlOffset;
             if (item.label.empty() && item.type == OptionType::Segment) {
-                float segW = (std::min)(280.0f * s, rowContentW);
+                float targetW = (item.options.size() > 2) ? (item.options.size() * 115.0f * s) : (280.0f * s);
+                float segW = (std::min)(targetW, rowContentW);
                 controlX = rowContentX + (rowContentW - segW) * 0.5f;
                 controlW = segW;
             }
@@ -6522,57 +6573,266 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                 }
                 case OptionType::HotkeyBindRow: {
                     const float padRight = 8.0f * s;
-                    const float btnLeft = controlX;
-                    const float btnRight = controlX + controlW - padRight;
-                    const float btnH = 24.0f * s;
-                    const float btnCy = contentY + rowHeight * 0.5f;
-                    D2D1_RECT_F btnRect = D2D1::RectF(btnLeft, btnCy - btnH * 0.5f, btnRight, btnCy + btnH * 0.5f);
-                    item.interactRect = btnRect;
-                    
-                    std::wstring btnText;
+                    const float btnH = 22.0f * s;
+                    const float gap = 6.0f * s;
+                    const float padX = 8.0f * s;
+
                     bool isThisCapturing = m_capturingHotkey && (m_capturingAction == item.hotkeyAction);
-                    
-                    if (isThisCapturing) {
-                        btnText = AppStrings::Settings_Hotkey_PressKey;
-                    } else {
-                        auto idx = static_cast<size_t>(item.hotkeyAction);
-                        if (idx < g_hotkeys.size()) {
-                            btnText = KeyComboToString(g_hotkeys[idx].combo);
-                        } else {
-                            btnText = L"None";
+
+                    // 1. Gather all key combos for this action
+                    std::vector<KeyCombo> combos = g_config.GetCombosForAction(item.hotkeyAction);
+
+                    // 2. Measure pill widths for each combo + add button
+                    struct PillData {
+                        std::wstring text;
+                        float width;
+                        bool isAdd;
+                    };
+                    std::vector<PillData> pills;
+                    pills.reserve(combos.size() + 1);
+
+                    for (const auto& cb : combos) {
+                        std::wstring t = KeyComboToString(cb);
+                        float tw = 24.0f * s;
+                        ComPtr<IDWriteTextLayout> layout;
+                        if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(t.c_str(), (UINT32)t.length(), m_textFormatItem.Get(), 500.0f, btnH, &layout))) {
+                            DWRITE_TEXT_METRICS m = {};
+                            if (SUCCEEDED(layout->GetMetrics(&m))) {
+                                tw = std::ceil(m.widthIncludingTrailingWhitespace);
+                            }
                         }
-                    }
-                    
-                    using namespace QuickView::UI;
-                    ButtonStyle style = isThisCapturing ? ButtonStyle::Primary : ButtonStyle::Secondary;
-                    ButtonState state = isHovered ? ButtonState::Hovered : ButtonState::Normal;
-                    GeekWidgets::DrawPillButton(pRT, btnRect, btnText, style, state, m_textFormatItem.Get(), s, ToWidgetPalette(palette));
-                    
-                    if (isFocused && !isThisCapturing) {
-                        float btnR = (btnRect.bottom - btnRect.top) * 0.5f;
-                        pRT->DrawRoundedRectangle(D2D1::RoundedRect(btnRect, btnR, btnR), m_brushAccent.Get(), 1.5f * s);
+                        pills.push_back({ std::move(t), (std::max)(28.0f * s, tw + padX * 2.0f), false });
                     }
 
+                    std::wstring addText = isThisCapturing ? AppStrings::Settings_Hotkey_PressKey : L"+";
+                    float addTw = 20.0f * s;
+                    {
+                        ComPtr<IDWriteTextLayout> layout;
+                        if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(addText.c_str(), (UINT32)addText.length(), m_textFormatItem.Get(), 500.0f, btnH, &layout))) {
+                            DWRITE_TEXT_METRICS m = {};
+                            if (SUCCEEDED(layout->GetMetrics(&m))) {
+                                addTw = std::ceil(m.widthIncludingTrailingWhitespace);
+                            }
+                        }
+                    }
+                    pills.push_back({ std::move(addText), (std::max)(24.0f * s, addTw + padX * 2.0f), true });
+
+                    // 3. Flow wrap layout for pills (prevents truncation when multiple shortcuts bound)
+                    float availW = (std::max)(60.0f * s, controlW - padRight);
+                    const float lineGap = 3.0f * s; // Very tight gap between folded lines of the same action
+                    struct LayoutLine {
+                        std::vector<size_t> indices;
+                        float totalW = 0.0f;
+                    };
+                    std::vector<LayoutLine> lines;
+                    lines.push_back({});
+
+                    for (size_t i = 0; i < pills.size(); ++i) {
+                        float needed = pills[i].width + (lines.back().indices.empty() ? 0.0f : gap);
+                        if (!lines.back().indices.empty() && lines.back().totalW + needed > availW) {
+                            lines.push_back({});
+                        }
+                        lines.back().indices.push_back(i);
+                        lines.back().totalW += needed;
+                    }
+
+                    // Strict Group Proximity Layout:
+                    // Single line: compact 34px total height. Multi-line: tight pills + 12px bottom separation.
+                    const float padTop = 6.0f * s;
+                    float totalPillsH = lines.size() * btnH + (lines.size() - 1) * lineGap;
+                    rowHeight = (lines.size() > 1) ? (padTop + totalPillsH + 12.0f * s) : (34.0f * s);
+                    item.rect = D2D1::RectF(rowContentX, contentY, rowContentX + rowContentW, contentY + rowHeight);
+
+                    // Fixed padTop anchor: first row always aligns exactly at contentY + 6px (center-aligned with label at 17px)
+                    float startY = contentY + padTop;
+                    float curY = startY;
+
+                    item.optionRects.assign(pills.size(), D2D1_RECT_F{});
+                    using namespace QuickView::UI;
+                    auto ptIn = [this](const D2D1_RECT_F& r) {
+                        return m_lastMouseX >= r.left && m_lastMouseX <= r.right && m_lastMouseY >= r.top && m_lastMouseY <= r.bottom;
+                    };
+
+                    float minPillX = controlX + controlW;
+                    float maxPillX = controlX;
+
+                    for (const auto& line : lines) {
+                        float lineRight = controlX + controlW - padRight;
+                        float curX = (std::max)(controlX, lineRight - line.totalW);
+                        minPillX = (std::min)(minPillX, curX);
+
+                        for (size_t idx : line.indices) {
+                            D2D1_RECT_F rPill = D2D1::RectF(curX, curY, curX + pills[idx].width, curY + btnH);
+                            item.optionRects[idx] = rPill;
+                            maxPillX = (std::max)(maxPillX, rPill.right);
+                            curX += pills[idx].width + gap;
+
+                            bool isPillHover = ptIn(rPill);
+                            if (!pills[idx].isAdd) {
+                                if (isPillHover) {
+                                    // Hover state: Warning red background with center delete mark '✕'
+                                    GeekWidgets::DrawPillButton(pRT, rPill, L"\u2715", ButtonStyle::Destructive, ButtonState::Hovered, m_textFormatItem.Get(), s, ToWidgetPalette(palette));
+                                } else {
+                                    // Normal state: Clean & minimal, displays only the key combo name without clutter
+                                    GeekWidgets::DrawPillButton(pRT, rPill, pills[idx].text, ButtonStyle::Secondary, ButtonState::Normal, m_textFormatItem.Get(), s, ToWidgetPalette(palette));
+                                }
+                            } else {
+                                ButtonStyle style = isThisCapturing ? ButtonStyle::Primary : ButtonStyle::Secondary;
+                                ButtonState bState = isPillHover ? ButtonState::Hovered : ButtonState::Normal;
+                                GeekWidgets::DrawPillButton(pRT, rPill, pills[idx].text, style, bState, m_textFormatItem.Get(), s, ToWidgetPalette(palette));
+
+                                if (isThisCapturing) {
+                                    float r = (rPill.bottom - rPill.top) * 0.5f;
+                                    pRT->DrawRoundedRectangle(D2D1::RoundedRect(rPill, r, r), m_brushAccent.Get(), 1.5f * s);
+                                }
+                            }
+                        }
+                        curY += btnH + lineGap;
+                    }
+
+                    item.interactRect = D2D1::RectF(minPillX, startY, maxPillX, (std::max)(startY + btnH, curY - lineGap));
+
                     if (!item.statusText.empty() && item.statusSetTime > 0) {
-                         if (GetTickCount() - item.statusSetTime > 3000) {
-                             item.statusText.clear();
-                         }
+                        if (GetTickCount() - item.statusSetTime > 3000) {
+                            item.statusText.clear();
+                        }
                     }
                     if (!item.statusText.empty()) {
                         ComPtr<ID2D1SolidColorBrush> statusBrush;
                         pRT->CreateSolidColorBrush(item.statusColor, &statusBrush);
-                        D2D1_RECT_F statusRect = D2D1::RectF(controlX, contentY, btnLeft - 16.0f * s, contentY + rowHeight);
+                        D2D1_RECT_F statusRect = D2D1::RectF(controlX, contentY, minPillX - 8.0f * s, contentY + rowHeight);
                         m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
                         pRT->DrawText(item.statusText.c_str(), (UINT32)item.statusText.length(), m_textFormatItem.Get(), statusRect, statusBrush.Get());
                         m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
                     }
 
-                    m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-                    m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                    ID2D1SolidColorBrush* textBrush = isThisCapturing ? m_brushWhite.Get() : m_brushText.Get();
-                    pRT->DrawText(btnText.c_str(), (UINT32)btnText.length(), m_textFormatItem.Get(), btnRect, textBrush);
-                    m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-                    m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                    // Draw subtle bottom divider line between items to ensure crisp, unmistakable separation
+                    float origBorderOpacity = m_brushBorder->GetOpacity();
+                    m_brushBorder->SetOpacity(origBorderOpacity * 0.22f);
+                    pRT->DrawLine(
+                        D2D1::Point2F(rowContentX, contentY + rowHeight - 1.0f * s),
+                        D2D1::Point2F(rowContentX + rowContentW, contentY + rowHeight - 1.0f * s),
+                        m_brushBorder.Get(),
+                        1.0f * s
+                    );
+                    m_brushBorder->SetOpacity(origBorderOpacity);
+                    break;
+                }
+
+                case OptionType::MouseGestureRow: {
+                    if (item.gestureIndex < 0 || item.gestureIndex >= (int)g_config.MouseGestures.size()) break;
+                    const auto& rule = g_config.MouseGestures[item.gestureIndex];
+                    const float padRight = 8.0f * s;
+                    const float gap = 6.0f * s;
+                    const float delBtnW = 26.0f * s;
+                    const float availW = (std::max)(100.0f * s, controlW - delBtnW - gap * 4.0f - padRight);
+                    const float col0W = std::floor(availW * 0.16f); // Mod1
+                    const float col1W = std::floor(availW * 0.16f); // Mod2
+                    const float col2W = std::floor(availW * 0.31f); // Trigger
+                    const float col3W = availW - col0W - col1W - col2W; // Action
+                    const float rowH = 24.0f * s;
+                    const float cy = contentY + rowHeight * 0.5f;
+                    const float top = cy - rowH * 0.5f;
+                    const float bot = cy + rowH * 0.5f;
+
+                    float curX = controlX;
+                    D2D1_RECT_F rCol0 = D2D1::RectF(curX, top, curX + col0W, bot); curX += col0W + gap;
+                    D2D1_RECT_F rCol1 = D2D1::RectF(curX, top, curX + col1W, bot); curX += col1W + gap;
+                    D2D1_RECT_F rCol2 = D2D1::RectF(curX, top, curX + col2W, bot); curX += col2W + gap;
+                    D2D1_RECT_F rCol3 = D2D1::RectF(curX, top, curX + col3W, bot); curX += col3W + gap;
+                    D2D1_RECT_F rDel  = D2D1::RectF(curX, top, curX + delBtnW, bot);
+
+                    item.optionRects = { rCol0, rCol1, rCol2, rCol3, rDel };
+                    item.interactRect = D2D1::RectF(controlX, top, curX + delBtnW, bot);
+
+                    auto ptIn = [this](const D2D1_RECT_F& r) {
+                        return m_lastMouseX >= r.left && m_lastMouseX <= r.right && m_lastMouseY >= r.top && m_lastMouseY <= r.bottom;
+                    };
+
+                    bool isDropdownOpen = (m_activeGestureDropdown.gestureIndex == item.gestureIndex);
+                    bool isRowHover = ptIn(item.interactRect);
+                    bool isEditing = isRowHover || isDropdownOpen;
+
+                    using namespace QuickView::UI;
+
+                    if (!isEditing) {
+                        // 1. Idle Natural Language View: "[Ctrl + 左键拖拽] ➔ 框选剪裁"
+                        std::wstring trDesc;
+                        if (rule.mod1 != 0) trDesc += AppStrings::GetMouseModifierName(rule.mod1) + L" + ";
+                        if (rule.mod2 != 0) trDesc += AppStrings::GetMouseModifierName(rule.mod2) + L" + ";
+                        trDesc += AppStrings::GetMouseTriggerName((MouseTrigger)rule.trigger);
+
+                        std::wstring actDesc = AppStrings::GetMouseActionTargetName((MouseActionTarget)rule.action);
+
+                        float tw = 60.0f * s;
+                        if (m_dwriteFactory) {
+                            ComPtr<IDWriteTextLayout> layout;
+                            if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(trDesc.c_str(), (UINT32)trDesc.length(), m_textFormatItem.Get(), 500.0f, rowH, &layout))) {
+                                DWRITE_TEXT_METRICS m = {};
+                                if (SUCCEEDED(layout->GetMetrics(&m))) {
+                                    tw = std::ceil(m.widthIncludingTrailingWhitespace);
+                                }
+                            }
+                        }
+                        const float pillPadX = 10.0f * s;
+                        float trigPillW = (std::max)(60.0f * s, tw + pillPadX * 2.0f);
+                        D2D1_RECT_F rTrigPill = D2D1::RectF(controlX, top, controlX + trigPillW, bot);
+
+                        GeekWidgets::DrawPillButton(pRT, rTrigPill, trDesc, ButtonStyle::Secondary, ButtonState::Normal, m_textFormatItem.Get(), s, ToWidgetPalette(palette));
+
+                        float arrowX = rTrigPill.right + 10.0f * s;
+                        float arrowW = 20.0f * s;
+                        D2D1_RECT_F rArrow = D2D1::RectF(arrowX, top, arrowX + arrowW, bot);
+                        m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                        m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                        pRT->DrawText(L"\u2794", 1, m_textFormatItem.Get(), rArrow, m_brushAccent.Get());
+                        m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+
+                        float actX = rArrow.right + 10.0f * s;
+                        float actW = (controlX + controlW - delBtnW - padRight) - actX;
+                        if (actW > 0.0f) {
+                            D2D1_RECT_F rAct = D2D1::RectF(actX, top, actX + actW, bot);
+                            pRT->DrawText(actDesc.c_str(), (UINT32)actDesc.length(), m_textFormatItem.Get(), rAct, m_brushText.Get());
+                        }
+
+                        GeekWidgets::DrawPillButton(pRT, rDel, L"\u2715", ButtonStyle::Secondary, ButtonState::Normal, m_textFormatItem.Get(), s, ToWidgetPalette(palette));
+                    } else {
+                        // 2. Active Editing View: 4 Detailed Dropdown Columns
+                        std::wstring mod1Text = AppStrings::GetMouseModifierName(rule.mod1);
+                        std::wstring mod2Text = AppStrings::GetMouseModifierName(rule.mod2);
+                        std::wstring trText = AppStrings::GetMouseTriggerName((MouseTrigger)rule.trigger);
+                        std::wstring actText = AppStrings::GetMouseActionTargetName((MouseActionTarget)rule.action);
+
+                        bool isCol0Open = (m_activeGestureDropdown.gestureIndex == item.gestureIndex && m_activeGestureDropdown.column == 0);
+                        bool isCol1Open = (m_activeGestureDropdown.gestureIndex == item.gestureIndex && m_activeGestureDropdown.column == 1);
+                        bool isCol2Open = (m_activeGestureDropdown.gestureIndex == item.gestureIndex && m_activeGestureDropdown.column == 2);
+                        bool isCol3Open = (m_activeGestureDropdown.gestureIndex == item.gestureIndex && m_activeGestureDropdown.column == 3);
+
+                        bool isCol0Hover = ptIn(rCol0);
+                        bool isCol1Hover = ptIn(rCol1);
+                        bool isCol2Hover = ptIn(rCol2);
+                        bool isCol3Hover = ptIn(rCol3);
+                        bool isDelHover  = ptIn(rDel);
+
+                        GeekWidgets::DrawPillComboBox(pRT, rCol0, mod1Text, isCol0Open, isCol0Hover, false, m_textFormatItem.Get(), s, ToWidgetPalette(palette));
+                        GeekWidgets::DrawPillComboBox(pRT, rCol1, mod2Text, isCol1Open, isCol1Hover, false, m_textFormatItem.Get(), s, ToWidgetPalette(palette));
+                        GeekWidgets::DrawPillComboBox(pRT, rCol2, trText, isCol2Open, isCol2Hover, false, m_textFormatItem.Get(), s, ToWidgetPalette(palette));
+                        GeekWidgets::DrawPillComboBox(pRT, rCol3, actText, isCol3Open, isCol3Hover, false, m_textFormatItem.Get(), s, ToWidgetPalette(palette));
+
+                        // Delete Button (×)
+                        GeekWidgets::DrawPillButton(pRT, rDel, L"\u2715", ButtonStyle::Destructive, isDelHover ? ButtonState::Hovered : ButtonState::Normal, m_textFormatItem.Get(), s, ToWidgetPalette(palette));
+                    }
+
+                    // Subtle bottom divider line
+                    float origBorderOpacity = m_brushBorder->GetOpacity();
+                    m_brushBorder->SetOpacity(origBorderOpacity * 0.15f);
+                    pRT->DrawLine(
+                        D2D1::Point2F(controlX, contentY + rowHeight - 1.0f * s),
+                        D2D1::Point2F(controlX + controlW, contentY + rowHeight - 1.0f * s),
+                        m_brushBorder.Get(),
+                        1.0f * s
+                    );
+                    m_brushBorder->SetOpacity(origBorderOpacity);
                     break;
                 }
 
@@ -6611,6 +6871,9 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
     // Draw Overlay Dropdowns (Z-Order Top)
     if (m_pActiveCombo) {
         DrawComboDropdown(pRT);
+    }
+    if (m_activeGestureDropdown.gestureIndex >= 0) {
+        DrawGestureDropdown(pRT);
     }
 } 
 
@@ -6658,6 +6921,27 @@ bool SettingsOverlay::OnMouseWheel(float delta) {
     
     // Fallback to Settings Scroll
     if (!m_visible) return false;
+
+    // Gesture dropdown scrolling
+    if (m_activeGestureDropdown.gestureIndex >= 0) {
+        D2D1_RECT_F dropRect = GetGestureDropdownRect();
+        if (m_lastMouseX >= dropRect.left && m_lastMouseX <= dropRect.right &&
+            m_lastMouseY >= dropRect.top && m_lastMouseY <= dropRect.bottom) {
+            const float s = m_uiScale;
+            float itemH = ITEM_HEIGHT * s;
+            int count = (int)m_activeGestureDropdown.options.size();
+            int visibleItems = (int)std::round((dropRect.bottom - dropRect.top) / itemH);
+            int maxOffset = (std::max)(0, count - visibleItems);
+            if (delta < 0) {
+                m_gestureDropdownScrollOffset = (std::min)(m_gestureDropdownScrollOffset + 1, maxOffset);
+            } else if (delta > 0) {
+                m_gestureDropdownScrollOffset = (std::max)(0, m_gestureDropdownScrollOffset - 1);
+            }
+            return true;
+        }
+        CloseGestureDropdown();
+        return true;
+    }
 
     // Dropdown list scrolling if mouse is over open ComboBox dropdown
     if (m_pActiveCombo) {
@@ -6928,12 +7212,23 @@ void SettingsOverlay::HandleItemKeyboardActivation(SettingsItem& item, WPARAM ke
                 m_capturingAction = item.hotkeyAction;
                 m_pendingRebuild = true;
             } else if (key == VK_DELETE || key == VK_BACK) {
+                auto combos = g_config.GetCombosForAction(item.hotkeyAction);
+                for (const auto& cb : combos) {
+                    g_config.RemoveHotkeyRule(item.hotkeyAction, cb);
+                }
                 auto idx = static_cast<size_t>(item.hotkeyAction);
                 if (idx < g_hotkeys.size()) {
                     g_hotkeys[idx].combo = {0, 0};
-                    SaveConfig();
-                    m_pendingRebuild = true;
                 }
+                if (item.hotkeyAction == HotkeyAction::Exit) {
+                    const auto* mClick = g_config.FindMouseGesture(MouseModMask::None, MouseTrigger::MiddleClick);
+                    if (mClick && mClick->action == static_cast<int>(MouseActionTarget::ExitApp)) {
+                        g_config.SetMouseGesture(0, 0, MouseTrigger::MiddleClick, MouseActionTarget::None);
+                        SaveMouseGesturesConfig();
+                    }
+                }
+                SaveHotkeysConfig();
+                m_pendingRebuild = true;
             }
             break;
         }
@@ -7075,6 +7370,15 @@ bool SettingsOverlay::OnKeyDown(WPARAM key) {
                 }
             }
             m_pActiveCombo = nullptr;
+            return true;
+        }
+        return true;
+    }
+
+    // 2.5 Active Gesture Dropdown Handling
+    if (m_activeGestureDropdown.gestureIndex >= 0) {
+        if (key == VK_ESCAPE) {
+            CloseGestureDropdown();
             return true;
         }
         return true;
@@ -7463,6 +7767,42 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
         return SettingsAction::RepaintStatic;
     }
 
+    // Active Gesture Dropdown Logic
+    if (m_activeGestureDropdown.gestureIndex >= 0) {
+        m_pHoverItem = nullptr;
+        D2D1_RECT_F dropRect = GetGestureDropdownRect();
+        const float s = m_uiScale;
+        float itemH = ITEM_HEIGHT * s;
+        int count = (int)m_activeGestureDropdown.options.size();
+
+        if (x >= dropRect.left && x <= dropRect.right && y >= dropRect.top && y <= dropRect.bottom) {
+            g_currentCursor = ::LoadCursor(NULL, IDC_HAND);
+            ::SetCursor(g_currentCursor);
+            int relIdx = (int)((y - dropRect.top) / itemH);
+            int idx = m_gestureDropdownScrollOffset + relIdx;
+            if (idx >= 0 && idx < count) {
+                if (m_gestureDropdownHoverIdx != idx) {
+                    m_gestureDropdownHoverIdx = idx;
+                }
+                return SettingsAction::RepaintStatic; // Drive marquee smooth scroll while hovering
+            } else {
+                if (m_gestureDropdownHoverIdx != -1) {
+                    m_gestureDropdownHoverIdx = -1;
+                    return SettingsAction::RepaintStatic;
+                }
+            }
+            return SettingsAction::None;
+        } else {
+            if (m_gestureDropdownHoverIdx != -1) {
+                m_gestureDropdownHoverIdx = -1;
+                g_currentCursor = ::LoadCursor(NULL, IDC_ARROW);
+                ::SetCursor(g_currentCursor);
+                return SettingsAction::RepaintStatic;
+            }
+            return SettingsAction::None;
+        }
+    }
+
     // Active Combo Logic (Priority Modal Behavior)
     if (m_pActiveCombo) {
         m_pHoverItem = nullptr; // Block all background hover testing while dropdown is open
@@ -7479,8 +7819,8 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
              if (idx >= 0 && idx < count) {
                  if (m_comboHoverIdx != idx) {
                      m_comboHoverIdx = idx;
-                     return SettingsAction::RepaintStatic;
                  }
+                 return SettingsAction::RepaintStatic; // Drive marquee smooth scroll while hovering
              } else {
                  if (m_comboHoverIdx != -1) {
                      m_comboHoverIdx = -1;
@@ -7697,6 +8037,59 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
     }
 
     if (!m_visible) return SettingsAction::None;
+
+    // Active Gesture Dropdown Processing (Exclusive Modal Priority)
+    if (m_activeGestureDropdown.gestureIndex >= 0) {
+        if (m_pFocusedSlider) CommitInput();
+        D2D1_RECT_F dropRect = GetGestureDropdownRect();
+        const float sc = m_uiScale;
+        float itemH = ITEM_HEIGHT * sc;
+        int count = (int)m_activeGestureDropdown.options.size();
+
+        if (x >= dropRect.left && x <= dropRect.right && y >= dropRect.top && y <= dropRect.bottom) {
+            int relIdx = (int)((y - dropRect.top) / itemH);
+            int idx = m_gestureDropdownScrollOffset + relIdx;
+            if (idx >= 0 && idx < count && m_activeGestureDropdown.gestureIndex < (int)g_config.MouseGestures.size()) {
+                int rowIdx = m_activeGestureDropdown.gestureIndex;
+                auto& rule = g_config.MouseGestures[rowIdx];
+                int actualVal = (idx < (int)m_activeGestureDropdown.optionValues.size()) ? m_activeGestureDropdown.optionValues[idx] : idx;
+                if (m_activeGestureDropdown.column == 0) {
+                    rule.mod1 = (uint8_t)actualVal;
+                    if (rule.mod1 != 0 && rule.mod1 == rule.mod2) rule.mod2 = 0;
+                } else if (m_activeGestureDropdown.column == 1) {
+                    rule.mod2 = (uint8_t)actualVal;
+                    if (rule.mod2 != 0 && rule.mod2 == rule.mod1) rule.mod1 = 0;
+                } else if (m_activeGestureDropdown.column == 2) {
+                    rule.trigger = (uint8_t)actualVal;
+                } else if (m_activeGestureDropdown.column == 3) {
+                    rule.action = actualVal;
+                }
+
+                // Deduplicate conflicting rules sharing the same (modifiers, trigger)
+                if (m_activeGestureDropdown.column <= 2) {
+                    uint8_t newMods = rule.GetModifiers();
+                    uint8_t newTrig = rule.trigger;
+                    for (int i = (int)g_config.MouseGestures.size() - 1; i >= 0; --i) {
+                        if (i != rowIdx && g_config.MouseGestures[i].trigger == newTrig && g_config.MouseGestures[i].GetModifiers() == newMods) {
+                            g_config.MouseGestures.erase(g_config.MouseGestures.begin() + i);
+                            if (i < rowIdx) --rowIdx;
+                            m_pendingRebuild = true;
+                        }
+                    }
+                }
+
+                g_config.SyncMiddleClickHotkeyFromGestures();
+                g_config.SyncLegacyHotkeysArray(g_hotkeys);
+                SaveMouseGesturesConfig();
+                SaveHotkeysConfig();
+                CloseGestureDropdown();
+                return SettingsAction::RepaintAll;
+            }
+        }
+        // Clicked anchor or outside gesture dropdown: close it
+        CloseGestureDropdown();
+        return SettingsAction::RepaintAll;
+    }
 
     // Active Combo Processing (Exclusive Modal Priority: Process BEFORE HUD boundary check!)
     if (m_pActiveCombo) {
@@ -7939,17 +8332,8 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
         // Segment
         if (m_pHoverItem->type == OptionType::Segment && m_pHoverItem->pIntVal) {
             if (m_pHoverItem->isDisabled) return SettingsAction::RepaintStatic;
-            const float sc = m_uiScale;
-            float controlX = m_pHoverItem->rect.left + LABEL_COLUMN_WIDTH * sc;
-            float controlW = m_pHoverItem->rect.right - controlX;
-            if (m_pHoverItem->label.empty()) {
-                float contentW = m_pHoverItem->rect.right - m_pHoverItem->rect.left;
-                float segW = (std::min)(280.0f * sc, contentW);
-                controlX = m_pHoverItem->rect.left + (contentW - segW) * 0.5f;
-                controlW = segW;
-            } else {
-                controlW -= 8.0f * sc;
-            }
+            float controlX = m_pHoverItem->interactRect.left;
+            float controlW = m_pHoverItem->interactRect.right - m_pHoverItem->interactRect.left;
              
              if (x >= controlX && x <= controlX + controlW) {
                  std::vector<float> itemWidths = CalculateSegmentWidths(m_pHoverItem->options, controlW);
@@ -8105,13 +8489,131 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
             }
             return SettingsAction::RepaintStatic;
         }
+        // If currently in hotkey capturing state, any click cancels capture
+        if (m_capturingHotkey) {
+            bool wasCapturingThisAction = (m_pHoverItem && m_pHoverItem->type == OptionType::HotkeyBindRow && m_pHoverItem->hotkeyAction == m_capturingAction);
+            m_capturingHotkey = false;
+            m_capturingAction = HotkeyAction::None;
+            if (wasCapturingThisAction) {
+                return SettingsAction::RepaintAll;
+            }
+        }
+
         // Hotkey binding row button
         if (m_pHoverItem->type == OptionType::HotkeyBindRow) {
             if (m_pHoverItem->isDisabled) return SettingsAction::RepaintStatic;
-            m_capturingHotkey = true;
-            m_capturingAction = m_pHoverItem->hotkeyAction;
-            m_pendingRebuild = true;
-            return SettingsAction::RepaintAll;
+            
+            auto combos = g_config.GetCombosForAction(m_pHoverItem->hotkeyAction);
+
+            int clickedIdx = -1;
+            for (size_t i = 0; i < m_pHoverItem->optionRects.size(); ++i) {
+                const auto& r = m_pHoverItem->optionRects[i];
+                if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+                    clickedIdx = (int)i;
+                    break;
+                }
+            }
+
+            if (clickedIdx >= 0 && clickedIdx < (int)combos.size()) {
+                // Clicked an existing key pill: remove this binding!
+                KeyCombo removedCombo = combos[clickedIdx];
+                g_config.RemoveHotkeyRule(m_pHoverItem->hotkeyAction, removedCombo);
+                auto remaining = g_config.GetCombosForAction(m_pHoverItem->hotkeyAction);
+                auto actionIdx = static_cast<size_t>(m_pHoverItem->hotkeyAction);
+                if (actionIdx < g_hotkeys.size()) {
+                    g_hotkeys[actionIdx].combo = remaining.empty() ? KeyCombo{} : remaining[0];
+                }
+                if (m_pHoverItem->hotkeyAction == HotkeyAction::Exit && removedCombo.virtualKey == VK_MBUTTON && removedCombo.modifiers == 0) {
+                    const auto* mClick = g_config.FindMouseGesture(MouseModMask::None, MouseTrigger::MiddleClick);
+                    if (mClick && mClick->action == static_cast<int>(MouseActionTarget::ExitApp)) {
+                        g_config.SetMouseGesture(0, 0, MouseTrigger::MiddleClick, MouseActionTarget::None);
+                        SaveMouseGesturesConfig();
+                    }
+                }
+                SaveHotkeysConfig();
+                return SettingsAction::RepaintAll;
+            } else if (clickedIdx == (int)combos.size()) {
+                // Explicitly clicked [+] pill -> Start capturing!
+                m_capturingHotkey = true;
+                m_capturingAction = m_pHoverItem->hotkeyAction;
+                return SettingsAction::RepaintAll;
+            }
+            return SettingsAction::RepaintStatic;
+        }
+        // Mouse Gesture Row
+        if (m_pHoverItem->type == OptionType::MouseGestureRow) {
+            int rowIdx = m_pHoverItem->gestureIndex;
+            if (rowIdx >= 0 && rowIdx < (int)g_config.MouseGestures.size() && m_pHoverItem->optionRects.size() == 5) {
+                const auto& rects = m_pHoverItem->optionRects;
+                auto ptInRect = [x, y](const D2D1_RECT_F& r) {
+                    return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+                };
+
+                if (ptInRect(rects[4])) {
+                    // Delete Button (×)
+                    g_config.MouseGestures.erase(g_config.MouseGestures.begin() + rowIdx);
+                    g_config.SyncMiddleClickHotkeyFromGestures();
+                    g_config.SyncLegacyHotkeysArray(g_hotkeys);
+                    SaveMouseGesturesConfig();
+                    SaveHotkeysConfig();
+                    m_pendingRebuild = true;
+                    return SettingsAction::RepaintAll;
+                }
+
+                auto openDropdown = [this, rowIdx](int col, const D2D1_RECT_F& anchor) {
+                    m_pActiveCombo = nullptr;
+                    m_activeGestureDropdown.gestureIndex = rowIdx;
+                    m_activeGestureDropdown.column = col;
+                    m_activeGestureDropdown.anchorRect = anchor;
+                    m_activeGestureDropdown.options.clear();
+                    m_activeGestureDropdown.optionValues.clear();
+                    m_gestureDropdownHoverIdx = -1;
+                    m_gestureDropdownScrollOffset = 0;
+
+                    const auto& r = g_config.MouseGestures[rowIdx];
+                    if (col == 0 || col == 1) {
+                        uint8_t otherMod = (col == 0) ? r.mod2 : r.mod1;
+                        int curVal = (col == 0) ? r.mod1 : r.mod2;
+                        int selOptionIdx = 0;
+                        for (uint8_t m = 0; m <= 3; ++m) {
+                            if (m != 0 && m == otherMod) continue; // Exclude modifier already in use by the other column
+                            if (m == curVal) {
+                                selOptionIdx = (int)m_activeGestureDropdown.options.size();
+                            }
+                            m_activeGestureDropdown.options.push_back(AppStrings::GetMouseModifierName(m));
+                            m_activeGestureDropdown.optionValues.push_back(m);
+                        }
+                        m_activeGestureDropdown.selectedIdx = selOptionIdx;
+                    } else if (col == 2) {
+                        for (int t = 0; t < (int)MouseTrigger::Count; ++t) {
+                            m_activeGestureDropdown.options.push_back(AppStrings::GetMouseTriggerName((MouseTrigger)t));
+                            m_activeGestureDropdown.optionValues.push_back(t);
+                        }
+                        m_activeGestureDropdown.selectedIdx = r.trigger;
+                    } else if (col == 3) {
+                        for (int a = 0; a < (int)MouseActionTarget::Count; ++a) {
+                            m_activeGestureDropdown.options.push_back(AppStrings::GetMouseActionTargetName((MouseActionTarget)a));
+                            m_activeGestureDropdown.optionValues.push_back(a);
+                        }
+                        m_activeGestureDropdown.selectedIdx = r.action;
+                    }
+                };
+
+                if (ptInRect(rects[0])) {
+                    openDropdown(0, rects[0]);
+                    return SettingsAction::RepaintAll;
+                } else if (ptInRect(rects[1])) {
+                    openDropdown(1, rects[1]);
+                    return SettingsAction::RepaintAll;
+                } else if (ptInRect(rects[2])) {
+                    openDropdown(2, rects[2]);
+                    return SettingsAction::RepaintAll;
+                } else if (ptInRect(rects[3])) {
+                    openDropdown(3, rects[3]);
+                    return SettingsAction::RepaintAll;
+                }
+            }
+            return SettingsAction::RepaintStatic;
         }
         // AccordionCardHeader: Toggle expansion or toggle direct switch
         if (m_pHoverItem->type == OptionType::AccordionCardHeader) {
@@ -8272,6 +8774,7 @@ void SettingsOverlay::OpenTab(int index) {
     if (index >= 0 && index < (int)m_tabs.size()) {
         m_pActiveCombo = nullptr;
         m_comboHoverIdx = -1;
+        CloseGestureDropdown();
         m_pActiveSlider = nullptr;
         m_pHoverItem = nullptr;
         m_activeTab = index;
@@ -8289,8 +8792,9 @@ void SettingsOverlay::DrawComboBox(ID2D1DeviceContext* pRT, const D2D1_RECT_F& r
         text = options[selectedIdx];
     }
     const auto palette = GetSettingsThemePalette();
+    bool isHover = (m_lastMouseX >= rect.left && m_lastMouseX <= rect.right && m_lastMouseY >= rect.top && m_lastMouseY <= rect.bottom);
     QuickView::UI::GeekWidgets::DrawPillComboBox(
-        pRT, rect, text, isOpen, false, false, m_textFormatItem.Get(), m_uiScale, ToWidgetPalette(palette));
+        pRT, rect, text, isOpen, isHover, false, m_textFormatItem.Get(), m_uiScale, ToWidgetPalette(palette));
 }
 
 D2D1_RECT_F SettingsOverlay::GetComboDropdownRect(const SettingsItem* item) const {
@@ -8405,10 +8909,10 @@ void SettingsOverlay::DrawComboDropdown(ID2D1DeviceContext* pRT) {
         
         // Text
         D2D1_RECT_F textRect = D2D1::RectF(itemRect.left + 10.0f * s, y, itemRect.right - 6.0f * s, y + itemH);
-        m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         ID2D1SolidColorBrush* textBrush = isHover ? m_brushWhite.Get() : m_brushText.Get();
-        pRT->DrawText(m_pActiveCombo->options[idx].data(), (UINT32)m_pActiveCombo->options[idx].length(), 
-                      m_textFormatItem.Get(), textRect, textBrush);
+        QuickView::UI::GeekWidgets::DrawMarqueeText(
+            pRT, textRect, m_pActiveCombo->options[idx], isHover, false,
+            m_textFormatItem.Get(), textBrush, s, m_dwriteFactory.Get());
     }
     
     m_textFormatItem->SetWordWrapping(origWrap);
@@ -8492,25 +8996,53 @@ void SettingsOverlay::OnHotkeyCaptured(const KeyCombo& combo) {
     
     m_capturingHotkey = false;
     m_capturingAction = HotkeyAction::None;
-    m_pendingRebuild = true;
 
-    // ESC (without modifiers) cancels the capture
+    // Pure ESC cancels hotkey capture unless binding Exit when it doesn't already have ESC
     if (combo.virtualKey == VK_ESCAPE && combo.modifiers == 0) {
-        if (m_hwnd) InvalidateRect(m_hwnd, NULL, FALSE);
-        return;
+        bool exitAlreadyHasEsc = false;
+        for (const auto& rule : g_config.HotkeyRules) {
+            if (rule.action == HotkeyAction::Exit && rule.combo.virtualKey == VK_ESCAPE && rule.combo.modifiers == 0) {
+                exitAlreadyHasEsc = true;
+                break;
+            }
+        }
+        if (action != HotkeyAction::Exit || exitAlreadyHasEsc) {
+            if (m_hwnd) InvalidateRect(m_hwnd, NULL, FALSE);
+            return;
+        }
     }
 
-    // Check conflict
+    // Check conflict against HotkeyRules
     HotkeyAction conflictAction = HotkeyAction::None;
-    for (const auto& binding : g_hotkeys) {
-        if (binding.action != action && !binding.combo.IsEmpty() && binding.combo == combo) {
-            conflictAction = binding.action;
+    for (const auto& rule : g_config.HotkeyRules) {
+        if (rule.action != action && !rule.combo.IsEmpty() && rule.combo == combo) {
+            conflictAction = rule.action;
             break;
         }
     }
 
     extern OSDState g_osd;
-    extern void SaveConfig();
+
+    auto syncMouseHotkeyToGesture = [&](HotkeyAction boundAction, HotkeyAction prevAction) {
+        if (combo.virtualKey != VK_MBUTTON && combo.virtualKey != VK_XBUTTON1 && combo.virtualKey != VK_XBUTTON2) {
+            return;
+        }
+        uint8_t mod1 = 0, mod2 = 0;
+        MouseGestureRule::ModifiersToMods(combo.modifiers, mod1, mod2);
+        MouseTrigger trig = MouseTrigger::MiddleClick;
+        if (combo.virtualKey == VK_XBUTTON1) trig = MouseTrigger::XButton1Click;
+        else if (combo.virtualKey == VK_XBUTTON2) trig = MouseTrigger::XButton2Click;
+
+        if (combo.virtualKey == VK_MBUTTON && combo.modifiers == 0 && boundAction == HotkeyAction::Exit) {
+            g_config.SetMouseGesture(0, 0, MouseTrigger::MiddleClick, MouseActionTarget::ExitApp);
+            SaveMouseGesturesConfig();
+        } else if (boundAction == HotkeyAction::Exit || prevAction == HotkeyAction::Exit ||
+                   combo.virtualKey == VK_XBUTTON1 || combo.virtualKey == VK_XBUTTON2 ||
+                   g_config.FindMouseGesture(combo.modifiers, trig) != nullptr) {
+            g_config.SetMouseGesture(mod1, mod2, trig, MouseActionTarget::None);
+            SaveMouseGesturesConfig();
+        }
+    };
 
     if (conflictAction != HotkeyAction::None) {
         std::wstring actionName = AppStrings::GetHotkeyActionName(conflictAction);
@@ -8531,24 +9063,18 @@ void SettingsOverlay::OnHotkeyCaptured(const KeyCombo& combo) {
         );
 
         if (result == DialogResult::Yes) {
-            for (auto& binding : g_hotkeys) {
-                if (binding.action == conflictAction) {
-                    binding.combo = KeyCombo{};
-                } else if (binding.action == action) {
-                    binding.combo = combo;
-                }
-            }
-            SaveConfig();
+            g_config.RemoveHotkeyRule(conflictAction, combo);
+            g_config.AddHotkeyRule(action, combo);
+            g_config.SyncLegacyHotkeysArray(g_hotkeys);
+            syncMouseHotkeyToGesture(action, conflictAction);
+            SaveHotkeysConfig();
         }
     } else {
         // Apply new key combo
-        for (auto& binding : g_hotkeys) {
-            if (binding.action == action) {
-                binding.combo = combo;
-                break;
-            }
-        }
-        SaveConfig();
+        g_config.AddHotkeyRule(action, combo);
+        g_config.SyncLegacyHotkeysArray(g_hotkeys);
+        syncMouseHotkeyToGesture(action, HotkeyAction::None);
+        SaveHotkeysConfig();
     }
     if (m_hwnd) InvalidateRect(m_hwnd, NULL, FALSE);
 }
@@ -8571,5 +9097,142 @@ void SettingsOverlay::DrawNewBadge(ID2D1DeviceContext* pRT, float badgeX, float 
     m_textFormatBadge->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
     m_textFormatBadge->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     pRT->DrawText(L"NEW", 3, m_textFormatBadge.Get(), badgeRect, m_brushWhite.Get());
+}
+
+D2D1_RECT_F SettingsOverlay::GetGestureDropdownRect() const {
+    if (m_activeGestureDropdown.gestureIndex < 0) return D2D1::RectF(0, 0, 0, 0);
+
+    const float s = m_uiScale;
+    const auto& anchor = m_activeGestureDropdown.anchorRect;
+    float anchorW = anchor.right - anchor.left;
+    float dropW = (m_activeGestureDropdown.column <= 1) ? (std::max)(anchorW, 120.0f * s) : (std::max)(anchorW, 200.0f * s);
+    float dropX = anchor.left;
+
+    const float hudRight = m_hudX + HUD_WIDTH * s - 16.0f * s;
+    if (dropX + dropW > hudRight) {
+        dropX = (std::max)(m_hudX + 16.0f * s, hudRight - dropW);
+    }
+
+    float itemH = ITEM_HEIGHT * s;
+    int count = (int)m_activeGestureDropdown.options.size();
+    if (count <= 0) return D2D1::RectF(0, 0, 0, 0);
+
+    float anchorTop = anchor.top;
+    float anchorBottom = anchor.bottom;
+
+    const float hudTop = m_hudY + 12.0f * s;
+    const float hudBottom = m_hudY + HUD_HEIGHT * s - 12.0f * s;
+
+    float spaceBelow = hudBottom - anchorBottom;
+    float spaceAbove = anchorTop - hudTop;
+
+    int maxItems = 10;
+    int targetItems = (count > maxItems) ? maxItems : count;
+    float idealDropH = targetItems * itemH;
+
+    bool openUpwards = false;
+    float availableH = spaceBelow;
+
+    if (spaceBelow < idealDropH) {
+        if (spaceAbove > spaceBelow) {
+            openUpwards = true;
+            availableH = spaceAbove;
+        } else {
+            availableH = spaceBelow;
+        }
+    }
+
+    int visibleItems = (int)(availableH / itemH);
+    if (visibleItems < 1) visibleItems = 1;
+    if (visibleItems > targetItems) visibleItems = targetItems;
+
+    float dropH = visibleItems * itemH;
+    const float gap = 4.0f * s;
+    float dropY = openUpwards ? (anchorTop - dropH - gap) : (anchorBottom + gap);
+
+    if (dropY < hudTop) dropY = hudTop;
+    if (dropY + dropH > hudBottom) dropH = (std::max)(itemH, hudBottom - dropY);
+
+    return D2D1::RectF(dropX, dropY, dropX + dropW, dropY + dropH);
+}
+
+void SettingsOverlay::DrawGestureDropdown(ID2D1DeviceContext* pRT) {
+    if (m_activeGestureDropdown.gestureIndex < 0) return;
+    const auto palette = GetSettingsThemePalette();
+
+    D2D1_RECT_F dropRect = GetGestureDropdownRect();
+    float controlX = dropRect.left;
+    float controlW = dropRect.right - controlX;
+    float dropY = dropRect.top;
+
+    const float s = m_uiScale;
+    const float radius = 8.0f * s;
+    float itemH = ITEM_HEIGHT * s;
+    int count = (int)m_activeGestureDropdown.options.size();
+    int visibleItems = static_cast<int>(std::round((dropRect.bottom - dropRect.top) / itemH));
+    if (visibleItems <= 0) visibleItems = 1;
+    if (visibleItems > count) visibleItems = count;
+
+    int maxOffset = (std::max)(0, count - visibleItems);
+    int startIdx = std::clamp(m_gestureDropdownScrollOffset, 0, maxOffset);
+
+    // 1. Container Background
+    if (m_brushBg) {
+        D2D1_COLOR_F opaqueBg = palette.panelBg;
+        opaqueBg.a = 1.0f;
+        m_brushBg->SetColor(opaqueBg);
+        pRT->FillRoundedRectangle(D2D1::RoundedRect(dropRect, radius, radius), m_brushBg.Get());
+    }
+    pRT->DrawRoundedRectangle(D2D1::RoundedRect(dropRect, radius, radius), m_brushBorder.Get(), 1.0f * s);
+
+    // 2. Items
+    pRT->PushAxisAlignedClip(dropRect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+
+    const DWRITE_WORD_WRAPPING origWrap = m_textFormatItem->GetWordWrapping();
+    m_textFormatItem->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+
+    for (int i = 0; i < visibleItems; i++) {
+        int idx = startIdx + i;
+        if (idx >= count) break;
+
+        float y = dropY + i * itemH;
+        float padRightEdge = (count > visibleItems) ? (10.0f * s) : (3.0f * s);
+        D2D1_RECT_F itemRect = D2D1::RectF(controlX + 3.0f * s, y + 2.0f * s, controlX + controlW - padRightEdge, y + itemH - 2.0f * s);
+        float itemRadius = 4.0f * s;
+
+        bool isHover = (idx == m_gestureDropdownHoverIdx);
+        if (isHover) {
+            pRT->FillRoundedRectangle(D2D1::RoundedRect(itemRect, itemRadius, itemRadius), m_brushAccent.Get());
+        } else {
+            bool isSel = (idx == m_activeGestureDropdown.selectedIdx);
+            if (isSel && m_brushBg) {
+                m_brushBg->SetColor(palette.subtleTint);
+                pRT->FillRoundedRectangle(D2D1::RoundedRect(itemRect, itemRadius, itemRadius), m_brushBg.Get());
+            }
+        }
+
+        D2D1_RECT_F textRect = D2D1::RectF(itemRect.left + 10.0f * s, y, itemRect.right - 6.0f * s, y + itemH);
+        ID2D1SolidColorBrush* textBrush = isHover ? m_brushWhite.Get() : m_brushText.Get();
+        QuickView::UI::GeekWidgets::DrawMarqueeText(
+            pRT, textRect, m_activeGestureDropdown.options[idx], isHover, false,
+            m_textFormatItem.Get(), textBrush, s, m_dwriteFactory.Get());
+    }
+
+    m_textFormatItem->SetWordWrapping(origWrap);
+
+    // 3. Scrollbar indicator
+    if (count > visibleItems && maxOffset > 0) {
+        float scrollTrackH = dropRect.bottom - dropRect.top - 8.0f * s;
+        float thumbH = (std::max)(16.0f * s, scrollTrackH * ((float)visibleItems / (float)count));
+        float thumbY = dropRect.top + 4.0f * s + (scrollTrackH - thumbH) * ((float)startIdx / (float)maxOffset);
+        float thumbW = 3.0f * s;
+        float thumbX = dropRect.right - 6.0f * s;
+        D2D1_RECT_F thumbRect = D2D1::RectF(thumbX, thumbY, thumbX + thumbW, thumbY + thumbH);
+        if (m_brushAccent) {
+            pRT->FillRoundedRectangle(D2D1::RoundedRect(thumbRect, 1.5f * s, 1.5f * s), m_brushAccent.Get());
+        }
+    }
+
+    pRT->PopAxisAlignedClip();
 }
 
