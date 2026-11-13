@@ -803,8 +803,8 @@ bool IsUnifiedBufferCodec(const std::wstring &fmt) {
 }
 
 bool ShouldProbeAnimatedBufferCodec(const std::wstring &fmt) {
-  return fmt == L"WebP" || fmt == L"GIF" || fmt == L"PNG" || fmt == L"AVIF" ||
-         fmt == L"JXL";
+  return fmt == L"WebP" || fmt == L"WEBP" || fmt == L"GIF" ||
+         fmt == L"PNG" || fmt == L"APNG" || fmt == L"AVIF" || fmt == L"JXL";
 }
 
 bool IsMetafileFormat(const std::wstring &fmt) {
@@ -1047,6 +1047,63 @@ HRESULT CollapseFloatResultToSdr(const QuickView::Codec::DecodeContext &ctx,
   return S_OK;
 }
 
+bool TryProbeAnimatedBuffer(std::shared_ptr<QuickView::MappedFile> fileMap,
+                            const std::wstring &fmt,
+                            QuickView::Codec::DecodeResult &result) {
+  if (!ShouldProbeAnimatedBufferCodec(fmt) || !fileMap || !fileMap->IsValid()) {
+    return false;
+  }
+
+  std::unique_ptr<QuickView::IAnimationDecoder> animator;
+  if (fmt == L"WebP" || fmt == L"WEBP") {
+    animator = QuickView::CreateWebPAnimator();
+  } else if (fmt == L"AVIF") {
+    animator = QuickView::CreateAvifAnimator();
+  } else if (fmt == L"JXL") {
+    animator = QuickView::CreateJxlAnimator();
+  } else {
+    animator = QuickView::CreateWuffsAnimator();
+  }
+
+  if (!animator ||
+      !animator->Initialize(fileMap, QuickView::PixelFormat::BGRA8888) ||
+      !animator->IsAnimated()) {
+    return false;
+  }
+
+  auto firstFrame = animator->GetNextFrame();
+  if (!firstFrame || !firstFrame->pixels) {
+    QV_LOG("Anim_Loader",
+           TraceLoggingString("GetNextFrame Null", "Action"));
+    return false;
+  }
+
+  result.width = firstFrame->width;
+  result.height = firstFrame->height;
+  result.stride = firstFrame->stride;
+  result.format = firstFrame->format;
+
+  // Transfer ownership of the aligned pixel buffer to DecodeResult.
+  result.pixels = firstFrame->pixels;
+  firstFrame->pixels = nullptr;
+  firstFrame->memoryDeleter.Clear();
+
+  result.frameMeta = firstFrame->frameMeta;
+  result.animator = std::move(animator);
+  result.metadata.Width = firstFrame->width;
+  result.metadata.Height = firstFrame->height;
+  result.metadata.Format = fmt;
+  result.metadata.LoaderName =
+      (fmt == L"WebP" || fmt == L"WEBP")
+          ? L"WebPAnimator"
+          : (fmt == L"AVIF" ? L"AvifAnimator"
+                            : (fmt == L"JXL" ? L"JxlAnimator"
+                                             : L"WuffsAnimator"));
+  QV_LOG("Anim_Loader",
+         TraceLoggingString("Hijack Success", "Action"));
+  return true;
+}
+
 void MoveDecodeResultToFrame(const QuickView::Codec::DecodeResult &result,
                              QuickView::RawImageFrame *outFrame,
                              QuantumArena *arena) {
@@ -1264,7 +1321,8 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t *data, size_t size,
                                             int targetWidth, int targetHeight,
                                             std::wstring *pLoaderName,
                                             ImageMetadata *pMetadata,
-                                            float targetHdrHeadroomStops) {
+                                            float targetHdrHeadroomStops,
+                                            std::shared_ptr<QuickView::MappedFile> sourceMmf) {
   if (!data || !size || !outFrame)
     return E_INVALIDARG;
   (void)targetHdrHeadroomStops;
@@ -1500,7 +1558,18 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t *data, size_t size,
     ctx.targetHdrHeadroomStops = targetHdrHeadroomStops;
 
     DecodeResult result;
-    HRESULT hrUnified = LoadBufferUnified(data, size, fmt, ctx, result);
+    bool animProbed = false;
+    if (ShouldProbeAnimatedBufferCodec(fmt)) {
+      std::shared_ptr<QuickView::MappedFile> animMap = std::move(sourceMmf);
+      if (!animMap || !animMap->IsValid()) {
+        animMap = QuickView::MappedFile::FromMemory(data, size);
+      }
+      animProbed = TryProbeAnimatedBuffer(std::move(animMap), fmt, result);
+    }
+
+    HRESULT hrUnified = animProbed
+                            ? S_OK
+                            : LoadBufferUnified(data, size, fmt, ctx, result);
 
     if (hrUnified == E_OUTOFMEMORY || hrUnified == E_ABORT)
       return hrUnified;
@@ -1513,6 +1582,10 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t *data, size_t size,
 
     if (SUCCEEDED(hrUnified) && result.pixels) {
       MoveDecodeResultToFrame(result, outFrame, arena);
+      if (result.animator) {
+        outFrame->animator = std::move(result.animator);
+        outFrame->frameMeta = result.frameMeta;
+      }
       QV_LOG("LoadToFrame_Memory",
              TraceLoggingString("Unified_Success", "Action"),
              TraceLoggingWideString(fmt.c_str(), "Format"));
@@ -9251,60 +9324,8 @@ HRESULT CImageLoader::LoadImageUnifiedInternal(LPCWSTR filePath,
     size_t mappedSize = fileMap->size();
 
     // Dispatch
-    if (ShouldProbeAnimatedBufferCodec(fmt)) { // APNG supported by Wuffs
-      if (fileMap->IsValid()) {
-        std::unique_ptr<QuickView::IAnimationDecoder> animator;
-        if (fmt == L"WebP") {
-          animator = QuickView::CreateWebPAnimator();
-        } else if (fmt == L"AVIF") {
-          animator = QuickView::CreateAvifAnimator();
-        } else if (fmt == L"JXL") {
-          animator = QuickView::CreateJxlAnimator();
-        } else {
-          animator = QuickView::CreateWuffsAnimator();
-        }
-
-        if (animator &&
-            animator->Initialize(fileMap, QuickView::PixelFormat::BGRA8888)) {
-          if (animator->IsAnimated()) {
-            auto firstFrame = animator->GetNextFrame();
-            if (firstFrame && firstFrame->pixels) {
-              result.width = firstFrame->width;
-              result.height = firstFrame->height;
-              result.stride = firstFrame->stride;
-              result.format = firstFrame->format;
-
-              // Steal pixels
-              result.pixels = firstFrame->pixels;
-              firstFrame->pixels = nullptr; // prevent double free
-
-              // Propagate Animation meta and Animator link
-              result.frameMeta = firstFrame->frameMeta;
-              result.animator = std::move(animator);
-              result.metadata.LoaderName =
-                  fmt == L"WebP"
-                      ? L"WebPAnimator"
-                      : (fmt == L"AVIF" ? L"AvifAnimator"
-                                        : (fmt == L"JXL" ? L"JxlAnimator"
-                                                         : L"WuffsAnimator"));
-              QV_LOG("Anim_Loader",
-                     TraceLoggingString("Hijack Success", "Action"));
-              return S_OK;
-            } else {
-              QV_LOG("Anim_Loader",
-                     TraceLoggingString("GetNextFrame Null", "Action"));
-            }
-            // QV_LOG("Anim_Loader", TraceLoggingString("NotAnimated",
-            // "Action"));
-          }
-        } else {
-          // QV_LOG("Anim_Loader", TraceLoggingString("InitializeFailed",
-          // "Action"));
-        }
-      } else {
-        QV_LOG("Anim_Loader",
-               TraceLoggingString("MappedFile Invalid", "Action"));
-      }
+    if (TryProbeAnimatedBuffer(fileMap, fmt, result)) { // APNG supported by Wuffs
+      return S_OK;
     }
 
     if (fmt == L"HEIC") {
@@ -13380,11 +13401,13 @@ CImageLoader::ImageHeaderInfo CImageLoader::PeekHeader(LPCWSTR filePath) {
     if (lastDot != std::wstring::npos) {
       std::wstring ext = pathStr.substr(lastDot);
       std::transform(ext.begin(), ext.end(), ext.begin(), ::towlower);
-      if (ext == L".png")
+      if (ext == L".png" || ext == L".apng")
         result.format = L"PNG";
+      else if (ext == L".gif")
+        result.format = L"GIF";
       else if (ext == L".webp")
         result.format = L"WEBP";
-      else if (ext == L".avif")
+      else if (ext == L".avif" || ext == L".avifs")
         result.format = L"AVIF";
       else if (ext == L".jxl")
         result.format = L"JXL";

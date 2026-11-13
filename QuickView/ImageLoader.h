@@ -13,6 +13,7 @@
 #include <type_traits>
 
 namespace QuickView {
+class MappedFile;
 namespace Codec {
 struct DecodeContext;
 struct DecodeResult;
@@ -347,7 +348,8 @@ public:
                                 int targetWidth = 0, int targetHeight = 0,
                                 std::wstring *pLoaderName = nullptr,
                                 ImageMetadata *pMetadata = nullptr,
-                                float targetHdrHeadroomStops = -1.0f);
+                                float targetHdrHeadroomStops = -1.0f,
+                                std::shared_ptr<QuickView::MappedFile> sourceMmf = nullptr);
 
   // ============================================================================
   // [Titan Engine] Region Decoding API
@@ -541,6 +543,7 @@ private:
 };
 
 namespace QuickView {
+class MappedFile;
 namespace Codec {
 
 struct DecodeContext {

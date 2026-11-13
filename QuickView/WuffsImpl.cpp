@@ -599,6 +599,9 @@ public:
 
     bool Initialize(std::shared_ptr<QuickView::MappedFile> file,
                     QuickView::PixelFormat /*preferredFormat*/) override {
+      if (!file || !file->IsValid() || !file->data() || file->size() == 0) {
+        return false;
+      }
       m_mappedFile = file;
       const uint8_t *data = file->data();
       size_t size = file->size();
@@ -615,19 +618,18 @@ public:
           WUFFS_INITIALIZE__LEAVE_INTERNAL_BUFFERS_UNINITIALIZED);
 
       if (wuffs_base__status__is_ok(&status)) {
-        status =
-            wuffs_gif__decoder__decode_image_config(&m_gifDec, &m_ic, &m_src);
+        status = DecodeConfigWithShortRead(true, m_gifDec, m_pngDec, m_ic, m_src);
         if (wuffs_base__status__is_ok(&status)) {
-          // [BUGFIX] Verify actual animated GIF via Application Extension or
-          // multiple Image Descriptors
+          // Verify actual animated GIF via multiple Image Descriptors.
           bool hasAnim = false;
-          int image_count = 0;
+          uint32_t image_count = 0;
           const uint8_t *p = data;
           size_t offset = 13; // Header (6) + LSD (7)
           if (size > 13) {
             uint8_t lsd_packed = p[10];
             if (lsd_packed & 0x80) { // Global Color Table Flag
-              offset += 3 * (2 << (lsd_packed & 0x07));
+              size_t gctSize = 3u * (2u << (lsd_packed & 0x07));
+              offset = (gctSize <= size - offset) ? (offset + gctSize) : size;
             }
             while (offset < size) {
               uint8_t block_type = p[offset++];
@@ -643,7 +645,10 @@ public:
                 uint8_t id_packed = p[offset + 8];
                 offset += 9;
                 if (id_packed & 0x80) { // Local Color Table Flag
-                  offset += 3 * (2 << (id_packed & 0x07));
+                  size_t lctSize = 3u * (2u << (id_packed & 0x07));
+                  if (lctSize > size - offset)
+                    break;
+                  offset += lctSize;
                 }
                 if (offset >= size)
                   break;
@@ -652,6 +657,10 @@ public:
                   uint8_t sub_len = p[offset++];
                   if (sub_len == 0)
                     break;
+                  if (sub_len > size - offset) {
+                    offset = size;
+                    break;
+                  }
                   offset += sub_len;
                 }
               } else if (block_type == 0x21) { // Extension
@@ -663,6 +672,10 @@ public:
                   uint8_t sub_len = p[offset++];
                   if (sub_len == 0)
                     break;
+                  if (sub_len > size - offset) {
+                    offset = size;
+                    break;
+                  }
                   offset += sub_len;
                 }
               } else {
@@ -680,41 +693,21 @@ public:
       }
 
       if (!m_isGif) {
-        // Try PNG (APNG)
+        // Try PNG (APNG) with full short-read config expansion support (>1MB metadata)
         m_src.meta.ri = 0;
+        m_src.meta.wi = std::min(size, (size_t)1048576);
+        m_src.meta.closed = (m_src.meta.wi == size);
         status = wuffs_png__decoder__initialize(
             &m_pngDec, sizeof(m_pngDec), WUFFS_VERSION,
             WUFFS_INITIALIZE__LEAVE_INTERNAL_BUFFERS_UNINITIALIZED);
         if (wuffs_base__status__is_ok(&status)) {
-          status =
-              wuffs_png__decoder__decode_image_config(&m_pngDec, &m_ic, &m_src);
+          status = DecodeConfigWithShortRead(false, m_gifDec, m_pngDec, m_ic, m_src);
           if (wuffs_base__status__is_ok(&status)) {
-            // [BUGFIX] Verify actual APNG via acTL chunk presence before IDAT
-            bool hasAcTL = false;
-            uint32_t apng_frames = 0;
-            const uint8_t *p = data;
-            size_t offset = 8; // Skip PNG signature
-            while (offset + 12 <= size) {
-              uint32_t chunk_len = (p[offset] << 24) | (p[offset + 1] << 16) |
-                                   (p[offset + 2] << 8) | p[offset + 3];
-              uint32_t chunk_type = (p[offset + 4] << 24) |
-                                    (p[offset + 5] << 16) |
-                                    (p[offset + 6] << 8) | p[offset + 7];
-
-              if (chunk_type == 0x6163544C) { // 'acTL'
-                hasAcTL = true;
-                if (offset + 12 <= size) {
-                  apng_frames = (p[offset + 8] << 24) | (p[offset + 9] << 16) |
-                                (p[offset + 10] << 8) | p[offset + 11];
-                }
-                break;
-              } else if (chunk_type == 0x49444154 ||
-                         chunk_type == 0x49454E44) { // 'IDAT' or 'IEND'
-                break;
-              }
-              offset += 12 + chunk_len;
-            }
-            if (hasAcTL && apng_frames > 1) {
+            const uint32_t apng_frames =
+                m_pngDec.private_impl.f_seen_actl
+                    ? m_pngDec.private_impl.f_num_animation_frames_value
+                    : 1u;
+            if (apng_frames > 1) {
               m_isPng = true;
               m_knownTotalFrames = apng_frames;
             } else {
@@ -769,12 +762,7 @@ public:
       m_lastRect = {};
 
       m_isAnimated = true; // For now.
-      
-      // Start Background Indexer
-      m_indexerThread = std::jthread([this](std::stop_token st) {
-          BackgroundIndexer(st);
-      });
-
+      // Defer background indexer until non-zero seek to avoid cold-boot CPU/memory contention.
       return true;
     }
 
@@ -897,7 +885,10 @@ public:
         }
 
         m_currentIndex++;
-        if (m_currentIndex > m_knownTotalFrames) m_knownTotalFrames = m_currentIndex;
+        uint32_t known = m_knownTotalFrames.load(std::memory_order_relaxed);
+        if (m_currentIndex > known) {
+            m_knownTotalFrames.store(m_currentIndex, std::memory_order_relaxed);
+        }
         
         return true;
     }
@@ -911,6 +902,9 @@ public:
     }
 
     std::shared_ptr<RawImageFrame> SeekToFrame(uint32_t targetIndex) override {
+        if (targetIndex > 0) {
+            EnsureIndexerStarted();
+        }
         if (targetIndex == m_currentIndex) {
             // Already there
             return GetNextFrame(); // wait, GetNextFrame advances to current+1
@@ -944,17 +938,24 @@ public:
         } else if (m_currentIndex > targetIndex) {
             // We need to rewind, but no snapshot was closer than 0.
             // Re-initialize foreground decoder only (do not clear background indexer)
-            wuffs_base__status status;
+            wuffs_base__status status = {};
             m_src.meta.ri = 0; // Rewind IO
             m_src.meta.wi = std::min(m_mappedFile->size(), (size_t)1048576);
             m_src.meta.closed = (m_src.meta.wi == m_mappedFile->size());
             if (m_isGif) {
                 status = wuffs_gif__decoder__initialize(&m_gifDec, sizeof(m_gifDec), WUFFS_VERSION, WUFFS_INITIALIZE__LEAVE_INTERNAL_BUFFERS_UNINITIALIZED);
-                wuffs_gif__decoder__decode_image_config(&m_gifDec, &m_ic, &m_src);
+                if (!wuffs_base__status__is_ok(&status)) return nullptr;
+                status = DecodeConfigWithShortRead(true, m_gifDec, m_pngDec, m_ic, m_src);
+                if (!wuffs_base__status__is_ok(&status)) return nullptr;
             } else if (m_isPng) {
                 status = wuffs_png__decoder__initialize(&m_pngDec, sizeof(m_pngDec), WUFFS_VERSION, WUFFS_INITIALIZE__LEAVE_INTERNAL_BUFFERS_UNINITIALIZED);
-                wuffs_png__decoder__decode_image_config(&m_pngDec, &m_ic, &m_src);
+                if (!wuffs_base__status__is_ok(&status)) return nullptr;
+                status = DecodeConfigWithShortRead(false, m_gifDec, m_pngDec, m_ic, m_src);
+                if (!wuffs_base__status__is_ok(&status)) return nullptr;
             }
+            wuffs_base__pixel_config__set(
+                &m_ic.pixcfg, WUFFS_BASE__PIXEL_FORMAT__BGRA_PREMUL,
+                WUFFS_BASE__PIXEL_SUBSAMPLING__NONE, m_width, m_height);
             memset(m_canvas.data(), 0, m_canvas.size());
             m_currentIndex = 0;
             m_lastDisposal = FrameDisposalMode::Unspecified;
@@ -972,11 +973,18 @@ public:
         return GetNextFrame();
     }
 
-    uint32_t GetTotalFrames() const override { return m_knownTotalFrames; }
+    uint32_t GetTotalFrames() const override { return m_knownTotalFrames.load(std::memory_order_relaxed); }
     bool IsAnimated() const override { return m_isAnimated; }
     bool SupportsDirtyRect() const override { return true; }
 
 private:
+    void EnsureIndexerStarted() {
+        std::call_once(m_indexerOnce, [this]() {
+            m_indexerThread = std::jthread([this](std::stop_token st) {
+                BackgroundIndexer(st);
+            });
+        });
+    }
     struct Rect { int left = 0; int top = 0; int right = 0; int bottom = 0; };
 
     struct Snapshot {
@@ -998,30 +1006,42 @@ private:
     }
 
     void BackgroundIndexerInternal(std::stop_token st) {
+        if (!m_mappedFile || !m_mappedFile->IsValid()) return;
+        const size_t fileSize = m_mappedFile->size();
         wuffs_gif__decoder bgGifDec;
         wuffs_png__decoder bgPngDec;
-        wuffs_base__io_buffer bgSrc = m_src; // Copy initial io_buffer state
-        bgSrc.meta.ri = 0; // Restart from 0
-        
-        wuffs_base__status status;
-        wuffs_base__image_config ic;
+        wuffs_base__io_buffer bgSrc = {};
+        bgSrc.data.ptr = const_cast<uint8_t*>(m_mappedFile->data());
+        bgSrc.data.len = fileSize;
+        bgSrc.meta.wi = std::min(fileSize, (size_t)1048576);
+        bgSrc.meta.ri = 0;
+        bgSrc.meta.closed = (bgSrc.meta.wi == fileSize);
+
+        wuffs_base__status status = {};
+        wuffs_base__image_config ic = {};
         if (m_isGif) {
             status = wuffs_gif__decoder__initialize(&bgGifDec, sizeof(bgGifDec), WUFFS_VERSION, WUFFS_INITIALIZE__LEAVE_INTERNAL_BUFFERS_UNINITIALIZED);
             if (!wuffs_base__status__is_ok(&status)) return;
-            wuffs_gif__decoder__decode_image_config(&bgGifDec, &ic, &bgSrc);
+            status = DecodeConfigWithShortRead(true, bgGifDec, bgPngDec, ic, bgSrc);
+            if (!wuffs_base__status__is_ok(&status)) return;
         } else if (m_isPng) {
             status = wuffs_png__decoder__initialize(&bgPngDec, sizeof(bgPngDec), WUFFS_VERSION, WUFFS_INITIALIZE__LEAVE_INTERNAL_BUFFERS_UNINITIALIZED);
             if (!wuffs_base__status__is_ok(&status)) return;
-            wuffs_png__decoder__decode_image_config(&bgPngDec, &ic, &bgSrc);
+            status = DecodeConfigWithShortRead(false, bgGifDec, bgPngDec, ic, bgSrc);
+            if (!wuffs_base__status__is_ok(&status)) return;
         } else {
             return;
         }
 
         std::vector<uint8_t> bgCanvas(m_canvas.size(), 0);
         std::vector<uint8_t> bgWorkbuf(m_workbuf.size());
-        wuffs_base__pixel_buffer bgPb;
-        wuffs_base__pixel_config bgIc = m_ic.pixcfg;
-        wuffs_base__pixel_buffer__set_from_slice(&bgPb, &bgIc, wuffs_base__make_slice_u8(bgCanvas.data(), bgCanvas.size()));
+        wuffs_base__pixel_buffer bgPb = {};
+        wuffs_base__pixel_config bgIc = {};
+        wuffs_base__pixel_config__set(
+            &bgIc, WUFFS_BASE__PIXEL_FORMAT__BGRA_PREMUL,
+            WUFFS_BASE__PIXEL_SUBSAMPLING__NONE, m_width, m_height);
+        status = wuffs_base__pixel_buffer__set_from_slice(&bgPb, &bgIc, wuffs_base__make_slice_u8(bgCanvas.data(), bgCanvas.size()));
+        if (!wuffs_base__status__is_ok(&status)) return;
 
         uint32_t bgCurrentIndex = 0;
         FrameDisposalMode bgLastDisposal = FrameDisposalMode::Unspecified;
@@ -1137,20 +1157,45 @@ private:
             bgLastRect.bottom = bounds.max_excl_y;
 
             bgCurrentIndex++;
-            if (bgCurrentIndex > m_knownTotalFrames) m_knownTotalFrames = bgCurrentIndex;
+            uint32_t known = m_knownTotalFrames.load(std::memory_order_relaxed);
+            if (bgCurrentIndex > known) {
+                m_knownTotalFrames.store(bgCurrentIndex, std::memory_order_relaxed);
+            }
+        }
+    }
+
+    wuffs_base__status DecodeConfigWithShortRead(bool isGif,
+                                                 wuffs_gif__decoder& gifDec,
+                                                 wuffs_png__decoder& pngDec,
+                                                 wuffs_base__image_config& ic,
+                                                 wuffs_base__io_buffer& src) const {
+        const size_t total = m_mappedFile ? m_mappedFile->size() : 0;
+        wuffs_base__status status = {};
+        while (true) {
+            status = isGif
+                ? wuffs_gif__decoder__decode_image_config(&gifDec, &ic, &src)
+                : wuffs_png__decoder__decode_image_config(&pngDec, &ic, &src);
+            if (wuffs_base__status__is_ok(&status)) return status;
+            if (status.repr == wuffs_base__suspension__short_read && !src.meta.closed) {
+                const size_t next = std::min(total, src.meta.wi + 1048576);
+                src.meta.wi = next;
+                src.meta.closed = (next == total);
+                continue;
+            }
+            return status;
         }
     }
 
     std::shared_ptr<QuickView::MappedFile> m_mappedFile;
     
-    wuffs_gif__decoder m_gifDec;
-    wuffs_png__decoder m_pngDec;
+    wuffs_gif__decoder m_gifDec = {};
+    wuffs_png__decoder m_pngDec = {};
     bool m_isGif = false;
     bool m_isPng = false;
     
-    wuffs_base__io_buffer m_src;
-    wuffs_base__image_config m_ic;
-    wuffs_base__pixel_buffer m_pb;
+    wuffs_base__io_buffer m_src = {};
+    wuffs_base__image_config m_ic = {};
+    wuffs_base__pixel_buffer m_pb = {};
     
     uint32_t m_width = 0;
     uint32_t m_height = 0;
@@ -1160,7 +1205,7 @@ private:
     std::vector<uint8_t> m_canvas;
     
     uint32_t m_currentIndex = 0;
-    uint32_t m_knownTotalFrames = 0;
+    std::atomic<uint32_t> m_knownTotalFrames{0};
     bool m_isAnimated = false;
     
     // Disposal State
@@ -1170,6 +1215,7 @@ private:
 
     std::vector<Snapshot> m_snapshots;
     std::shared_mutex m_snapshotMutex;
+    std::once_flag m_indexerOnce;
     std::jthread m_indexerThread;
 };
 

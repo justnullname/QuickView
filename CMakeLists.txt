@@ -319,6 +319,8 @@ find_library(BROTLI_COMMON_LIB_RELEASE NAMES brotlicommon PATH_SUFFIXES "lib" PA
 find_library(BROTLI_COMMON_LIB_DEBUG NAMES brotlicommon PATH_SUFFIXES "debug/lib" PATHS ${_VCPKG_SEARCH_PATHS} NO_DEFAULT_PATH)
 find_library(BROTLI_DEC_LIB_RELEASE NAMES brotlidec PATH_SUFFIXES "lib" PATHS ${_VCPKG_SEARCH_PATHS} NO_DEFAULT_PATH)
 find_library(BROTLI_DEC_LIB_DEBUG NAMES brotlidec PATH_SUFFIXES "debug/lib" PATHS ${_VCPKG_SEARCH_PATHS} NO_DEFAULT_PATH)
+find_library(BROTLI_ENC_LIB_RELEASE NAMES brotlienc PATH_SUFFIXES "lib" PATHS ${_VCPKG_SEARCH_PATHS} NO_DEFAULT_PATH)
+find_library(BROTLI_ENC_LIB_DEBUG NAMES brotlienc PATH_SUFFIXES "debug/lib" PATHS ${_VCPKG_SEARCH_PATHS} NO_DEFAULT_PATH)
 
 # dav1d (required by avif)
 find_library(DAV1D_LIB_RELEASE NAMES dav1d PATH_SUFFIXES "lib" PATHS ${_VCPKG_SEARCH_PATHS} NO_DEFAULT_PATH)
@@ -347,6 +349,10 @@ set_property(TARGET brotli::common PROPERTY IMPORTED_LOCATION_DEBUG "${BROTLI_CO
 add_library(brotli::dec STATIC IMPORTED)
 set_property(TARGET brotli::dec PROPERTY IMPORTED_LOCATION_RELEASE "${BROTLI_DEC_LIB_RELEASE}")
 set_property(TARGET brotli::dec PROPERTY IMPORTED_LOCATION_DEBUG "${BROTLI_DEC_LIB_DEBUG}")
+
+add_library(brotli::enc STATIC IMPORTED)
+set_property(TARGET brotli::enc PROPERTY IMPORTED_LOCATION_RELEASE "${BROTLI_ENC_LIB_RELEASE}")
+set_property(TARGET brotli::enc PROPERTY IMPORTED_LOCATION_DEBUG "${BROTLI_ENC_LIB_DEBUG}")
 
 add_library(dav1d::dav1d STATIC IMPORTED)
 set_property(TARGET dav1d::dav1d PROPERTY IMPORTED_LOCATION_RELEASE "${DAV1D_LIB_RELEASE}")
@@ -512,6 +518,40 @@ target_link_libraries(QuickViewTests PRIVATE
 target_include_directories(QuickViewTests PRIVATE QuickView third_party/yyjson third_party/unrar-mini)
 target_compile_definitions(QuickViewTests PRIVATE UNICODE _UNICODE)
 add_test(NAME QuickViewTests COMMAND QuickViewTests)
+
+add_executable(QuickViewAnimationTests
+    tests/AnimationDecoderTests.cpp
+    QuickView/WuffsImpl.cpp
+    QuickView/WebPAnimator.cpp
+    QuickView/AvifAnimator.cpp
+    QuickView/JxlAnimator.cpp
+    QuickView/ImageLoaderSimd.cpp
+    QuickView/pch.cpp
+)
+target_precompile_headers(QuickViewAnimationTests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:pch.h>)
+target_link_libraries(QuickViewAnimationTests PRIVATE
+    GTest::gtest_main
+    GTest::gtest
+    ZLIB::ZLIB
+    brotli::common
+    brotli::dec
+    brotli::enc
+    libjxl::jxl
+    libjxl::jxl_threads
+    libjxl::jxl_cms
+    lcms2::lcms2
+    avif
+    dav1d::dav1d
+    yuv
+    WebP::webpdemux
+    WebP::libwebpmux
+    WebP::webp
+    WebP::sharpyuv
+    hwy::hwy
+)
+target_include_directories(QuickViewAnimationTests PRIVATE QuickView)
+target_compile_definitions(QuickViewAnimationTests PRIVATE UNICODE _UNICODE)
+add_test(NAME QuickViewAnimationTests COMMAND QuickViewAnimationTests)
 
 # ============================================================================
 # IDE IntelliSense & Build Environment Helper (Inject Adaptive SDK Include Paths)

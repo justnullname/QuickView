@@ -8059,6 +8059,17 @@ static bool CreateSvgDocumentFromMemory(ID2D1DeviceContext* ctxBase, const uint8
     return SUCCEEDED(ctx5->CreateSvgDocument(stream.Get(), vpSize, &outDoc)) && outDoc;
 }
 
+static void SyncAnimationPlaybackTimer(HWND hwnd, const ImageResource& resource) {
+    if (resource.animator) {
+        g_animPlaying = true;
+        uint32_t delayMs = resource.frameMeta.delayMs;
+        if (delayMs < 10) delayMs = 100;
+        SetTimer(hwnd, IDT_ANIMATION, delayMs, NULL);
+    } else {
+        KillTimer(hwnd, IDT_ANIMATION);
+    }
+}
+
 static bool TryPresentBootPreloadedFrame(HWND hwnd, const std::wstring& initialImagePath) {
     if (initialImagePath.empty() || !g_renderEngine || !g_compEngine) return false;
 
@@ -8100,6 +8111,8 @@ static bool TryPresentBootPreloadedFrame(HWND hwnd, const std::wstring& initialI
             return false;
         }
         primaryPane.resource.bitmap = bootBitmap;
+        primaryPane.resource.animator = preloadedFrame->animator;
+        primaryPane.resource.frameMeta = preloadedFrame->frameMeta;
     }
 
     primaryPane.path = initialImagePath;
@@ -8144,6 +8157,7 @@ static bool TryPresentBootPreloadedFrame(HWND hwnd, const std::wstring& initialI
 
     RECT rcClient{}; GetClientRect(hwnd, &rcClient);
     SyncDCompState(hwnd, (float)rcClient.right, (float)rcClient.bottom, false);
+    SyncAnimationPlaybackTimer(hwnd, primaryPane.resource);
     if (g_uiRenderer) {
         g_toolbar.UpdateLayout((float)rcClient.right, (float)rcClient.bottom);
         g_uiRenderer->Render(hwnd, 0.016f);
@@ -16213,14 +16227,10 @@ void ProcessEngineEvents(HWND hwnd) {
                 TryUpgradeBitmapSurface(hwnd);
                 KillTimer(hwnd, 995); // Stop UI heartbeat timer
                 
-                // [v10.5] Start Animation Timer
-                if (!isPreview && GetPaneContext(PaneSlot::Primary).resource.animator) {
-                    g_animPlaying = true;
-                    uint32_t delayMs = GetPaneContext(PaneSlot::Primary).resource.frameMeta.delayMs;
-                    if (delayMs < 10) delayMs = 100;
-                    SetTimer(hwnd, IDT_ANIMATION, delayMs, NULL);
-                } else if (!isPreview) {
-                    KillTimer(hwnd, IDT_ANIMATION);
+                // [v10.5] Start Animation Timer (also cover animated frames arriving with preview flag)
+                const auto& primaryResource = GetPaneContext(PaneSlot::Primary).resource;
+                if (!isPreview || primaryResource.animator) {
+                    SyncAnimationPlaybackTimer(hwnd, primaryResource);
                 }
 
                 // [QVX-SR] Trigger debounced Super-Resolution check when image/animation is loaded and displayed

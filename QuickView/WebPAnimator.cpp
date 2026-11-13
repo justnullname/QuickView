@@ -1,5 +1,6 @@
 #include "AnimationDecoder.h"
 #include "MappedFile.h"
+#include <algorithm>
 #include <memory>
 #include <webp/demux.h>
 #include <webp/decode.h>
@@ -17,16 +18,21 @@ public:
     }
     
     ~WebPAnimator() override {
-        if (m_iter.has_alpha || m_iter.width > 0) { // basic init check
-            WebPDemuxReleaseIterator(&m_iter);
-        }
+        ReleaseIterator();
         if (m_demux) {
             WebPDemuxDelete(m_demux);
         }
     }
 
     bool Initialize(std::shared_ptr<QuickView::MappedFile> file, QuickView::PixelFormat /*preferredFormat*/) override {
+        if (!file || !file->IsValid()) return false;
         m_mappedFile = file;
+        ReleaseIterator();
+        if (m_demux) {
+            WebPDemuxDelete(m_demux);
+            m_demux = nullptr;
+        }
+
         WebPData webp_data;
         webp_data.bytes = file->data();
         webp_data.size = file->size();
@@ -45,92 +51,30 @@ public:
         if (m_width == 0 || m_height == 0) return false;
 
         if (!WebPDemuxGetFrame(m_demux, 1, &m_iter)) return false; // 1-based index
+        m_iterInitialized = true;
 
         m_canvas.resize((size_t)m_width * m_height * 4, 0); // BGRA Canvas, clear to 0
-        
-        m_indexerThread = std::jthread([this](std::stop_token st) {
-            BackgroundIndexer(st);
-        });
-        
+        // Defer background indexer until non-zero seek to avoid cold-boot CPU/memory contention.
         return true;
     }
 
     std::shared_ptr<RawImageFrame> GetNextFrame() override {
-        if (m_currentIndex >= m_totalFrames) return nullptr;
+        if (!m_iterInitialized || m_currentIndex >= m_totalFrames) return nullptr;
         
         // 1. Process previous frame disposal if needed
-        if (m_currentIndex > 0) {
-            if (m_lastDisposal == WEBP_MUX_DISPOSE_BACKGROUND) {
-                // Clear the previous frame's rect to transparent
-                for (int y = 0; y < m_lastRect.height; y++) {
-                    uint8_t* row = m_canvas.data() + (m_lastRect.y + y) * (m_width * 4) + m_lastRect.x * 4;
-                    memset(row, 0, m_lastRect.width * 4);
-                }
-            } else if (m_lastDisposal == WEBP_MUX_DISPOSE_NONE) {
-                // Keep
-            }
+        if (m_currentIndex > 0 && m_lastDisposal == WEBP_MUX_DISPOSE_BACKGROUND) {
+            ClearRectTransparent(m_canvas, m_width, m_height, m_lastRect);
         }
         
         // 2. Decode current frame fragment
-        int w, h;
+        int w = 0, h = 0;
         uint8_t* rgba = WebPDecodeBGRA(m_iter.fragment.bytes, m_iter.fragment.size, &w, &h);
         if (!rgba) return nullptr;
         
-        // 3. Blend onto canvas
+        // 3. Blend onto canvas with bounds clamping
         int x_offset = m_iter.x_offset;
         int y_offset = m_iter.y_offset;
-        
-        if (m_iter.blend_method == WEBP_MUX_NO_BLEND) {
-            // Overwrite (with alpha premultiplication)
-            for (int y = 0; y < h; y++) {
-                uint8_t* dstRow = m_canvas.data() + (y_offset + y) * (m_width * 4) + x_offset * 4;
-                const uint8_t* srcRow = rgba + y * (w * 4);
-                for (int x = 0; x < w; x++) {
-                    uint8_t a = srcRow[x*4 + 3];
-                    if (a == 255) {
-                        dstRow[x*4+0] = srcRow[x*4+0];
-                        dstRow[x*4+1] = srcRow[x*4+1];
-                        dstRow[x*4+2] = srcRow[x*4+2];
-                        dstRow[x*4+3] = 255;
-                    } else if (a == 0) {
-                        dstRow[x*4+0] = 0;
-                        dstRow[x*4+1] = 0;
-                        dstRow[x*4+2] = 0;
-                        dstRow[x*4+3] = 0;
-                    } else {
-                        dstRow[x*4+0] = static_cast<uint8_t>((srcRow[x*4+0] * a + 127) / 255);
-                        dstRow[x*4+1] = static_cast<uint8_t>((srcRow[x*4+1] * a + 127) / 255);
-                        dstRow[x*4+2] = static_cast<uint8_t>((srcRow[x*4+2] * a + 127) / 255);
-                        dstRow[x*4+3] = a;
-                    }
-                }
-            }
-        } else {
-            // Alpha Blend (SRC_OVER) - src is straight BGRA, dst is premultiplied BGRA
-            for (int y = 0; y < h; y++) {
-                uint8_t* dstRow = m_canvas.data() + (y_offset + y) * (m_width * 4) + x_offset * 4;
-                const uint8_t* srcRow = rgba + y * (w * 4);
-                for (int x = 0; x < w; x++) {
-                    uint8_t a = srcRow[x*4 + 3];
-                    if (a == 255) {
-                        dstRow[x*4+0] = srcRow[x*4+0];
-                        dstRow[x*4+1] = srcRow[x*4+1];
-                        dstRow[x*4+2] = srcRow[x*4+2];
-                        dstRow[x*4+3] = 255;
-                    } else if (a > 0) {
-                        uint8_t inv_a = 255 - a;
-                        uint32_t src_b = (srcRow[x*4+0] * a + 127) / 255;
-                        uint32_t src_g = (srcRow[x*4+1] * a + 127) / 255;
-                        uint32_t src_r = (srcRow[x*4+2] * a + 127) / 255;
-
-                        dstRow[x*4+0] = static_cast<uint8_t>(std::min<int>(255, src_b + (dstRow[x*4+0] * inv_a + 127) / 255));
-                        dstRow[x*4+1] = static_cast<uint8_t>(std::min<int>(255, src_g + (dstRow[x*4+1] * inv_a + 127) / 255));
-                        dstRow[x*4+2] = static_cast<uint8_t>(std::min<int>(255, src_r + (dstRow[x*4+2] * inv_a + 127) / 255));
-                        dstRow[x*4+3] = static_cast<uint8_t>(std::min<int>(255, a + (dstRow[x*4+3] * inv_a + 127) / 255));
-                    }
-                }
-            }
-        }
+        CompositeFragmentBGRA(m_canvas, m_width, m_height, rgba, w, h, x_offset, y_offset, m_iter.blend_method);
         
         WebPFree(rgba);
         
@@ -139,6 +83,7 @@ public:
         auto frame = std::make_shared<RawImageFrame>();
         size_t bufSize = m_canvas.size();
         frame->pixels = (uint8_t*)_aligned_malloc(bufSize, 64);
+        if (!frame->pixels) return nullptr;
         frame->memoryDeleter = QuickView::MemoryDeleter::FromAlignedFree();
         memcpy(frame->pixels, m_canvas.data(), bufSize);
         
@@ -171,7 +116,11 @@ public:
     }
 
     std::shared_ptr<RawImageFrame> SeekToFrame(uint32_t targetIndex) override {
+        if (m_totalFrames == 0) return nullptr;
         if (targetIndex >= m_totalFrames) targetIndex = m_totalFrames - 1;
+        if (targetIndex > 0) {
+            EnsureIndexerStarted();
+        }
         if (targetIndex == m_currentIndex) return GetNextFrame();
         
         uint32_t bestIndex = 0;
@@ -192,13 +141,15 @@ public:
             auto& snap = m_snapshots[bestSnap];
             m_currentIndex = snap.index;
             m_canvas = snap.canvas;
-            WebPDemuxGetFrame(m_demux, snap.demuxIndex, &m_iter);
+            ReleaseIterator();
+            m_iterInitialized = WebPDemuxGetFrame(m_demux, snap.demuxIndex, &m_iter) != 0;
             m_lastDisposal = snap.lastDisposal;
             m_lastRect = snap.lastRect;
         } else if (m_currentIndex > targetIndex) {
             m_currentIndex = 0;
             memset(m_canvas.data(), 0, m_canvas.size());
-            WebPDemuxGetFrame(m_demux, 1, &m_iter);
+            ReleaseIterator();
+            m_iterInitialized = WebPDemuxGetFrame(m_demux, 1, &m_iter) != 0;
             m_lastDisposal = WEBP_MUX_DISPOSE_NONE;
             m_lastRect = {0,0,0,0};
         }
@@ -214,19 +165,115 @@ public:
     }
 
     uint32_t GetTotalFrames() const override { return m_totalFrames; }
-    bool IsAnimated() const override { return true; }
+    bool IsAnimated() const override { return m_totalFrames > 1; }
     bool SupportsDirtyRect() const override { return true; }
 
 private:
+    struct Rect { int x, y, width, height; };
+
+    void ReleaseIterator() {
+        if (m_iterInitialized) {
+            WebPDemuxReleaseIterator(&m_iter);
+            memset(&m_iter, 0, sizeof(m_iter));
+            m_iterInitialized = false;
+        }
+    }
+
+    static void ClearRectTransparent(std::vector<uint8_t>& canvas, uint32_t canvasW, uint32_t canvasH, const Rect& rect) {
+        int x0 = std::clamp(rect.x, 0, (int)canvasW);
+        int y0 = std::clamp(rect.y, 0, (int)canvasH);
+        int x1 = std::clamp(rect.x + rect.width, 0, (int)canvasW);
+        int y1 = std::clamp(rect.y + rect.height, 0, (int)canvasH);
+        if (x1 <= x0 || y1 <= y0) return;
+
+        size_t clearBytes = (size_t)(x1 - x0) * 4;
+        for (int y = y0; y < y1; y++) {
+            uint8_t* row = canvas.data() + ((size_t)y * canvasW + (size_t)x0) * 4;
+            memset(row, 0, clearBytes);
+        }
+    }
+
+    static void CompositeFragmentBGRA(
+        std::vector<uint8_t>& canvas, uint32_t canvasW, uint32_t canvasH,
+        const uint8_t* rgba, int fragW, int fragH, int xOffset, int yOffset, WebPMuxAnimBlend blendMethod)
+    {
+        if (!rgba || fragW <= 0 || fragH <= 0) return;
+        int x0 = std::clamp(xOffset, 0, (int)canvasW);
+        int y0 = std::clamp(yOffset, 0, (int)canvasH);
+        int x1 = std::clamp(xOffset + fragW, 0, (int)canvasW);
+        int y1 = std::clamp(yOffset + fragH, 0, (int)canvasH);
+        if (x1 <= x0 || y1 <= y0) return;
+
+        int copyW = x1 - x0;
+        int srcStartX = x0 - xOffset;
+        if (blendMethod == WEBP_MUX_NO_BLEND) {
+            for (int y = y0; y < y1; y++) {
+                uint8_t* dstRow = canvas.data() + ((size_t)y * canvasW + (size_t)x0) * 4;
+                const uint8_t* srcRow = rgba + ((size_t)(y - yOffset) * fragW + (size_t)srcStartX) * 4;
+                for (int x = 0; x < copyW; x++) {
+                    uint8_t a = srcRow[x * 4 + 3];
+                    if (a == 255) {
+                        dstRow[x * 4 + 0] = srcRow[x * 4 + 0];
+                        dstRow[x * 4 + 1] = srcRow[x * 4 + 1];
+                        dstRow[x * 4 + 2] = srcRow[x * 4 + 2];
+                        dstRow[x * 4 + 3] = 255;
+                    } else if (a == 0) {
+                        dstRow[x * 4 + 0] = 0;
+                        dstRow[x * 4 + 1] = 0;
+                        dstRow[x * 4 + 2] = 0;
+                        dstRow[x * 4 + 3] = 0;
+                    } else {
+                        dstRow[x * 4 + 0] = static_cast<uint8_t>((srcRow[x * 4 + 0] * a + 127) / 255);
+                        dstRow[x * 4 + 1] = static_cast<uint8_t>((srcRow[x * 4 + 1] * a + 127) / 255);
+                        dstRow[x * 4 + 2] = static_cast<uint8_t>((srcRow[x * 4 + 2] * a + 127) / 255);
+                        dstRow[x * 4 + 3] = a;
+                    }
+                }
+            }
+        } else {
+            for (int y = y0; y < y1; y++) {
+                uint8_t* dstRow = canvas.data() + ((size_t)y * canvasW + (size_t)x0) * 4;
+                const uint8_t* srcRow = rgba + ((size_t)(y - yOffset) * fragW + (size_t)srcStartX) * 4;
+                for (int x = 0; x < copyW; x++) {
+                    uint8_t a = srcRow[x * 4 + 3];
+                    if (a == 255) {
+                        dstRow[x * 4 + 0] = srcRow[x * 4 + 0];
+                        dstRow[x * 4 + 1] = srcRow[x * 4 + 1];
+                        dstRow[x * 4 + 2] = srcRow[x * 4 + 2];
+                        dstRow[x * 4 + 3] = 255;
+                    } else if (a > 0) {
+                        uint8_t inv_a = 255 - a;
+                        uint32_t src_b = (srcRow[x * 4 + 0] * a + 127) / 255;
+                        uint32_t src_g = (srcRow[x * 4 + 1] * a + 127) / 255;
+                        uint32_t src_r = (srcRow[x * 4 + 2] * a + 127) / 255;
+
+                        dstRow[x * 4 + 0] = static_cast<uint8_t>(std::min<int>(255, src_b + (dstRow[x * 4 + 0] * inv_a + 127) / 255));
+                        dstRow[x * 4 + 1] = static_cast<uint8_t>(std::min<int>(255, src_g + (dstRow[x * 4 + 1] * inv_a + 127) / 255));
+                        dstRow[x * 4 + 2] = static_cast<uint8_t>(std::min<int>(255, src_r + (dstRow[x * 4 + 2] * inv_a + 127) / 255));
+                        dstRow[x * 4 + 3] = static_cast<uint8_t>(std::min<int>(255, a + (dstRow[x * 4 + 3] * inv_a + 127) / 255));
+                    }
+                }
+            }
+        }
+    }
+
+    void EnsureIndexerStarted() {
+        std::call_once(m_indexerOnce, [this]() {
+            m_indexerThread = std::jthread([this](std::stop_token st) {
+                BackgroundIndexer(st);
+            });
+        });
+    }
+
     std::shared_ptr<QuickView::MappedFile> m_mappedFile;
     WebPDemuxer* m_demux = nullptr;
     WebPIterator m_iter;
+    bool m_iterInitialized = false;
     uint32_t m_totalFrames = 0;
     uint32_t m_currentIndex = 0;
     uint32_t m_width = 0;
     uint32_t m_height = 0;
     
-    struct Rect { int x, y, width, height; };
     WebPMuxAnimDispose m_lastDisposal = WEBP_MUX_DISPOSE_NONE;
     Rect m_lastRect = {0,0,0,0};
     
@@ -241,9 +288,11 @@ private:
     };
     std::vector<Snapshot> m_snapshots;
     std::shared_mutex m_snapshotMutex;
+    std::once_flag m_indexerOnce;
     std::jthread m_indexerThread;
 
     void BackgroundIndexer(std::stop_token st) {
+        if (!m_mappedFile || !m_mappedFile->IsValid()) return;
         WebPData webp_data;
         webp_data.bytes = m_mappedFile->data();
         webp_data.size = m_mappedFile->size();
@@ -252,6 +301,7 @@ private:
         if (!bgDemux) return;
 
         WebPIterator bgIter;
+        memset(&bgIter, 0, sizeof(bgIter));
         if (!WebPDemuxGetFrame(bgDemux, 1, &bgIter)) {
             WebPDemuxDelete(bgDemux);
             return;
@@ -267,22 +317,18 @@ private:
         size_t currentMemory = 0;
 
         while (!st.stop_requested() && bgCurrentIndex < m_totalFrames) {
-            if (bgCurrentIndex > 0) {
-                if (bgLastDisposal == WEBP_MUX_DISPOSE_BACKGROUND) {
-                    for (int y = 0; y < bgLastRect.height; y++) {
-                        uint8_t* row = bgCanvas.data() + (bgLastRect.y + y) * (m_width * 4) + bgLastRect.x * 4;
-                        memset(row, 0, bgLastRect.width * 4);
-                    }
-                }
+            if (bgCurrentIndex > 0 && bgLastDisposal == WEBP_MUX_DISPOSE_BACKGROUND) {
+                ClearRectTransparent(bgCanvas, m_width, m_height, bgLastRect);
             }
 
+            // Capture snapshot AFTER applying previous frame's disposal and BEFORE decoding bgCurrentIndex.
             if (bgCurrentIndex % snapshotInterval == 0) {
                 Snapshot snap;
                 snap.index = bgCurrentIndex;
                 snap.canvas = bgCanvas;
                 snap.demuxIndex = bgIter.frame_num;
-                snap.lastDisposal = bgIter.dispose_method;
-                snap.lastRect = { bgIter.x_offset, bgIter.y_offset, bgIter.width, bgIter.height };
+                snap.lastDisposal = WEBP_MUX_DISPOSE_NONE;
+                snap.lastRect = {0, 0, 0, 0};
 
                 size_t snapSize = snap.canvas.size();
 
@@ -303,52 +349,10 @@ private:
                 lock.unlock();
             }
 
-            int w, h;
+            int w = 0, h = 0;
             uint8_t* rgba = WebPDecodeBGRA(bgIter.fragment.bytes, bgIter.fragment.size, &w, &h);
             if (rgba) {
-                int x_offset = bgIter.x_offset;
-                int y_offset = bgIter.y_offset;
-
-                if (bgIter.blend_method == WEBP_MUX_NO_BLEND) {
-                    for (int y = 0; y < h; y++) {
-                        uint8_t* dstRow = bgCanvas.data() + (y_offset + y) * (m_width * 4) + x_offset * 4;
-                        const uint8_t* srcRow = rgba + y * (w * 4);
-                        for (int x = 0; x < w; x++) {
-                            uint8_t a = srcRow[x*4 + 3];
-                            if (a == 255) {
-                                dstRow[x*4+0] = srcRow[x*4+0]; dstRow[x*4+1] = srcRow[x*4+1]; dstRow[x*4+2] = srcRow[x*4+2]; dstRow[x*4+3] = 255;
-                            } else if (a == 0) {
-                                dstRow[x*4+0] = 0; dstRow[x*4+1] = 0; dstRow[x*4+2] = 0; dstRow[x*4+3] = 0;
-                            } else {
-                                dstRow[x*4+0] = static_cast<uint8_t>((srcRow[x*4+0] * a + 127) / 255);
-                                dstRow[x*4+1] = static_cast<uint8_t>((srcRow[x*4+1] * a + 127) / 255);
-                                dstRow[x*4+2] = static_cast<uint8_t>((srcRow[x*4+2] * a + 127) / 255);
-                                dstRow[x*4+3] = a;
-                            }
-                        }
-                    }
-                } else {
-                    for (int y = 0; y < h; y++) {
-                        uint8_t* dstRow = bgCanvas.data() + (y_offset + y) * (m_width * 4) + x_offset * 4;
-                        const uint8_t* srcRow = rgba + y * (w * 4);
-                        for (int x = 0; x < w; x++) {
-                            uint8_t a = srcRow[x*4 + 3];
-                            if (a == 255) {
-                                dstRow[x*4+0] = srcRow[x*4+0]; dstRow[x*4+1] = srcRow[x*4+1]; dstRow[x*4+2] = srcRow[x*4+2]; dstRow[x*4+3] = 255;
-                            } else if (a > 0) {
-                                uint8_t inv_a = 255 - a;
-                                uint32_t src_b = (srcRow[x*4+0] * a + 127) / 255;
-                                uint32_t src_g = (srcRow[x*4+1] * a + 127) / 255;
-                                uint32_t src_r = (srcRow[x*4+2] * a + 127) / 255;
-
-                                dstRow[x*4+0] = static_cast<uint8_t>(std::min<int>(255, src_b + (dstRow[x*4+0] * inv_a + 127) / 255));
-                                dstRow[x*4+1] = static_cast<uint8_t>(std::min<int>(255, src_g + (dstRow[x*4+1] * inv_a + 127) / 255));
-                                dstRow[x*4+2] = static_cast<uint8_t>(std::min<int>(255, src_r + (dstRow[x*4+2] * inv_a + 127) / 255));
-                                dstRow[x*4+3] = static_cast<uint8_t>(std::min<int>(255, a + (dstRow[x*4+3] * inv_a + 127) / 255));
-                            }
-                        }
-                    }
-                }
+                CompositeFragmentBGRA(bgCanvas, m_width, m_height, rgba, w, h, bgIter.x_offset, bgIter.y_offset, bgIter.blend_method);
                 WebPFree(rgba);
             }
 

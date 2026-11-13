@@ -149,7 +149,7 @@ void BootPreloader::Start(const std::wstring& imagePath) {
 
         if (data->mmf && data->mmf->IsValid()) {
             hr = loader.LoadToFrameFromMemory(data->mmf->data(), data->mmf->size(), frame.get(),
-                                             nullptr, 0, 0, &ldr, &meta);
+                                             nullptr, 0, 0, &ldr, &meta, -1.0f, data->mmf);
         }
 
         if (FAILED(hr) && !st.stop_requested()) {
