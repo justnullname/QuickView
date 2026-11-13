@@ -25,7 +25,11 @@
 #include "SupportedExtensions.h"
 
 #include <wrl/client.h>
+#include <zlib.h>
 
+#include <algorithm>
+#include <cstring>
+#include <span>
 #include <vector>
 
 using Microsoft::WRL::ComPtr;
@@ -267,6 +271,167 @@ HRESULT Transcode(IWICImagingFactory* factory, const std::wstring& path, int sta
         return HRESULT_FROM_WIN32(lastErr);
     }
     return S_OK;
+}
+
+uint16_t RatingPercentForStars(int starVal) {
+    switch (starVal) {
+        case 1: return 1;
+        case 2: return 25;
+        case 3: return 50;
+        case 4: return 75;
+        case 5: return 99;
+        default: return 0;
+    }
+}
+
+std::string BuildStandardXmpPayload(int starVal) {
+    std::string s =
+        "<?xpacket begin=\"\xEF\xBB\xBF\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n"
+        "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">\n"
+        " <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n"
+        "  <rdf:Description rdf:about=\"\"\n"
+        "    xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"\n";
+    if (starVal > 0) {
+        s += "    xmp:Rating=\"" + std::to_string(starVal) + "\"/>\n";
+    } else {
+        s += "   />\n";
+    }
+    s += " </rdf:RDF>\n"
+         "</x:xmpmeta>\n";
+    s.append(2048, ' ');
+    s += "\n<?xpacket end=\"w\"?>";
+    return s;
+}
+
+bool IsFileLockError(DWORD err) {
+    return err == ERROR_SHARING_VIOLATION || err == ERROR_LOCK_VIOLATION;
+}
+
+HANDLE OpenFileForReadRetry(const std::wstring& path, DWORD* outLastErr = nullptr) {
+    DWORD lastErr = 0;
+    for (int attempt = 0; attempt < 5; ++attempt) {
+        HANDLE file = CreateFileW(path.c_str(), GENERIC_READ,
+                                  FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                  nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file != INVALID_HANDLE_VALUE) return file;
+        lastErr = GetLastError();
+        if (attempt + 1 < 5) Sleep(15);
+    }
+    if (outLastErr) *outLastErr = lastErr;
+    return INVALID_HANDLE_VALUE;
+}
+
+bool AtomicReplaceFile(const std::wstring& targetPath, const std::wstring& tempPath,
+                       DWORD* outLastErr = nullptr) {
+    DWORD lastErr = 0;
+    for (int retry = 0; retry < 5; ++retry) {
+        if (ReplaceFileW(targetPath.c_str(), tempPath.c_str(), nullptr,
+                         REPLACEFILE_IGNORE_MERGE_ERRORS, nullptr, nullptr)) {
+            return true;
+        }
+        lastErr = GetLastError();
+        if (retry + 1 < 5) Sleep(20);
+    }
+    DeleteFileW(tempPath.c_str());
+    if (outLastErr) *outLastErr = lastErr;
+    return false;
+}
+
+uint32_t ReadBe32(const uint8_t* p) {
+    return (static_cast<uint32_t>(p[0]) << 24) |
+           (static_cast<uint32_t>(p[1]) << 16) |
+           (static_cast<uint32_t>(p[2]) << 8) |
+           static_cast<uint32_t>(p[3]);
+}
+
+void AppendBe32(std::vector<uint8_t>& out, uint32_t val) {
+    out.push_back(static_cast<uint8_t>((val >> 24) & 0xFF));
+    out.push_back(static_cast<uint8_t>((val >> 16) & 0xFF));
+    out.push_back(static_cast<uint8_t>((val >> 8) & 0xFF));
+    out.push_back(static_cast<uint8_t>(val & 0xFF));
+}
+
+// Updates inline IFD0 SimpleRating (0x4746) and RatingPercent (0x4749) in place
+// inside an uncompressed TIFF buffer. Returns true if at least one tag was patched.
+bool PatchTiffBufferRating(std::span<uint8_t> tiff, int stars) {
+    if (tiff.size() < 8) return false;
+    const bool littleEndian = (tiff[0] == 'I' && tiff[1] == 'I');
+    const bool bigEndian = (tiff[0] == 'M' && tiff[1] == 'M');
+    if (!littleEndian && !bigEndian) return false;
+
+    auto read16 = [littleEndian](const uint8_t* p) -> uint16_t {
+        return littleEndian ? (static_cast<uint16_t>(p[1]) << 8 | p[0])
+                            : (static_cast<uint16_t>(p[0]) << 8 | p[1]);
+    };
+    auto read32 = [littleEndian](const uint8_t* p) -> uint32_t {
+        return littleEndian ? ((static_cast<uint32_t>(p[3]) << 24) | (static_cast<uint32_t>(p[2]) << 16) |
+                               (static_cast<uint32_t>(p[1]) << 8) | p[0])
+                            : ((static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |
+                               (static_cast<uint32_t>(p[2]) << 8) | p[3]);
+    };
+    auto write16 = [littleEndian](uint8_t* p, uint16_t v) {
+        if (littleEndian) {
+            p[0] = static_cast<uint8_t>(v & 0xFF);
+            p[1] = static_cast<uint8_t>((v >> 8) & 0xFF);
+        } else {
+            p[0] = static_cast<uint8_t>((v >> 8) & 0xFF);
+            p[1] = static_cast<uint8_t>(v & 0xFF);
+        }
+    };
+    auto write32 = [littleEndian](uint8_t* p, uint32_t v) {
+        if (littleEndian) {
+            p[0] = static_cast<uint8_t>(v & 0xFF);
+            p[1] = static_cast<uint8_t>((v >> 8) & 0xFF);
+            p[2] = static_cast<uint8_t>((v >> 16) & 0xFF);
+            p[3] = static_cast<uint8_t>((v >> 24) & 0xFF);
+        } else {
+            p[0] = static_cast<uint8_t>((v >> 24) & 0xFF);
+            p[1] = static_cast<uint8_t>((v >> 16) & 0xFF);
+            p[2] = static_cast<uint8_t>((v >> 8) & 0xFF);
+            p[3] = static_cast<uint8_t>(v & 0xFF);
+        }
+    };
+
+    if (read16(tiff.data() + 2) != 42) return false;
+    const uint32_t ifdOffset = read32(tiff.data() + 4);
+    if (ifdOffset < 8 || static_cast<uint64_t>(ifdOffset) + 2 > tiff.size()) return false;
+
+    const uint16_t entryCount = read16(tiff.data() + ifdOffset);
+    const size_t tableEnd = static_cast<size_t>(ifdOffset) + 2 + static_cast<size_t>(entryCount) * 12;
+    if (entryCount == 0 || tableEnd > tiff.size()) return false;
+
+    const int clampedStars = std::clamp(stars, 0, 5);
+    const uint16_t pct = RatingPercentForStars(clampedStars);
+    bool updatedAny = false;
+
+    for (uint16_t i = 0; i < entryCount; ++i) {
+        uint8_t* entry = tiff.data() + ifdOffset + 2 + static_cast<size_t>(i) * 12;
+        const uint16_t tag = read16(entry);
+        if (tag != 0x4746 && tag != 0x4749) continue;
+
+        const uint16_t type = read16(entry + 2);
+        const uint32_t count = read32(entry + 4);
+        if (count != 1) continue;
+
+        const uint32_t val = (tag == 0x4746) ? static_cast<uint32_t>(clampedStars) : static_cast<uint32_t>(pct);
+        switch (type) {
+            case 1: // BYTE
+                entry[8] = static_cast<uint8_t>(val & 0xFF);
+                updatedAny = true;
+                break;
+            case 3: // SHORT
+                write16(entry + 8, static_cast<uint16_t>(val));
+                updatedAny = true;
+                break;
+            case 4: // LONG
+                write32(entry + 8, val);
+                updatedAny = true;
+                break;
+            default:
+                break;
+        }
+    }
+    return updatedAny;
 }
 
 // Lossless native RIFF container surgery for WebP: preserves all compressed
@@ -1424,25 +1589,6 @@ WriteStatus WriteRatingToJxl(const std::wstring& path, int stars, bool allowTran
         return p;
     };
 
-    auto buildStandardXmpPayload = [](int starVal) -> std::string {
-        std::string s =
-            "<?xpacket begin=\"\xEF\xBB\xBF\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n"
-            "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">\n"
-            " <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n"
-            "  <rdf:Description rdf:about=\"\"\n"
-            "    xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"\n";
-        if (starVal > 0) {
-            s += "    xmp:Rating=\"" + std::to_string(starVal) + "\"/>\n";
-        } else {
-            s += "   />\n";
-        }
-        s += " </rdf:RDF>\n"
-             "</x:xmpmeta>\n";
-        s.append(2048, ' ');
-        s += "\n<?xpacket end=\"w\"?>";
-        return s;
-    };
-
     // 1. Bare Codestream check (0xFF 0x0A)
     if (src[0] == 0xFF && src[1] == 0x0A) {
         if (stars <= 0) {
@@ -1476,7 +1622,7 @@ WriteStatus WriteRatingToJxl(const std::wstring& path, int stars, bool allowTran
         container.insert(container.end(), exifPayload.begin(), exifPayload.end());
 
         // xml box (XMP)
-        const auto xmpPayload = buildStandardXmpPayload(stars);
+        const auto xmpPayload = BuildStandardXmpPayload(stars);
         writeU32(container, static_cast<uint32_t>(8 + xmpPayload.size()));
         container.push_back('x'); container.push_back('m'); container.push_back('l'); container.push_back(' ');
         container.insert(container.end(), xmpPayload.begin(), xmpPayload.end());
@@ -1503,19 +1649,7 @@ WriteStatus WriteRatingToJxl(const std::wstring& path, int stars, bool allowTran
             return WriteStatus::Failed;
         }
 
-        auto atomicReplace = [&](const std::wstring& tPath) -> bool {
-            for (int retry = 0; retry < 5; ++retry) {
-                if (ReplaceFileW(path.c_str(), tPath.c_str(), nullptr,
-                                 REPLACEFILE_IGNORE_MERGE_ERRORS, nullptr, nullptr)) {
-                    return true;
-                }
-                Sleep(20);
-            }
-            DeleteFileW(tPath.c_str());
-            return false;
-        };
-
-        if (!atomicReplace(tempPath)) {
+        if (!AtomicReplaceFile(path, tempPath)) {
             return WriteStatus::Failed;
         }
         return WriteStatus::WrittenTranscode;
@@ -1649,7 +1783,7 @@ WriteStatus WriteRatingToJxl(const std::wstring& path, int stars, bool allowTran
             newContainer.insert(newContainer.end(), exifPayload.begin(), exifPayload.end());
 
             // 2. xml box
-            const auto xmpPayload = buildStandardXmpPayload(stars);
+            const auto xmpPayload = BuildStandardXmpPayload(stars);
             writeU32(newContainer, static_cast<uint32_t>(8 + xmpPayload.size()));
             newContainer.push_back('x'); newContainer.push_back('m'); newContainer.push_back('l'); newContainer.push_back(' ');
             newContainer.insert(newContainer.end(), xmpPayload.begin(), xmpPayload.end());
@@ -1665,7 +1799,7 @@ WriteStatus WriteRatingToJxl(const std::wstring& path, int stars, bool allowTran
         newContainer.push_back('E'); newContainer.push_back('x'); newContainer.push_back('i'); newContainer.push_back('f');
         newContainer.insert(newContainer.end(), exifPayload.begin(), exifPayload.end());
 
-        const auto xmpPayload = buildStandardXmpPayload(stars);
+        const auto xmpPayload = BuildStandardXmpPayload(stars);
         writeU32(newContainer, static_cast<uint32_t>(8 + xmpPayload.size()));
         newContainer.push_back('x'); newContainer.push_back('m'); newContainer.push_back('l'); newContainer.push_back(' ');
         newContainer.insert(newContainer.end(), xmpPayload.begin(), xmpPayload.end());
@@ -1682,20 +1816,453 @@ WriteStatus WriteRatingToJxl(const std::wstring& path, int stars, bool allowTran
         return WriteStatus::Failed;
     }
 
-    auto atomicReplace = [&](const std::wstring& tPath) -> bool {
-        for (int retry = 0; retry < 5; ++retry) {
-            if (ReplaceFileW(path.c_str(), tPath.c_str(), nullptr,
-                             REPLACEFILE_IGNORE_MERGE_ERRORS, nullptr, nullptr)) {
-                return true;
-            }
-            Sleep(20);
+    if (!AtomicReplaceFile(path, tempPath)) {
+        return WriteStatus::Failed;
+    }
+    return WriteStatus::WrittenTranscode;
+}
+
+// ============================================================================
+// Lossless native PNG / APNG Chunk Writer (O(1) in-place + 64KB streaming)
+// ============================================================================
+
+constexpr uint8_t PNG_SIGNATURE[8] = { 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n' };
+constexpr std::string_view PNG_XMP_KEYWORD = "XML:com.adobe.xmp";
+constexpr uint32_t PNG_MAX_METADATA_CHUNK_BYTES = 16u * 1024u * 1024u;
+
+bool SeekFileTo(HANDLE hFile, uint64_t offset) {
+    LARGE_INTEGER li;
+    li.QuadPart = static_cast<LONGLONG>(offset);
+    return SetFilePointerEx(hFile, li, nullptr, FILE_BEGIN) != FALSE;
+}
+
+bool ReadExactBytes(HANDLE hFile, uint8_t* dst, size_t bytes) {
+    size_t offset = 0;
+    while (offset < bytes) {
+        const DWORD toRead = static_cast<DWORD>(std::min<size_t>(bytes - offset, 0x40000000u));
+        DWORD read = 0;
+        if (!ReadFile(hFile, dst + offset, toRead, &read, nullptr) || read == 0) {
+            return false;
         }
-        DeleteFileW(tPath.c_str());
+        offset += read;
+    }
+    return true;
+}
+
+bool WriteExactBytes(HANDLE hFile, const uint8_t* src, size_t bytes) {
+    size_t offset = 0;
+    while (offset < bytes) {
+        const DWORD toWrite = static_cast<DWORD>(std::min<size_t>(bytes - offset, 0x40000000u));
+        DWORD written = 0;
+        if (!WriteFile(hFile, src + offset, toWrite, &written, nullptr) || written != toWrite) {
+            return false;
+        }
+        offset += written;
+    }
+    return true;
+}
+
+bool CopyFileRangeChunked(HANDLE hSrc, HANDLE hDst, uint64_t startOffset, uint64_t endOffset,
+                          std::vector<uint8_t>& ioBuf) {
+    if (endOffset < startOffset) return false;
+    if (endOffset == startOffset) return true;
+    if (!SeekFileTo(hSrc, startOffset)) return false;
+
+    uint64_t remaining = endOffset - startOffset;
+    while (remaining > 0) {
+        const DWORD chunk = static_cast<DWORD>(std::min<uint64_t>(remaining, ioBuf.size()));
+        if (!ReadExactBytes(hSrc, ioBuf.data(), chunk)) return false;
+        if (!WriteExactBytes(hDst, ioBuf.data(), chunk)) return false;
+        remaining -= chunk;
+    }
+    return true;
+}
+
+uint32_t ComputePngChunkCrc(const uint8_t type[4], std::span<const uint8_t> data) {
+    uLong crc = crc32(0L, Z_NULL, 0);
+    crc = crc32(crc, type, 4);
+    size_t offset = 0;
+    while (offset < data.size()) {
+        const uInt step = static_cast<uInt>(std::min<size_t>(data.size() - offset, 0x40000000u));
+        crc = crc32(crc, data.data() + offset, step);
+        offset += step;
+    }
+    return static_cast<uint32_t>(crc);
+}
+
+std::vector<uint8_t> BuildPngChunkBytes(const uint8_t type[4], std::span<const uint8_t> data) {
+    std::vector<uint8_t> out;
+    out.reserve(12 + data.size());
+    AppendBe32(out, static_cast<uint32_t>(data.size()));
+    out.insert(out.end(), type, type + 4);
+    out.insert(out.end(), data.begin(), data.end());
+    AppendBe32(out, ComputePngChunkCrc(type, data));
+    return out;
+}
+
+std::vector<uint8_t> BuildPngITXtXmpChunk(int stars) {
+    const std::string xmp = BuildStandardXmpPayload(stars);
+    std::vector<uint8_t> payload;
+    payload.reserve(PNG_XMP_KEYWORD.size() + 5 + xmp.size());
+    payload.insert(payload.end(), PNG_XMP_KEYWORD.begin(), PNG_XMP_KEYWORD.end());
+    payload.push_back(0); // keyword null-terminator
+    payload.push_back(0); // compression flag = uncompressed
+    payload.push_back(0); // compression method = 0
+    payload.push_back(0); // language tag null-terminator
+    payload.push_back(0); // translated keyword null-terminator
+    payload.insert(payload.end(), xmp.begin(), xmp.end());
+    static constexpr uint8_t ITXT_TYPE[4] = { 'i', 'T', 'X', 't' };
+    return BuildPngChunkBytes(ITXT_TYPE, payload);
+}
+
+enum class PngITXtKind { NotXmp, UncompressedXmp, CompressedOrMalformedXmp };
+
+PngITXtKind InspectPngITXt(std::span<const uint8_t> data, size_t& outXmpOffset) {
+    if (data.size() <= PNG_XMP_KEYWORD.size() ||
+        std::memcmp(data.data(), PNG_XMP_KEYWORD.data(), PNG_XMP_KEYWORD.size()) != 0 ||
+        data[PNG_XMP_KEYWORD.size()] != 0) {
+        return PngITXtKind::NotXmp;
+    }
+    const size_t flagPos = PNG_XMP_KEYWORD.size() + 1;
+    if (flagPos + 4 > data.size() || data[flagPos] != 0) {
+        return PngITXtKind::CompressedOrMalformedXmp;
+    }
+    size_t pos = flagPos + 2;
+    for (int i = 0; i < 2; ++i) {
+        const auto* nul = static_cast<const uint8_t*>(std::memchr(data.data() + pos, 0, data.size() - pos));
+        if (!nul) return PngITXtKind::CompressedOrMalformedXmp;
+        pos = static_cast<size_t>(nul - data.data()) + 1;
+    }
+    outXmpOffset = pos;
+    return PngITXtKind::UncompressedXmp;
+}
+
+bool IsPngZTxtXmp(std::span<const uint8_t> data) {
+    return data.size() > PNG_XMP_KEYWORD.size() &&
+           std::memcmp(data.data(), PNG_XMP_KEYWORD.data(), PNG_XMP_KEYWORD.size()) == 0 &&
+           data[PNG_XMP_KEYWORD.size()] == 0;
+}
+
+struct PngXmpChunkRecord {
+    uint64_t chunkOffset = 0;
+    uint64_t totalSize = 0;
+    bool uncompressedITXt = false;
+    size_t xmpOffsetInData = 0;
+    std::vector<uint8_t> data;
+};
+
+struct PngExifChunkRecord {
+    uint64_t chunkOffset = 0;
+    uint64_t totalSize = 0;
+    std::vector<uint8_t> data;
+    bool hasPatchedRating = false;
+};
+
+struct PngPreIdatScan {
+    uint64_t fileSize = 0;
+    uint64_t insertOffset = 0;
+    bool foundImageOrEndBoundary = false;
+    std::vector<PngXmpChunkRecord> xmpChunks;
+    std::vector<PngExifChunkRecord> exifChunks;
+};
+
+bool ScanPngPreIdat(HANDLE hFile, int targetStars, PngPreIdatScan& out) {
+    LARGE_INTEGER sizeLi{};
+    if (!GetFileSizeEx(hFile, &sizeLi) || sizeLi.QuadPart < 20) return false;
+    out.fileSize = static_cast<uint64_t>(sizeLi.QuadPart);
+
+    if (!SeekFileTo(hFile, 0)) return false;
+    uint8_t sig[8]{};
+    if (!ReadExactBytes(hFile, sig, 8) || std::memcmp(sig, PNG_SIGNATURE, 8) != 0) {
         return false;
+    }
+
+    uint64_t pos = 8;
+    bool insertAnchorLocked = false;
+
+    while (pos + 12 <= out.fileSize) {
+        if (!SeekFileTo(hFile, pos)) return false;
+        uint8_t header[8]{};
+        if (!ReadExactBytes(hFile, header, 8)) return false;
+
+        const uint32_t chunkLen = ReadBe32(header);
+        if (chunkLen > 0x7FFFFFFFu) return false; // PNG spec forbids bit 31 set
+        const uint64_t totalSize = 12ull + chunkLen;
+        if (totalSize > out.fileSize - pos) return false;
+
+        if (pos == 8 && (std::memcmp(header + 4, "IHDR", 4) != 0 || chunkLen < 13)) {
+            return false;
+        }
+
+        const bool isActl = (std::memcmp(header + 4, "acTL", 4) == 0);
+        const bool isFctl = (std::memcmp(header + 4, "fcTL", 4) == 0);
+        const bool isIdat = (std::memcmp(header + 4, "IDAT", 4) == 0);
+        const bool isIend = (std::memcmp(header + 4, "IEND", 4) == 0);
+
+        if (!insertAnchorLocked && (isActl || isFctl || isIdat || isIend)) {
+            out.insertOffset = pos;
+            insertAnchorLocked = true;
+        }
+
+        if (isIdat || isIend) {
+            out.foundImageOrEndBoundary = true;
+            break;
+        }
+
+        const bool isITXt = (std::memcmp(header + 4, "iTXt", 4) == 0);
+        const bool isZTxt = (std::memcmp(header + 4, "zTXt", 4) == 0);
+        const bool isExif = (std::memcmp(header + 4, "eXIf", 4) == 0);
+
+        if ((isITXt || isZTxt || isExif) && chunkLen > 0) {
+            if (chunkLen > PNG_MAX_METADATA_CHUNK_BYTES) return false;
+            std::vector<uint8_t> data(chunkLen);
+            if (!ReadExactBytes(hFile, data.data(), chunkLen)) return false;
+
+            if (isITXt) {
+                size_t xmpOff = 0;
+                const PngITXtKind kind = InspectPngITXt(data, xmpOff);
+                if (kind != PngITXtKind::NotXmp) {
+                    PngXmpChunkRecord rec;
+                    rec.chunkOffset = pos;
+                    rec.totalSize = totalSize;
+                    rec.uncompressedITXt = (kind == PngITXtKind::UncompressedXmp);
+                    rec.xmpOffsetInData = xmpOff;
+                    rec.data = std::move(data);
+                    out.xmpChunks.push_back(std::move(rec));
+                }
+            } else if (isZTxt) {
+                if (IsPngZTxtXmp(data)) {
+                    PngXmpChunkRecord rec;
+                    rec.chunkOffset = pos;
+                    rec.totalSize = totalSize;
+                    rec.uncompressedITXt = false;
+                    out.xmpChunks.push_back(std::move(rec));
+                }
+            } else if (isExif) {
+                PngExifChunkRecord rec;
+                rec.chunkOffset = pos;
+                rec.totalSize = totalSize;
+                rec.data = std::move(data);
+                rec.hasPatchedRating = PatchTiffBufferRating(rec.data, targetStars);
+                out.exifChunks.push_back(std::move(rec));
+            }
+        }
+
+        pos += totalSize;
+    }
+
+    return out.foundImageOrEndBoundary && insertAnchorLocked;
+}
+
+struct PngInPlaceWriteOp {
+    uint64_t dataFileOffset = 0;
+    const uint8_t* dataBytes = nullptr;
+    size_t dataSize = 0;
+    uint64_t crcFileOffset = 0;
+    uint32_t newCrc = 0;
+};
+
+bool TryPngInPlaceUpdate(const std::wstring& path, PngPreIdatScan& scan, int targetStars,
+                         bool& outFileLocked) {
+    outFileLocked = false;
+
+    bool anyExifHasRating = false;
+    for (const auto& exif : scan.exifChunks) {
+        if (exif.hasPatchedRating) anyExifHasRating = true;
+    }
+
+    // Cannot safely patch compressed or duplicate XMP chunks in place.
+    if (scan.xmpChunks.size() > 1) return false;
+    if (scan.xmpChunks.size() == 1 && !scan.xmpChunks[0].uncompressedITXt) return false;
+
+    // Nothing in file carries a rating yet: clearing is a no-op, setting needs injection.
+    if (scan.xmpChunks.empty() && !anyExifHasRating) {
+        return targetStars <= 0;
+    }
+
+    std::vector<PngInPlaceWriteOp> ops;
+
+    if (scan.xmpChunks.size() == 1) {
+        auto& xmpChunk = scan.xmpChunks[0];
+        const std::string_view oldXmp(
+            reinterpret_cast<const char*>(xmpChunk.data.data() + xmpChunk.xmpOffsetInData),
+            xmpChunk.data.size() - xmpChunk.xmpOffsetInData);
+        auto patched = PatchXmpRatingInPlaceStrict(oldXmp, targetStars);
+        if (!patched || patched->size() != oldXmp.size()) {
+            return false;
+        }
+        std::memcpy(xmpChunk.data.data() + xmpChunk.xmpOffsetInData, patched->data(), patched->size());
+        static constexpr uint8_t ITXT_TYPE[4] = { 'i', 'T', 'X', 't' };
+        PngInPlaceWriteOp op;
+        op.dataFileOffset = xmpChunk.chunkOffset + 8 + xmpChunk.xmpOffsetInData;
+        op.dataBytes = xmpChunk.data.data() + xmpChunk.xmpOffsetInData;
+        op.dataSize = patched->size();
+        op.crcFileOffset = xmpChunk.chunkOffset + 8 + xmpChunk.data.size();
+        op.newCrc = ComputePngChunkCrc(ITXT_TYPE, xmpChunk.data);
+        ops.push_back(op);
+    }
+
+    for (const auto& exif : scan.exifChunks) {
+        if (!exif.hasPatchedRating) continue;
+        static constexpr uint8_t EXIF_TYPE[4] = { 'e', 'X', 'I', 'f' };
+        PngInPlaceWriteOp op;
+        op.dataFileOffset = exif.chunkOffset + 8;
+        op.dataBytes = exif.data.data();
+        op.dataSize = exif.data.size();
+        op.crcFileOffset = exif.chunkOffset + 8 + exif.data.size();
+        op.newCrc = ComputePngChunkCrc(EXIF_TYPE, exif.data);
+        ops.push_back(op);
+    }
+
+    if (ops.empty()) return true;
+
+    HANDLE hWrite = INVALID_HANDLE_VALUE;
+    DWORD lastErr = 0;
+    for (int attempt = 0; attempt < 5; ++attempt) {
+        hWrite = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE,
+                             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                             nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (hWrite != INVALID_HANDLE_VALUE) break;
+        lastErr = GetLastError();
+        if (attempt + 1 < 5) Sleep(15);
+    }
+    if (hWrite == INVALID_HANDLE_VALUE) {
+        outFileLocked = IsFileLockError(lastErr);
+        return false;
+    }
+
+    bool ok = true;
+    for (const auto& op : ops) {
+        if (!SeekFileTo(hWrite, op.dataFileOffset) ||
+            !WriteExactBytes(hWrite, op.dataBytes, op.dataSize)) {
+            ok = false;
+            break;
+        }
+        uint8_t crcBe[4]{};
+        crcBe[0] = static_cast<uint8_t>((op.newCrc >> 24) & 0xFF);
+        crcBe[1] = static_cast<uint8_t>((op.newCrc >> 16) & 0xFF);
+        crcBe[2] = static_cast<uint8_t>((op.newCrc >> 8) & 0xFF);
+        crcBe[3] = static_cast<uint8_t>(op.newCrc & 0xFF);
+        if (!SeekFileTo(hWrite, op.crcFileOffset) || !WriteExactBytes(hWrite, crcBe, 4)) {
+            ok = false;
+            break;
+        }
+    }
+
+    if (ok) FlushFileBuffers(hWrite);
+    CloseHandle(hWrite);
+    return ok;
+}
+
+WriteStatus WriteRatingToPng(const std::wstring& path, int stars, bool allowTranscode) {
+    const int targetStars = std::clamp(stars, 0, 5);
+
+    DWORD openErr = 0;
+    HANDLE hSrc = OpenFileForReadRetry(path, &openErr);
+    if (hSrc == INVALID_HANDLE_VALUE) {
+        return IsFileLockError(openErr) ? WriteStatus::NeedsTranscode : WriteStatus::Failed;
+    }
+
+    PngPreIdatScan scan;
+    const bool validPng = ScanPngPreIdat(hSrc, targetStars, scan);
+    if (!validPng) {
+        CloseHandle(hSrc);
+        return WriteStatus::Failed;
+    }
+
+    bool inPlaceLocked = false;
+    if (TryPngInPlaceUpdate(path, scan, targetStars, inPlaceLocked)) {
+        CloseHandle(hSrc);
+        return WriteStatus::WrittenInPlace;
+    }
+    if (inPlaceLocked || !allowTranscode) {
+        CloseHandle(hSrc);
+        return WriteStatus::NeedsTranscode;
+    }
+
+    struct ChunkReplacement {
+        uint64_t offset = 0;
+        uint64_t totalSize = 0;
+        std::vector<uint8_t> bytes;
     };
 
-    if (!atomicReplace(tempPath)) {
+    std::vector<ChunkReplacement> replacements;
+    replacements.reserve(scan.xmpChunks.size() + scan.exifChunks.size());
+    for (const auto& xmp : scan.xmpChunks) {
+        replacements.push_back(ChunkReplacement{ xmp.chunkOffset, xmp.totalSize, {} });
+    }
+    for (const auto& exif : scan.exifChunks) {
+        if (!exif.hasPatchedRating) continue;
+        static constexpr uint8_t EXIF_TYPE[4] = { 'e', 'X', 'I', 'f' };
+        replacements.push_back(ChunkReplacement{
+            exif.chunkOffset, exif.totalSize, BuildPngChunkBytes(EXIF_TYPE, exif.data)
+        });
+    }
+    std::sort(replacements.begin(), replacements.end(),
+              [](const ChunkReplacement& a, const ChunkReplacement& b) {
+                  return a.offset < b.offset;
+              });
+
+    const std::vector<uint8_t> newITXtChunk =
+        (targetStars > 0) ? BuildPngITXtXmpChunk(targetStars) : std::vector<uint8_t>{};
+
+    const std::wstring tempPath = path + L".tmp_png_rating";
+    HANDLE hDst = CreateFileW(tempPath.c_str(), GENERIC_WRITE, 0, nullptr,
+                              CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hDst == INVALID_HANDLE_VALUE) {
+        const DWORD createErr = GetLastError();
+        CloseHandle(hSrc);
+        return IsFileLockError(createErr) ? WriteStatus::NeedsTranscode : WriteStatus::Failed;
+    }
+
+    std::vector<uint8_t> ioBuf(64u * 1024u);
+    bool streamOk = true;
+    uint64_t cursor = 0;
+    bool insertedNewXmp = newITXtChunk.empty();
+
+    for (const auto& rep : replacements) {
+        if (!insertedNewXmp && scan.insertOffset <= rep.offset) {
+            if (!CopyFileRangeChunked(hSrc, hDst, cursor, scan.insertOffset, ioBuf) ||
+                !WriteExactBytes(hDst, newITXtChunk.data(), newITXtChunk.size())) {
+                streamOk = false;
+                break;
+            }
+            cursor = scan.insertOffset;
+            insertedNewXmp = true;
+        }
+        if (!CopyFileRangeChunked(hSrc, hDst, cursor, rep.offset, ioBuf) ||
+            (!rep.bytes.empty() && !WriteExactBytes(hDst, rep.bytes.data(), rep.bytes.size()))) {
+            streamOk = false;
+            break;
+        }
+        cursor = rep.offset + rep.totalSize;
+    }
+
+    if (streamOk && !insertedNewXmp) {
+        if (!CopyFileRangeChunked(hSrc, hDst, cursor, scan.insertOffset, ioBuf) ||
+            !WriteExactBytes(hDst, newITXtChunk.data(), newITXtChunk.size())) {
+            streamOk = false;
+        } else {
+            cursor = scan.insertOffset;
+        }
+    }
+
+    if (streamOk && !CopyFileRangeChunked(hSrc, hDst, cursor, scan.fileSize, ioBuf)) {
+        streamOk = false;
+    }
+
+    if (streamOk) FlushFileBuffers(hDst);
+    CloseHandle(hDst);
+    CloseHandle(hSrc);
+
+    if (!streamOk) {
+        DeleteFileW(tempPath.c_str());
         return WriteStatus::Failed;
+    }
+
+    DWORD replaceErr = 0;
+    if (!AtomicReplaceFile(path, tempPath, &replaceErr)) {
+        return IsFileLockError(replaceErr) ? WriteStatus::NeedsTranscode : WriteStatus::Failed;
     }
     return WriteStatus::WrittenTranscode;
 }
@@ -1710,6 +2277,12 @@ WriteStatus WriteRatingToImage(const std::wstring& path, int stars, bool allowTr
     const bool isJxl = QuickView::ExtEqualsIgnoreCase(ext, L".jxl");
     if (isJxl) {
         return WriteRatingToJxl(path, stars, allowTranscode);
+    }
+
+    const bool isPng = QuickView::ExtEqualsIgnoreCase(ext, L".png") ||
+                       QuickView::ExtEqualsIgnoreCase(ext, L".apng");
+    if (isPng) {
+        return WriteRatingToPng(path, stars, allowTranscode);
     }
 
     const bool isWebp = QuickView::ExtEqualsIgnoreCase(ext, L".webp");
@@ -1729,8 +2302,6 @@ WriteStatus WriteRatingToImage(const std::wstring& path, int stars, bool allowTr
 
     const bool isTiff = QuickView::ExtEqualsIgnoreCase(ext, L".tif") ||
                         QuickView::ExtEqualsIgnoreCase(ext, L".tiff");
-    const bool isPng = QuickView::ExtEqualsIgnoreCase(ext, L".png") ||
-                       QuickView::ExtEqualsIgnoreCase(ext, L".apng");
 
     ComPtr<IWICImagingFactory> factory;
     if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
@@ -1738,9 +2309,9 @@ WriteStatus WriteRatingToImage(const std::wstring& path, int stars, bool allowTr
         return WriteStatus::Failed;
     }
 
-    // WIC TIFF and PNG decoders do NOT support FastMetadataEncoder (returns WINCODEC_ERR_UNSUPPORTEDOPERATION).
+    // WIC TIFF decoder does NOT support FastMetadataEncoder (returns WINCODEC_ERR_UNSUPPORTEDOPERATION).
     // Bypassing TryInPlace avoids open handle collisions during subsequent Transcode.
-    if (!isTiff && !isPng) {
+    if (!isTiff) {
         const HRESULT hrInPlace = TryInPlace(factory.Get(), path, stars);
         if (SUCCEEDED(hrInPlace)) {
             return WriteStatus::WrittenInPlace;

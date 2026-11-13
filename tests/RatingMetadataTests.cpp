@@ -5,6 +5,7 @@
 #include <windows.h>
 #include <jxl/decode.h>
 #include <jxl/decode_cxx.h>
+#include <zlib.h>
 
 #include <cstdint>
 #include <string>
@@ -1095,4 +1096,260 @@ TEST(RatingMetadataTest, JxlRealContainerRebuildAndInPlace) {
 
     DeleteFileW(copyPath);
 }
+
+namespace {
+
+void AppendPngChunkWithCrc(std::vector<uint8_t>& out, const char type[4], const std::vector<uint8_t>& data) {
+    const uint32_t len = static_cast<uint32_t>(data.size());
+    out.push_back(static_cast<uint8_t>((len >> 24) & 0xFF));
+    out.push_back(static_cast<uint8_t>((len >> 16) & 0xFF));
+    out.push_back(static_cast<uint8_t>((len >> 8) & 0xFF));
+    out.push_back(static_cast<uint8_t>(len & 0xFF));
+    out.push_back(static_cast<uint8_t>(type[0]));
+    out.push_back(static_cast<uint8_t>(type[1]));
+    out.push_back(static_cast<uint8_t>(type[2]));
+    out.push_back(static_cast<uint8_t>(type[3]));
+    out.insert(out.end(), data.begin(), data.end());
+
+    uLong crc = crc32(0L, Z_NULL, 0);
+    crc = crc32(crc, reinterpret_cast<const Bytef*>(type), 4);
+    if (!data.empty()) {
+        crc = crc32(crc, data.data(), static_cast<uInt>(data.size()));
+    }
+    const uint32_t crc32Val = static_cast<uint32_t>(crc);
+    out.push_back(static_cast<uint8_t>((crc32Val >> 24) & 0xFF));
+    out.push_back(static_cast<uint8_t>((crc32Val >> 16) & 0xFF));
+    out.push_back(static_cast<uint8_t>((crc32Val >> 8) & 0xFF));
+    out.push_back(static_cast<uint8_t>(crc32Val & 0xFF));
+}
+
+bool WriteAllToTempFile(const std::wstring& path, const std::vector<uint8_t>& bytes) {
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    DWORD written = 0;
+    const BOOL ok = WriteFile(h, bytes.data(), static_cast<DWORD>(bytes.size()), &written, nullptr);
+    CloseHandle(h);
+    return ok && written == bytes.size();
+}
+
+std::vector<uint8_t> ReadAllFromTempFile(const std::wstring& path) {
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return {};
+    LARGE_INTEGER sz{};
+    if (!GetFileSizeEx(h, &sz) || sz.QuadPart <= 0) {
+        CloseHandle(h);
+        return {};
+    }
+    std::vector<uint8_t> out(static_cast<size_t>(sz.QuadPart));
+    DWORD read = 0;
+    const BOOL ok = ReadFile(h, out.data(), static_cast<DWORD>(out.size()), &read, nullptr);
+    CloseHandle(h);
+    if (!ok || read != out.size()) return {};
+    return out;
+}
+
+struct ParsedPngChunkView {
+    std::string type;
+    size_t offset = 0;
+    size_t totalSize = 0;
+    uint32_t crcStored = 0;
+    uint32_t crcComputed = 0;
+    std::vector<uint8_t> data;
+};
+
+bool ParseAndVerifyAllPngChunks(const std::vector<uint8_t>& bytes, std::vector<ParsedPngChunkView>& chunks) {
+    chunks.clear();
+    static constexpr uint8_t SIG[8] = { 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n' };
+    if (bytes.size() < 8 || std::memcmp(bytes.data(), SIG, 8) != 0) return false;
+    size_t pos = 8;
+    while (pos + 12 <= bytes.size()) {
+        const uint32_t len = (static_cast<uint32_t>(bytes[pos]) << 24) |
+                             (static_cast<uint32_t>(bytes[pos + 1]) << 16) |
+                             (static_cast<uint32_t>(bytes[pos + 2]) << 8) |
+                             bytes[pos + 3];
+        if (len > 0x7FFFFFFFu || pos + 12 + static_cast<size_t>(len) > bytes.size()) return false;
+        ParsedPngChunkView c;
+        c.type.assign(reinterpret_cast<const char*>(bytes.data() + pos + 4), 4);
+        c.offset = pos;
+        c.totalSize = 12 + static_cast<size_t>(len);
+        c.data.assign(bytes.data() + pos + 8, bytes.data() + pos + 8 + len);
+
+        const size_t crcOff = pos + 8 + len;
+        c.crcStored = (static_cast<uint32_t>(bytes[crcOff]) << 24) |
+                      (static_cast<uint32_t>(bytes[crcOff + 1]) << 16) |
+                      (static_cast<uint32_t>(bytes[crcOff + 2]) << 8) |
+                      bytes[crcOff + 3];
+        uLong crc = crc32(0L, Z_NULL, 0);
+        crc = crc32(crc, bytes.data() + pos + 4, 4);
+        if (len > 0) crc = crc32(crc, bytes.data() + pos + 8, len);
+        c.crcComputed = static_cast<uint32_t>(crc);
+        if (c.crcStored != c.crcComputed) return false;
+
+        chunks.push_back(std::move(c));
+        pos += 12 + static_cast<size_t>(len);
+        if (chunks.back().type == "IEND") break;
+    }
+    return pos == bytes.size() && !chunks.empty() && chunks.back().type == "IEND";
+}
+
+} // namespace
+
+TEST(RatingMetadataTest, PngInjectInPlaceUpdateAndClearRoundTrip) {
+    const std::wstring path = L"test_png_roundtrip.png";
+    std::vector<uint8_t> png = { 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n' };
+    AppendPngChunkWithCrc(png, "IHDR", std::vector<uint8_t>(13, 1));
+    AppendPngChunkWithCrc(png, "PLTE", { 10, 20, 30 });
+    const std::vector<uint8_t> idatPayload = { 0xDE, 0xAD, 0xBE, 0xEF, 0x11, 0x22, 0x33 };
+    AppendPngChunkWithCrc(png, "IDAT", idatPayload);
+    AppendPngChunkWithCrc(png, "IEND", {});
+    ASSERT_TRUE(WriteAllToTempFile(path, png));
+
+    // Unrated PNG: clearing is an immediate in-place no-op
+    EXPECT_EQ(WriteRatingToImage(path, 0, /*allowTranscode=*/false), WriteStatus::WrittenInPlace);
+    EXPECT_FALSE(RatingStore::ReadRatingFromFile(path).has_value());
+
+    // Initial write requires rebuild; allowTranscode=false must report NeedsTranscode without modifying
+    EXPECT_EQ(WriteRatingToImage(path, 4, /*allowTranscode=*/false), WriteStatus::NeedsTranscode);
+    EXPECT_EQ(ReadAllFromTempFile(path), png);
+
+    // 1. Rebuild injects padded iTXt XMP chunk before IDAT
+    EXPECT_EQ(WriteRatingToImage(path, 4, /*allowTranscode=*/true), WriteStatus::WrittenTranscode);
+    EXPECT_EQ(RatingStore::ReadRatingFromFile(path), 4);
+
+    // 2. Subsequent updates hit 2048-byte padding in O(1) in-place even with allowTranscode=false
+    EXPECT_EQ(WriteRatingToImage(path, 2, /*allowTranscode=*/false), WriteStatus::WrittenInPlace);
+    EXPECT_EQ(RatingStore::ReadRatingFromFile(path), 2);
+
+    // 3. Clear to 0 stars in-place and then re-rate in-place
+    EXPECT_EQ(WriteRatingToImage(path, 0, /*allowTranscode=*/false), WriteStatus::WrittenInPlace);
+    EXPECT_FALSE(RatingStore::ReadRatingFromFile(path).has_value());
+
+    EXPECT_EQ(WriteRatingToImage(path, 5, /*allowTranscode=*/false), WriteStatus::WrittenInPlace);
+    EXPECT_EQ(RatingStore::ReadRatingFromFile(path), 5);
+
+    std::vector<ParsedPngChunkView> chunks;
+    const auto finalBytes = ReadAllFromTempFile(path);
+    ASSERT_TRUE(ParseAndVerifyAllPngChunks(finalBytes, chunks));
+    ASSERT_EQ(chunks.size(), 5u);
+    EXPECT_EQ(chunks[0].type, "IHDR");
+    EXPECT_EQ(chunks[1].type, "PLTE");
+    EXPECT_EQ(chunks[2].type, "iTXt");
+    EXPECT_EQ(chunks[3].type, "IDAT");
+    EXPECT_EQ(chunks[3].data, idatPayload);
+    EXPECT_EQ(chunks[4].type, "IEND");
+
+    DeleteFileW(path.c_str());
+}
+
+TEST(RatingMetadataTest, PngReplacesCompressedXmpAndSyncsExif) {
+    const std::wstring path = L"test_png_exif_compressed_xmp.png";
+    std::vector<uint8_t> png = { 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n' };
+    AppendPngChunkWithCrc(png, "IHDR", std::vector<uint8_t>(13, 2));
+
+    // TIFF IFD0 with 2 entries: ImageWidth (0x0100=320) + SimpleRating (0x4746=2)
+    std::vector<uint8_t> exif;
+    exif.push_back('I'); exif.push_back('I');
+    exif.push_back(0x2A); exif.push_back(0x00);
+    exif.push_back(0x08); exif.push_back(0x00); exif.push_back(0x00); exif.push_back(0x00);
+    exif.push_back(0x02); exif.push_back(0x00);
+    // Entry 1: tag 0x0100, SHORT(3), count 1, val 320
+    exif.insert(exif.end(), { 0x00, 0x01, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00, 0x40, 0x01, 0x00, 0x00 });
+    // Entry 2: tag 0x4746, SHORT(3), count 1, val 2
+    exif.insert(exif.end(), { 0x46, 0x47, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00 });
+    exif.insert(exif.end(), { 0x00, 0x00, 0x00, 0x00 });
+    AppendPngChunkWithCrc(png, "eXIf", exif);
+
+    // Compressed iTXt (compression_flag = 1) + stale zTXt
+    std::vector<uint8_t> compITXt;
+    const std::string_view kw = "XML:com.adobe.xmp";
+    compITXt.insert(compITXt.end(), kw.begin(), kw.end());
+    compITXt.insert(compITXt.end(), { 0, 1, 0, 0, 0, 0x78, 0x9C, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01 });
+    AppendPngChunkWithCrc(png, "iTXt", compITXt);
+
+    std::vector<uint8_t> ztxt;
+    ztxt.insert(ztxt.end(), kw.begin(), kw.end());
+    ztxt.insert(ztxt.end(), { 0, 0, 0x78, 0x9C, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01 });
+    AppendPngChunkWithCrc(png, "zTXt", ztxt);
+
+    AppendPngChunkWithCrc(png, "IDAT", { 1, 2, 3, 4 });
+    AppendPngChunkWithCrc(png, "IEND", {});
+    ASSERT_TRUE(WriteAllToTempFile(path, png));
+
+    // Compressed XMP chunks cannot be patched in place: rebuild strips stale XMP chunks and syncs eXIf
+    EXPECT_EQ(WriteRatingToImage(path, 5, /*allowTranscode=*/false), WriteStatus::NeedsTranscode);
+    EXPECT_EQ(WriteRatingToImage(path, 5, /*allowTranscode=*/true), WriteStatus::WrittenTranscode);
+    EXPECT_EQ(RatingStore::ReadRatingFromFile(path), 5);
+
+    // Subsequent edit updates BOTH eXIf and iTXt in place!
+    EXPECT_EQ(WriteRatingToImage(path, 1, /*allowTranscode=*/false), WriteStatus::WrittenInPlace);
+    EXPECT_EQ(RatingStore::ReadRatingFromFile(path), 1);
+
+    std::vector<ParsedPngChunkView> chunks;
+    const auto finalBytes = ReadAllFromTempFile(path);
+    ASSERT_TRUE(ParseAndVerifyAllPngChunks(finalBytes, chunks));
+    int xmpChunkCount = 0;
+    bool sawExifWithPreservedWidth = false;
+    for (const auto& c : chunks) {
+        if (c.type == "iTXt" || c.type == "zTXt") ++xmpChunkCount;
+        if (c.type == "eXIf" && c.data.size() >= 22) {
+            sawExifWithPreservedWidth = (c.data[18] == 0x40 && c.data[19] == 0x01 && c.data[30] == 1);
+        }
+    }
+    EXPECT_EQ(xmpChunkCount, 1);
+    EXPECT_TRUE(sawExifWithPreservedWidth);
+
+    DeleteFileW(path.c_str());
+}
+
+TEST(RatingMetadataTest, ApngPreservesAnimationChunksByteForByte) {
+    for (const wchar_t* path : { L"test_anim_keep.apng", L"test_anim_keep.png" }) {
+        std::vector<uint8_t> head = { 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n' };
+        AppendPngChunkWithCrc(head, "IHDR", std::vector<uint8_t>(13, 3));
+        AppendPngChunkWithCrc(head, "pHYs", { 0, 0, 0x0B, 0x13, 0, 0, 0x0B, 0x13, 1 });
+
+        std::vector<uint8_t> animTail;
+        AppendPngChunkWithCrc(animTail, "acTL", { 0, 0, 0, 2, 0, 0, 0, 0 });
+        AppendPngChunkWithCrc(animTail, "fcTL", std::vector<uint8_t>(26, 0x11));
+        AppendPngChunkWithCrc(animTail, "IDAT", { 0xAA, 0xBB, 0xCC, 0xDD });
+        AppendPngChunkWithCrc(animTail, "fcTL", std::vector<uint8_t>(26, 0x22));
+        AppendPngChunkWithCrc(animTail, "fdAT", { 0, 0, 0, 2, 0xEE, 0xFF });
+        AppendPngChunkWithCrc(animTail, "IEND", {});
+
+        std::vector<uint8_t> apng = head;
+        apng.insert(apng.end(), animTail.begin(), animTail.end());
+        ASSERT_TRUE(WriteAllToTempFile(path, apng));
+
+        EXPECT_EQ(WriteRatingToImage(path, 3, /*allowTranscode=*/true), WriteStatus::WrittenTranscode);
+        EXPECT_EQ(RatingStore::ReadRatingFromFile(path), 3);
+
+        EXPECT_EQ(WriteRatingToImage(path, 5, /*allowTranscode=*/false), WriteStatus::WrittenInPlace);
+        EXPECT_EQ(RatingStore::ReadRatingFromFile(path), 5);
+
+        EXPECT_EQ(WriteRatingToImage(path, 0, /*allowTranscode=*/false), WriteStatus::WrittenInPlace);
+        EXPECT_FALSE(RatingStore::ReadRatingFromFile(path).has_value());
+
+        const auto finalBytes = ReadAllFromTempFile(path);
+        std::vector<ParsedPngChunkView> chunks;
+        ASSERT_TRUE(ParseAndVerifyAllPngChunks(finalBytes, chunks));
+        ASSERT_EQ(chunks.size(), 9u);
+        EXPECT_EQ(chunks[0].type, "IHDR");
+        EXPECT_EQ(chunks[1].type, "pHYs");
+        EXPECT_EQ(chunks[2].type, "iTXt");
+        EXPECT_EQ(chunks[3].type, "acTL");
+        EXPECT_EQ(chunks[4].type, "fcTL");
+        EXPECT_EQ(chunks[5].type, "IDAT");
+        EXPECT_EQ(chunks[6].type, "fcTL");
+        EXPECT_EQ(chunks[7].type, "fdAT");
+        EXPECT_EQ(chunks[8].type, "IEND");
+
+        // Animation stream [acTL .. IEND] must be 100% byte-for-byte intact
+        ASSERT_GT(finalBytes.size(), animTail.size());
+        const size_t tailStart = chunks[3].offset;
+        ASSERT_EQ(finalBytes.size() - tailStart, animTail.size());
+        EXPECT_EQ(std::memcmp(finalBytes.data() + tailStart, animTail.data(), animTail.size()), 0);
+
+        DeleteFileW(path);
+    }
+}
+
 
