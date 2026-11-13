@@ -4418,14 +4418,20 @@ static void EnsureWindowSizeForDialog(HWND hwnd) {
 // --- Logic Functions ---
 
 bool SaveCurrentImage(bool saveAs) {
-    if (!GetPaneContext(PaneSlot::Primary).editState.IsDirty && !saveAs) return true;
+    auto& primaryPane = GetPaneContext(PaneSlot::Primary);
+    if (!primaryPane.editState.IsDirty && !saveAs) return true;
     
-    std::wstring targetPath = GetPaneContext(PaneSlot::Primary).editState.OriginalFilePath;
+    std::wstring sourcePath = primaryPane.editState.OriginalFilePath;
+    if (sourcePath.empty()) {
+        sourcePath = !primaryPane.path.empty() ? primaryPane.path : g_imagePath;
+        primaryPane.editState.OriginalFilePath = sourcePath;
+    }
+    std::wstring targetPath = sourcePath;
     if (saveAs) {
         OPENFILENAMEW ofn{};
         ofn.lStructSize = sizeof(ofn);
         wchar_t szFile[MAX_PATH] = { 0 };
-        wcscpy_s(szFile, GetPaneContext(PaneSlot::Primary).editState.OriginalFilePath.c_str());
+        wcscpy_s(szFile, sourcePath.c_str());
         ofn.lStructSize = sizeof(ofn);
         ofn.hwndOwner = GetActiveWindow();
         ofn.lpstrFile = szFile;
@@ -4468,7 +4474,7 @@ bool SaveCurrentImage(bool saveAs) {
     
     std::wstring workFile = tempFile;
 
-    if (!CopyFileW(GetPaneContext(PaneSlot::Primary).editState.OriginalFilePath.c_str(), workFile.c_str(), FALSE)) {
+    if (!CopyFileW(sourcePath.c_str(), workFile.c_str(), FALSE)) {
         DeleteFileW(workFile.c_str());
         SetCursor(hOldCursor);
         wchar_t err[256];
@@ -4479,17 +4485,12 @@ bool SaveCurrentImage(bool saveAs) {
     
     // 2. Apply Net Transform calculated via D4 Group Algebra (Combine EXIF + Edit)
     bool transformError = false;
-    const auto& primaryPane = GetPaneContext(PaneSlot::Primary);
     
     int baseExif = primaryPane.metadata.ExifOrientation;
     if (baseExif < 1 || baseExif > 8) baseExif = 1;
 
-    Transform2D exifT = Transform2D::FromExif(baseExif);
-    Transform2D editT;
-    editT.Rotation = (primaryPane.editState.TotalRotation % 360 + 360) % 360;
-    editT.FlipH = primaryPane.editState.FlippedH;
-
-    Transform2D netT = Transform2D::Combine(exifT, editT);
+    int effExif = GetEffectiveExifOrientation(baseExif, primaryPane.editState);
+    Transform2D netT = Transform2D::FromExif(effExif);
 
     std::vector<TransformType> steps;
     if (netT.Rotation == 90) steps.push_back(TransformType::Rotate90CW);
@@ -4497,7 +4498,6 @@ bool SaveCurrentImage(bool saveAs) {
     else if (netT.Rotation == 270) steps.push_back(TransformType::Rotate90CCW);
 
     if (netT.FlipH) steps.push_back(TransformType::FlipHorizontal);
-    if (primaryPane.editState.FlippedV) steps.push_back(TransformType::FlipVertical);
 
     bool isJpeg = CLosslessTransform::IsJPEG(workFile.c_str());
     if (isJpeg) {
@@ -5795,30 +5795,36 @@ bool IsImageModified() {
 
 static void GetExportBaseVisualDimensions(const PaneContext& pane, int& outW, int& outH) {
     if (g_cropState.IsActive) {
-        outW = (int)std::round(g_cropState.CropRight - g_cropState.CropLeft);
-        outH = (int)std::round(g_cropState.CropBottom - g_cropState.CropTop);
+        outW = (int)std::round(std::abs(g_cropState.CropRight - g_cropState.CropLeft));
+        outH = (int)std::round(std::abs(g_cropState.CropBottom - g_cropState.CropTop));
     } else if (pane.editState.HasCrop) {
-        outW = (int)std::round(pane.editState.CropRight - pane.editState.CropLeft);
-        outH = (int)std::round(pane.editState.CropBottom - pane.editState.CropTop);
+        outW = (int)std::round(std::abs(pane.editState.CropRight - pane.editState.CropLeft));
+        outH = (int)std::round(std::abs(pane.editState.CropBottom - pane.editState.CropTop));
     } else {
-        VisualState vs = GetVisualState();
-        outW = (int)std::round(vs.VisualSize.width);
-        outH = (int)std::round(vs.VisualSize.height);
-        if (outW <= 0 || outH <= 0) {
-            float pw = (float)pane.metadata.Width;
-            float ph = (float)pane.metadata.Height;
-            if (pw <= 0 || ph <= 0) {
-                auto rsize = pane.resource.GetSize();
-                pw = rsize.width;
-                ph = rsize.height;
-            }
-            if (vs.IsRotated90) {
-                outW = (int)std::round(ph);
-                outH = (int)std::round(pw);
-            } else {
-                outW = (int)std::round(pw);
-                outH = (int)std::round(ph);
-            }
+        float pw = 0.0f;
+        float ph = 0.0f;
+        if (pane.resource && (pane.resource.isSvg || pane.resource.isWebView) && pane.resource.svgW > 0.0f && pane.resource.svgH > 0.0f) {
+            auto rsize = pane.resource.GetSize();
+            pw = rsize.width;
+            ph = rsize.height;
+        }
+        if (pw <= 0.0f || ph <= 0.0f) {
+            pw = (float)pane.metadata.Width;
+            ph = (float)pane.metadata.Height;
+        }
+        if (pw <= 0.0f || ph <= 0.0f) {
+            auto rsize = pane.resource.GetSize();
+            pw = rsize.width;
+            ph = rsize.height;
+        }
+        int effExif = GetEffectiveExifOrientation(pane.view.ExifOrientation, pane.editState);
+        bool isRot90 = (effExif >= 5 && effExif <= 8);
+        if (isRot90) {
+            outW = (int)std::round(ph);
+            outH = (int)std::round(pw);
+        } else {
+            outW = (int)std::round(pw);
+            outH = (int)std::round(ph);
         }
     }
     if (outW <= 0) outW = 1;
@@ -5832,22 +5838,18 @@ bool CheckUnsavedChanges(HWND hwnd, QuickView::PendingAction pending = QuickView
     if (g_config.ShouldAutoSave(primaryPane.editState.Quality)) return SaveCurrentImage(false);
 
     // 1. Direct routing to ExportPanel for active Crop Mode, applied Crop modifications, or modified in-memory frame (AI generated, etc.)
-    if (g_cropState.IsActive || primaryPane.editState.HasCrop || (primaryPane.editState.IsDirty && primaryPane.currentFrame)) {
+    if (g_cropState.IsActive || primaryPane.editState.HasCrop || primaryPane.editState.HasModifiedFrame) {
         int targetW = 0;
         int targetH = 0;
-        if (primaryPane.currentFrame) {
-            targetW = primaryPane.currentFrame->width;
-            targetH = primaryPane.currentFrame->height;
-        } else {
-            GetExportBaseVisualDimensions(primaryPane, targetW, targetH);
-        }
+        GetExportBaseVisualDimensions(primaryPane, targetW, targetH);
         std::wstring targetPath = !primaryPane.path.empty() ? primaryPane.path : g_imagePath;
 
         if (pending == QuickView::PendingAction::None && (g_cropState.IsActive || primaryPane.editState.HasCrop)) {
             pending = QuickView::PendingAction::ExitCropMode;
         }
 
-        QuickView::ExportPanel::GetInstance().Show(hwnd, targetW, targetH, targetPath, pending, PaneSlot::Primary, primaryPane.currentFrame, QuickView::ExportMode::UnsavedLeave);
+        auto customFrame = primaryPane.editState.HasModifiedFrame ? primaryPane.currentFrame : nullptr;
+        QuickView::ExportPanel::GetInstance().Show(hwnd, targetW, targetH, targetPath, pending, PaneSlot::Primary, customFrame, QuickView::ExportMode::UnsavedLeave);
         RequestRepaint(PaintLayer::All);
         return false; // Intercept navigation until user completes ExportPanel action
     }
@@ -7457,6 +7459,9 @@ void PerformTransform(HWND hwnd, TransformType type) {
     std::wstring& path = isLeft ? GetPaneContext(PaneSlot::Left).path : GetPaneContext(PaneSlot::Primary).path;
 
     if (path.empty()) return;
+    if (state.OriginalFilePath.empty()) {
+        state.OriginalFilePath = path;
+    }
     
     // 1. Update State
     state.PendingTransforms.push_back(type);
@@ -9415,7 +9420,8 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
                 int targetW = 0;
                 int targetH = 0;
                 GetExportBaseVisualDimensions(pane, targetW, targetH);
-                QuickView::ExportPanel::GetInstance().Show(hwnd, targetW, targetH, targetPath, QuickView::PendingAction::None, activeSlot, pane.currentFrame);
+                auto customFrame = pane.editState.HasModifiedFrame ? pane.currentFrame : nullptr;
+                QuickView::ExportPanel::GetInstance().Show(hwnd, targetW, targetH, targetPath, QuickView::PendingAction::None, activeSlot, customFrame);
                 RequestRepaint(PaintLayer::All);
             }
             break;
@@ -11115,6 +11121,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             }
 
             primaryPane.editState.IsDirty = true;
+            primaryPane.editState.HasModifiedFrame = true;
             primaryPane.editState.Quality = EditQuality::Lossy;
 
             // Cache raw frame for potential manual super-resolution or export
@@ -14282,7 +14289,8 @@ SKIP_EDGE_NAV:;
                     int targetW = 0, targetH = 0;
                     GetExportBaseVisualDimensions(targetPane, targetW, targetH);
                     std::wstring targetPath = !targetPane.path.empty() ? targetPane.path : g_imagePath;
-                    QuickView::ExportPanel::GetInstance().Show(hwnd, targetW, targetH, targetPath, QuickView::PendingAction::None, activeSlot, targetPane.currentFrame);
+                    auto customFrame = targetPane.editState.HasModifiedFrame ? targetPane.currentFrame : nullptr;
+                    QuickView::ExportPanel::GetInstance().Show(hwnd, targetW, targetH, targetPath, QuickView::PendingAction::None, activeSlot, customFrame);
                     RequestRepaint(PaintLayer::All);
                     break;
                 }
@@ -16072,6 +16080,7 @@ void ProcessEngineEvents(HWND hwnd) {
                 // deferred from StartNavigation to eliminate rotation flicker while decoding.
                 if (!g_preserveViewStateOnNextLoad) {
                     GetPaneContext(PaneSlot::Primary).editState.Reset();
+                    GetPaneContext(PaneSlot::Primary).editState.OriginalFilePath = GetPaneContext(PaneSlot::Primary).path;
                     GetPaneContext(PaneSlot::Primary).view.Reset();
                 }
 

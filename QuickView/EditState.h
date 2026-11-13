@@ -63,6 +63,7 @@ struct EditState {
     int TotalRotation = 0;              // Cumulative rotation (0/90/180/270)
     bool FlippedH = false;              // Horizontal flip state
     bool FlippedV = false;              // Vertical flip state
+    bool HasModifiedFrame = false;      // True when currentFrame holds an in-memory generated/modified image (e.g. AI action)
     
     // [Visual Rotation] Queue of pending operations to be applied on Save
     std::vector<TransformType> PendingTransforms;
@@ -80,6 +81,7 @@ struct EditState {
         TotalRotation = 0;
         FlippedH = false;
         FlippedV = false;
+        HasModifiedFrame = false;
         Quality = EditQuality::Lossless;
         PendingTransforms.clear();
         HasCrop = false;

@@ -245,16 +245,20 @@ void ExportPanel::Show(HWND hwnd, int initialWidth, int initialHeight, const std
     m_customSourceFrame = sourceFrame;
 
     auto& targetPane = GetPaneContext(m_targetSlot);
-    m_isModified = IsImageModified() || targetPane.editState.IsDirty || (m_customSourceFrame != nullptr) || (targetPane.currentFrame != nullptr);
+    if (!m_customSourceFrame && targetPane.editState.HasModifiedFrame && targetPane.currentFrame) {
+        m_customSourceFrame = targetPane.currentFrame;
+    }
+    m_isModified = IsImageModified() || targetPane.editState.IsDirty || (m_customSourceFrame != nullptr) || targetPane.editState.HasModifiedFrame;
     m_exportMode = (mode == ExportMode::UnsavedLeave || pending != PendingAction::None) ? ExportMode::UnsavedLeave : ExportMode::NormalExport;
 
-    // Use dimensions of in-memory source frame if available
-    if (m_customSourceFrame && m_customSourceFrame->width > 0 && m_customSourceFrame->height > 0) {
-        initialWidth = static_cast<int>(m_customSourceFrame->width);
-        initialHeight = static_cast<int>(m_customSourceFrame->height);
-    } else if (targetPane.currentFrame && targetPane.currentFrame->width > 0 && targetPane.currentFrame->height > 0) {
-        initialWidth = static_cast<int>(targetPane.currentFrame->width);
-        initialHeight = static_cast<int>(targetPane.currentFrame->height);
+    // Only fall back to in-memory source frame dimensions if caller did not provide valid visual dimensions
+    if ((initialWidth <= 0 || initialHeight <= 0) && m_customSourceFrame && m_customSourceFrame->width > 0 && m_customSourceFrame->height > 0) {
+        int rot = 0;
+        bool fh = false, fv = false;
+        CalculateNetTransform(rot, fh, fv);
+        bool isRot90 = (rot == 90 || rot == 270);
+        initialWidth = static_cast<int>(isRot90 ? m_customSourceFrame->height : m_customSourceFrame->width);
+        initialHeight = static_cast<int>(isRot90 ? m_customSourceFrame->width : m_customSourceFrame->height);
     }
 
     m_cropWidth = initialWidth;
@@ -568,9 +572,9 @@ void ExportPanel::TriggerAsyncEstimate() {
     CalculateNetTransform(opts.Rotation, opts.FlipH, opts.FlipV);
 
     const auto& targetPane = GetPaneContext(m_targetSlot);
-    if (m_customSourceFrame) {
+    if (m_customSourceFrame && m_customSourceFrame->pixels && m_customSourceFrame->width > 0) {
         opts.SourceFrame = m_customSourceFrame;
-    } else if (targetPane.currentFrame && targetPane.currentFrame->pixels && targetPane.currentFrame->width > 0) {
+    } else if (targetPane.editState.HasModifiedFrame && targetPane.currentFrame && targetPane.currentFrame->pixels && targetPane.currentFrame->width > 0) {
         opts.SourceFrame = targetPane.currentFrame;
     }
 
@@ -1090,12 +1094,10 @@ void ExportPanel::CommitSave(bool overwrite) {
   auto& targetPane = GetPaneContext(m_targetSlot);
 
   // [QVX-SR / AI] Extract in-memory source frame BEFORE ReleaseImageResources() destroys resources
-  std::shared_ptr<RawImageFrame> capturedFrame = m_customSourceFrame;
-  if (!capturedFrame && targetPane.currentFrame && targetPane.currentFrame->pixels && targetPane.currentFrame->width > 0) {
-      capturedFrame = targetPane.currentFrame;
-  }
+  std::shared_ptr<RawImageFrame> capturedFrame = nullptr;
+  bool isSrExtracted = false;
 
-  if (!capturedFrame && m_exportSr && m_hasSrBitmap) {
+  if (m_exportSr && m_hasSrBitmap) {
       capturedFrame = std::make_shared<RawImageFrame>();
       HRESULT hrExtract = E_FAIL;
       if (g_pRenderEngine) {
@@ -1105,17 +1107,23 @@ void ExportPanel::CommitSave(bool overwrite) {
               hrExtract = g_pRenderEngine->ExtractBitmapPixels(targetPane.resource.promotedSrBitmap.Get(), capturedFrame.get());
           }
       }
-      if (FAILED(hrExtract)) {
+      if (SUCCEEDED(hrExtract) && capturedFrame->pixels && capturedFrame->width > 0) {
+          isSrExtracted = true;
+      } else {
           capturedFrame.reset(); // Extraction failed; fall back to normal path
       }
   }
 
-  if (!capturedFrame && targetPane.resource.bitmap && targetPane.editState.IsDirty) {
-      capturedFrame = std::make_shared<RawImageFrame>();
-      if (g_pRenderEngine && SUCCEEDED(g_pRenderEngine->ExtractBitmapPixels(targetPane.resource.bitmap.Get(), capturedFrame.get())) && capturedFrame->pixels) {
-          // Extracted successfully
-      } else {
-          capturedFrame.reset();
+  if (!capturedFrame) {
+      if (m_customSourceFrame && m_customSourceFrame->pixels && m_customSourceFrame->width > 0) {
+          capturedFrame = m_customSourceFrame;
+      } else if (targetPane.editState.HasModifiedFrame && targetPane.currentFrame && targetPane.currentFrame->pixels && targetPane.currentFrame->width > 0) {
+          capturedFrame = targetPane.currentFrame;
+      } else if (targetPane.editState.HasModifiedFrame && targetPane.resource.bitmap) {
+          capturedFrame = std::make_shared<RawImageFrame>();
+          if (!(g_pRenderEngine && SUCCEEDED(g_pRenderEngine->ExtractBitmapPixels(targetPane.resource.bitmap.Get(), capturedFrame.get())) && capturedFrame->pixels)) {
+              capturedFrame.reset();
+          }
       }
   }
 
@@ -1129,7 +1137,7 @@ void ExportPanel::CommitSave(bool overwrite) {
   opts.InputPath = m_originalPath;
   CalculateNetTransform(opts.Rotation, opts.FlipH, opts.FlipV);
 
-  float srScale = (capturedFrame && capturedFrame->pixels && capturedFrame->width > 0) ? m_srScale : 1.0f;
+  float srScale = isSrExtracted ? m_srScale : 1.0f;
 
   if (g_cropState.IsActive) {
     opts.CropX = (int)std::round(g_cropState.CropLeft * srScale);
@@ -1168,8 +1176,13 @@ void ExportPanel::CommitSave(bool overwrite) {
           opts.TargetHeight = m_targetHeight;
       }
   } else {
-      opts.TargetWidth = m_targetWidth;
-      opts.TargetHeight = m_targetHeight;
+      if (m_targetWidth == m_cropWidth && m_targetHeight == m_cropHeight) {
+          opts.TargetWidth = 0;
+          opts.TargetHeight = 0;
+      } else {
+          opts.TargetWidth = m_targetWidth;
+          opts.TargetHeight = m_targetHeight;
+      }
   }
 
   opts.JpegQuality = m_jpegQuality;
@@ -1292,6 +1305,7 @@ void ExportPanel::OnExportDone(bool success, const std::wstring &errorMsg,
     TryExitCropMode(m_hwnd, true);
     primaryPane.editState.IsDirty = false;
     primaryPane.editState.HasCrop = false;
+    primaryPane.editState.HasModifiedFrame = false;
     primaryPane.editState.PendingTransforms.clear();
     primaryPane.editState.TotalRotation = 0;
     primaryPane.editState.FlippedH = false;
