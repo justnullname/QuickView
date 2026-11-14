@@ -6010,61 +6010,148 @@ VisualState GetVisualState() {
     return vs;
 }
 
-void ClampPanForSlot(PaneSlot slot, float vpW, float vpH) {
-    auto& pane = GetPaneContext(slot);
-    if (!pane.resource) return;
-    // For Left pane in compare mode, also check valid flag
-    if (slot == PaneSlot::Left && !pane.valid) return;
+static void ClampPanePanBounds(ViewState& view, float scaledW, float scaledH, float vpW, float vpH) {
+    if (vpW <= 0.0f || vpH <= 0.0f) return;
 
-    int exifOrientation = GetEffectiveExifOrientation(pane.view.ExifOrientation, pane.editState);
-    D2D1_SIZE_F orientedSize = GetOrientedSize(pane.resource, exifOrientation);
-    if (orientedSize.width <= 0.0f || orientedSize.height <= 0.0f) return;
-
-    float fitScale = std::min(vpW / orientedSize.width, vpH / orientedSize.height);
-    if (orientedSize.width < 200.0f && orientedSize.height < 200.0f && fitScale > 1.0f) {
-        fitScale = 1.0f;
-    }
-    float totalZoom = fitScale * (std::max)(0.02f, pane.view.Zoom);
-    float scaledW = orientedSize.width * totalZoom;
-    float scaledH = orientedSize.height * totalZoom;
-
-    float maxPanX = (std::max)(0.0f, (scaledW - vpW) * 0.5f);
-    float maxPanY = (std::max)(0.0f, (scaledH - vpH) * 0.5f);
+    const float maxPanX = (std::max)(0.0f, (scaledW - vpW) * 0.5f);
+    const float maxPanY = (std::max)(0.0f, (scaledH - vpH) * 0.5f);
 
     if (maxPanX <= 0.5f) {
-        pane.view.PanX = 0.0f;
+        view.PanX = 0.0f;
     } else {
-        pane.view.PanX = std::clamp(pane.view.PanX, -maxPanX, maxPanX);
+        view.PanX = std::clamp(view.PanX, -maxPanX, maxPanX);
     }
 
     if (maxPanY <= 0.5f) {
-        pane.view.PanY = 0.0f;
+        view.PanY = 0.0f;
     } else {
-        pane.view.PanY = std::clamp(pane.view.PanY, -maxPanY, maxPanY);
+        view.PanY = std::clamp(view.PanY, -maxPanY, maxPanY);
     }
+}
+
+int GetNavigatorPaneCount() {
+    if (!IsCompareModeActive()) {
+        return 1;
+    }
+    if (g_toolbar.IsComicMode() || AppContext::GetInstance().Compare.mode == ViewMode::CompareSideBySide) {
+        return 2;
+    }
+    // CompareWipe mode: no minimap
+    return 0;
+}
+
+static bool ComputeSlotFitScale(PaneSlot slot, bool isCompare, float effVpW, float effVpH, D2D1_SIZE_F& outOrientedSize, float& outFitScale) {
+    outOrientedSize = { 0.0f, 0.0f };
+    outFitScale = 1.0f;
+
+    auto& pane = GetPaneContext(slot);
+    if (!pane.resource) return false;
+    if (slot == PaneSlot::Left && !pane.valid) return false;
+
+    if (!isCompare && slot == PaneSlot::Primary) {
+        const VisualState vs = GetVisualState();
+        outOrientedSize = vs.VisualSize;
+        if (outOrientedSize.width <= 0.0f || outOrientedSize.height <= 0.0f) return false;
+
+        float fitScale = ComputeBaseFitScaleForVisual(vs, effVpW, effVpH);
+        if (g_slideshowState.IsActive && g_config.SlideshowImmersiveMode == 1) {
+            fitScale *= 0.85f;
+        }
+        outFitScale = fitScale;
+        return true;
+    }
+
+    const int exifOrientation = GetEffectiveExifOrientation(pane.view.ExifOrientation, pane.editState);
+    outOrientedSize = GetOrientedSize(pane.resource, exifOrientation);
+    if (slot == PaneSlot::Primary && pane.editState.HasCrop) {
+        const float cw = pane.editState.CropRight - pane.editState.CropLeft;
+        const float ch = pane.editState.CropBottom - pane.editState.CropTop;
+        if (cw > 0.0f && ch > 0.0f) {
+            outOrientedSize = D2D1::SizeF(cw, ch);
+        }
+    }
+    if (outOrientedSize.width <= 0.0f || outOrientedSize.height <= 0.0f) return false;
+
+    float fitScale = (std::min)(effVpW / outOrientedSize.width, effVpH / outOrientedSize.height);
+    const bool isVector = (pane.resource.isSvg || pane.resource.isWebView);
+    if (!isVector && outOrientedSize.width < 200.0f && outOrientedSize.height < 200.0f && fitScale > 1.0f) {
+        fitScale = 1.0f;
+    }
+    outFitScale = fitScale;
+    return true;
+}
+
+bool ComputeNavigatorPaneMetrics(PaneSlot slot, float winW, float winH, int numPanes, bool useSmoothZoom, NavigatorPaneMetrics& out) {
+    out = {};
+    if (numPanes <= 0 || winW <= 1.0f || winH <= 1.0f) return false;
+
+    const auto& pane = GetPaneContext(slot);
+    if (!pane.resource) return false;
+    if (slot == PaneSlot::Left && !pane.valid) return false;
+
+    const bool isCompare = (numPanes == 2);
+    if (isCompare) {
+        const float splitX = 0.5f * winW;
+        out.vpRect = (slot == PaneSlot::Left)
+            ? D2D1::RectF(0.0f, 0.0f, splitX, winH)
+            : D2D1::RectF(splitX, 0.0f, winW, winH);
+    } else {
+        out.vpRect = D2D1::RectF(0.0f, 0.0f, winW, winH);
+    }
+
+    const float vpW = out.vpRect.right - out.vpRect.left;
+    const float vpH = out.vpRect.bottom - out.vpRect.top;
+    if (vpW <= 1.0f || vpH <= 1.0f) return false;
+
+    float galleryH = 0.0f;
+    if (!isCompare && g_gallery.IsPinned() && g_gallery.IsVisible()) {
+        galleryH = g_gallery.GetVisualHeight(vpH);
+    }
+    out.effVpW = vpW;
+    out.effVpH = (std::max)(1.0f, vpH - galleryH);
+
+    if (!ComputeSlotFitScale(slot, isCompare, out.effVpW, out.effVpH, out.orientedSize, out.fitScale)) {
+        return false;
+    }
+
+    const float clampedZoom = (std::max)(0.02f, pane.view.Zoom);
+    out.totalScale = out.fitScale * clampedZoom;
+    out.panX = pane.view.PanX;
+    out.panY = pane.view.PanY;
+
+    if (useSmoothZoom && !isCompare) {
+        const auto& smooth = AppContext::GetInstance().SmoothZoom;
+        const ImageID currentImageId = g_currentImageId.load(std::memory_order_acquire);
+        if (smooth.Active && smooth.ImageId == currentImageId) {
+            out.totalScale = (std::max)(0.0001f, smooth.CurrentZoom);
+            out.panX = smooth.CurrentPanX;
+            out.panY = smooth.CurrentPanY;
+        }
+    }
+
+    out.scaledW = out.orientedSize.width * out.totalScale;
+    out.scaledH = out.orientedSize.height * out.totalScale;
+    out.isOverflow = (out.scaledW > out.effVpW + 1.0f || out.scaledH > out.effVpH + 1.0f);
+    out.shouldShowByDefault = out.isOverflow && (out.scaledW > out.effVpW * 1.5f || out.scaledH > out.effVpH * 1.5f);
+    out.valid = true;
+    return true;
+}
+
+void ClampPanForSlot(PaneSlot slot, float vpW, float vpH) {
+    D2D1_SIZE_F orientedSize = { 0.0f, 0.0f };
+    float fitScale = 1.0f;
+    if (!ComputeSlotFitScale(slot, IsCompareModeActive(), vpW, vpH, orientedSize, fitScale)) {
+        return;
+    }
+
+    auto& pane = GetPaneContext(slot);
+    const float totalZoom = fitScale * (std::max)(0.02f, pane.view.Zoom);
+    ClampPanePanBounds(pane.view, orientedSize.width * totalZoom, orientedSize.height * totalZoom, vpW, vpH);
 }
 
 static void ClampPanForViewport(const VisualState& vs, float winW, float winH, float targetZoom) {
     if (vs.VisualSize.width <= 0.0f || vs.VisualSize.height <= 0.0f) return;
-    if (winW <= 0.0f || winH <= 0.0f) return;
-
-    const float scaledW = vs.VisualSize.width * targetZoom;
-    const float scaledH = vs.VisualSize.height * targetZoom;
-
-    const float maxPanX = std::max(0.0f, (scaledW - winW) * 0.5f);
-    const float maxPanY = std::max(0.0f, (scaledH - winH) * 0.5f);
-
-    if (maxPanX <= 0.5f) {
-        GetPaneContext(PaneSlot::Primary).view.PanX = 0.0f;
-    } else {
-        GetPaneContext(PaneSlot::Primary).view.PanX = std::clamp(GetPaneContext(PaneSlot::Primary).view.PanX, -maxPanX, maxPanX);
-    }
-
-    if (maxPanY <= 0.5f) {
-        GetPaneContext(PaneSlot::Primary).view.PanY = 0.0f;
-    } else {
-        GetPaneContext(PaneSlot::Primary).view.PanY = std::clamp(GetPaneContext(PaneSlot::Primary).view.PanY, -maxPanY, maxPanY);
-    }
+    ClampPanePanBounds(GetPaneContext(PaneSlot::Primary).view, vs.VisualSize.width * targetZoom, vs.VisualSize.height * targetZoom, winW, winH);
 }
 
 // [Refactor] Wrapper around GetVisualState
@@ -8847,54 +8934,34 @@ static MinimapHitResult HitTestMinimaps(POINT pt) {
     return {};
 }
 
-extern void ClampPanForSlot(PaneSlot slot, float vpW, float vpH);
-
 static void UpdatePanFromMinimapClick(int idx, POINT pt, HWND hwnd) {
     auto& minimap = AppContext::GetInstance().Minimaps[idx];
     PaneSlot slot = (idx == 1) ? PaneSlot::Left : PaneSlot::Primary;
     auto& pane = GetPaneContext(slot);
-    if (!pane.resource) return;
-    if (slot == PaneSlot::Left && !pane.valid) return;
-    
+
     RECT rcClient; GetClientRect(hwnd, &rcClient);
     float winW = (float)(rcClient.right - rcClient.left);
     float winH = (float)(rcClient.bottom - rcClient.top);
-    
-    bool isCompare = IsCompareModeActive();
-    int numPanes = 1;
-    if (isCompare && g_toolbar.IsComicMode()) numPanes = 2;
-    else if (isCompare && AppContext::GetInstance().Compare.mode == ViewMode::CompareSideBySide) numPanes = 2;
-    
-    float vpW = winW;
-    float vpH = winH;
-    if (numPanes == 2) {
-        vpW = winW * 0.5f;
-    }
-    
-    int baseExif = pane.view.ExifOrientation;
-    int exifOrientation = GetEffectiveExifOrientation(baseExif, pane.editState);
-    D2D1_SIZE_F orientedSize = GetOrientedSize(pane.resource, exifOrientation);
-    if (orientedSize.width <= 0.0f || orientedSize.height <= 0.0f) return;
-    
-    float fitScale = std::min(vpW / orientedSize.width, vpH / orientedSize.height);
-    if (orientedSize.width < 200.0f && orientedSize.height < 200.0f && fitScale > 1.0f) {
-        fitScale = 1.0f;
-    }
-    const float clampedZoom = (std::max)(0.02f, pane.view.Zoom);
-    const float totalScale = fitScale * clampedZoom;
-    
-    MinimapGeometry geo = CalculateMinimapGeometry(minimap.innerRect, orientedSize);
+
+    const bool isCompare = IsCompareModeActive();
+    const int numPanes = GetNavigatorPaneCount();
+    if (numPanes <= 0) return;
+
+    NavigatorPaneMetrics metrics;
+    if (!ComputeNavigatorPaneMetrics(slot, winW, winH, numPanes, false, metrics)) return;
+
+    MinimapGeometry geo = CalculateMinimapGeometry(minimap.innerRect, metrics.orientedSize);
     if (geo.fitScale <= 0.0f) return;
-    
+
     float relX = (float)pt.x - geo.imgDrawX;
     float relY = (float)pt.y - geo.imgDrawY;
-    
+
     float imgX = relX / geo.fitScale;
     float imgY = relY / geo.fitScale;
-    
-    float newPanX = (orientedSize.width * 0.5f - imgX) * totalScale;
-    float newPanY = (orientedSize.height * 0.5f - imgY) * totalScale;
-    
+
+    float newPanX = (metrics.orientedSize.width * 0.5f - imgX) * metrics.totalScale;
+    float newPanY = (metrics.orientedSize.height * 0.5f - imgY) * metrics.totalScale;
+
     if (isCompare && AppContext::GetInstance().Compare.syncPan) {
         // Apply same delta to the other pane
         float deltaX = newPanX - pane.view.PanX;
@@ -8903,11 +8970,11 @@ static void UpdatePanFromMinimapClick(int idx, POINT pt, HWND hwnd) {
         GetPaneContext(otherSlot).view.PanX += deltaX;
         GetPaneContext(otherSlot).view.PanY += deltaY;
     }
-    
+
     pane.view.PanX = newPanX;
     pane.view.PanY = newPanY;
-    
-    ClampPanForSlot(slot, vpW, vpH);
+
+    ClampPanePanBounds(pane.view, metrics.scaledW, metrics.scaledH, metrics.effVpW, metrics.effVpH);
     
     if (isCompare) {
         MarkCompareDirty();
@@ -19388,7 +19455,12 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
         }
         return true;
 
-    case HotkeyAction::ToggleMinimap:
+    case HotkeyAction::ToggleMinimap: {
+        RECT rcClient; GetClientRect(hwnd, &rcClient);
+        const float winW = (float)(rcClient.right - rcClient.left);
+        const float winH = (float)(rcClient.bottom - rcClient.top);
+        const int numPanes = GetNavigatorPaneCount();
+
         for (int idx : {0, 1}) {
             auto& minimap = AppContext::GetInstance().Minimaps[idx];
             if (minimap.overrideState == MinimapOverride::Show) {
@@ -19397,42 +19469,24 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
                 minimap.overrideState = MinimapOverride::Show;
             } else {
                 bool currentlyShownByDefault = false;
-                if (g_config.ShowNavigator == 1) {
-                    currentlyShownByDefault = true;
-                } else if (g_config.ShowNavigator == 0) {
-                    PaneSlot slot = (idx == 1) ? PaneSlot::Left : PaneSlot::Primary;
-                    auto& pane = GetPaneContext(slot);
-                    if (pane.resource) {
-                        RECT rcClient; GetClientRect(hwnd, &rcClient);
-                        float winW = (float)(rcClient.right - rcClient.left);
-                        float winH = (float)(rcClient.bottom - rcClient.top);
-                        if (IsCompareModeActive() && AppContext::GetInstance().Compare.mode == ViewMode::CompareSideBySide) {
-                            winW *= 0.5f;
-                        }
-                        int baseExif = pane.view.ExifOrientation;
-                        int exifOrientation = GetEffectiveExifOrientation(baseExif, pane.editState);
-                        const D2D1_SIZE_F orientedSize = GetOrientedSize(pane.resource, exifOrientation);
-                        if (orientedSize.width > 0.0f && orientedSize.height > 0.0f) {
-                            float fitScale = std::min(winW / orientedSize.width, winH / orientedSize.height);
-                            float totalScale = fitScale * (std::max)(0.02f, pane.view.Zoom);
-                            float scaledW = orientedSize.width * totalScale;
-                            float scaledH = orientedSize.height * totalScale;
-                            if (scaledW > winW * 1.5f || scaledH > winH * 1.5f) {
-                                currentlyShownByDefault = true;
-                            }
-                        }
+                if (g_config.ShowNavigator == 0 || g_config.ShowNavigator == 1) {
+                    const PaneSlot slot = (idx == 1) ? PaneSlot::Left : PaneSlot::Primary;
+                    NavigatorPaneMetrics metrics;
+                    if (ComputeNavigatorPaneMetrics(slot, winW, winH, numPanes, false, metrics)) {
+                        currentlyShownByDefault = (g_config.ShowNavigator == 1)
+                            ? metrics.isOverflow
+                            : metrics.shouldShowByDefault;
                     }
                 }
-                
-                if (currentlyShownByDefault) {
-                    minimap.overrideState = MinimapOverride::Hide;
-                } else {
-                    minimap.overrideState = MinimapOverride::Show;
-                }
+
+                minimap.overrideState = currentlyShownByDefault
+                    ? MinimapOverride::Hide
+                    : MinimapOverride::Show;
             }
         }
         RequestRepaint(PaintLayer::Static | PaintLayer::Dynamic);
         return true;
+    }
 
     case HotkeyAction::ToggleFullscreen:
         SendMessage(hwnd, WM_COMMAND, IDM_FULLSCREEN, 0);

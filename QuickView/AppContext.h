@@ -168,6 +168,12 @@ struct MinimapState {
     D2D1_RECT_F closeBtnRect = { 0.0f, 0.0f, 0.0f, 0.0f };
     D2D1_RECT_F innerRect = { 0.0f, 0.0f, 0.0f, 0.0f };
 
+    void ClearRects() {
+        layoutRect = { 0.0f, 0.0f, 0.0f, 0.0f };
+        closeBtnRect = { 0.0f, 0.0f, 0.0f, 0.0f };
+        innerRect = { 0.0f, 0.0f, 0.0f, 0.0f };
+    }
+
     void ResetLayout() {
         overrideState = MinimapOverride::Auto;
         closedByUser = false;
@@ -175,7 +181,24 @@ struct MinimapState {
         isDraggingView = false;
         isEdgeHovered = false;
         isCloseHovered = false;
+        ClearRects();
     }
+};
+
+struct NavigatorPaneMetrics {
+    D2D1_RECT_F vpRect = { 0.0f, 0.0f, 0.0f, 0.0f };
+    float effVpW = 0.0f;
+    float effVpH = 0.0f;
+    D2D1_SIZE_F orientedSize = { 0.0f, 0.0f };
+    float fitScale = 1.0f;
+    float totalScale = 1.0f;
+    float panX = 0.0f;
+    float panY = 0.0f;
+    float scaledW = 0.0f;
+    float scaledH = 0.0f;
+    bool isOverflow = false;
+    bool shouldShowByDefault = false;
+    bool valid = false;
 };
 
 struct MinimapGeometry {

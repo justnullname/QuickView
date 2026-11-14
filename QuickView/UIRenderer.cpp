@@ -63,6 +63,8 @@ extern int GetCurrentZoomPercent(); // [v3.2.3] For Info Panel Zoom Display
 extern bool GetCompareIndicatorState(int& outPane, float& outSplitRatio, bool& outIsWipe);
 extern bool GetCompareInfoSnapshot(CImageLoader::ImageMetadata& left, CImageLoader::ImageMetadata& right);
 extern bool GetAdaptiveUiPaneSnapshot(int paneIndex, AdaptiveUiPaneSnapshot& outSnapshot);
+extern int GetNavigatorPaneCount();
+extern bool ComputeNavigatorPaneMetrics(PaneSlot slot, float winW, float winH, int numPanes, bool useSmoothZoom, NavigatorPaneMetrics& outMetrics);
 
 static void GetMaximizedWindowPaddings(HWND hwnd, bool isFullscreen, float& outPadX, float& outPadY) {
     outPadX = 0.0f;
@@ -924,6 +926,9 @@ void UIRenderer::RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd) {
     // Minimap / Navigator (disabled in Crop Mode and Overlays)
     if (!isAnyOverlayActive && !g_cropState.IsActive) {
         DrawNavigator(dc);
+    } else {
+        AppContext::GetInstance().Minimaps[0].ClearRects();
+        AppContext::GetInstance().Minimaps[1].ClearRects();
     }
 
     // Settings Overlay
@@ -6316,79 +6321,47 @@ void UIRenderer::DrawWelcomeButton(ID2D1DeviceContext *dc, const D2D1_RECT_F &r,
 }
 
 void UIRenderer::DrawNavigator(ID2D1DeviceContext* dc) {
+    auto& app = AppContext::GetInstance();
+    app.Minimaps[0].ClearRects();
+    app.Minimaps[1].ClearRects();
+
     if (m_width <= 0 || m_height <= 0) return;
     const float s = m_uiScale;
-    
-    int numPanes = 1;
-    bool isCompare = IsCompareModeActive();
-    if (isCompare && g_toolbar.IsComicMode()) {
-        numPanes = 2;
-    } else if (isCompare) {
-        if (AppContext::GetInstance().Compare.mode == ViewMode::CompareSideBySide) {
-            numPanes = 2;
-        } else {
-            // CompareWipe mode: no minimap
-            return;
-        }
-    }
-    
+
+    const int numPanes = GetNavigatorPaneCount();
+    if (numPanes <= 0) return;
+
     for (int i = 0; i < numPanes; ++i) {
         PaneSlot slot = (i == 0 && numPanes == 2) ? PaneSlot::Left : PaneSlot::Primary;
         int minimapIdx = (slot == PaneSlot::Left) ? 1 : 0;
-        
-        auto& minimap = AppContext::GetInstance().Minimaps[minimapIdx];
-        
+
+        auto& minimap = app.Minimaps[minimapIdx];
         auto& pane = GetPaneContext(slot);
-        if (!pane.resource) continue;
-        if (slot == PaneSlot::Left && !pane.valid) continue;
-        
-        D2D1_RECT_F vpRect;
-        if (numPanes == 2) {
-            float splitX = 0.5f * (float)m_width;
-            if (slot == PaneSlot::Left) {
-                vpRect = D2D1::RectF(0.0f, 0.0f, splitX, (float)m_height);
-            } else {
-                vpRect = D2D1::RectF(splitX, 0.0f, (float)m_width, (float)m_height);
-            }
-        } else {
-            vpRect = D2D1::RectF(0.0f, 0.0f, (float)m_width, (float)m_height);
+
+        NavigatorPaneMetrics metrics;
+        if (!ComputeNavigatorPaneMetrics(slot, (float)m_width, (float)m_height, numPanes, true, metrics)) {
+            continue;
         }
-        
-        const float vpW = vpRect.right - vpRect.left;
-        const float vpH = vpRect.bottom - vpRect.top;
-        if (vpW <= 1.0f || vpH <= 1.0f) continue;
-        
-        int baseExif = pane.view.ExifOrientation;
-        int exifOrientation = GetEffectiveExifOrientation(baseExif, pane.editState);
-        const D2D1_SIZE_F orientedSize = GetOrientedSize(pane.resource, exifOrientation);
-        if (orientedSize.width <= 0.0f || orientedSize.height <= 0.0f) continue;
-        
-        float fitScale = std::min(vpW / orientedSize.width, vpH / orientedSize.height);
-        if (orientedSize.width < 200.0f && orientedSize.height < 200.0f && fitScale > 1.0f) {
-            fitScale = 1.0f;
-        }
-        const float clampedZoom = (std::max)(0.02f, pane.view.Zoom);
-        const float totalScale = fitScale * clampedZoom;
-        const float scaledW = orientedSize.width * totalScale;
-        const float scaledH = orientedSize.height * totalScale;
-        
-        bool isOverflow = (scaledW > vpW + 1.0f || scaledH > vpH + 1.0f);
+
         bool shouldShow = false;
-        if (isOverflow) {
+        if (metrics.isOverflow) {
             if (minimap.overrideState == MinimapOverride::Show) {
                 shouldShow = true;
             } else if (minimap.overrideState == MinimapOverride::Hide) {
                 shouldShow = false;
-            } else {
-                if (g_config.ShowNavigator == 0) {
-                    shouldShow = (scaledW > vpW * 1.5f || scaledH > vpH * 1.5f);
-                } else if (g_config.ShowNavigator == 1) {
-                    shouldShow = true;
-                }
+            } else if (g_config.ShowNavigator == 0) {
+                shouldShow = metrics.shouldShowByDefault;
+            } else if (g_config.ShowNavigator == 1) {
+                shouldShow = true;
             }
         }
-        
+
         if (!shouldShow) continue;
+
+        const D2D1_RECT_F vpRect = metrics.vpRect;
+        const D2D1_SIZE_F orientedSize = metrics.orientedSize;
+        const float totalScale = metrics.totalScale;
+        const int exifOrientation = GetEffectiveExifOrientation(pane.view.ExifOrientation, pane.editState);
         
         float maxDim = 150.0f * s;
         float minimapW = maxDim;
@@ -6495,13 +6468,18 @@ void UIRenderer::DrawNavigator(ID2D1DeviceContext* dc) {
             const float imgW = pane.resource.GetSize().width;
             const float imgH = pane.resource.GetSize().height;
             const bool rotated = (exifOrientation >= 2 && exifOrientation <= 8);
+            const bool swapped90 = (exifOrientation >= 5 && exifOrientation <= 8);
+            const float bmpOrientedW = swapped90 ? imgH : imgW;
+            const float bmpOrientedH = swapped90 ? imgW : imgH;
             
             D2D1_INTERPOLATION_MODE interpMode = D2D1_INTERPOLATION_MODE_LINEAR;
             
             if (!rotated) {
                 D2D1_RECT_F dest = D2D1::RectF(geo.imgDrawX, geo.imgDrawY, geo.imgDrawX + geo.drawW, geo.imgDrawY + geo.drawH);
                 dc->DrawBitmap(pane.resource.bitmap.Get(), &dest, 1.0f, interpMode);
-            } else {
+            } else if (bmpOrientedW > 0.0f && bmpOrientedH > 0.0f) {
+                const float thumbScaleX = geo.drawW / bmpOrientedW;
+                const float thumbScaleY = geo.drawH / bmpOrientedH;
                 D2D1::Matrix3x2F m = D2D1::Matrix3x2F::Translation(-imgW * 0.5f, -imgH * 0.5f);
                 switch (exifOrientation) {
                     case 2: m = m * D2D1::Matrix3x2F::Scale(-1.0f, 1.0f); break;
@@ -6513,7 +6491,7 @@ void UIRenderer::DrawNavigator(ID2D1DeviceContext* dc) {
                     case 8: m = m * D2D1::Matrix3x2F::Rotation(270.0f); break;
                     default: break;
                 }
-                m = m * D2D1::Matrix3x2F::Scale(geo.fitScale, geo.fitScale);
+                m = m * D2D1::Matrix3x2F::Scale(thumbScaleX, thumbScaleY);
                 m = m * D2D1::Matrix3x2F::Translation(minimapCenterX, minimapCenterY);
                 dc->SetTransform(m * oldTransform);
                 D2D1_RECT_F src = D2D1::RectF(0.0f, 0.0f, imgW, imgH);
@@ -6522,10 +6500,10 @@ void UIRenderer::DrawNavigator(ID2D1DeviceContext* dc) {
             }
         }
         
-        float vpCenterX = orientedSize.width * 0.5f - pane.view.PanX / totalScale;
-        float vpCenterY = orientedSize.height * 0.5f - pane.view.PanY / totalScale;
-        float vpWInImg = vpW / totalScale;
-        float vpHInImg = vpH / totalScale;
+        float vpCenterX = orientedSize.width * 0.5f - metrics.panX / totalScale;
+        float vpCenterY = orientedSize.height * 0.5f - metrics.panY / totalScale;
+        float vpWInImg = metrics.effVpW / totalScale;
+        float vpHInImg = metrics.effVpH / totalScale;
         
         D2D1_RECT_F viewRect = D2D1::RectF(
             geo.imgDrawX + (vpCenterX - vpWInImg * 0.5f) * geo.fitScale,
