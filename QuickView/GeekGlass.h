@@ -76,6 +76,7 @@ namespace QuickView::UI::GeekGlass {
         // Caches brushes based on dimensions to avoid constant recreation overhead
         void CreateOrUpdateBrushes(ID2D1RenderTarget* pRT, const GeekGlassConfig& config);
 
+        ComPtr<ID2D1Device> m_device;
         ComPtr<ID2D1Effect> m_blurEffect;
         ComPtr<ID2D1Effect> m_cropEffect;
         ComPtr<ID2D1Effect> m_transformEffect;

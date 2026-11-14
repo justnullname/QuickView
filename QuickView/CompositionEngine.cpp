@@ -601,6 +601,17 @@ ID2D1DeviceContext* CompositionEngine::BeginPendingUpdate(UINT width, UINT heigh
     // Determine target layer (the hidden one)
     int pendingIndex = (m_activeLayerIndex + 1) % 2;
     ImageLayer& layer = (pendingIndex == 0) ? m_imageA : m_imageB;
+
+    const DXGI_FORMAT resolvedFormat = ResolveImageSurfaceFormat(surfaceFormatOverride == DXGI_FORMAT_UNKNOWN ? m_surfaceFormat : surfaceFormatOverride);
+    const bool useTitan = isTitan || (!allowOversizedStandard && (width > 8192 || height > 8192));
+
+    // Reuse existing standard DComp surface when dimensions, format, and alpha mode match
+    // (critical for animated playback to avoid per-frame surface reallocation).
+    if (!useTitan && !layer.isTitan && layer.surface &&
+        layer.width == width && layer.height == height &&
+        layer.surfaceFormat == resolvedFormat && layer.hasAlpha == hasAlpha) {
+        return BeginDrawHelper(layer.surface.Get(), layer.surfaceFormat);
+    }
     
     // Safe reset
     layer.visual->RemoveAllVisuals(); 
@@ -613,16 +624,11 @@ ID2D1DeviceContext* CompositionEngine::BeginPendingUpdate(UINT width, UINT heigh
         layer.virtualSurfaces[i].Reset();
     }
     layer.isTitan = false;
-    layer.surfaceFormat = ResolveImageSurfaceFormat(surfaceFormatOverride == DXGI_FORMAT_UNKNOWN ? m_surfaceFormat : surfaceFormatOverride);
+    layer.surfaceFormat = resolvedFormat;
     layer.hasAlpha = hasAlpha;
     
     HRESULT hr = S_OK; (void)hr;
 
-    // [Smart Dispatch] Titan Mode: Explicit flag OR size threshold for bitmap-style
-    // content. SVG can request an oversized standard surface so it stays on the
-    // single-surface vector path instead of being funneled into Titan.
-    bool useTitan = isTitan || (!allowOversizedStandard && (width > 8192 || height > 8192));
-    
     // Fallback: If legacy implicit detection used, fill full dimensions
     if (useTitan && (fullWidth == 0 || fullHeight == 0)) {
         fullWidth = width;

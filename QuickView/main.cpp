@@ -2668,13 +2668,26 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, [[maybe_unused]] bool isF
 
     // [Fix] REMOVE AlignActiveLayer to prevent double-centering conflict with SetPan
     
+    const bool useSvgViewport = UseSvgViewportRendering(res);
+    if (!useSvgViewport && !res.bitmap) {
+        return false;
+    }
+
     const DXGI_FORMAT imageSurfaceFormat = res.isSvg ? DXGI_FORMAT_B8G8R8A8_UNORM : GetImageResourceSurfaceFormat(res);
     ID2D1DeviceContext* ctx = g_compEngine->BeginPendingUpdate(surfW, surfH, isTitan, fullWidth, fullHeight, false, imageSurfaceFormat, GetPaneContext(PaneSlot::Primary).metadata.hasAlpha);
     if (!ctx) return false;
-    
+
+    // Capture the DComp surface atlas offset before resetting to Identity so the
+    // recorded CommandList stays in clean surface-local coordinates for GeekGlass.
+    D2D1_MATRIX_3X2_F origTransform = D2D1::Matrix3x2F::Identity();
+    ctx->GetTransform(&origTransform);
+
     // [Geek Glass] Create a CommandList to intercept the drawing
     ComPtr<ID2D1CommandList> cmdList;
-    ctx->CreateCommandList(&cmdList);
+    if (FAILED(ctx->CreateCommandList(&cmdList)) || !cmdList) {
+        g_compEngine->EndPendingUpdate();
+        return false;
+    }
     ComPtr<ID2D1Image> origTarget;
     ctx->GetTarget(&origTarget);
 
@@ -2682,8 +2695,9 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, [[maybe_unused]] bool isF
     ctx->Clear(D2D1::ColorF(0, 0, 0, 0)); 
     
     ctx->SetTarget(cmdList.Get());
+    ctx->SetTransform(D2D1::Matrix3x2F::Identity());
 
-    if (UseSvgViewportRendering(res)) {
+    if (useSvgViewport) {
         // === SVG Viewport Path ===
         VisualState vs = GetVisualState();
         D2D1_MATRIX_3X2_F transform = BuildSvgViewportTransform((float)winW, (float)winH, res, vs);
@@ -2701,8 +2715,6 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, [[maybe_unused]] bool isF
         g_lastSurfaceSize = D2D1::SizeF((float)surfW, (float)surfH);
     } else {
         // === Bitmap Path (Legacy) ===
-        if (!res.bitmap) return false;
-        
         D2D1_SIZE_F bmpSize = res.GetSize();
         const auto& editState = GetPaneContext(PaneSlot::Primary).editState;
         
@@ -2869,15 +2881,8 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, [[maybe_unused]] bool isF
     // [Geek Glass] Finish CommandList recording and apply to actual DComp surface
     cmdList->Close();
     ctx->SetTarget(origTarget.Get());
-    
-    // [Fix] Save and Reset the context transform so DrawImage doesn't doubly apply the recorded transform
-    D2D1_MATRIX_3X2_F oldTransform;
-    ctx->GetTransform(&oldTransform);
-    ctx->SetTransform(D2D1::Matrix3x2F::Identity());
-    
+    ctx->SetTransform(origTransform);
     ctx->DrawImage(cmdList.Get());
-    
-    ctx->SetTransform(oldTransform);
     
     if (g_uiRenderer) {
         g_uiRenderer->SetBackgroundCommandList(cmdList.Get());

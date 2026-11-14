@@ -13,6 +13,19 @@ void GeekGlassEngine::InitializeResources(ID2D1RenderTarget* pRT) {
     ComPtr<ID2D1DeviceContext> pContext;
     if (FAILED(pRT->QueryInterface(IID_PPV_ARGS(&pContext)))) return;
 
+    ComPtr<ID2D1Device> pDevice;
+    pContext->GetDevice(&pDevice);
+    if (pDevice && m_device.Get() == pDevice.Get() &&
+        m_blurEffect && m_cropEffect && m_transformEffect &&
+        m_scaleDownEffect && m_scaleUpEffect && m_colorMatrixEffect && m_shadowEffect) {
+        return;
+    }
+
+    if (m_device && m_device.Get() != pDevice.Get()) {
+        ReleaseResources();
+    }
+    m_device = pDevice;
+
     pContext->CreateEffect(CLSID_D2D1GaussianBlur, &m_blurEffect);
     pContext->CreateEffect(CLSID_D2D1Crop, &m_cropEffect);
     pContext->CreateEffect(CLSID_D2D12DAffineTransform, &m_transformEffect);
@@ -31,6 +44,7 @@ void GeekGlassEngine::InitializeResources(ID2D1RenderTarget* pRT) {
 }
 
 void GeekGlassEngine::ReleaseResources() {
+    m_device.Reset();
     m_blurEffect.Reset();
     m_cropEffect.Reset();
     m_transformEffect.Reset();
@@ -38,10 +52,15 @@ void GeekGlassEngine::ReleaseResources() {
     m_scaleUpEffect.Reset();
     m_colorMatrixEffect.Reset();
     m_shadowEffect.Reset();
+    m_shadowMask.Reset();
     m_diagonalBrush.Reset();
     m_borderBrush.Reset();
     m_bevelBrush.Reset();
     m_baseTintBrush.Reset();
+    m_noiseBitmap.Reset();
+    m_shadowClipGeometry.Reset();
+    m_shadowLayer.Reset();
+    m_currentBounds = {};
 }
 
 void GeekGlassEngine::CreateOrUpdateBrushes(ID2D1RenderTarget* pRT, const GeekGlassConfig& config) {
