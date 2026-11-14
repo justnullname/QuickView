@@ -5241,6 +5241,31 @@ void SaveConfigSync() {
     ReleaseSRWLockExclusive(&s_configSnapshotLock);
 }
 
+void ApplySortPreferences(int sortOrder, bool sortDescending, HWND hwnd) {
+    sortOrder = std::clamp(sortOrder, 0, 5);
+    g_config.SortOrder = sortOrder;
+    g_config.SortDescending = sortDescending;
+    g_runtime.SortOrder = sortOrder;
+    g_runtime.SortDescending = sortDescending;
+    SaveConfig();
+
+    // Auto follows the live Explorer view; other modes (and visible gallery) need a full list.
+    const bool defer = (g_runtime.SortOrder == 0) && !g_gallery.IsVisible();
+    auto& primary = GetPaneContext(PaneSlot::Primary);
+    if (hwnd && !primary.path.empty()) {
+        primary.navigator.Initialize(primary.path, hwnd, defer);
+    }
+    if (hwnd && IsCompareModeActive()) {
+        auto& left = GetPaneContext(PaneSlot::Left);
+        if (!left.path.empty()) {
+            left.navigator.Initialize(left.path, hwnd, defer);
+        }
+    }
+    if (g_gallery.IsVisible()) {
+        RequestRepaint(PaintLayer::All);
+    }
+}
+
 void LoadConfig() {
     std::wstring iniPath = GetConfigPath();
     
@@ -5276,7 +5301,7 @@ void LoadConfig() {
         g_config.NavTraverse = GetPrivateProfileIntW(L"General", L"NavTraverse", 0, iniPath.c_str()) != 0;
     }
 
-    g_config.SortOrder = GetPrivateProfileIntW(L"General", L"SortOrder", 0, iniPath.c_str());
+    g_config.SortOrder = std::clamp<int>(GetPrivateProfileIntW(L"General", L"SortOrder", 0, iniPath.c_str()), 0, 5);
     g_config.SortDescending = GetPrivateProfileIntW(L"General", L"SortDescending", 0, iniPath.c_str()) != 0;
     g_config.SortArchivesByNameAscending = GetPrivateProfileIntW(L"General", L"SortArchivesByNameAscending", 1, iniPath.c_str()) != 0;
     g_config.ConfirmDelete = GetPrivateProfileIntW(L"General", L"ConfirmDelete", 1, iniPath.c_str()) != 0;
@@ -9985,6 +10010,7 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
         }
         case IDM_ALWAYS_ON_TOP: {
             g_config.AlwaysOnTop = !g_config.AlwaysOnTop;
+            SaveConfig();
             SetWindowPos(hwnd, g_config.AlwaysOnTop ? HWND_TOPMOST : HWND_NOTOPMOST,
                          0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
             g_osd.Show(hwnd, g_config.AlwaysOnTop ? AppStrings::OSD_AlwaysOnTopOn : AppStrings::OSD_AlwaysOnTopOff, false);
@@ -10152,32 +10178,27 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
         case IDM_SORT_DATE_TAKEN:
         case IDM_SORT_SIZE:
         case IDM_SORT_TYPE: {
-            g_runtime.SortOrder = wmId - IDM_SORT_AUTO;
-            if (!GetPaneContext(PaneSlot::Primary).path.empty()) {
-                // Auto follows the live Explorer view; other modes need a full list.
-                const bool defer = (g_runtime.SortOrder == 0);
-                GetPaneContext(PaneSlot::Primary).navigator.Initialize(
-                    GetPaneContext(PaneSlot::Primary).path, hwnd, defer);
-            }
+            ApplySortPreferences(wmId - IDM_SORT_AUTO, g_config.SortDescending, hwnd);
             break;
         }
 
         case IDM_SORT_ASCENDING:
         case IDM_SORT_DESCENDING: {
-            g_runtime.SortDescending = (wmId == IDM_SORT_DESCENDING);
-            if (!GetPaneContext(PaneSlot::Primary).path.empty()) {
-                GetPaneContext(PaneSlot::Primary).navigator.Initialize(GetPaneContext(PaneSlot::Primary).path, hwnd); // Re-initialize to re-sort
-            }
+            ApplySortPreferences(g_config.SortOrder, wmId == IDM_SORT_DESCENDING, hwnd);
             break;
         }
 
         case IDM_NAV_LOOP: {
-            g_runtime.NavLoop = !g_runtime.NavLoop;
+            g_config.NavLoop = !g_config.NavLoop;
+            g_runtime.NavLoop = g_config.NavLoop;
+            SaveConfig();
             g_osd.Show(hwnd, g_runtime.NavLoop ? L"Navigation Loop: ON" : L"Navigation Loop: OFF", false);
             break;
         }
         case IDM_NAV_THROUGH: {
-            g_runtime.NavTraverse = !g_runtime.NavTraverse;
+            g_config.NavTraverse = !g_config.NavTraverse;
+            g_runtime.NavTraverse = g_config.NavTraverse;
+            SaveConfig();
             g_osd.Show(hwnd, g_runtime.NavTraverse ? L"Traverse Subfolders: ON" : L"Traverse Subfolders: OFF", false);
             break;
         }

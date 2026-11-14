@@ -1585,6 +1585,7 @@ void SaveMouseGesturesConfig();
 void SaveHotkeysConfig();
 void DeactivateLoupe();
 void LoadConfig(); // Ensure visible
+void ApplySortPreferences(int sortOrder, bool sortDescending, HWND hwnd);
 void ParseFixedZoomLevels(); // Parse comma-separated fixed zoom levels
 bool IsSystemLightTheme();
 bool IsLightThemeActive();

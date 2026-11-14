@@ -2240,25 +2240,23 @@ void SettingsOverlay::BuildGeneralTab(SettingsTab& tabGeneral) {
         AppStrings::Settings_Option_SortSize, AppStrings::Settings_Option_SortType
     };
     itemSortOrder.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-        g_runtime.SortOrder = g_config.SortOrder;
-        SaveConfig();
-        extern HWND g_mainHwnd;
-        if (g_mainHwnd && !g_imagePath.empty()) {
-            g_navigator.Initialize(g_imagePath, g_mainHwnd, g_runtime.SortOrder == 0);
-        }
+        ApplySortPreferences(g_config.SortOrder, g_config.SortDescending, g_mainHwnd);
     };
     tabGeneral.items.push_back(itemSortOrder);
 
     SettingsItem itemSortDesc = { AppStrings::Settings_Label_SortDescending, OptionType::Toggle, &g_config.SortDescending };
     itemSortDesc.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-        g_runtime.SortDescending = g_config.SortDescending;
-        SaveConfig();
+        ApplySortPreferences(g_config.SortOrder, g_config.SortDescending, g_mainHwnd);
     };
     tabGeneral.items.push_back(itemSortDesc);
 
     SettingsItem itemSortArchives = { AppStrings::Settings_Label_SortArchivesByNameAscending, OptionType::Toggle, &g_config.SortArchivesByNameAscending };
     itemSortArchives.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-        SaveConfig();
+        if (g_navigator.GetArchive() != nullptr) {
+            ApplySortPreferences(g_config.SortOrder, g_config.SortDescending, g_mainHwnd);
+        } else {
+            SaveConfig();
+        }
     };
     tabGeneral.items.push_back(itemSortArchives);
     
