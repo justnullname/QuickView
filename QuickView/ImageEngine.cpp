@@ -217,12 +217,19 @@ bool ImageEngine::TryServeFromCache(
         (headerInfo && headerInfo->fileSize > 0) ? headerInfo->fileSize
         : ((cachedFrame->sourceFileSize > 0) ? cachedFrame->sourceFileSize : fallbackFileSize);
 
+    const bool isVectorFrame = cachedFrame->IsSvg() || cachedFrame->IsWebView();
+    const int metaW = (cachedFrame->srcWidth > 0) ? cachedFrame->srcWidth : cachedFrame->width;
+    const int metaH = (cachedFrame->srcHeight > 0) ? cachedFrame->srcHeight : cachedFrame->height;
+    const bool isScaledRaster = !isVectorFrame &&
+        metaW > 0 && metaH > 0 &&
+        ((std::max)(cachedFrame->width, cachedFrame->height) < (std::max)(metaW, metaH) ||
+         (std::min)(cachedFrame->width, cachedFrame->height) < (std::min)(metaW, metaH));
+    const bool isRawFormat = fmtUpper.contains(L"RAW");
+
     if (!headerInfo) {
         // Defer to header probe / MMF path if source format is unknown or indicates a Titan candidate.
         if (fmtUpper.empty()) return false;
 
-        const int metaW = (cachedFrame->srcWidth > 0) ? cachedFrame->srcWidth : cachedFrame->width;
-        const int metaH = (cachedFrame->srcHeight > 0) ? cachedFrame->srcHeight : cachedFrame->height;
         const bool isTitanCandidateFmt =
             (fmtUpper == L"JPEG" || fmtUpper == L"JPEG (MMF)" || fmtUpper == L"JPG" ||
              fmtUpper == L"WEBP" || fmtUpper == L"PNG" ||
@@ -235,6 +242,14 @@ bool ImageEngine::TryServeFromCache(
         if (isTitanCandidateFmt && (sizeTrigger || pixelTrigger || fallbackFileTrigger)) {
             return false;
         }
+        // Never serve a cached scaled preview for a non-Titan, non-RAW raster image.
+        if (!isRawFormat && isScaledRaster) {
+            InvalidateCache(path);
+            return false;
+        }
+    } else if (!enableTitan && !isRawFormat && isScaledRaster) {
+        InvalidateCache(path);
+        return false;
     }
 
     // Guard: do not reuse JXL placeholder/scaled cache as a final hit.
@@ -315,8 +330,9 @@ bool ImageEngine::TryServeFromCache(
     e.generationId = generationId;
     e.rawFrame = cachedFrame; // Zero-copy shared_ptr
 
-    e.metadata.Width = (cachedFrame->srcWidth > 0) ? cachedFrame->srcWidth : cachedFrame->width;
-    e.metadata.Height = (cachedFrame->srcHeight > 0) ? cachedFrame->srcHeight : cachedFrame->height;
+    e.metadata.Width = metaW;
+    e.metadata.Height = metaH;
+    e.isScaled = isScaledRaster;
     e.metadata.Format = formatStr;
     e.metadata.FileSize = observedFileSize;
     e.metadata.FormatDetails = cachedFrame->formatDetails;
@@ -1633,13 +1649,8 @@ void ImageEngine::ScheduleJob(int index, QuickView::Priority pri) {
                 m_pendingPaths.insert(path);
             }
             
-            // [v9.3] Alignment: JXL uses Direct Full Decode (serial upgrade cancelled).
-            // Prefetch must also be Full to prevent stuck Scaled/Blurry image.
-            if (info.format == L"JXL") {
-                m_heavyPool->SubmitFullDecode(path, ComputePathHash(path), jobMmf);
-            } else {
-                m_heavyPool->Submit(path, ComputePathHash(path), jobMmf); // [ImageID]
-            }
+            // Non-Titan neighbors must always prefetch at full resolution even when active view is Titan.
+            m_heavyPool->SubmitFullDecode(path, ComputePathHash(path), jobMmf);
         }
         // If Heavy is busy and not critical, skip prefetch
     }

@@ -578,7 +578,14 @@ void HeavyLanePool::Submit(const std::wstring& path, ImageID imageId, std::share
 
 void HeavyLanePool::SubmitFullDecode(const std::wstring& path, ImageID imageId, std::shared_ptr<QuickView::MappedFile> mmf, PaneSlot targetSlot, uint64_t generationId) {
     std::lock_guard lock(m_poolMutex);
-    
+
+    for (const auto& existing : m_pendingJobs) {
+        if (existing.type == JobType::Standard && existing.isFullDecode &&
+            existing.imageId == imageId && existing.targetSlot == targetSlot) {
+            return;
+        }
+    }
+
     JobInfo job;
     job.type = JobType::Standard;
     job.path = path;
@@ -1815,6 +1822,14 @@ tile_decode_done: ; // [P14] Jump target for fast path (skip legacy TJ decode)
                 
                 evt.type = EventType::FullReady;
                 evt.isScaled = !job.isFullDecode;
+
+                // Preserve true source dimensions on cached frames so Titan revisits retain full metadata.
+                if (meta.Width > 0 && rawFrame.srcWidth <= 0) {
+                    rawFrame.srcWidth = static_cast<int>(meta.Width);
+                }
+                if (meta.Height > 0 && rawFrame.srcHeight <= 0) {
+                    rawFrame.srcHeight = static_cast<int>(meta.Height);
+                }
 
                 // Promote decoded frame to standalone heap ownership (zero-copy when deleter is set).
                 const uint64_t sourceSize = (meta.FileSize > 0) ? meta.FileSize : (job.mmf ? (uint64_t)job.mmf->size() : 0);
@@ -3064,10 +3079,14 @@ HRESULT HeavyLanePool::LaunchDecodeWorker(
         }
     }
 
-    // Propagate EXIF orientation from child
+    // Propagate EXIF orientation and true source dimensions from child
     outMeta.ExifOrientation = static_cast<int>(header->exifOrientation);
     outMeta.Width  = static_cast<int>(header->originalWidth);
     outMeta.Height = static_cast<int>(header->originalHeight);
+    if (header->originalWidth > 0 && header->originalHeight > 0) {
+        outFrame.srcWidth  = static_cast<int>(header->originalWidth);
+        outFrame.srcHeight = static_cast<int>(header->originalHeight);
+    }
 
     {
         QV_LOG("DecodeWorker_Result",

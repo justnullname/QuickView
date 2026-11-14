@@ -254,4 +254,42 @@ float GetAdaptiveFsrSharpness(
     return std::clamp(baseSharpness, 0.0f, 1.0f);
 }
 
+SurfaceSize2D ComputeBoundedBitmapSurfaceSize(
+    float originalW,
+    float originalH,
+    float desiredScale,
+    uint32_t maxAxis,
+    uint64_t maxPixels) {
+    if (!(originalW > 0.0f) || !(originalH > 0.0f) || !(desiredScale > 0.0f) ||
+        maxAxis == 0 || maxPixels == 0) {
+        return {};
+    }
+
+    double w = static_cast<double>(originalW) * static_cast<double>(desiredScale);
+    double h = static_cast<double>(originalH) * static_cast<double>(desiredScale);
+    if (!std::isfinite(w) || !std::isfinite(h) || !(w > 0.0) || !(h > 0.0)) {
+        return {};
+    }
+
+    const double axisLimit = static_cast<double>(maxAxis);
+    if (w > axisLimit || h > axisLimit) {
+        const double axisRatio = std::min(axisLimit / w, axisLimit / h);
+        w *= axisRatio;
+        h *= axisRatio;
+    }
+
+    const double pixelBudget = static_cast<double>(maxPixels);
+    const double totalPixels = w * h;
+    if (totalPixels > pixelBudget) {
+        const double pixelRatio = std::sqrt(pixelBudget / totalPixels);
+        w *= pixelRatio;
+        h *= pixelRatio;
+    }
+
+    const long long maxAxisSigned = static_cast<long long>(maxAxis);
+    const uint32_t outW = static_cast<uint32_t>(std::clamp(std::llround(w), 1LL, maxAxisSigned));
+    const uint32_t outH = static_cast<uint32_t>(std::clamp(std::llround(h), 1LL, maxAxisSigned));
+    return { outW, outH };
+}
+
 } // namespace ColorMath

@@ -2485,23 +2485,9 @@ static D2D1_SIZE_U ComputeDesiredBitmapSurfaceSize(UINT winW, UINT winH, const I
     }
     if (originalW <= 0.0f || originalH <= 0.0f) return D2D1::SizeU(0, 0);
 
-    VisualState vs = GetVisualState();
-    float visualW = vs.IsRotated90 ? originalH : originalW;
-    float visualH = vs.IsRotated90 ? originalW : originalH;
-
-    float fitScale = std::min((float)winW / visualW, (float)winH / visualH);
-    if (g_runtime.LockWindowSize) {
-        if (!g_config.UpscaleSmallImagesWhenLocked && fitScale > 1.0f) {
-            fitScale = 1.0f;
-        }
-    } else {
-        if (visualW < 200.0f && visualH < 200.0f) {
-            if (fitScale > 1.0f) fitScale = 1.0f;
-        }
-    }
-
-    // [Screen-Max Surface Pool Architecture with Adaptive Downsampling]
-    // For standard images, allocate 1:1 native resolution on load/zoom-in.
+    // [Surface Pool Architecture with Adaptive Downsampling]
+    // For standard images (<= 8192px on each axis), allocate up to 1:1 native resolution
+    // within a total pixel budget so tall/panoramic images are not shrunk to screen bounds.
     // For downsampling under Auto (0) or HQ Cubic (3), allocate the target viewport scale to enable true D2D bicubic anti-aliasing.
     float desiredScale = 1.0f;
     if (res.srScale > 1.01f) {
@@ -2510,31 +2496,10 @@ static D2D1_SIZE_U ComputeDesiredBitmapSurfaceSize(UINT winW, UINT winH, const I
         desiredScale = downsampleScale;
     }
 
-    if (!(desiredScale > 0.0f)) return D2D1::SizeU(0, 0);
-
-    float desiredW = originalW * desiredScale;
-    float desiredH = originalH * desiredScale;
-
-    // 4K virtual screen bounding box for giant images
-    constexpr float kMaxInitialSurfaceDimension = 4096.0f;
-    if (desiredW > kMaxInitialSurfaceDimension || desiredH > kMaxInitialSurfaceDimension) {
-        UINT screenW = static_cast<UINT>(GetSystemMetrics(SM_CXVIRTUALSCREEN));
-        UINT screenH = static_cast<UINT>(GetSystemMetrics(SM_CYVIRTUALSCREEN));
-        float maxBoundW = (screenW > 0) ? (float)screenW : 3840.0f;
-        float maxBoundH = (screenH > 0) ? (float)screenH : 2160.0f;
-        maxBoundW = (std::min)(maxBoundW, (float)g_maxBitmapSurfaceSize);
-        maxBoundH = (std::min)(maxBoundH, (float)g_maxBitmapSurfaceSize);
-
-        if (desiredW > maxBoundW || desiredH > maxBoundH) {
-            float ratio = (std::min)(maxBoundW / desiredW, maxBoundH / desiredH);
-            desiredW *= ratio;
-            desiredH *= ratio;
-        }
-    }
-
-    UINT outW = (UINT)std::max(1.0f, std::round(desiredW));
-    UINT outH = (UINT)std::max(1.0f, std::round(desiredH));
-    return D2D1::SizeU(outW, outH);
+    constexpr uint64_t kMaxBitmapSurfacePixels = 4096ull * 4096ull;
+    const ColorMath::SurfaceSize2D bounded = ColorMath::ComputeBoundedBitmapSurfaceSize(
+        originalW, originalH, desiredScale, g_maxBitmapSurfaceSize, kMaxBitmapSurfacePixels);
+    return D2D1::SizeU(bounded.width, bounded.height);
 }
 
 static bool ShouldUpgradeBitmapSurface(const D2D1_SIZE_U& desired) {
@@ -2548,22 +2513,33 @@ static bool ShouldUpgradeBitmapSurface(const D2D1_SIZE_U& desired) {
 
 
 
-static void TryUpgradeBitmapSurface(HWND hwnd) {
-    if (!GetPaneContext(PaneSlot::Primary).resource || GetPaneContext(PaneSlot::Primary).resource.isSvg || GetPaneContext(PaneSlot::Primary).resource.isWebView) return;
-    if (IsCompareModeActive()) return;
-    if (g_isLoading) return;
-    if (GetPaneContext(PaneSlot::Primary).metadata.Width > 8192 || GetPaneContext(PaneSlot::Primary).metadata.Height > 8192) return;
+static bool IsActiveTitanBitmapView(const CImageLoader::ImageMetadata& meta) {
+    return (meta.Width > 8192 || meta.Height > 8192 ||
+            (g_imageEngine && g_imageEngine->IsTitanModeEnabled()));
+}
 
-    RECT rc; GetClientRect(hwnd, &rc);
-    if (rc.right <= 0 || rc.bottom <= 0) return;
-
+static void ComputeBitmapSurfaceDownsampleArgs(HWND hwnd, bool* outAllowDownsampling, float* outDownsampleScale) {
     float realScale = GetCurrentRealScale(hwnd);
     D2D1_SIZE_F visualSize = GetVisualImageSize();
     const auto& meta = GetPaneContext(PaneSlot::Primary).metadata;
     bool isPixelArt = IsEffectivelyPixelArtMode(realScale, visualSize.width, visualSize.height, meta.Entropy, meta.HasEntropy);
-
     // Auto (0) or HQ Cubic (3) enables downsampling refinement when zoomed below 100%
-    bool allowDownsampling = (realScale < 0.999f) && (g_config.ZoomModeOut == 0 || g_config.ZoomModeOut == 3) && !isPixelArt;
+    *outAllowDownsampling = (realScale < 0.999f) && (g_config.ZoomModeOut == 0 || g_config.ZoomModeOut == 3) && !isPixelArt;
+    *outDownsampleScale = realScale;
+}
+
+static void TryUpgradeBitmapSurface(HWND hwnd) {
+    if (!GetPaneContext(PaneSlot::Primary).resource || GetPaneContext(PaneSlot::Primary).resource.isSvg || GetPaneContext(PaneSlot::Primary).resource.isWebView) return;
+    if (IsCompareModeActive()) return;
+    if (g_isLoading) return;
+    if (IsActiveTitanBitmapView(GetPaneContext(PaneSlot::Primary).metadata)) return;
+
+    RECT rc; GetClientRect(hwnd, &rc);
+    if (rc.right <= 0 || rc.bottom <= 0) return;
+
+    bool allowDownsampling = false;
+    float realScale = 1.0f;
+    ComputeBitmapSurfaceDownsampleArgs(hwnd, &allowDownsampling, &realScale);
 
     D2D1_SIZE_U desired = ComputeDesiredBitmapSurfaceSize((UINT)rc.right, (UINT)rc.bottom, GetPaneContext(PaneSlot::Primary).resource, allowDownsampling, realScale);
     if (!ShouldUpgradeBitmapSurface(desired)) return;
@@ -2661,7 +2637,7 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, [[maybe_unused]] bool isF
     UINT fullWidth = 0;
     UINT fullHeight = 0;
     // Only Bitmap mode supports Titan (SVG uses vector re-rasterization)
-    if (!res.isSvg && (GetPaneContext(PaneSlot::Primary).metadata.Width > 8192 || GetPaneContext(PaneSlot::Primary).metadata.Height > 8192)) {
+    if (!res.isSvg && IsActiveTitanBitmapView(GetPaneContext(PaneSlot::Primary).metadata)) {
          isTitan = true;
          fullWidth = GetPaneContext(PaneSlot::Primary).metadata.Width;
          fullHeight = GetPaneContext(PaneSlot::Primary).metadata.Height;
@@ -2750,7 +2726,7 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, [[maybe_unused]] bool isF
         float scaleCalcW = effectiveW;
         float scaleCalcH = effectiveH;
         
-        if (isTitan && (imgW < 4096 || imgH < 4096) && !editState.HasCrop) {
+        if (isTitan && (imgW < (float)fullWidth || imgH < (float)fullHeight) && !editState.HasCrop) {
              scaleCalcW = (float)fullWidth;
              scaleCalcH = (float)fullHeight;
         }
@@ -3957,6 +3933,7 @@ static void PerformRestoreWindow(HWND hwnd) {
         GetPaneContext(PaneSlot::Primary).view.PanX = 0;
         GetPaneContext(PaneSlot::Primary).view.PanY = 0;
         g_osd.Show(hwnd, AppStrings::OSD_Restored, false, false, D2D1::ColorF(D2D1::ColorF::White));
+        TryUpgradeBitmapSurface(hwnd);
         RequestRepaint(PaintLayer::All);
 
         s_restoredWindowRect = {};
@@ -4115,6 +4092,7 @@ static void PerformZoom100(HWND hwnd, bool allowResizeWindow = true) {
             GetPaneContext(PaneSlot::Primary).view.PanY = 0;
             g_osd.Show(hwnd, AppStrings::OSD_Zoom100, false, false, D2D1::ColorF(0.4f, 1.0f, 0.4f));
     }
+    TryUpgradeBitmapSurface(hwnd);
     RequestRepaint(PaintLayer::All);
     GetPaneContext(PaneSlot::Primary).view.IsInteracting = true;
     SetTimer(hwnd, IDT_INTERACTION, 150, nullptr);
@@ -4337,6 +4315,7 @@ static void PerformZoomFit(HWND hwnd, float maxScreenPct = 1.0f, bool allowResiz
             GetPaneContext(PaneSlot::Primary).view.PanX = 0;
             GetPaneContext(PaneSlot::Primary).view.PanY = 0;
             g_osd.Show(hwnd, AppStrings::OSD_ZoomFit, false, false, D2D1::ColorF(D2D1::ColorF::White));
+            TryUpgradeBitmapSurface(hwnd);
             RequestRepaint(PaintLayer::All);
             ScheduleDebouncedSuperResolution(hwnd);
             return;
@@ -10947,6 +10926,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             g_isInSizeMove = false;
             if (GetPaneContext(PaneSlot::Primary).resource.isWebView) {
                 MaybeSyncWebContentRaster(hwnd);
+            } else if (!g_isLoading) {
+                TryUpgradeBitmapSurface(hwnd);
+                SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
             }
             g_compEngine->Commit();
         } else {
@@ -14746,6 +14728,8 @@ SKIP_EDGE_NAV:;
                 AppContext::GetInstance().Compare.activePane = pane;
                 ApplyCompareZoomWithMultiplier(hwnd, pane, ComputeZoomStep(delta), &pt, AppContext::GetInstance().Compare.syncZoom);
             } else {
+                GetPaneContext(PaneSlot::Primary).view.IsInteracting = true;
+                SetTimer(hwnd, IDT_INTERACTION, 150, nullptr);
                 PerformSmartZoom(hwnd, newTotalScale, &pt, false, true);
             }
             ShowZoomOsd(hwnd, newTotalScale);
@@ -16217,7 +16201,8 @@ void ProcessEngineEvents(HWND hwnd) {
                 // Force one Titan scheduling pass after content swap.
                 // This prevents "same size, same zoom" switches from skipping
                 // initial tile dispatch under Phase2 queue-drop flow.
-                if (GetPaneContext(PaneSlot::Primary).metadata.Width > 8192 || GetPaneContext(PaneSlot::Primary).metadata.Height > 8192) {
+                if (!GetPaneContext(PaneSlot::Primary).resource.isSvg &&
+                    IsActiveTitanBitmapView(GetPaneContext(PaneSlot::Primary).metadata)) {
                     g_forceTitanTileReseed.store(true, std::memory_order_release);
                 }
                 
@@ -16325,8 +16310,17 @@ void ProcessEngineEvents(HWND hwnd) {
                         g_deferProgrammaticZoomResizeSync = false;
                     }
 
-                    // Update DComp Visual using the correct, up-to-date window dimensions
-                    RenderImageToDComp(hwnd, GetPaneContext(PaneSlot::Primary).resource, false);
+                    // Update DComp Visual using the final target surface budget in a single pass
+                    // to avoid allocating a full-size surface and immediately replacing it below.
+                    bool allowDownsampling = false;
+                    float downsampleScale = 1.0f;
+                    if (!isPreview &&
+                        !GetPaneContext(PaneSlot::Primary).resource.isSvg &&
+                        !GetPaneContext(PaneSlot::Primary).resource.isWebView &&
+                        !IsActiveTitanBitmapView(GetPaneContext(PaneSlot::Primary).metadata)) {
+                        ComputeBitmapSurfaceDownsampleArgs(hwnd, &allowDownsampling, &downsampleScale);
+                    }
+                    RenderImageToDComp(hwnd, GetPaneContext(PaneSlot::Primary).resource, false, allowDownsampling, downsampleScale);
 
                     // [Fix] Explicitly Sync DComp State immediately after Window Adjustment
                     // This covers the case where the Window Size DOES NOT CHANGE (e.g. Locked or Maximized),
@@ -17850,39 +17844,44 @@ void OnPaint(HWND hwnd) {
                  }
 
                  // Update Manager (Scheduling) - Guarded to prevent loop
-                  static QuickView::RegionRect lastVP = { -1, -1, -1, -1 };
-                  static float lastAbsZoom = 0;
-                  static ImageID lastTileImageId = 0;
-                  static uint64_t lastDispatchSerial = 0;
-                  ImageID curTileImageId = g_currentImageId.load();
-                  bool imageChanged = (curTileImageId != lastTileImageId);
-                  uint64_t curDispatchSerial = g_titanDispatchSerial.load(std::memory_order_acquire);
-                  bool dispatchChanged = (curDispatchSerial != lastDispatchSerial);
-                  bool forceReseed = g_forceTitanTileReseed.exchange(false, std::memory_order_acq_rel);
-                  if (imageChanged) {
-                                       lastAbsZoom = -1.0f;
-                      lastTileImageId = curTileImageId;
-                  }
-                  if (dispatchChanged) {
-                      lastDispatchSerial = curDispatchSerial;
-                  }
-                  
-                  // [Performance] Block TileManager from evaluating tiles until Base Layer finishes loading (!g_isLoading)
-                  // This prevents the Phase1 thumbnail from triggering a flood of deep zoom tile
-                  // decodes that starve the Base Layer threads.
-                  if (!g_isLoading && (imageChanged || dispatchChanged || forceReseed || vp.x != lastVP.x || vp.y != lastVP.y || vp.w != lastVP.w || vp.h != lastVP.h || absoluteZoom != lastAbsZoom)) {
-                      if (imageChanged || dispatchChanged || forceReseed) {
-                         QV_LOG("Main_TitanSeed",
-                             TraceLoggingUInt64(curTileImageId, "ImageID"),
-                             TraceLoggingInt32(titanMeta.Width, "MetaW"),
-                             TraceLoggingInt32(titanMeta.Height, "MetaH"),
-                             TraceLoggingFloat32((float)previewW, "PreviewW"),
-                             TraceLoggingFloat32((float)baseRatio, "BaseRatio"),
-                             TraceLoggingFloat32((float)absoluteZoom, "Zoom"));
+                 // Defer consuming reseed latches until !g_isLoading so transition/Phase 1
+                 // repaints never swallow the pending initial tile scheduling pass.
+                 static QuickView::RegionRect lastVP = { -1, -1, -1, -1 };
+                 static float lastAbsZoom = 0;
+                 static ImageID lastTileImageId = 0;
+                 static uint64_t lastDispatchSerial = 0;
+
+                 // [Performance] Block TileManager from evaluating tiles until Base Layer finishes loading (!g_isLoading)
+                 // This prevents the Phase1 thumbnail from triggering a flood of deep zoom tile
+                 // decodes that starve the Base Layer threads.
+                 if (!g_isLoading) {
+                     ImageID curTileImageId = g_currentImageId.load();
+                     bool imageChanged = (curTileImageId != lastTileImageId);
+                     uint64_t curDispatchSerial = g_titanDispatchSerial.load(std::memory_order_acquire);
+                     bool dispatchChanged = (curDispatchSerial != lastDispatchSerial);
+                     bool forceReseed = g_forceTitanTileReseed.exchange(false, std::memory_order_acq_rel);
+                     if (imageChanged) {
+                         lastAbsZoom = -1.0f;
+                         lastTileImageId = curTileImageId;
                      }
-                     g_imageEngine->UpdateTileViewport(vp, absoluteZoom, titanMeta.Width, titanMeta.Height, baseRatio, 0.0f, 0.0f);
-                     lastVP = vp;
-                     lastAbsZoom = absoluteZoom;
+                     if (dispatchChanged) {
+                         lastDispatchSerial = curDispatchSerial;
+                     }
+
+                     if (imageChanged || dispatchChanged || forceReseed || vp.x != lastVP.x || vp.y != lastVP.y || vp.w != lastVP.w || vp.h != lastVP.h || absoluteZoom != lastAbsZoom) {
+                         if (imageChanged || dispatchChanged || forceReseed) {
+                             QV_LOG("Main_TitanSeed",
+                                 TraceLoggingUInt64(curTileImageId, "ImageID"),
+                                 TraceLoggingInt32(titanMeta.Width, "MetaW"),
+                                 TraceLoggingInt32(titanMeta.Height, "MetaH"),
+                                 TraceLoggingFloat32((float)previewW, "PreviewW"),
+                                 TraceLoggingFloat32((float)baseRatio, "BaseRatio"),
+                                 TraceLoggingFloat32((float)absoluteZoom, "Zoom"));
+                         }
+                         g_imageEngine->UpdateTileViewport(vp, absoluteZoom, titanMeta.Width, titanMeta.Height, baseRatio, 0.0f, 0.0f);
+                         lastVP = vp;
+                         lastAbsZoom = absoluteZoom;
+                     }
                  }
                  
                  // [Pure DComp] Render Titan View directly to DComp Surface

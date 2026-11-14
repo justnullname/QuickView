@@ -72,3 +72,36 @@ TEST(ColorMathTest, MatrixMultiplication) {
     EXPECT_FLOAT_EQ(c.m[1][0], 84);
     EXPECT_FLOAT_EQ(c.m[2][2], 90);
 }
+
+TEST(ColorMathTest, ComputeBoundedBitmapSurfaceSize) {
+    // 1. Non-Titan tall screenshot (2549x6510) fits within 16.77MP budget and 8192 axis cap -> full 1:1
+    auto tall = ColorMath::ComputeBoundedBitmapSurfaceSize(2549.0f, 6510.0f, 1.0f);
+    EXPECT_EQ(tall.width, 2549u);
+    EXPECT_EQ(tall.height, 6510u);
+
+    // 2. Downsampled fit scale for the same tall image preserves target viewport resolution
+    auto downsampled = ColorMath::ComputeBoundedBitmapSurfaceSize(2549.0f, 6510.0f, 0.2f);
+    EXPECT_EQ(downsampled.width, 510u);
+    EXPECT_EQ(downsampled.height, 1302u);
+
+    // 3. Large square image exceeding 4096*4096 pixel budget scales proportionally
+    auto oversizedSquare = ColorMath::ComputeBoundedBitmapSurfaceSize(8000.0f, 8000.0f, 1.0f);
+    EXPECT_EQ(oversizedSquare.width, 4096u);
+    EXPECT_EQ(oversizedSquare.height, 4096u);
+
+    // 4. Ultra-wide or tall image within pixel budget up to maxAxis (8192) remains 1:1
+    auto tallStrip = ColorMath::ComputeBoundedBitmapSurfaceSize(1000.0f, 8192.0f, 1.0f);
+    EXPECT_EQ(tallStrip.width, 1000u);
+    EXPECT_EQ(tallStrip.height, 8192u);
+
+    // 5. Image upscaled past maxAxis clamps cleanly to maxAxis while preserving aspect ratio
+    auto srUpscaled = ColorMath::ComputeBoundedBitmapSurfaceSize(5000.0f, 2000.0f, 2.0f);
+    EXPECT_LE(srUpscaled.width, 8192u);
+    EXPECT_LE(srUpscaled.height, 8192u);
+    EXPECT_LE(static_cast<uint64_t>(srUpscaled.width) * srUpscaled.height, 4096ull * 4096ull + 4096ull);
+
+    // 6. Invalid inputs return zero
+    auto invalidZero = ColorMath::ComputeBoundedBitmapSurfaceSize(0.0f, 100.0f, 1.0f);
+    EXPECT_EQ(invalidZero.width, 0u);
+    EXPECT_EQ(invalidZero.height, 0u);
+}
