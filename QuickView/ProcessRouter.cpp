@@ -241,6 +241,10 @@ RouteResult TryRoute(bool singleInstanceEnabled) {
         // Before exiting, delegate it to all processes that are about to request foreground permissions (e.g. main process or newly spawned child processes)
         AllowSetForegroundWindow(ASFW_ANY);
 
+        // Clear OS startup feedback cursor (IDC_APPSTARTING) before short-lived router exits
+        MSG msg{};
+        PeekMessageW(&msg, nullptr, 0, 0, PM_NOREMOVE);
+
         return RouteResult::RoutedToMaster;
     }
 
@@ -326,7 +330,7 @@ void SpawnViewer(const std::wstring& imagePath, HWND hFgCaller) {
 
     STARTUPINFOW si{};
     si.cb = sizeof(si);
-    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.dwFlags = STARTF_USESHOWWINDOW | STARTF_FORCEOFFFEEDBACK;
     si.wShowWindow = SW_SHOWNORMAL;
 
     PROCESS_INFORMATION pi{};

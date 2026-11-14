@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <algorithm>
+#include <atomic>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -24,6 +25,28 @@ struct SystemInfo {
 
     static bool IsSolidStateDrive(const std::wstring& path) {
 #ifdef _WIN32
+        // Lock-free O(1) drive-letter cache (0 = unknown, 1 = HDD, 2 = SSD)
+        static std::atomic<uint8_t> s_driveLetterCache[26]{};
+        int driveIdx = -1;
+        wchar_t driveChar = 0;
+        if (path.size() >= 2 && path[1] == L':') {
+            driveChar = path[0];
+        } else if (path.size() >= 6 && path[0] == L'\\' && path[1] == L'\\' &&
+                   (path[2] == L'?' || path[2] == L'.') && path[3] == L'\\' && path[5] == L':') {
+            driveChar = path[4];
+        }
+        if (driveChar >= L'A' && driveChar <= L'Z') {
+            driveIdx = driveChar - L'A';
+        } else if (driveChar >= L'a' && driveChar <= L'z') {
+            driveIdx = driveChar - L'a';
+        }
+        if (driveIdx >= 0) {
+            const uint8_t cached = s_driveLetterCache[driveIdx].load(std::memory_order_relaxed);
+            if (cached != 0) {
+                return cached == 2;
+            }
+        }
+
         // Get Volume Path (e.g. "C:\\") from file path
         wchar_t volumePath[MAX_PATH];
         if (!GetVolumePathNameW(path.c_str(), volumePath, MAX_PATH)) {
@@ -36,7 +59,12 @@ struct SystemInfo {
         {
             std::scoped_lock guard(s_cacheMutex);
             const auto it = s_cache.find(cacheKey);
-            if (it != s_cache.end()) return it->second;
+            if (it != s_cache.end()) {
+                if (driveIdx >= 0) {
+                    s_driveLetterCache[driveIdx].store(it->second ? 2 : 1, std::memory_order_relaxed);
+                }
+                return it->second;
+            }
         }
 
         // Create handle to the volume
@@ -51,7 +79,7 @@ struct SystemInfo {
         // Let's try opening the volume.
         
         std::wstring volStr = volumePath;
-        if (volStr.back() == L'\\') volStr.pop_back(); // "C:"
+        if (!volStr.empty() && volStr.back() == L'\\') volStr.pop_back(); // "C:"
         
         // Format: "\\.\C:" to open volume
         std::wstring devicePath = L"\\\\.\\" + volStr;
@@ -65,6 +93,9 @@ struct SystemInfo {
                                      NULL);
 
         if (hDevice == INVALID_HANDLE_VALUE) {
+            if (driveIdx >= 0) {
+                s_driveLetterCache[driveIdx].store(1, std::memory_order_relaxed);
+            }
             return false;
         }
 
@@ -89,6 +120,9 @@ struct SystemInfo {
         {
             std::scoped_lock guard(s_cacheMutex);
             s_cache.emplace(cacheKey, isSSD);
+        }
+        if (driveIdx >= 0) {
+            s_driveLetterCache[driveIdx].store(isSSD ? 2 : 1, std::memory_order_relaxed);
         }
         return isSSD;
 #else

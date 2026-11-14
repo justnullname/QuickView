@@ -9,6 +9,7 @@
 #define CURRENT_MODULE "RenderEngine"
 #include "QuickViewETW.h"
 #include "EditState.h"
+#include "ImageLoader.h"
 #include "ImageTypes.h" // [Direct D2D] RawImageFrame
 #include "ImageLoaderSimd.h"
 #include "Plugin/PluginHost.h"
@@ -708,13 +709,6 @@ ColorMatrix3x3 BuildGamutMappingMatrix(QuickView::ColorPrimaries src, QuickView:
   *pixelsOut = convertedPixels.data();
   *strideOut = static_cast<UINT>(frame.stride);
   return true;
-}
-
-HRESULT CreateScRgbColorContext(ID2D1DeviceContext *dc,
-                                ID2D1ColorContext **outContext) {
-  if (!dc || !outContext)
-    return E_INVALIDARG;
-  return dc->CreateColorContext(D2D1_COLOR_SPACE_SCRGB, nullptr, 0, outContext);
 }
 
 bool IsSceneLinearFrame(const QuickView::RawImageFrame &frame) {
@@ -2051,7 +2045,66 @@ HRESULT CRenderEngine::CreateDeviceResources() {
   if (FAILED(hr))
     return hr;
 
+  {
+    std::lock_guard<std::mutex> lock(m_cacheMutex);
+    m_cachedMonitorColorContext.Reset();
+    m_cachedSrgbColorContext.Reset();
+    m_cachedScRgbColorContext.Reset();
+    m_cachedDestDeviceName.clear();
+    m_cachedMonitorProfilePath.clear();
+    m_cachedMonitorIsSrgb = false;
+    m_colorContextCount = 0;
+    m_colorContextNextSlot = 0;
+    for (auto& entry : m_colorContextCache) {
+      entry.hash = 0;
+      entry.size = 0;
+      entry.profileData.clear();
+      entry.context.Reset();
+    }
+    m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0,
+                                     &m_cachedSrgbColorContext);
+    m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SCRGB, nullptr, 0,
+                                     &m_cachedScRgbColorContext);
+  }
+
   return S_OK;
+}
+
+namespace {
+HRESULT GetOrCreateStandardColorContextSlot(
+    ID2D1DeviceContext* d2dContext,
+    std::mutex& cacheMutex,
+    D2D1_COLOR_SPACE space,
+    Microsoft::WRL::ComPtr<ID2D1ColorContext>& cacheSlot,
+    ID2D1ColorContext** outContext) {
+  if (!outContext)
+    return E_INVALIDARG;
+  *outContext = nullptr;
+  if (!d2dContext)
+    return E_UNEXPECTED;
+  std::lock_guard<std::mutex> lock(cacheMutex);
+  if (!cacheSlot) {
+    const HRESULT hr =
+        d2dContext->CreateColorContext(space, nullptr, 0, &cacheSlot);
+    if (FAILED(hr))
+      return hr;
+  }
+  return cacheSlot.CopyTo(outContext);
+}
+} // namespace
+
+HRESULT CRenderEngine::GetOrCreateSrgbColorContext(
+    ID2D1ColorContext** outContext) const {
+  return GetOrCreateStandardColorContextSlot(
+      m_d2dContext.Get(), m_cacheMutex, D2D1_COLOR_SPACE_SRGB,
+      m_cachedSrgbColorContext, outContext);
+}
+
+HRESULT CRenderEngine::GetOrCreateScRgbColorContext(
+    ID2D1ColorContext** outContext) const {
+  return GetOrCreateStandardColorContextSlot(
+      m_d2dContext.Get(), m_cacheMutex, D2D1_COLOR_SPACE_SCRGB,
+      m_cachedScRgbColorContext, outContext);
 }
 
 HRESULT CRenderEngine::LoadColorContextForPrimaries(
@@ -2063,8 +2116,7 @@ HRESULT CRenderEngine::LoadColorContextForPrimaries(
   *outContext = nullptr;
   switch (primaries) {
   case QuickView::ColorPrimaries::SRGB:
-    return m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0,
-                                            outContext);
+    return GetOrCreateSrgbColorContext(outContext);
   case QuickView::ColorPrimaries::DisplayP3:
     return LoadIccFromResource(m_d2dContext.Get(), IDR_ICC_P3, outContext)
                ? S_OK
@@ -2097,18 +2149,17 @@ HRESULT CRenderEngine::ResolveSourceColorContext(
     if (IsSceneLinearFrame(frame)) {
       if (primaries == QuickView::ColorPrimaries::SRGB ||
           primaries == QuickView::ColorPrimaries::Unknown) {
-        return CreateScRgbColorContext(m_d2dContext.Get(), outContext);
+        return GetOrCreateScRgbColorContext(outContext);
       }
       return LoadColorContextForPrimaries(primaries, outContext);
     }
-    return CreateScRgbColorContext(m_d2dContext.Get(), outContext);
+    return GetOrCreateScRgbColorContext(outContext);
   }
 
   // [Fix] Manual overrides (modes 2,3,4,6) take absolute priority over embedded ICC.
   // Without this, images with embedded ICC profiles silently ignore user's color space selection.
   if (effectiveCmsMode == 2)
-    return m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0,
-                                            outContext);
+    return GetOrCreateSrgbColorContext(outContext);
   if (effectiveCmsMode == 3)
     return LoadColorContextForPrimaries(QuickView::ColorPrimaries::DisplayP3,
                                         outContext);
@@ -2171,8 +2222,7 @@ HRESULT CRenderEngine::ResolveSourceColorContext(
 
     if (frame.colorInfo.IsSrgb() ||
         frame.hdrMetadata.primaries == QuickView::ColorPrimaries::SRGB) {
-      return m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0,
-                                              outContext);
+      return GetOrCreateSrgbColorContext(outContext);
     }
 
     const int fallback = g_config.CmsDefaultFallback;
@@ -2185,28 +2235,55 @@ HRESULT CRenderEngine::ResolveSourceColorContext(
     if (fallback == 3)
       return LoadColorContextForPrimaries(QuickView::ColorPrimaries::ProPhotoRGB,
                                           outContext);
-    return m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0,
-                                            outContext);
+    return GetOrCreateSrgbColorContext(outContext);
   }
 
-  return m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0,
-                                          outContext);
+  return GetOrCreateSrgbColorContext(outContext);
 }
 
 HRESULT CRenderEngine::ResolveDestinationColorContext(
-    const QuickView::RawImageFrame &frame, ID2D1ColorContext **outContext) const {
+    const QuickView::RawImageFrame &frame, ID2D1ColorContext **outContext,
+    bool *outIsSrgb) const {
   if (!outContext)
     return E_INVALIDARG;
   *outContext = nullptr;
+  if (outIsSrgb)
+    *outIsSrgb = false;
+
+  std::lock_guard<std::mutex> lock(m_cacheMutex);
+
+  auto GetOrCreateStandardContext =
+      [&](D2D1_COLOR_SPACE space,
+          ComPtr<ID2D1ColorContext> &cacheSlot) -> HRESULT {
+    if (!cacheSlot) {
+      const HRESULT hr =
+          m_d2dContext->CreateColorContext(space, nullptr, 0, &cacheSlot);
+      if (FAILED(hr))
+        return hr;
+    }
+    return cacheSlot.CopyTo(outContext);
+  };
 
   if (ShouldUseHdrOutputForFrame(frame)) {
-    return m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SCRGB, nullptr, 0,
-                                            outContext);
+    return GetOrCreateStandardContext(D2D1_COLOR_SPACE_SCRGB,
+                                      m_cachedScRgbColorContext);
   }
 
   if (!m_displayColorState.gdiDeviceName.empty()) {
-    HDC hdcMon =
-        CreateDCW(L"DISPLAY", m_displayColorState.gdiDeviceName.c_str(), NULL, NULL);
+    if (m_cachedMonitorColorContext &&
+        m_cachedDestDeviceName == m_displayColorState.gdiDeviceName) {
+      if (outIsSrgb)
+        *outIsSrgb = m_cachedMonitorIsSrgb;
+      return m_cachedMonitorColorContext.CopyTo(outContext);
+    }
+
+    m_cachedDestDeviceName = m_displayColorState.gdiDeviceName;
+    m_cachedMonitorProfilePath.clear();
+    m_cachedMonitorColorContext.Reset();
+    m_cachedMonitorIsSrgb = true;
+
+    HDC hdcMon = CreateDCW(L"DISPLAY",
+                           m_displayColorState.gdiDeviceName.c_str(), NULL, NULL);
     if (hdcMon) {
       DWORD dwLen = 0;
       GetICMProfileW(hdcMon, &dwLen, NULL);
@@ -2214,20 +2291,34 @@ HRESULT CRenderEngine::ResolveDestinationColorContext(
         std::wstring profilePath(dwLen, L'\0');
         if (GetICMProfileW(hdcMon, &dwLen, &profilePath[0])) {
           profilePath.resize(dwLen - 1);
-          const HRESULT hr = m_d2dContext->CreateColorContextFromFilename(
-              profilePath.c_str(), outContext);
-          DeleteDC(hdcMon);
-          if (SUCCEEDED(hr)) {
-            return hr;
+          if (SUCCEEDED(m_d2dContext->CreateColorContextFromFilename(
+                  profilePath.c_str(), &m_cachedMonitorColorContext))) {
+            m_cachedMonitorProfilePath = std::move(profilePath);
+            m_cachedMonitorIsSrgb =
+                IsGenericSrgbProfilePath(m_cachedMonitorProfilePath);
           }
         }
       }
       DeleteDC(hdcMon);
     }
+
+    if (!m_cachedMonitorColorContext) {
+      const HRESULT hr = m_d2dContext->CreateColorContext(
+          D2D1_COLOR_SPACE_SRGB, nullptr, 0, &m_cachedMonitorColorContext);
+      if (FAILED(hr))
+        return hr;
+      m_cachedMonitorIsSrgb = true;
+    }
+
+    if (outIsSrgb)
+      *outIsSrgb = m_cachedMonitorIsSrgb;
+    return m_cachedMonitorColorContext.CopyTo(outContext);
   }
 
-  return m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0,
-                                          outContext);
+  if (outIsSrgb)
+    *outIsSrgb = true;
+  return GetOrCreateStandardContext(D2D1_COLOR_SPACE_SRGB,
+                                    m_cachedSrgbColorContext);
 }
 
 bool CRenderEngine::ShouldUseHdrOutputForFrame(
@@ -2428,7 +2519,7 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
                    
                    ComPtr<ID2D1ColorContext> scRgbContext;
                    if (useHdrOutput &&
-                       SUCCEEDED(m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SCRGB, nullptr, 0, &scRgbContext))) {
+                       SUCCEEDED(GetOrCreateScRgbColorContext(&scRgbContext))) {
                        hdrProps.colorContext = scRgbContext.Get();
                    }
                   
@@ -2552,7 +2643,7 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
 
   if (frame.format == QuickView::PixelFormat::R32G32B32A32_FLOAT || frame.format == QuickView::PixelFormat::R16G16B16A16_UNORM || frame.format == QuickView::PixelFormat::R16G16B16A16_FLOAT) {
       ComPtr<ID2D1ColorContext> scRgbContext;
-      CreateScRgbColorContext(m_d2dContext.Get(), &scRgbContext);
+      GetOrCreateScRgbColorContext(&scRgbContext);
 
       if (useHdrOutput) {
           // Pure HDR Environment (Roll-off)
@@ -2784,7 +2875,7 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
                   sdrPixels.data(), static_cast<UINT32>(frame.width * 4), &sdrProps, &rawBitmap);
           }
           // After tone mapping to SDR, the source for the next CMS step is sRGB
-          m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0, &srcContext);
+          GetOrCreateSrgbColorContext(&srcContext);
       }
   }
 
@@ -2799,7 +2890,7 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
   }
 
   if (!srcContext)
-    m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0, &srcContext);
+    GetOrCreateSrgbColorContext(&srcContext);
 
   if (!rawBitmap) {
     D2D1_BITMAP_PROPERTIES1 propsWithContext = props;
@@ -2836,8 +2927,37 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
   if ((applyCms && effectiveCmsMode != 0) || shouldEnableSoftProofing) {
     // Find destination context (Monitor or scRGB)
     ComPtr<ID2D1ColorContext> dstContext;
+    bool isDestMonitorSrgb = false;
 
-    ResolveDestinationColorContext(frame, &dstContext);
+    ResolveDestinationColorContext(frame, &dstContext, &isDestMonitorSrgb);
+
+    // Zero-cost identity bypass: skip full-frame render pass when both source
+    // and destination monitor are standard sRGB (not HDR, not soft-proofing, not grayscale).
+    bool isSourceSrgb = false;
+    if (!useHdrOutput && !shouldEnableSoftProofing && effectiveCmsMode != 5 &&
+        effectiveCmsMode != 3 && effectiveCmsMode != 4 && effectiveCmsMode != 6 &&
+        srcContext) {
+      if (srcContext->GetColorSpace() == D2D1_COLOR_SPACE_SRGB) {
+        isSourceSrgb = true;
+      } else if (effectiveCmsMode == 1 && !frame.iccProfile.empty()) {
+        std::wstring lowerName = CImageLoader::ParseICCProfileName(
+            frame.iccProfile.data(), frame.iccProfile.size());
+        for (wchar_t& ch : lowerName) {
+          if (ch >= L'A' && ch <= L'Z') ch = static_cast<wchar_t>(ch + 32);
+        }
+        // Match common sRGB ICC descriptions (e.g. "sRGB IEC61966-2.1", "sRGB built-in") while excluding linear/wide-gamut variants
+        isSourceSrgb =
+            lowerName.find(L"srgb") != std::wstring::npos &&
+            lowerName.find(L"linear") == std::wstring::npos &&
+            lowerName.find(L"scrgb") == std::wstring::npos &&
+            lowerName.find(L"rec2020") == std::wstring::npos &&
+            lowerName.find(L"p3") == std::wstring::npos;
+      }
+    }
+    if (isSourceSrgb && isDestMonitorSrgb) {
+      *outBitmap = rawBitmap.Detach();
+      return S_OK;
+    }
 
     if (srcContext && dstContext) {
       ComPtr<ID2D1Effect> colorManagementEffect;
@@ -3114,7 +3234,7 @@ HRESULT CRenderEngine::CreateBitmapFromD3DTexture(
 
   if (texDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT) {
       ComPtr<ID2D1ColorContext> scRgbContext;
-      if (SUCCEEDED(m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SCRGB, nullptr, 0, &scRgbContext))) {
+      if (SUCCEEDED(GetOrCreateScRgbColorContext(&scRgbContext))) {
           computeProps.colorContext = scRgbContext.Get();
       }
   }

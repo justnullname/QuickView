@@ -337,6 +337,37 @@ bool PluginHost::EnsureSrModuleLoaded() {
         if (m_srVTable->set_language) {
             m_srVTable->set_language(m_currentLanguage.c_str());
         }
+
+        // Hydrate plugin-specific dynamic parameters from cached INI if LoadConfig deferred DLL load
+        if (!m_cachedIniPath.empty() && m_srHeader->plugin_id &&
+            m_srVTable->get_param_count && m_srVTable->get_param_desc) {
+            wchar_t section[128] = { 0 };
+            QuickView::Utf8ToWide(m_srHeader->plugin_id, section);
+            std::wstring fullSection = L"Plugin." + std::wstring(section);
+            uint32_t count = m_srVTable->get_param_count();
+            for (uint32_t i = 0; i < count; ++i) {
+                const QVX_ParamDesc* pDesc = m_srVTable->get_param_desc(i);
+                if (!pDesc || !pDesc->id) continue;
+                wchar_t keyWide[64] = { 0 };
+                wchar_t valWide[64] = { 0 };
+                QuickView::Utf8ToWide(pDesc->id, keyWide);
+                if (GetPrivateProfileStringW(fullSection.c_str(), keyWide, L"", valWide, 64, m_cachedIniPath.c_str()) > 0) {
+                    wchar_t* pEnd = nullptr;
+                    float fVal = wcstof(valWide, &pEnd);
+                    bool found = false;
+                    for (auto& kv : m_dynamicParams) {
+                        if (kv.first == pDesc->id) {
+                            kv.second = fVal;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        m_dynamicParams.push_back({ pDesc->id, fVal });
+                    }
+                }
+            }
+        }
     }
     return true;
 }
@@ -601,8 +632,7 @@ void PluginHost::LoadConfig(const wchar_t* iniPath) {
     m_srAutoTriggerMaxWidth = (uint32_t)GetPrivateProfileIntW(L"SuperResolution", L"SrAutoTriggerMaxWidth", 1080, iniPath);
     m_srAutoTriggerMaxHeight = (uint32_t)GetPrivateProfileIntW(L"SuperResolution", L"SrAutoTriggerMaxHeight", 1080, iniPath);
 
-    // Load plugin-specific dynamic parameters from [Plugin.<plugin_id>] section
-    EnsureSrModuleLoaded();
+    // Load plugin-specific dynamic parameters lazily without loading DLL on cold boot
     const char* pluginId = (m_srHeader && m_srHeader->plugin_id) ? m_srHeader->plugin_id : "sr_ncnn_vulkan";
     wchar_t section[128] = { 0 };
     QuickView::Utf8ToWide(pluginId, section);

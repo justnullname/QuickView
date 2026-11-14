@@ -164,6 +164,34 @@ void BootPreloader::Start(const std::wstring& imagePath) {
             if (meta.ExifOrientation <= 1 && frame->exifOrientation > 1) {
                 meta.ExifOrientation = frame->exifOrientation;
             }
+            if (meta.FileSize == 0) {
+                meta.FileSize = data->headerInfo.fileSize;
+            }
+            if (meta.Format.empty() && !data->headerInfo.format.empty()) {
+                meta.Format = data->headerInfo.format;
+            }
+            if (meta.FormatDetails.empty() && !frame->formatDetails.empty()) {
+                meta.FormatDetails = frame->formatDetails;
+            }
+            if (meta.iccProfileData.empty() && !frame->iccProfile.empty()) {
+                meta.iccProfileData.assign(frame->iccProfile.begin(), frame->iccProfile.end());
+            }
+            if (!meta.HasEmbeddedColorProfile.has_value()) {
+                meta.HasEmbeddedColorProfile = !frame->iccProfile.empty();
+            }
+            if (meta.ColorSpace.empty() && !frame->iccProfile.empty()) {
+                meta.ColorSpace = CImageLoader::ParseICCProfileName(
+                    frame->iccProfile.data(), frame->iccProfile.size());
+            }
+            if (meta.colorInfo.dataSpace == QuickView::PixelDataSpace::Unknown &&
+                frame->colorInfo.dataSpace != QuickView::PixelDataSpace::Unknown) {
+                meta.colorInfo = frame->colorInfo;
+            }
+            frame->sourceFileSize = meta.FileSize;
+            frame->sourceFormat = meta.Format;
+            if (meta.LoaderName.empty() && !ldr.empty()) {
+                meta.LoaderName = ldr;
+            }
             data->rawFrame = std::move(frame);
             data->metadata = std::move(meta);
             data->loaderName = std::move(ldr);

@@ -2923,6 +2923,9 @@ std::wstring UIRenderer::BuildCompactInfoText(float maxFileW) const {
     uint64_t stateHash = 0;
     CombineHash(stateHash, currentZoom);
     CombineHash(stateHash, g_imagePath);
+    CombineHash(stateHash, g_navigator.Index());
+    CombineHash(stateHash, g_navigator.Count());
+    CombineHash(stateHash, g_navigator.HasPairedRaw(FileNavigator::PathToImageID(g_imagePath)));
     CombineHash(stateHash, g_config.InfoPanelLiteItemsNormal);
     // [Ratings] Same reason as the full panel: the read lands asynchronously,
     // so it must be part of the cache key or the strip would never update.
@@ -2932,6 +2935,14 @@ std::wstring UIRenderer::BuildCompactInfoText(float maxFileW) const {
         CombineHash(stateHash, -1);
     }
     CombineHash(stateHash, maxFileW);
+    CombineHash(stateHash, g_currentMetadata.Width);
+    CombineHash(stateHash, g_currentMetadata.Height);
+    CombineHash(stateHash, g_currentMetadata.FileSize);
+    CombineHash(stateHash, g_currentMetadata.Date);
+    CombineHash(stateHash, g_currentMetadata.Make);
+    CombineHash(stateHash, g_currentMetadata.Model);
+    CombineHash(stateHash, g_currentMetadata.Software);
+    CombineHash(stateHash, g_currentMetadata.ColorSpace);
     CombineHash(stateHash, g_currentMetadata.IsFullMetadataLoaded);
     CombineHash(stateHash, g_currentMetadata.HasSharpness);
     CombineHash(stateHash, g_currentMetadata.HasEntropy);
@@ -3171,10 +3182,20 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
         rows.push_back({L"\U0001F4F7", L"Camera", camera, L"", camera, TruncateMode::EndEllipsis, false});
     }
 
-    if (!metadata.ISO.empty()) {
-        std::wstring exp = L"ISO " + metadata.ISO + L"  " + metadata.Aperture + L"  " + metadata.Shutter;
+    if (!metadata.ISO.empty() || !metadata.Aperture.empty() || !metadata.Shutter.empty()) {
+        std::wstring exp;
+        auto appendExp = [&](const std::wstring& part) {
+            if (part.empty()) return;
+            if (!exp.empty()) exp += L"  ";
+            exp += part;
+        };
+        if (!metadata.ISO.empty()) {
+            appendExp(L"ISO " + metadata.ISO);
+        }
+        appendExp(metadata.Aperture);
+        appendExp(metadata.Shutter);
         std::wstring sub = metadata.ExposureBias.empty() ? L"" : metadata.ExposureBias;
-        rows.push_back({L"\U000026A1", L"Exp", exp, sub, exp + L" " + sub, TruncateMode::EndEllipsis, false});
+        rows.push_back({L"\U000026A1", L"Exp", exp, sub, sub.empty() ? exp : (exp + L" " + sub), TruncateMode::EndEllipsis, false});
     }
 
     if (!metadata.Lens.empty()) {
@@ -3655,10 +3676,21 @@ void UIRenderer::BuildInfoGrid() {
     uint64_t stateHash = 0;
     CombineHash(stateHash, currentZoom);
     CombineHash(stateHash, g_imagePath);
+    CombineHash(stateHash, g_navigator.Index());
+    CombineHash(stateHash, g_navigator.Count());
+    CombineHash(stateHash, g_navigator.HasPairedRaw(FileNavigator::PathToImageID(g_imagePath)));
     CombineHash(stateHash, g_config.InfoPanelFullItemsNormal);
     CombineHash(stateHash, g_config.InfoPanelFullItemsCompare);
     CombineHash(stateHash, g_runtime.ShowCompareInfo);
     CombineHash(stateHash, g_runtime.ShowHdrDetailsExpanded);
+    CombineHash(stateHash, g_currentMetadata.Width);
+    CombineHash(stateHash, g_currentMetadata.Height);
+    CombineHash(stateHash, g_currentMetadata.FileSize);
+    CombineHash(stateHash, g_currentMetadata.Date);
+    CombineHash(stateHash, g_currentMetadata.Make);
+    CombineHash(stateHash, g_currentMetadata.Model);
+    CombineHash(stateHash, g_currentMetadata.Software);
+    CombineHash(stateHash, g_currentMetadata.ColorSpace);
     CombineHash(stateHash, g_currentMetadata.IsFullMetadataLoaded);
     CombineHash(stateHash, g_currentMetadata.HasSharpness);
     CombineHash(stateHash, g_currentMetadata.HasEntropy);

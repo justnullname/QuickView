@@ -167,6 +167,7 @@ public:
     int GetCacheItemCount() const;
     std::shared_ptr<QuickView::RawImageFrame> GetCachedImage(const std::wstring& path);
     void PutCachedImage(const std::wstring& path, std::shared_ptr<QuickView::RawImageFrame> frame, int index = 0);
+    void AdoptBootFrame(const std::wstring& path, ImageID imageId, std::shared_ptr<QuickView::RawImageFrame> frame, int index = 0);
 
     
     // === Debug/Instrumentation API ===
@@ -297,6 +298,15 @@ private:
 
     // [Phase 2] Dispatcher
     void DispatchImageLoad(const std::wstring& path, ImageID imageId, uintmax_t fileSize, PaneSlot targetSlot, uint64_t generationId);
+    bool TryServeFromCache(
+        const std::wstring& path,
+        ImageID imageId,
+        uintmax_t fallbackFileSize,
+        PaneSlot targetSlot,
+        uint64_t generationId,
+        const CImageLoader::ImageHeaderInfo* headerInfo = nullptr,
+        bool enableTitan = false,
+        const std::shared_ptr<QuickView::MappedFile>& primaryMMF = nullptr);
 
     // --- Lane 1: The Fast Lane ---
     class FastLane {
@@ -308,7 +318,7 @@ private:
         // [v3.1] Ruthless Purge: Clear pending queue
         // [v3.1] Ruthless Purge: Clear pending queue
         void Clear();
-        void Push(const std::wstring& path, ImageID id, float targetHdrHeadroomStops = -1.0f, PaneSlot targetSlot = PaneSlot::Primary, uint64_t generationId = 0);
+        void Push(const std::wstring& path, ImageID id, float targetHdrHeadroomStops = -1.0f, PaneSlot targetSlot = PaneSlot::Primary, uint64_t generationId = 0, std::shared_ptr<QuickView::MappedFile> mmf = nullptr);
         std::optional<EngineEvent> TryPopResult();
         bool IsQueueEmpty() const;
         
@@ -349,6 +359,7 @@ private:
             float targetHdrHeadroomStops = -1.0f;
             PaneSlot targetSlot = PaneSlot::Primary;
             uint64_t generationId = 0;
+            std::shared_ptr<QuickView::MappedFile> mmf;
         };
         std::deque<FastLaneCommand> m_queue; 
         std::deque<EngineEvent> m_results; 

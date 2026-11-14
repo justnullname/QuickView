@@ -120,7 +120,17 @@ public:
     HRESULT Initialize(HWND hwnd);
 
     void SetAdvancedColorMode(bool enabled) { m_isAdvancedColor = enabled; }
-    void SetDisplayColorState(const QuickView::DisplayColorState& state) { m_displayColorState = state; }
+    void SetDisplayColorState(const QuickView::DisplayColorState& state) {
+        if (state.gdiDeviceName != m_displayColorState.gdiDeviceName ||
+            state.advancedColorActive != m_displayColorState.advancedColorActive) {
+            std::lock_guard<std::mutex> lock(m_cacheMutex);
+            m_cachedMonitorColorContext.Reset();
+            m_cachedDestDeviceName.clear();
+            m_cachedMonitorProfilePath.clear();
+            m_cachedMonitorIsSrgb = false;
+        }
+        m_displayColorState = state;
+    }
     const QuickView::DisplayColorState& GetDisplayColorState() const { return m_displayColorState; }
 
     /// <summary>
@@ -209,15 +219,24 @@ private:
     std::array<ColorContextCacheEntry, COLOR_CONTEXT_CACHE_CAPACITY> m_colorContextCache;
     size_t m_colorContextCount = 0;
     size_t m_colorContextNextSlot = 0;
-    std::mutex m_cacheMutex;
+    mutable std::mutex m_cacheMutex;
     mutable std::unordered_map<size_t, std::unique_ptr<GamutProgram>> m_gamutProgramCache;
     mutable std::mutex m_gamutProgramCacheMutex;
+    mutable std::wstring m_cachedDestDeviceName;
+    mutable std::wstring m_cachedMonitorProfilePath;
+    mutable ComPtr<ID2D1ColorContext> m_cachedMonitorColorContext;
+    mutable ComPtr<ID2D1ColorContext> m_cachedSrgbColorContext;
+    mutable ComPtr<ID2D1ColorContext> m_cachedScRgbColorContext;
+    mutable bool m_cachedMonitorIsSrgb = false;
     HRESULT CreateDeviceResources();
+    HRESULT GetOrCreateSrgbColorContext(ID2D1ColorContext** outContext) const;
+    HRESULT GetOrCreateScRgbColorContext(ID2D1ColorContext** outContext) const;
     HRESULT ResolveSourceColorContext(const QuickView::RawImageFrame& frame,
                                       int effectiveCmsMode,
                                       ID2D1ColorContext** outContext);
     HRESULT ResolveDestinationColorContext(const QuickView::RawImageFrame& frame,
-                                          ID2D1ColorContext** outContext) const;
+                                          ID2D1ColorContext** outContext,
+                                          bool* outIsSrgb = nullptr) const;
     HRESULT LoadColorContextForPrimaries(QuickView::ColorPrimaries primaries,
                                          ID2D1ColorContext** outContext) const;
     bool ShouldUseHdrOutputForFrame(const QuickView::RawImageFrame& frame) const;

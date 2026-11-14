@@ -88,6 +88,7 @@ public:
 
     // [v5.3] Split Strategy: True if Aux data (EXIF strings) is loaded
     bool IsFullMetadataLoaded = false;
+    uint64_t OwnerImageId = 0;
 
     // [v5.3] File Timestamps (for Sorting/Details)
     FILETIME CreationTime = {};
@@ -236,6 +237,11 @@ public:
   ImageHeaderInfo PeekHeader(LPCWSTR filePath);
 
   /// <summary>
+  /// Fast header peek from an already mapped in-memory buffer (zero file open).
+  /// </summary>
+  ImageHeaderInfo PeekHeaderFromMemory(LPCWSTR filePath, const uint8_t *data, size_t size);
+
+  /// <summary>
   /// Read metadata from file using WIC
   /// </summary>
   HRESULT ReadMetadata(LPCWSTR filePath, ImageMetadata *pMetadata,
@@ -336,7 +342,9 @@ public:
                       ImageMetadata *pMetadata = nullptr,
                       bool allowFakeBase = true, bool isTitanMode = false,
                       float targetHdrHeadroomStops = -1.0f,
-                      QuickView::ColorPrimaries targetPrimaries = QuickView::ColorPrimaries::SRGB);
+                      QuickView::ColorPrimaries targetPrimaries = QuickView::ColorPrimaries::SRGB,
+                      std::shared_ptr<QuickView::MappedFile> existingMmf = nullptr,
+                      bool preserveFloat = true);
 
   /// <summary>
   /// Load a frame directly from a mapped/in-memory buffer via the unified
@@ -349,7 +357,8 @@ public:
                                 std::wstring *pLoaderName = nullptr,
                                 ImageMetadata *pMetadata = nullptr,
                                 float targetHdrHeadroomStops = -1.0f,
-                                std::shared_ptr<QuickView::MappedFile> sourceMmf = nullptr);
+                                std::shared_ptr<QuickView::MappedFile> sourceMmf = nullptr,
+                                bool preserveFloat = true);
 
   // ============================================================================
   // [Titan Engine] Region Decoding API
@@ -570,7 +579,8 @@ struct DecodeContext {
   bool isTitanMode = false;
   bool preserveFloat = false;
 
-  QuickView::AuxLayerCallback onAuxLayerReady;
+  std::shared_ptr<QuickView::MappedFile> sourceMmf;
+  mutable QuickView::AuxLayerCallback onAuxLayerReady;
 };
 
 struct DecodeResult {

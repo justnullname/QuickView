@@ -195,6 +195,50 @@ static std::wstring UniqueRenderedSibling(const std::wstring& rawPath) {
     return (count == 1) ? found : std::wstring{};
 }
 
+// Single-syscall directory lookup for a unique paired RAW sibling matching a rendered image
+static std::wstring UniqueRawSibling(const std::wstring& renderedPath, uintmax_t* outRawSize = nullptr) {
+    if (!QuickView::IsRenderedPairExtension(QuickView::ExtensionOf(renderedPath))) return {};
+    const std::filesystem::path p(renderedPath);
+    const std::wstring targetStem = p.stem().wstring();
+    if (targetStem.empty()) return {};
+
+    const std::wstring dir = p.parent_path().wstring();
+    std::wstring dirPrefix = dir;
+    if (!dirPrefix.empty() && dirPrefix.back() != L'\\' && dirPrefix.back() != L'/') {
+        dirPrefix.push_back(L'\\');
+    }
+
+    const std::wstring pattern = dirPrefix + targetStem + L".*";
+    WIN32_FIND_DATAW ffd{};
+    HANDLE hFind = FindFirstFileExW(pattern.c_str(), FindExInfoBasic, &ffd, FindExSearchNameMatch, nullptr, 0);
+    if (hFind == INVALID_HANDLE_VALUE) return {};
+
+    std::wstring found;
+    uintmax_t foundSize = 0;
+    int count = 0;
+    do {
+        if (ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        const std::wstring_view fname(ffd.cFileName);
+        const std::wstring_view ext = QuickView::ExtensionOf(fname);
+        if (!QuickView::IsRawExtension(ext)) continue;
+
+        // Verify exact stem match to guard against 8.3 short-name matches
+        const size_t stemLen = fname.size() - ext.size();
+        if (stemLen != targetStem.size() || _wcsnicmp(fname.data(), targetStem.data(), stemLen) != 0) continue;
+
+        ++count;
+        if (count > 1) break;
+        found = dirPrefix;
+        found.append(fname);
+        foundSize = (static_cast<uintmax_t>(ffd.nFileSizeHigh) << 32) | ffd.nFileSizeLow;
+    } while (FindNextFileW(hFind, &ffd));
+    FindClose(hFind);
+
+    if (count != 1) return {};
+    if (outRawSize) *outRawSize = foundSize;
+    return found;
+}
+
 static bool PathIsSameShot(const std::wstring& a, const std::wstring& b) {
     if (PathsEqualCi(a, b)) return true;
     if (a.empty() || b.empty()) return false;
@@ -216,6 +260,46 @@ static int LocatePathInView(const ExplorerFolderView& view, const std::wstring& 
         if (matches(i)) return i;
     }
     return -1;
+}
+
+// STA-thread-safe probe that extracts POD cursor state without mutating FileNavigator members
+static bool ProbeExplorerView(const std::wstring& dir, const std::wstring& openedPath, const std::wstring& fallbackPath, FileNavigator::ExplorerBindResult& outRes) {
+    outRes = {};
+    if (dir.empty() || (openedPath.empty() && fallbackPath.empty())) return false;
+
+    ExplorerFolderView view;
+    if (!view.Open(dir) || view.itemCount <= 0) return false;
+
+    int idx = LocatePathInView(view, openedPath, false);
+    if (idx < 0 && !fallbackPath.empty() && fallbackPath != openedPath) {
+        idx = LocatePathInView(view, fallbackPath, false);
+    }
+    if (idx < 0) return false;
+
+    outRes.bound = true;
+    outRes.index = idx;
+    outRes.count = view.itemCount;
+    outRes.openedPath = !openedPath.empty() ? openedPath : fallbackPath;
+    SORTCOLUMN sc{};
+    if (view.GetSortColumnRaw(sc)) {
+        outRes.sortFmtid = sc.propkey.fmtid;
+        outRes.sortPid = sc.propkey.pid;
+        outRes.sortDir = (int)sc.direction;
+        outRes.hasSort = true;
+    }
+
+    // Pre-fetch neighbor paths [idx - 2, idx + 2] on this STA thread to avoid UI-thread COM re-queries during prefetching
+    const int minPrefetch = (std::max)(0, idx - 2);
+    const int maxPrefetch = (std::min)(view.itemCount - 1, idx + 2);
+    outRes.prefetchedPaths.reserve(static_cast<size_t>(maxPrefetch - minPrefetch + 1));
+    for (int i = minPrefetch; i <= maxPrefetch; ++i) {
+        if (i == idx) continue;
+        std::wstring p = view.PathAt(i);
+        if (!p.empty()) {
+            outRes.prefetchedPaths.emplace_back(i, std::move(p));
+        }
+    }
+    return true;
 }
 
 void FileNavigator::Initialize(const std::wstring& currentPath, HWND hwnd, bool deferFolderScan) {
@@ -327,9 +411,10 @@ void FileNavigator::Initialize(const std::wstring& currentPath, HWND hwnd, bool 
         }
     } else if (deferFolderScan && hwnd && !isDirectory) {
         SeedOpenedFile(isVfsInput ? currentPath : p.wstring());
-        const bool bound = (g_runtime.SortOrder == 0)
-            && TryBindExplorer(dirStr, CurrentVisiblePath());
-        m_needInitialScan = !bound;
+        // Never block the UI thread on cross-process Explorer COM RPC; WatcherThreadProc handles both Explorer probe and fallback scan
+        m_initialBindPath = CurrentVisiblePath();
+        m_needExplorerBind = (g_runtime.SortOrder == 0);
+        m_needInitialScan = !m_needExplorerBind.load();
         StartDirectoryWatcher(dirStr);
         StartPairVerification();
         return;
@@ -514,9 +599,10 @@ void FileNavigator::HydrateBootNavigator() {
 
     if (m_watchedDir.empty()) return;
 
-    const bool bound = (g_runtime.SortOrder == 0)
-        && TryBindExplorer(m_watchedDir, CurrentVisiblePath());
-    m_needInitialScan = !bound;
+    // Dispatch Explorer binding & fallback directory scan strictly on the background STA watcher thread
+    m_initialBindPath = CurrentVisiblePath();
+    m_needExplorerBind = (g_runtime.SortOrder == 0);
+    m_needInitialScan = !m_needExplorerBind.load();
     StartDirectoryWatcher(m_watchedDir);
     StartPairVerification();
 }
@@ -525,7 +611,13 @@ std::wstring FileNavigator::Next(bool /*unused*/) {
     if (m_bootDeferredHydration) {
         HydrateBootNavigator();
     }
-    if (g_runtime.SortOrder == 0) SyncExplorerCursor(true);
+    if (UsingExplorerCursor() && g_runtime.SortOrder == 0) {
+        SyncExplorerCursor(true);
+    } else if (!m_playlistReady && !UsingExplorerCursor() && m_files.size() <= 1 && (m_needExplorerBind.load() || m_needInitialScan.load())) {
+        // User navigated within the first few milliseconds before background hydration landed
+        EnsureMaterialized();
+        if (UsingExplorerCursor() && g_runtime.SortOrder == 0) SyncExplorerCursor(true);
+    }
     if (UsingExplorerCursor()) {
         std::wstring path = ExplorerStep(+1);
         if (path.empty() && g_runtime.NavTraverse) {
@@ -604,7 +696,12 @@ std::wstring FileNavigator::Previous(bool /*unused*/) {
     if (m_bootDeferredHydration) {
         HydrateBootNavigator();
     }
-    if (g_runtime.SortOrder == 0) SyncExplorerCursor(true);
+    if (UsingExplorerCursor() && g_runtime.SortOrder == 0) {
+        SyncExplorerCursor(true);
+    } else if (!m_playlistReady && !UsingExplorerCursor() && m_files.size() <= 1 && (m_needExplorerBind.load() || m_needInitialScan.load())) {
+        EnsureMaterialized();
+        if (UsingExplorerCursor() && g_runtime.SortOrder == 0) SyncExplorerCursor(true);
+    }
     if (UsingExplorerCursor()) {
         std::wstring path = ExplorerStep(-1);
         if (path.empty() && g_runtime.NavTraverse) {
@@ -930,45 +1027,11 @@ bool FileNavigator::TrySelectExisting(const std::wstring& path) {
 }
 
 void FileNavigator::SeedOpenedFile(const std::wstring& path) {
-    namespace fs = std::filesystem;
     m_archive.reset();
     m_archivePath.clear();
-    m_files.clear();
-    m_sizes.clear();
-    m_ids.clear();
-    m_pairedRaws.clear();
-    m_currentIndex = -1;
     m_hitEnd = false;
     m_playlistReady = false;
-
-    std::error_code ec;
-    uintmax_t sz = fs::file_size(path, ec);
-    std::wstring visible = path;
-
-    if (g_config.PairRawJpeg && QuickView::IsRawPath(path)) {
-        const fs::path p(path);
-        const std::wstring stem = (p.parent_path() / p.stem()).wstring();
-        std::wstring found;
-        int renderedCount = 0;
-        for (const auto ext : QuickView::RENDERED_PAIR_EXTENSIONS) {
-            std::wstring cand = stem;
-            cand.append(ext.data(), ext.size());
-            if (GetFileAttributesW(cand.c_str()) != INVALID_FILE_ATTRIBUTES) {
-                ++renderedCount;
-                found = std::move(cand);
-            }
-        }
-        if (renderedCount == 1) {
-            visible = std::move(found);
-            const ImageID rid = ComputePathHash(visible);
-            m_pairedRaws.emplace(rid, PairedRaw{ path, sz, ComputePathHash(path) });
-            sz = fs::file_size(visible, ec);
-        }
-    }
-
-    m_files.push_back(visible);
-    m_sizes.push_back(sz);
-    m_ids.push_back(ComputePathHash(visible));
+    AdoptCurrentFile(path);
     m_currentIndex = 0;
 }
 
@@ -1044,6 +1107,21 @@ void FileNavigator::AdoptCurrentFile(const std::wstring& path) {
                 sz = std::filesystem::file_size(visible, ec);
             }
         }
+    } else if (g_config.PairRawJpeg && QuickView::IsRenderedPairExtension(QuickView::ExtensionOf(path))) {
+        uintmax_t rawSz = 0;
+        std::wstring rawSibling = UniqueRawSibling(path, &rawSz);
+        if (!rawSibling.empty()) {
+            const ImageID rid = ComputePathHash(visible);
+            bool skip = false;
+            {
+                std::lock_guard<std::mutex> lock(m_verifyMutex);
+                skip = m_verifyUnpaired.find(rid) != m_verifyUnpaired.end();
+            }
+            if (!skip) {
+                const ImageID rawId = ComputePathHash(rawSibling);
+                m_pairedRaws.emplace(rid, PairedRaw{ std::move(rawSibling), rawSz, rawId });
+            }
+        }
     }
     m_files.clear();
     m_sizes.clear();
@@ -1077,41 +1155,37 @@ bool FileNavigator::IsExplorerVisibleImage(const std::wstring& path) const {
     return true;
 }
 
+void FileNavigator::ApplyExplorerBindResult(ExplorerBindResult&& res) {
+    m_explorerBound = true;
+    m_explorerIndex = res.index;
+    m_explorerCount = res.count;
+    m_currentIndex = res.index;
+    m_explorerPathCache.clear();
+    CacheExplorerPath(res.index, std::move(res.openedPath));
+    for (auto& [pIdx, pPath] : res.prefetchedPaths) {
+        CacheExplorerPath(pIdx, std::move(pPath));
+    }
+    if (res.hasSort) {
+        m_explorerSortFmtid = res.sortFmtid;
+        m_explorerSortPid = res.sortPid;
+        m_explorerSortDir = res.sortDir;
+        m_hasExplorerSort = true;
+    }
+}
+
 bool FileNavigator::TryBindExplorer(const std::wstring& dir, const std::wstring& openedPath) {
     if (dir.empty() || openedPath.empty() || g_runtime.SortOrder != 0) {
         ClearExplorerCursor();
         return false;
     }
 
-    ExplorerFolderView view;
-    if (!view.Open(dir) || view.itemCount <= 0) {
+    ExplorerBindResult res;
+    if (!ProbeExplorerView(dir, openedPath, CurrentVisiblePath(), res)) {
         ClearExplorerCursor();
         return false;
     }
 
-    // Prefer the selection mark: after a double-click Explorer keeps the file
-    // selected even when the view no longer has keyboard focus (GetFocusedItem
-    // then returns -1 and we used to fall back to a frozen name list).
-    int idx = LocatePathInView(view, openedPath, false);
-    if (idx < 0) idx = LocatePathInView(view, CurrentVisiblePath(), false);
-    if (idx < 0) {
-        ClearExplorerCursor();
-        return false;
-    }
-
-    m_explorerBound = true;
-    m_explorerIndex = idx;
-    m_explorerCount = view.itemCount;
-    m_currentIndex = idx;
-    m_explorerPathCache.clear();
-    CacheExplorerPath(idx, openedPath);
-    SORTCOLUMN sc{};
-    if (view.GetSortColumnRaw(sc)) {
-        m_explorerSortFmtid = sc.propkey.fmtid;
-        m_explorerSortPid = sc.propkey.pid;
-        m_explorerSortDir = (int)sc.direction;
-        m_hasExplorerSort = true;
-    }
+    ApplyExplorerBindResult(std::move(res));
     return true;
 }
 
@@ -1327,13 +1401,28 @@ bool FileNavigator::ParseVirtualPath(const std::wstring& path, std::wstring& out
 }
 
 void FileNavigator::ApplyPendingScanResult() {
+    std::optional<ExplorerBindResult> bindResult;
     DirectoryScanResult result;
+    bool hasScanResult = false;
     {
         std::lock_guard<std::mutex> lock(m_scanResultMutex);
-        if (!m_pendingScanResult) return;
-        result = std::move(*m_pendingScanResult);
-        m_pendingScanResult.reset();
+        if (m_pendingExplorerBind) {
+            bindResult = std::move(m_pendingExplorerBind);
+            m_pendingExplorerBind.reset();
+        }
+        if (m_pendingScanResult) {
+            result = std::move(*m_pendingScanResult);
+            m_pendingScanResult.reset();
+            hasScanResult = true;
+        }
     }
+
+    if (bindResult && bindResult->bound && !m_playlistReady.load() && g_runtime.SortOrder == 0 &&
+        !m_explorerBound && PathIsSameShot(CurrentVisiblePath(), bindResult->openedPath)) {
+        ApplyExplorerBindResult(std::move(*bindResult));
+    }
+
+    if (!hasScanResult) return;
 
     // Cache current path BEFORE swap for index reconciliation
     std::wstring currentPath = CurrentVisiblePath();
@@ -1839,8 +1928,24 @@ void FileNavigator::WatcherThreadProc() {
         if (m_hwnd) PostMessageW(m_hwnd, WM_NAVIGATOR_DIR_CHANGED, 0, 0);
     };
 
-    // Names-only list only when we are not using the live Explorer cursor.
-    if (m_needInitialScan.load()) publishScan();
+    // Probe live Explorer window off the UI thread first; fall back to names-only directory scan if unavailable
+    if (m_needExplorerBind.exchange(false) && !ScanCancelled()) {
+        ExplorerBindResult bindRes;
+        if (ProbeExplorerView(m_watchedDir, m_initialBindPath, m_initialBindPath, bindRes)) {
+            if (!ScanCancelled()) {
+                {
+                    std::lock_guard<std::mutex> lock(m_scanResultMutex);
+                    m_pendingExplorerBind = std::move(bindRes);
+                }
+                if (m_hwnd) PostMessageW(m_hwnd, WM_NAVIGATOR_DIR_CHANGED, 0, 0);
+            }
+        } else if (!ScanCancelled()) {
+            m_needInitialScan.store(true);
+            publishScan();
+        }
+    } else if (m_needInitialScan.load()) {
+        publishScan();
+    }
 
     HANDLE hNotify = FindFirstChangeNotificationW(
         m_watchedDir.c_str(),
@@ -1924,4 +2029,6 @@ void FileNavigator::StopDirectoryWatcher() {
     // Discard any unprocessed result
     std::lock_guard<std::mutex> lock(m_scanResultMutex);
     m_pendingScanResult.reset();
+    m_pendingExplorerBind.reset();
+    m_needExplorerBind.store(false);
 }

@@ -8,6 +8,7 @@ static constexpr const char* CURRENT_MODULE = "ImageEngine";
 #include "TileManager.h"    // [Infinity Engine]
 #include "OffscreenWebView2.h"
 #include "AsyncJob.h"
+#include "SupportedExtensions.h"
 
 #include <algorithm>
 #include <psapi.h>
@@ -196,15 +197,183 @@ void ImageEngine::RequestFullDecode(const std::wstring& path, ImageID imageId, P
 }
 
 // [Phase 2] Dispatcher Implementation
+bool ImageEngine::TryServeFromCache(
+    const std::wstring& path,
+    ImageID imageId,
+    uintmax_t fallbackFileSize,
+    PaneSlot targetSlot,
+    uint64_t generationId,
+    const CImageLoader::ImageHeaderInfo* headerInfo,
+    bool enableTitan,
+    const std::shared_ptr<QuickView::MappedFile>& primaryMMF)
+{
+    auto cachedFrame = GetCachedImage(path);
+    if (!cachedFrame) return false;
+
+    std::wstring fmtUpper = headerInfo ? headerInfo->format : cachedFrame->sourceFormat;
+    std::transform(fmtUpper.begin(), fmtUpper.end(), fmtUpper.begin(), ::toupper);
+
+    const uintmax_t observedFileSize =
+        (headerInfo && headerInfo->fileSize > 0) ? headerInfo->fileSize
+        : ((cachedFrame->sourceFileSize > 0) ? cachedFrame->sourceFileSize : fallbackFileSize);
+
+    if (!headerInfo) {
+        // Defer to header probe / MMF path if source format is unknown or indicates a Titan candidate.
+        if (fmtUpper.empty()) return false;
+
+        const int metaW = (cachedFrame->srcWidth > 0) ? cachedFrame->srcWidth : cachedFrame->width;
+        const int metaH = (cachedFrame->srcHeight > 0) ? cachedFrame->srcHeight : cachedFrame->height;
+        const bool isTitanCandidateFmt =
+            (fmtUpper == L"JPEG" || fmtUpper == L"JPEG (MMF)" || fmtUpper == L"JPG" ||
+             fmtUpper == L"WEBP" || fmtUpper == L"PNG" ||
+             fmtUpper == L"JXL" || fmtUpper == L"TIF" ||
+             fmtUpper == L"TIFF" || fmtUpper == L"AVIF");
+        const bool sizeTrigger = (metaW > 8192 || metaH > 8192);
+        const bool pixelTrigger = (metaW > 0 && metaH > 0 && ((size_t)metaW * (size_t)metaH > 50000000ull));
+        const bool unknownDims = (metaW <= 0 || metaH <= 0);
+        const bool fallbackFileTrigger = unknownDims && observedFileSize >= (32ull * 1024ull * 1024ull);
+        if (isTitanCandidateFmt && (sizeTrigger || pixelTrigger || fallbackFileTrigger)) {
+            return false;
+        }
+    }
+
+    // Guard: do not reuse JXL placeholder/scaled cache as a final hit.
+    if (fmtUpper == L"JXL") {
+        const bool frameUsable = cachedFrame->IsValid() && !cachedFrame->IsSvg();
+        const bool tinyFakeBase = frameUsable && (cachedFrame->width <= 1 || cachedFrame->height <= 1);
+        const int refW = headerInfo ? headerInfo->width : cachedFrame->srcWidth;
+        const int refH = headerInfo ? headerInfo->height : cachedFrame->srcHeight;
+        const bool hasRefDims = (refW > 0 && refH > 0);
+        const bool scaledPreviewCache = frameUsable && hasRefDims &&
+            (cachedFrame->width < (int)(refW * 0.85f) ||
+             cachedFrame->height < (int)(refH * 0.85f));
+        if (!frameUsable || tinyFakeBase || !hasRefDims || scaledPreviewCache) {
+            if (!headerInfo) {
+                return false;
+            }
+            const int cacheW = frameUsable ? cachedFrame->width : 0;
+            const int cacheH = frameUsable ? cachedFrame->height : 0;
+            InvalidateCache(path);
+            cachedFrame.reset();
+            QV_LOG("Dispatch_JXLCache",
+                TraceLoggingString("Bypass", "Action"),
+                TraceLoggingInt32(cacheW, "CacheW"),
+                TraceLoggingInt32(cacheH, "CacheH"),
+                TraceLoggingInt32(refW, "MetaW"),
+                TraceLoggingInt32(refH, "MetaH"),
+                TraceLoggingBool(enableTitan, "Titan"));
+            return false;
+        }
+    }
+
+    // Drop corrupt SVG_WEBVIEW cache entries (pre-fix: raster path stripped svg).
+    if (cachedFrame->format == QuickView::PixelFormat::SVG_WEBVIEW && !cachedFrame->IsWebView()) {
+        InvalidateCache(path);
+        return false;
+    }
+
+    // Same-process upgrade: old SVG_XML entries that now classify as animated/complex.
+    if (cachedFrame->format == QuickView::PixelFormat::SVG_XML &&
+        cachedFrame->svg && !cachedFrame->svg->xmlData.empty()) {
+        const auto& xml = cachedFrame->svg->xmlData;
+        if (QuickView::OffscreenWebView2::NeedsFallback(
+                std::string_view(reinterpret_cast<const char*>(xml.data()), xml.size()))) {
+            cachedFrame->format = QuickView::PixelFormat::SVG_WEBVIEW;
+            cachedFrame->formatDetails = L"Complex SVG";
+        }
+    }
+
+    // [v9.0] Smart RAW Quality Check
+    const std::wstring& formatStr = headerInfo ? headerInfo->format : cachedFrame->sourceFormat;
+    if (formatStr.contains(L"RAW")) {
+        const bool wantFull = m_config.ForceRawDecode;
+        const bool hasFull = (cachedFrame->quality == QuickView::DecodeQuality::Full);
+        if (wantFull && !hasFull) {
+            InvalidateCache(path);
+            return false;
+        }
+    }
+
+    if (!headerInfo) {
+        if (m_mmf) {
+            HeavyLanePool::TrashBag bag;
+            bag.mmf = std::move(m_mmf);
+            m_heavyPool->EnqueueTrash(std::move(bag));
+        }
+        m_heavyPool->SetTitanMode(false, 0, 0, L"", 0);
+        m_enablePadding = true;
+    } else if (enableTitan) {
+        // Re-trigger master warmup when revisiting a cached Titan image so zoom tiles find master backing ready.
+        m_heavyPool->EnsureMasterWarmup(path, imageId, primaryMMF, targetSlot, generationId);
+    }
+
+    EngineEvent e;
+    e.type = EventType::FullReady;
+    e.filePath = path;
+    e.imageId = imageId;
+    e.targetSlot = targetSlot;
+    e.generationId = generationId;
+    e.rawFrame = cachedFrame; // Zero-copy shared_ptr
+
+    e.metadata.Width = (cachedFrame->srcWidth > 0) ? cachedFrame->srcWidth : cachedFrame->width;
+    e.metadata.Height = (cachedFrame->srcHeight > 0) ? cachedFrame->srcHeight : cachedFrame->height;
+    e.metadata.Format = formatStr;
+    e.metadata.FileSize = observedFileSize;
+    e.metadata.FormatDetails = cachedFrame->formatDetails;
+    e.metadata.colorInfo = cachedFrame->colorInfo;
+    e.metadata.hdrMetadata = cachedFrame->hdrMetadata;
+    if (!e.metadata.HasEmbeddedColorProfile.has_value()) {
+        e.metadata.HasEmbeddedColorProfile =
+            cachedFrame->colorInfo.hasEmbeddedIcc || !cachedFrame->iccProfile.empty();
+    }
+    if (e.metadata.iccProfileData.empty() && !cachedFrame->iccProfile.empty()) {
+        e.metadata.iccProfileData.assign(cachedFrame->iccProfile.begin(), cachedFrame->iccProfile.end());
+    }
+    if (e.metadata.ColorSpace.empty() && !e.metadata.iccProfileData.empty()) {
+        e.metadata.ColorSpace = CImageLoader::ParseICCProfileName(
+            e.metadata.iccProfileData.data(), e.metadata.iccProfileData.size());
+    }
+    if (cachedFrame->IsSvg()) e.metadata.Format = L"SVG";
+    e.metadata.ExifOrientation = cachedFrame->exifOrientation;
+
+    QueueEvent(std::move(e));
+    return true;
+}
+
 void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, uintmax_t fileSize, PaneSlot targetSlot, uint64_t generationId) {
-    // 1. Peek Header
-    CImageLoader::ImageHeaderInfo info = m_loader->PeekHeader(path.c_str());
+    // [v9.0] Explicit Force Refresh (Toolbar Toggle)
+    if (m_forceRefresh.exchange(false)) {
+        InvalidateCache(path);
+    }
+
+    // [Cache-First Fast Path] Check RAM cache before PeekHeader / MappedFile / Disk I/O.
+    if (TryServeFromCache(path, imageId, fileSize, targetSlot, generationId)) {
+        return;
+    }
+
+    // [Map First] Create MMF upfront for non-VFS, non-RAW files so header peek
+    // reuses this single file open instead of opening the file 4-5 times.
+    std::shared_ptr<QuickView::MappedFile> primaryMMF;
+    const bool isVfsPath = (path.find(L'|') != std::wstring::npos);
+    if (!isVfsPath && !QuickView::IsRawPath(path)) {
+        primaryMMF = std::make_shared<QuickView::MappedFile>(path);
+        if (!primaryMMF->IsValid()) primaryMMF.reset();
+    }
+
+    // 1. Peek Header (in-memory zero-I/O when MMF is ready)
+    CImageLoader::ImageHeaderInfo info =
+        (primaryMMF && primaryMMF->IsValid())
+            ? m_loader->PeekHeaderFromMemory(path.c_str(), primaryMMF->data(), primaryMMF->size())
+            : m_loader->PeekHeader(path.c_str());
 
     // [Header Guard] Some containers (large AVIF/HEIC/TIFF variants) may return 0x0 in PeekHeader.
     // Run a second fast probe, then a last-resort WIC size query to stabilize Titan dispatch.
     if (info.width <= 0 || info.height <= 0 || info.format == L"Unknown") {
         CImageLoader::ImageInfo fastInfo{};
-        if (SUCCEEDED(m_loader->GetImageInfoFast(path.c_str(), &fastInfo))) {
+        const HRESULT hrFast = (primaryMMF && primaryMMF->IsValid())
+            ? m_loader->GetImageInfoFastFromMemory(primaryMMF->data(), primaryMMF->size(), &fastInfo, nullptr)
+            : m_loader->GetImageInfoFast(path.c_str(), &fastInfo);
+        if (SUCCEEDED(hrFast)) {
             if (info.width <= 0 && fastInfo.width > 0) info.width = (int)fastInfo.width;
             if (info.height <= 0 && fastInfo.height > 0) info.height = (int)fastInfo.height;
             if (info.format == L"Unknown" && !fastInfo.format.empty()) info.format = fastInfo.format;
@@ -218,11 +387,6 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
             }
         }
     }
-
-    // [v9.0] Explicit Force Refresh (Toolbar Toggle)
-    if (m_forceRefresh.exchange(false)) {
-        InvalidateCache(path);
-    }
     
     // [Titan] Initialize Tile Scheduler
     // Threshold: > 8K in any dimension OR > 50MP total?
@@ -233,10 +397,10 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
     std::wstring fmtUpper = info.format;
     std::transform(fmtUpper.begin(), fmtUpper.end(), fmtUpper.begin(), ::toupper);
     
-    // [Map First] Create MMF immediately for this image
-    // This allows Zero-Copy decoding for Base Layer AND Zero-Copy for Tiles
-    std::shared_ptr<QuickView::MappedFile> primaryMMF = std::make_shared<QuickView::MappedFile>(path);
-    if (!primaryMMF->IsValid()) primaryMMF.reset(); // Fallback if map fails
+    if (!primaryMMF && !isVfsPath) {
+        primaryMMF = std::make_shared<QuickView::MappedFile>(path);
+        if (!primaryMMF->IsValid()) primaryMMF.reset(); // Fallback if map fails
+    }
 
     // [Titan] Trigger Conditions
     // 1. Format support: JPEG, WebP, PNG, JXL, TIFF, AVIF
@@ -292,133 +456,9 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
          m_enablePadding = true; 
     }
 
-    // [Prefetch System] Cache Check ...
-    // If the image is already in memory (from prefetch), use it immediately!
-    {
-        auto cachedFrame = GetCachedImage(path);
-
-        // Guard: do not reuse JXL placeholder/scaled cache as a final hit.
-        // Large JXL revisit must re-enter decode pipeline to ensure proper tile activation.
-        if (cachedFrame && fmtUpper == L"JXL") {
-            const bool frameUsable =
-                cachedFrame->IsValid() &&
-                !cachedFrame->IsSvg();
-            const bool tinyFakeBase =
-                frameUsable &&
-                (cachedFrame->width <= 1 || cachedFrame->height <= 1);
-            const bool hasMetaDims = (info.width > 0 && info.height > 0);
-            const bool scaledPreviewCache =
-                frameUsable && hasMetaDims &&
-                (cachedFrame->width < (int)(info.width * 0.85f) ||
-                 cachedFrame->height < (int)(info.height * 0.85f));
-            const bool cacheUnknownDims = !hasMetaDims;
-            const bool bypassJxlCache = tinyFakeBase || scaledPreviewCache || cacheUnknownDims;
-
-            if (bypassJxlCache) {
-                const int cacheW = frameUsable ? cachedFrame->width : 0;
-                const int cacheH = frameUsable ? cachedFrame->height : 0;
-                InvalidateCache(path);
-                cachedFrame.reset();
-                QV_LOG("Dispatch_JXLCache",
-                    TraceLoggingString("Bypass", "Action"),
-                    TraceLoggingInt32(cacheW, "CacheW"),
-                    TraceLoggingInt32(cacheH, "CacheH"),
-                    TraceLoggingInt32(info.width, "MetaW"),
-                    TraceLoggingInt32(info.height, "MetaH"),
-                    TraceLoggingBool(enableTitan, "Titan"));
-            }
-        }
-
-        if (cachedFrame) {
-            bool isHit = true;
-
-            // Drop corrupt SVG_WEBVIEW cache entries (pre-fix: raster path stripped svg).
-            if (cachedFrame->format == QuickView::PixelFormat::SVG_WEBVIEW &&
-                !cachedFrame->IsWebView()) {
-                InvalidateCache(path);
-                cachedFrame.reset();
-                isHit = false;
-            }
-
-            // Same-process upgrade: old SVG_XML entries that now classify as animated/complex.
-            if (cachedFrame && cachedFrame->format == QuickView::PixelFormat::SVG_XML &&
-                cachedFrame->svg && !cachedFrame->svg->xmlData.empty()) {
-                const auto& xml = cachedFrame->svg->xmlData;
-                if (QuickView::OffscreenWebView2::NeedsFallback(
-                        std::string_view(reinterpret_cast<const char*>(xml.data()), xml.size()))) {
-                    cachedFrame->format = QuickView::PixelFormat::SVG_WEBVIEW;
-                    cachedFrame->formatDetails = L"Complex SVG";
-                }
-            }
-            
-            // [v9.0] Smart RAW Quality Check
-            // RAW files require strict quality matching (Preview vs Full) for A/B comparison
-            if (cachedFrame && info.format.contains(L"RAW")) {
-                  bool wantFull = m_config.ForceRawDecode;
-                  bool hasFull = (cachedFrame->quality == QuickView::DecodeQuality::Full);
-                  
-                  // [Fix] Logic Relaxed: Only invalidate if we WANT full but DON'T have it.
-                  // If we want Preview (wantFull=false) but have Full (hasFull=true), that's a BONUS. 
-                  // Don't reload Preview, use the high-quality cached one.
-                  if (wantFull && !hasFull) {
-                       isHit = false;
-                       // Explicitly invalidate so new load can replace it
-                       InvalidateCache(path); 
-                  }
-            }
-
-            if (cachedFrame && isHit) {
-                EngineEvent e;
-                e.type = EventType::FullReady;
-                e.filePath = path; 
-                e.imageId = imageId;
-                e.targetSlot = targetSlot;
-                e.generationId = generationId;
-                e.rawFrame = cachedFrame; // Zero-copy shared_ptr
-                
-                // [Fix - Bug 7] Re-populate metadata from cache
-                // Never trust info.width directly, this causes dimension downgrade 
-                // on cache hit for RAW/TIFFs with tiny IFD thumbs!
-                // [v10.1] Titan Fix: Prefer srcWidth/srcHeight (original resolution) over width/height (scaled preview)
-                e.metadata.Width = (cachedFrame->srcWidth > 0) ? cachedFrame->srcWidth : cachedFrame->width;
-                e.metadata.Height = (cachedFrame->srcHeight > 0) ? cachedFrame->srcHeight : cachedFrame->height;
-                e.metadata.Format = info.format;
-                e.metadata.FileSize = info.fileSize;
-                e.metadata.FormatDetails = cachedFrame->formatDetails;
-                e.metadata.colorInfo = cachedFrame->colorInfo;
-                e.metadata.hdrMetadata = cachedFrame->hdrMetadata;
-                if (!e.metadata.HasEmbeddedColorProfile.has_value()) {
-                    e.metadata.HasEmbeddedColorProfile =
-                        cachedFrame->colorInfo.hasEmbeddedIcc || !cachedFrame->iccProfile.empty();
-                }
-                if (e.metadata.iccProfileData.empty() && !cachedFrame->iccProfile.empty()) {
-                    e.metadata.iccProfileData.assign(cachedFrame->iccProfile.begin(), cachedFrame->iccProfile.end());
-                }
-                if (e.metadata.ColorSpace.empty() && !e.metadata.iccProfileData.empty()) {
-                    e.metadata.ColorSpace = CImageLoader::ParseICCProfileName(e.metadata.iccProfileData.data(), e.metadata.iccProfileData.size());
-                }
-                
-                if (cachedFrame->IsSvg()) e.metadata.Format = L"SVG"; 
-
-                // [Fix] Propagate EXIF Orientation from Cache (Critical for Rotation persistence)
-                e.metadata.ExifOrientation = cachedFrame->exifOrientation;
-                
-                // [Fix] Compute histogram from cached frame to prevent blank histogram on cache hit
-                if (cachedFrame->IsValid() && !cachedFrame->IsSvg()) {
-                    m_loader->ComputeHistogramFromFrame(*cachedFrame, &e.metadata);
-                }
-                
-                // [Fix] When revisiting a cached Titan image, re-trigger master warmup so
-                // subsequent tile decodes at higher zoom levels find master backing ready.
-                if (enableTitan) {
-                    m_heavyPool->EnsureMasterWarmup(path, imageId, primaryMMF, targetSlot, generationId);
-                }
-
-                QueueEvent(std::move(e)); 
-                
-                return; 
-            }
-        }
+    // [Prefetch System] Cache Check after Titan setup (handles large images & post-header checks)
+    if (TryServeFromCache(path, imageId, fileSize, targetSlot, generationId, &info, enableTitan, primaryMMF)) {
+        return;
     }
     
     // [DEBUG] Log
@@ -540,7 +580,7 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
         if (isSmall) {
             QV_LOG("Dispatch_Route", TraceLoggingString("JXL Small FastLane", "Action"));
             // FastLane will use target=0 if detected as small
-            m_fastLane.Push(path, imageId, m_targetHdrHeadroomStops.load(std::memory_order_relaxed), targetSlot, generationId);
+            m_fastLane.Push(path, imageId, m_targetHdrHeadroomStops.load(std::memory_order_relaxed), targetSlot, generationId, primaryMMF);
         } 
         else {
             if (enableTitan) {
@@ -608,7 +648,7 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
 
         if (isSmall) {
             QV_LOG("Dispatch_Route", TraceLoggingString("FormatSmall FastLane", "Action"));
-            m_fastLane.Push(path, imageId, m_targetHdrHeadroomStops.load(std::memory_order_relaxed), targetSlot, generationId);
+            m_fastLane.Push(path, imageId, m_targetHdrHeadroomStops.load(std::memory_order_relaxed), targetSlot, generationId, primaryMMF);
         } else {
             QV_LOG("Dispatch_Route", TraceLoggingString("FormatLarge HeavyLane", "Action"));
             m_heavyPool->Submit(path, imageId, primaryMMF, targetSlot, generationId);
@@ -626,7 +666,7 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
         // Logic: TypeA -> FastLane only. TypeB -> Heavy only.
         // Unknown type -> Parallel (Both).
         QV_LOG("Dispatch_Route", TraceLoggingString("FastLane", "Action"));
-        m_fastLane.Push(path, imageId, m_targetHdrHeadroomStops.load(std::memory_order_relaxed), targetSlot, generationId);
+        m_fastLane.Push(path, imageId, m_targetHdrHeadroomStops.load(std::memory_order_relaxed), targetSlot, generationId, primaryMMF);
     }
 }
 
@@ -716,8 +756,6 @@ std::vector<EngineEvent> ImageEngine::PollState() {
              // Still pass to batch? 
              // Yes, Main Thread might want to trigger Repaint.
              // But UI doesn't need to know details.
-         } else if (e->type == EventType::FullReady && e->imageId == m_currentImageId.load()) {
-             m_pool.SwapHeavy();
          }
          batch.push_back(std::move(*e));
     }
@@ -747,6 +785,7 @@ std::vector<EngineEvent> ImageEngine::PollState() {
             } else if (e.type == EventType::FullReady && !e.isScaled) {
                 m_isViewingScaledImage = false; // Final reached
                 m_stage2Requested = false;      // Reset request flag (job done)
+                m_startupPrefetchAllowed = true; // Primary view is ready; allow neighbor prefetch immediately
                 
 
 
@@ -1109,11 +1148,11 @@ void ImageEngine::FastLane::Clear() {
     // m_skipCount is not reset here, it accumulates for debug stats.
 }
 
-void ImageEngine::FastLane::Push(const std::wstring& path, ImageID id, float targetHdrHeadroomStops, PaneSlot targetSlot, uint64_t generationId) {
+void ImageEngine::FastLane::Push(const std::wstring& path, ImageID id, float targetHdrHeadroomStops, PaneSlot targetSlot, uint64_t generationId, std::shared_ptr<QuickView::MappedFile> mmf) {
     if (m_stopSignal) return;
     {
         std::lock_guard lock(m_queueMutex);
-        m_queue.push_back({path, id, targetHdrHeadroomStops, targetSlot, generationId});
+        m_queue.push_back({path, id, targetHdrHeadroomStops, targetSlot, generationId, std::move(mmf)});
         // [v3.1] Simplified Push: No complex anti-explosion here.
         // UpdateView()'s "Ruthless Purge" handles queue depth.
     }
@@ -1174,7 +1213,7 @@ void ImageEngine::FastLane::QueueWorker() {
 
                 // [v3.2] Robustness: Check again for empty to be safe
                 if (!m_queue.empty()) {
-                    cmd = m_queue.front();
+                    cmd = std::move(m_queue.front());
                     m_queue.pop_front();
                 }
             }
@@ -1188,15 +1227,12 @@ void ImageEngine::FastLane::QueueWorker() {
             // --- Work Stage (Unified RawImageFrame Architecture) ---
             auto start = std::chrono::high_resolution_clock::now();
             
-            // [Unified Architecture] FastLane uses ScoutArena
-            // Reset arena before each task to ensure clean state (FastLane is serial)
-            m_parent->m_pool.ResetScout();
-            QuantumArena& arena = m_parent->m_pool.GetScoutArena();
-            
             QuickView::RawImageFrame rawFrame;
             std::wstring loaderName;
             
-            auto info = m_loader->PeekHeader(cmd.path.c_str());
+            auto info = (cmd.mmf && cmd.mmf->IsValid())
+                ? m_loader->PeekHeaderFromMemory(cmd.path.c_str(), cmd.mmf->data(), cmd.mmf->size())
+                : m_loader->PeekHeader(cmd.path.c_str());
             
             // [Fix] Intelligent Target Sizing - Ultimate Fix!
             // FastLane only receives TypeA_Sprint or Dedicated Small (<30ms) formats.
@@ -1207,7 +1243,7 @@ void ImageEngine::FastLane::QueueWorker() {
             
             // [Unified Logic] SVG uses target=0 like other formats (User Request: Remove 80% special case)
 
-            // [Direct D2D] Load directly to RawImageFrame backed by Arena
+            // [Direct D2D] Load directly to RawImageFrame on independent aligned heap (arena = nullptr)
             {
                 auto* ctx = new(std::nothrow) AuxLayerReadyCtx{ m_parent, cmd.path, cmd.id, cmd.targetSlot, cmd.generationId };
                 if (ctx) {
@@ -1228,7 +1264,10 @@ void ImageEngine::FastLane::QueueWorker() {
                     rawFrame.onAuxLayerReady.ctxDeleter = [](void* c) { delete static_cast<AuxLayerReadyCtx*>(c); };
                 }
             }
-            HRESULT hr = m_loader->LoadToFrame(cmd.path.c_str(), &rawFrame, &arena, targetW, targetH, &loaderName, {}, nullptr, true, false, cmd.targetHdrHeadroomStops);
+            HRESULT hr = m_loader->LoadToFrame(
+                cmd.path.c_str(), &rawFrame, nullptr, targetW, targetH, &loaderName,
+                {}, nullptr, true, false, cmd.targetHdrHeadroomStops,
+                QuickView::ColorPrimaries::SRGB, cmd.mmf);
             
             int decodeMs = (int)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start).count();
 
@@ -1253,53 +1292,20 @@ void ImageEngine::FastLane::QueueWorker() {
                 e.targetSlot = cmd.targetSlot;
                 e.generationId = cmd.generationId;
                 
-                // [v8.16 Fix] DEEP COPY pixels to heap BEFORE outputting event!
-                // When FastLane immediately starts next job, Arena memory is reused.
-                // Main thread may not have consumed this frame yet -> corruption!
-                auto safeFrame = std::make_shared<QuickView::RawImageFrame>();
+                // Transfer independent heap ownership with zero memcpy when memoryDeleter is set;
+                // fallback to heap deep-copy only if arena-backed.
                 if (rawFrame.IsSvg() || rawFrame.IsWebView()) {
-                    safeFrame->format = rawFrame.format;
-                    safeFrame->formatDetails = rawFrame.formatDetails;
-                    safeFrame->width = rawFrame.width;
-                    safeFrame->height = rawFrame.height;
-                    safeFrame->svg = std::make_unique<QuickView::RawImageFrame::SvgData>();
-                    safeFrame->svg->xmlData = rawFrame.svg->xmlData;
-                    safeFrame->svg->viewBoxW = rawFrame.svg->viewBoxW;
-                    safeFrame->svg->viewBoxH = rawFrame.svg->viewBoxH;
+                    rawFrame.sourceFileSize = info.fileSize;
+                    rawFrame.sourceFormat = !info.format.empty() ? info.format : L"SVG";
                 } else {
-                    size_t bufferSize = rawFrame.GetBufferSize();
-                    uint8_t* heapPixels = new uint8_t[bufferSize];
-                    memcpy(heapPixels, rawFrame.pixels, bufferSize);
-                    
-                    safeFrame->pixels = heapPixels;
-                    safeFrame->width = rawFrame.width;
-                    safeFrame->height = rawFrame.height;
-                    safeFrame->stride = rawFrame.stride;
-                    safeFrame->format = rawFrame.format;
-                    safeFrame->formatDetails = rawFrame.formatDetails;
-                    safeFrame->quality = QuickView::DecodeQuality::Preview; 
-                    safeFrame->exifOrientation = rawFrame.exifOrientation;
-                    safeFrame->memoryDeleter = QuickView::MemoryDeleter::FromDeleteArray();
-                    
-                    // [CMS] Propagate color profile and HDR metadata
-                    safeFrame->iccProfile = std::move(rawFrame.iccProfile);
-                    safeFrame->colorInfo = rawFrame.colorInfo;
-                    safeFrame->hdrMetadata = rawFrame.hdrMetadata;
-                    safeFrame->srcWidth = rawFrame.srcWidth;
-                    safeFrame->srcHeight = rawFrame.srcHeight;
-
-                    // [GPU Pipeline] Deep copy blend operation and payload
-                    safeFrame->blendOp = rawFrame.blendOp;
-                    safeFrame->shaderPayload = rawFrame.shaderPayload;
-                    if (rawFrame.auxLayer) safeFrame->auxLayer = rawFrame.auxLayer->Clone();
-                    
+                    rawFrame.sourceFileSize = info.fileSize;
+                    rawFrame.sourceFormat = info.format;
+                    rawFrame.quality = QuickView::DecodeQuality::Preview;
                     // [v10.5] Animation Decoder propagation
                     QV_LOG("Anim_Probe", TraceLoggingString("Hijacked to Animator", "Action"));
-                    safeFrame->animator = rawFrame.animator;
-                    safeFrame->frameMeta = rawFrame.frameMeta;
                 }
-                e.rawFrame = safeFrame;
 
+                // Snapshot metadata before PromoteToStandalone() moves ownership from rawFrame.
                 e.metadata.Width = rawFrame.width;
                 e.metadata.Height = rawFrame.height;
                 e.metadata.Format = info.format; // [Scout] Direct from PeekHeader
@@ -1308,9 +1314,13 @@ void ImageEngine::FastLane::QueueWorker() {
                 e.metadata.FileSize = info.fileSize;
                 e.metadata.colorInfo = rawFrame.colorInfo;
                 e.metadata.hdrMetadata = rawFrame.hdrMetadata;
+
+                auto safeFrame = rawFrame.PromoteToStandalone();
+                e.rawFrame = safeFrame;
+
                 if (!e.metadata.HasEmbeddedColorProfile.has_value()) {
                     e.metadata.HasEmbeddedColorProfile =
-                        rawFrame.colorInfo.hasEmbeddedIcc || !safeFrame->iccProfile.empty();
+                        e.metadata.colorInfo.hasEmbeddedIcc || (safeFrame && !safeFrame->iccProfile.empty());
                 }
                 if (e.metadata.iccProfileData.empty() && safeFrame && !safeFrame->iccProfile.empty()) {
                     e.metadata.iccProfileData.assign(safeFrame->iccProfile.begin(), safeFrame->iccProfile.end());
@@ -1433,6 +1443,12 @@ std::shared_ptr<QuickView::RawImageFrame> ImageEngine::GetCachedImage(const std:
 void ImageEngine::PutCachedImage(const std::wstring& path, std::shared_ptr<QuickView::RawImageFrame> frame, int index) {
     if (path.empty() || !frame || !frame->IsValid()) return;
     std::lock_guard lock(m_cacheMutex);
+    auto existing = m_cache.find(path);
+    if (existing != m_cache.end()) {
+        m_currentCacheBytes -= existing->second.sizeBytes;
+        auto lit = std::find(m_lruOrder.begin(), m_lruOrder.end(), path);
+        if (lit != m_lruOrder.end()) m_lruOrder.erase(lit);
+    }
     size_t newSize = frame->GetBufferSize();
     CacheEntry entry;
     entry.frame = frame;
@@ -1441,6 +1457,23 @@ void ImageEngine::PutCachedImage(const std::wstring& path, std::shared_ptr<Quick
     m_cache[path] = std::move(entry);
     m_lruOrder.push_front(path);
     m_currentCacheBytes += newSize;
+}
+
+void ImageEngine::AdoptBootFrame(const std::wstring& path, ImageID imageId, std::shared_ptr<QuickView::RawImageFrame> frame, int index) {
+    if (path.empty() || !frame || !frame->IsValid()) return;
+
+    m_currentImageId.store(imageId);
+    m_currentImageIdBySlot[static_cast<int>(PaneSlot::Primary)].store(imageId);
+    m_currentNavPath = path;
+    m_currentViewIndex = index;
+    m_baseLayerReady.store(true);
+    m_isViewingScaledImage = false;
+    m_stage2Requested = false;
+    m_startupPrefetchAllowed = true;
+
+    if (!frame->animator) {
+        PutCachedImage(path, std::move(frame), index);
+    }
 }
 
 void ImageEngine::UpdateView(int currentIndex, QuickView::BrowseDirection dir) {
@@ -1453,7 +1486,16 @@ void ImageEngine::UpdateView(int currentIndex, QuickView::BrowseDirection dir) {
     QV_LOG("Engine_UpdateView",
         TraceLoggingInt32(currentIndex, "Index"),
         TraceLoggingInt32(dirInt, "Direction"));
-    
+
+    // Keep cached boot/current frame's sourceIndex in sync with resolved navigator index
+    if (!m_currentNavPath.empty() && currentIndex >= 0) {
+        std::lock_guard<std::mutex> lock(m_cacheMutex);
+        auto it = m_cache.find(m_currentNavPath);
+        if (it != m_cache.end()) {
+            it->second.sourceIndex = currentIndex;
+        }
+    }
+
     // 1. Prune: Cancel old tasks not in visible range
     PruneQueue(currentIndex, dir);
     
@@ -1522,8 +1564,18 @@ void ImageEngine::ScheduleJob(int index, QuickView::Priority pri) {
     
     // [v4.1] Smart Prefetch logic re-enabled (Unified Dispatch Integration)
 
-    // 6. Pre-flight check for classification
-    auto info = m_loader->PeekHeader(path.c_str());
+    // 6. Pre-flight check for classification (map non-VFS, non-RAW files once for peek + decode)
+    std::shared_ptr<QuickView::MappedFile> jobMmf;
+    if (path.find(L'|') == std::wstring::npos && !QuickView::IsRawPath(path)) {
+        jobMmf = std::make_shared<QuickView::MappedFile>(path);
+        if (!jobMmf->IsValid()) {
+            jobMmf.reset();
+        }
+    }
+
+    auto info = jobMmf
+        ? m_loader->PeekHeaderFromMemory(path.c_str(), jobMmf->data(), jobMmf->size())
+        : m_loader->PeekHeader(path.c_str());
     
     // 7. Dispatch based on classification
     uintmax_t fileSize = m_navigator->GetFileSize(index);
@@ -1569,7 +1621,7 @@ void ImageEngine::ScheduleJob(int index, QuickView::Priority pri) {
             std::lock_guard lock(m_pendingMutex);
             m_pendingPaths.insert(path);
         }
-        m_fastLane.Push(path, ComputePathHash(path), m_targetHdrHeadroomStops.load(std::memory_order_relaxed));
+        m_fastLane.Push(path, ComputePathHash(path), m_targetHdrHeadroomStops.load(std::memory_order_relaxed), PaneSlot::Primary, 0, jobMmf);
     } else if (info.type == CImageLoader::ImageType::TypeB_Heavy) {
         // Large image: 
         // Critical: Always submit
@@ -1584,9 +1636,9 @@ void ImageEngine::ScheduleJob(int index, QuickView::Priority pri) {
             // [v9.3] Alignment: JXL uses Direct Full Decode (serial upgrade cancelled).
             // Prefetch must also be Full to prevent stuck Scaled/Blurry image.
             if (info.format == L"JXL") {
-                m_heavyPool->SubmitFullDecode(path, ComputePathHash(path));
+                m_heavyPool->SubmitFullDecode(path, ComputePathHash(path), jobMmf);
             } else {
-                m_heavyPool->Submit(path, ComputePathHash(path)); // [ImageID]
+                m_heavyPool->Submit(path, ComputePathHash(path), jobMmf); // [ImageID]
             }
         }
         // If Heavy is busy and not critical, skip prefetch
@@ -1646,6 +1698,7 @@ void ImageEngine::AddToCache(int index, const std::wstring& path, std::shared_pt
             if (lit != m_lruOrder.end()) m_lruOrder.erase(lit);
             
         } else {
+             it->second.sourceIndex = index;
              return; // Already cached (Equal or Better quality)
         }
     }
@@ -1686,81 +1739,33 @@ void ImageEngine::AddToCache(int index, const std::wstring& path, std::shared_pt
     // Only add if we have space OR if it's high priority (neighbor)
     // If we couldn't evict enough (due to protection), we might exceed limit. That's OK.
     if (m_currentCacheBytes + newSize <= m_prefetchPolicy.maxCacheMemory || abs(index - m_currentViewIndex) <= 1) {
-        
-        // [v8.13 Fix] DEEP COPY pixel data to heap memory!
-        // The original frame's pixels may point to PMR Arena memory which gets reused.
-        // We must copy the data to independently-owned heap memory for safe caching.
-        auto cachedFrame = std::make_shared<QuickView::RawImageFrame>();
-        
-        // SVG_XML (D2D) and SVG_WEBVIEW (WebContentHost) both carry xmlData only.
-        // IsSvg() is SVG_XML-only — WebView frames must use the same branch or
-        // they fall into the raster path without svg, so IsWebView() fails on revisit.
+        std::shared_ptr<QuickView::RawImageFrame> cachedFrame;
+
         if (frame->IsSvg() || frame->IsWebView()) {
-            // SVG / complex-SVG: Copy the SVG data struct (no pixel buffer)
-            cachedFrame->format = frame->format;
-            cachedFrame->formatDetails = frame->formatDetails;
-            cachedFrame->width = frame->width;
-            cachedFrame->height = frame->height;
-            cachedFrame->svg = std::make_unique<QuickView::RawImageFrame::SvgData>();
-            if (frame->svg) {
-                cachedFrame->svg->xmlData = frame->svg->xmlData; // Vector copy
-                cachedFrame->svg->viewBoxW = frame->svg->viewBoxW;
-                cachedFrame->svg->viewBoxH = frame->svg->viewBoxH;
+            cachedFrame = frame->CloneToStandalone();
+            if (!cachedFrame) return;
+            if (cachedFrame->sourceFormat.empty()) {
+                cachedFrame->sourceFormat = L"SVG";
             }
-            cachedFrame->srcWidth = frame->srcWidth;
-            cachedFrame->srcHeight = frame->srcHeight;
-            
-            // [CMS] Propagate color profile and HDR metadata
-            cachedFrame->iccProfile = frame->iccProfile;
-            cachedFrame->colorInfo = frame->colorInfo;
-            cachedFrame->hdrMetadata = frame->hdrMetadata;
         } else {
-            // Raster: Deep copy pixels to heap
-            size_t bufferSize = frame->GetBufferSize();
+            const size_t bufferSize = frame->GetBufferSize();
             if (!frame->pixels || bufferSize == 0) {
                 return; // Refuse to cache invalid raster
             }
-            uint8_t* heapPixels = new uint8_t[bufferSize];
-            memcpy(heapPixels, frame->pixels, bufferSize);
-            
-            cachedFrame->pixels = heapPixels;
-            cachedFrame->width = frame->width;
-            cachedFrame->height = frame->height;
-            cachedFrame->stride = frame->stride;
-            cachedFrame->format = frame->format;
-            cachedFrame->quality = frame->quality;
-            cachedFrame->formatDetails = frame->formatDetails;
-            cachedFrame->exifOrientation = frame->exifOrientation;
-            cachedFrame->srcWidth = frame->srcWidth;
-            cachedFrame->srcHeight = frame->srcHeight;
-            cachedFrame->memoryDeleter = QuickView::MemoryDeleter::FromDeleteArray(); // Heap cleanup
-            
-            // [CMS] Propagate color profile and HDR metadata
-            cachedFrame->iccProfile = frame->iccProfile;
-            cachedFrame->colorInfo = frame->colorInfo;
-            cachedFrame->hdrMetadata = frame->hdrMetadata;
 
-            // [GPU Pipeline] Deep copy blend operation and payload
-            cachedFrame->blendOp = frame->blendOp;
-            cachedFrame->shaderPayload = frame->shaderPayload;
-            if (frame->auxLayer && frame->auxLayer->pixels) {
-                auto safeAux = std::make_unique<QuickView::AuxLayer>();
-                safeAux->width = frame->auxLayer->width;
-                safeAux->height = frame->auxLayer->height;
-                safeAux->stride = frame->auxLayer->stride;
-                safeAux->bytesPerPixel = frame->auxLayer->bytesPerPixel;
-                
-                size_t auxSize = (size_t)safeAux->stride * safeAux->height;
-                uint8_t* auxHeap = new uint8_t[auxSize];
-                memcpy(auxHeap, frame->auxLayer->pixels, auxSize);
-                safeAux->pixels = auxHeap;
-                safeAux->deleter = QuickView::MemoryDeleter::FromDeleteArray();
-                cachedFrame->auxLayer = std::move(safeAux);
+            const bool hasSelfContainedAux =
+                !frame->auxLayer || !frame->auxLayer->pixels || frame->auxLayer->deleter.pfn != nullptr;
+            if (frame->memoryDeleter.pfn != nullptr && hasSelfContainedAux) {
+                // Zero-copy share when frame owns self-contained memory with deleter
+                cachedFrame = frame;
+            } else {
+                cachedFrame = frame->CloneToStandalone();
+                if (!cachedFrame) return;
             }
         }
         
         CacheEntry entry;
-        entry.frame = cachedFrame; // Now owns independent heap memory
+        entry.frame = std::move(cachedFrame); // Self-contained heap memory
         entry.sourceIndex = index;
         entry.sizeBytes = newSize;
         

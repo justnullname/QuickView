@@ -40,9 +40,10 @@ struct MemoryDeleter {
   void DestroyCtx() {
     if (ctxDeleter && ctx) {
       ctxDeleter(ctx);
-      ctx = nullptr;
-      ctxDeleter = nullptr;
     }
+    pfn = nullptr;
+    ctx = nullptr;
+    ctxDeleter = nullptr;
   }
   explicit operator bool() const { return pfn != nullptr; }
 
@@ -293,9 +294,10 @@ struct AuxLayerCallback {
   void DestroyCtx() {
     if (ctxDeleter && ctx) {
       ctxDeleter(ctx);
-      ctx = nullptr;
-      ctxDeleter = nullptr;
     }
+    pfn = nullptr;
+    ctx = nullptr;
+    ctxDeleter = nullptr;
   }
   void operator()(std::unique_ptr<AuxLayer> aux, GpuBlendOp op,
                   GpuShaderPayload payload) const {
@@ -352,6 +354,8 @@ struct RawImageFrame {
 
     // [v5.4] Intrinsic Decoder Details (e.g. "4:2:0", "Progressive")
     std::wstring formatDetails;
+    uint64_t sourceFileSize = 0;
+    std::wstring sourceFormat;
     
     // [v8.7] EXIF Orientation (1-8)
     int exifOrientation = 1; /* 1 = Normal */
@@ -478,7 +482,15 @@ struct RawImageFrame {
         width = 0;
         height = 0;
         stride = 0;
+        srcWidth = 0;
+        srcHeight = 0;
+        quality = DecodeQuality::Preview;
+        sourceFileSize = 0;
+        sourceFormat.clear();
+        dpiX = 96.0;
+        dpiY = 96.0;
         memoryDeleter.Clear();
+        onAuxLayerReady.DestroyCtx();
         onAuxLayerReady.Clear();
         svg.reset(); // [D2D Native] Release SVG data
         iccProfile.clear(); // Ensure it is cleared on reset
@@ -489,6 +501,7 @@ struct RawImageFrame {
         blendOp = GpuBlendOp::None;
         shaderPayload = {};
         frameMeta = {};
+        animator.reset();
     }
     
     /// Detach pointer without calling deleter (transfers ownership out)
@@ -499,6 +512,70 @@ struct RawImageFrame {
         return temp;
     }
 
+    /// Promote this frame into a standalone heap-owned shared_ptr (zero-copy when already heap-backed).
+    [[nodiscard]] std::shared_ptr<RawImageFrame> PromoteToStandalone() {
+        if (!IsSvg() && !IsWebView() && pixels && memoryDeleter.pfn == nullptr) {
+            const size_t bufSize = GetBufferSize();
+            uint8_t* heapPixels = static_cast<uint8_t*>(_aligned_malloc(bufSize, 64));
+            if (heapPixels) {
+                memcpy(heapPixels, pixels, bufSize);
+                pixels = heapPixels;
+                memoryDeleter = MemoryDeleter::FromAlignedFree();
+            }
+        }
+        if (auxLayer && auxLayer->pixels && auxLayer->deleter.pfn == nullptr) {
+            auxLayer = auxLayer->Clone();
+        }
+        onAuxLayerReady.DestroyCtx();
+        onAuxLayerReady.Clear();
+        return std::make_shared<RawImageFrame>(std::move(*this));
+    }
+
+    /// Deep-copy this frame into a new standalone heap-owned shared_ptr.
+    [[nodiscard]] std::shared_ptr<RawImageFrame> CloneToStandalone() const {
+        auto copy = std::make_shared<RawImageFrame>();
+        copy->width = width;
+        copy->height = height;
+        copy->stride = stride;
+        copy->format = format;
+        copy->quality = quality;
+        copy->formatDetails = formatDetails;
+        copy->sourceFileSize = sourceFileSize;
+        copy->sourceFormat = sourceFormat;
+        copy->exifOrientation = exifOrientation;
+        copy->iccProfile = iccProfile;
+        copy->colorInfo = colorInfo;
+        copy->hdrMetadata = hdrMetadata;
+        copy->measuredPeakScRgb = measuredPeakScRgb;
+        copy->measuredAverageScRgb = measuredAverageScRgb;
+        copy->srcWidth = srcWidth;
+        copy->srcHeight = srcHeight;
+        copy->dpiX = dpiX;
+        copy->dpiY = dpiY;
+        copy->blendOp = blendOp;
+        copy->shaderPayload = shaderPayload;
+        copy->frameMeta = frameMeta;
+        if (IsSvg() || IsWebView()) {
+            if (svg) {
+                copy->svg = std::make_unique<SvgData>(*svg);
+            }
+        } else if (pixels) {
+            const size_t bufSize = GetBufferSize();
+            if (bufSize > 0) {
+                uint8_t* heapPixels = static_cast<uint8_t*>(_aligned_malloc(bufSize, 64));
+                if (heapPixels) {
+                    memcpy(heapPixels, pixels, bufSize);
+                    copy->pixels = heapPixels;
+                    copy->memoryDeleter = MemoryDeleter::FromAlignedFree();
+                }
+            }
+            if (auxLayer && auxLayer->pixels) {
+                copy->auxLayer = auxLayer->Clone();
+            }
+        }
+        return copy;
+    }
+
 private:
     void MoveFrom(RawImageFrame&& other) noexcept {
         pixels = other.pixels;
@@ -506,8 +583,11 @@ private:
         height = other.height;
         stride = other.stride;
         format = other.format;
+        quality = other.quality;
         // [v5.6 Fix] Move formatDetails!
         formatDetails = std::move(other.formatDetails);
+        sourceFileSize = other.sourceFileSize;
+        sourceFormat = std::move(other.sourceFormat);
         exifOrientation = other.exifOrientation;
         iccProfile = std::move(other.iccProfile);
         colorInfo = other.colorInfo;
@@ -516,6 +596,8 @@ private:
         measuredAverageScRgb = other.measuredAverageScRgb;
         srcWidth = other.srcWidth;
         srcHeight = other.srcHeight;
+        dpiX = other.dpiX;
+        dpiY = other.dpiY;
         memoryDeleter = std::move(other.memoryDeleter);
         onAuxLayerReady = std::move(other.onAuxLayerReady);
 
@@ -528,6 +610,7 @@ private:
         shaderPayload = other.shaderPayload;
         
         frameMeta = other.frameMeta;
+        animator = std::move(other.animator);
         
         // Nullify source
         other.pixels = nullptr;
@@ -536,7 +619,11 @@ private:
         other.stride = 0;
         other.srcWidth = 0;
         other.srcHeight = 0;
-        // other.formatDetails is moved (empty)
+        other.quality = DecodeQuality::Preview;
+        other.sourceFileSize = 0;
+        other.dpiX = 96.0;
+        other.dpiY = 96.0;
+        // other.formatDetails / sourceFormat are moved
         other.iccProfile.clear(); // Clear source vector after move
         other.colorInfo = {};
         other.hdrMetadata = {};
@@ -546,9 +633,9 @@ private:
         other.blendOp = GpuBlendOp::None;
         other.shaderPayload = {};
         other.frameMeta = {};
-        // memoryDeleter is moved, but setting to nullptr for clarity
-        // other.svg is moved (becomes nullptr)
-        // other.auxLayer is moved (becomes nullptr)
+        other.memoryDeleter.Clear();
+        other.onAuxLayerReady.Clear();
+        // other.svg / other.auxLayer / other.animator are moved (nullptr)
     }
 };
 

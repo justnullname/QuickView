@@ -3,6 +3,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <utility>
 #include <unordered_map>
 #include <unordered_set>
 #include <atomic>
@@ -47,6 +48,19 @@ public:
         std::vector<uintmax_t> sizes;
         std::vector<ImageID> ids;
         std::unordered_map<ImageID, PairedRaw> pairedRaws;
+    };
+
+    // Background Explorer cursor bind result (produced by watcher thread, consumed on UI thread)
+    struct ExplorerBindResult {
+        bool bound = false;
+        int index = -1;
+        int count = 0;
+        std::wstring openedPath;
+        bool hasSort = false;
+        GUID sortFmtid{};
+        DWORD sortPid = 0;
+        int sortDir = 0;
+        std::vector<std::pair<int, std::wstring>> prefetchedPaths;
     };
 
     FileNavigator() = default;
@@ -231,6 +245,7 @@ private:
     bool CollectFolderEntries(const std::wstring& dir, std::vector<SortEntry>& entries) const;
     bool ScanCancelled() const;
     bool TryBindExplorer(const std::wstring& dir, const std::wstring& openedPath);
+    void ApplyExplorerBindResult(ExplorerBindResult&& res);
     bool SyncExplorerCursor(bool allowDematerialize);
     void ClearExplorerCursor();
     std::wstring CurrentVisiblePath() const;
@@ -288,6 +303,9 @@ private:
     std::thread m_watcherThread;
     std::mutex m_scanResultMutex;
     std::optional<DirectoryScanResult> m_pendingScanResult;
+    std::atomic<bool> m_needExplorerBind{ false };
+    std::wstring m_initialBindPath;
+    std::optional<ExplorerBindResult> m_pendingExplorerBind;
     bool m_bootDeferredHydration = false;
 
 public:

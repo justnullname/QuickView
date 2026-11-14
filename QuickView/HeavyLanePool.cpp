@@ -1241,35 +1241,12 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
         }
     }
 
-    // [Unified Architecture] Always use the Back Arena for new decoding jobs
-    // Note: For Tiles, we should ideally use SlabAllocator.
-    // For now, reuse the heavy arena (it resets anyway).
-    QuantumArena& arena = m_pool->GetBackHeavyArena();
-    
-    // RAII guard for concurrent jobs
-    struct ArenaJobGuard {
-        QuantumArena& a;
-        ArenaJobGuard(QuantumArena& arena) : a(arena) {
-            a.m_activeJobs.fetch_add(1, std::memory_order_acq_rel);
-        }
-        ~ArenaJobGuard() {
-            a.m_activeJobs.fetch_sub(1, std::memory_order_acq_rel);
-        }
-    } jobGuard(arena);
-    
     QuickView::RawImageFrame rawFrame;
     std::wstring loaderName;
     CImageLoader::ImageMetadata meta;
     HRESULT hr = E_FAIL;
     
     auto decodeStart = std::chrono::high_resolution_clock::now();
-
-    // Only reset the arena if we are the first and only job running on it right now.
-    // (e.g. all background tile decoding for previous image finished).
-    // Since we already incremented it, it will be exactly 1.
-    if (arena.m_activeJobs.load(std::memory_order_acquire) == 1) {
-        arena.Reset();
-    }
 
          if (job.type == JobType::Standard) {
               // --- Standard Decode (Full/Scaled) ---
@@ -1449,24 +1426,24 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                    // so we probe magic bytes before checking supportsMmfDecode.
                    bool animResolved = tryHijackMmfAnimation();
 
-                   QuantumArena* effectiveArena = m_isTitanMode.load(std::memory_order_relaxed) ? nullptr : &arena;
+                   QuantumArena* effectiveArena = nullptr;
                    if (!animResolved) {
                        if (supportsMmfDecode) {
                            hr = m_loader->LoadToFrameFromMemory(job.mmf->data(), job.mmf->size(), &rawFrame, effectiveArena, targetW, targetH, &loaderName, &meta, -1.0f, job.mmf);
                            if (FAILED(hr)) {
                                // Fallback to file if MMF decode fails
-                               hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, effectiveArena, targetW, targetH, &loaderName, cancelPred, &meta, !job.isFullDecode, m_isTitanMode, job.targetHdrHeadroomStops, job.targetPrimaries);
+                               hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, effectiveArena, targetW, targetH, &loaderName, cancelPred, &meta, !job.isFullDecode, m_isTitanMode, job.targetHdrHeadroomStops, job.targetPrimaries, job.mmf);
                            } else {
                                // MMF Decode Success -> Trigger Touch-Up Prefetch!
                                TriggerPrefetch(job.mmf);
                            }
                        } else {
-                           hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, effectiveArena, targetW, targetH, &loaderName, cancelPred, &meta, !job.isFullDecode, m_isTitanMode, job.targetHdrHeadroomStops, job.targetPrimaries);
+                           hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, effectiveArena, targetW, targetH, &loaderName, cancelPred, &meta, !job.isFullDecode, m_isTitanMode, job.targetHdrHeadroomStops, job.targetPrimaries, job.mmf);
                        }
                    }
               } else {
-                   QuantumArena* effectiveArena = m_isTitanMode.load(std::memory_order_relaxed) ? nullptr : &arena;
-                   hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, effectiveArena, targetW, targetH, &loaderName, cancelPred, &meta, !job.isFullDecode, m_isTitanMode, job.targetHdrHeadroomStops, job.targetPrimaries);
+                   QuantumArena* effectiveArena = nullptr;
+                   hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, effectiveArena, targetW, targetH, &loaderName, cancelPred, &meta, !job.isFullDecode, m_isTitanMode, job.targetHdrHeadroomStops, job.targetPrimaries, job.mmf);
               }
               } // end FAILED(hr) inline fallback
               // [Baseline Benchmark] Measure performance from Standard (base layer) decode
@@ -1839,75 +1816,23 @@ tile_decode_done: ; // [P14] Jump target for fast path (skip legacy TJ decode)
                 evt.type = EventType::FullReady;
                 evt.isScaled = !job.isFullDecode;
 
-                // [Standard] Deep Copy to Heap (since Arena is reused/reset)
-                auto safeFrame = std::make_shared<QuickView::RawImageFrame>();
-                safeFrame->quality = rawFrame.quality;
-                
-                size_t bufferSize = 0;
-
+                // Promote decoded frame to standalone heap ownership (zero-copy when deleter is set).
+                const uint64_t sourceSize = (meta.FileSize > 0) ? meta.FileSize : (job.mmf ? (uint64_t)job.mmf->size() : 0);
+                rawFrame.sourceFileSize = sourceSize;
                 if (rawFrame.IsSvg() || rawFrame.IsWebView()) {
-                    safeFrame->format = rawFrame.format;
-                    safeFrame->width = rawFrame.width;
-                    safeFrame->height = rawFrame.height;
-                    safeFrame->svg = std::make_unique<QuickView::RawImageFrame::SvgData>();
-                    safeFrame->svg->xmlData = rawFrame.svg->xmlData;
-                    safeFrame->svg->viewBoxW = rawFrame.svg->viewBoxW;
-                    safeFrame->svg->viewBoxH = rawFrame.svg->viewBoxH;
+                    rawFrame.sourceFormat = !meta.Format.empty() ? meta.Format : L"SVG";
                 } else {
-                    bufferSize = rawFrame.GetBufferSize();
-                    uint8_t* heapPixels = new uint8_t[bufferSize];
-                    memcpy(heapPixels, rawFrame.pixels, bufferSize);
-                    safeFrame->pixels = heapPixels;
-                    safeFrame->width = rawFrame.width;
-                    safeFrame->height = rawFrame.height;
-                    safeFrame->stride = rawFrame.stride;
-                    safeFrame->format = rawFrame.format;
-                    safeFrame->formatDetails = rawFrame.formatDetails;
-                    safeFrame->srcWidth = rawFrame.srcWidth;   // [v10.1] Preserve original resolution
-                    safeFrame->srcHeight = rawFrame.srcHeight;
-                    safeFrame->exifOrientation = rawFrame.exifOrientation; // [Fix] Propagate Orientation to cache
-                    safeFrame->memoryDeleter = QuickView::MemoryDeleter::FromDeleteArray();
-
-                    // [CMS] Propagate color profile and HDR metadata
-                    safeFrame->iccProfile = std::move(rawFrame.iccProfile);
-                    safeFrame->colorInfo = rawFrame.colorInfo;
-                    safeFrame->hdrMetadata = rawFrame.hdrMetadata;
-
-                    // [v10.5] Animation Meta propagation
-                    safeFrame->animator = rawFrame.animator;
-                    safeFrame->frameMeta = rawFrame.frameMeta;
-
-                    // [GPU Pipeline] Deep copy blend operation and payload
-                    safeFrame->blendOp = rawFrame.blendOp;
-                    safeFrame->shaderPayload = rawFrame.shaderPayload;
-                    if (rawFrame.auxLayer && rawFrame.auxLayer->pixels) {
-                        auto safeAux = std::make_unique<QuickView::AuxLayer>();
-                        safeAux->width = rawFrame.auxLayer->width;
-                        safeAux->height = rawFrame.auxLayer->height;
-                        safeAux->stride = rawFrame.auxLayer->stride;
-                        safeAux->bytesPerPixel = rawFrame.auxLayer->bytesPerPixel;
-                        
-                        size_t auxSize = (size_t)safeAux->stride * safeAux->height;
-                        uint8_t* auxHeap = new uint8_t[auxSize];
-                        memcpy(auxHeap, rawFrame.auxLayer->pixels, auxSize);
-                        safeAux->pixels = auxHeap;
-                        safeAux->deleter = QuickView::MemoryDeleter::FromDeleteArray();
-                        safeFrame->auxLayer = std::move(safeAux);
-                    }
+                    rawFrame.sourceFormat = !meta.Format.empty() ? meta.Format : rawFrame.sourceFormat;
                 }
-                
+                const size_t bufferSize = (!rawFrame.IsSvg() && !rawFrame.IsWebView()) ? rawFrame.GetBufferSize() : 0;
+                auto safeFrame = rawFrame.PromoteToStandalone();
                 evt.rawFrame = safeFrame;
-                
-                QV_LOG("Worker_StdJobDone",
-                    TraceLoggingInt32(safeFrame->width, "Width"),
-                    TraceLoggingInt32(safeFrame->height, "Height"),
-                    TraceLoggingInt32(safeFrame->stride, "Stride"),
-                    TraceLoggingUInt64((uint64_t)bufferSize, "BufferSize"));
-            }
 
-            // [Fix] Compute histogram for HeavyLane results
-            if (evt.rawFrame && evt.rawFrame->IsValid() && !evt.rawFrame->IsSvg() && job.type == JobType::Standard) {
-                m_loader->ComputeHistogramFromFrame(*evt.rawFrame, &meta);
+                QV_LOG("Worker_StdJobDone",
+                    TraceLoggingInt32(safeFrame ? safeFrame->width : 0, "Width"),
+                    TraceLoggingInt32(safeFrame ? safeFrame->height : 0, "Height"),
+                    TraceLoggingInt32(safeFrame ? safeFrame->stride : 0, "Stride"),
+                    TraceLoggingUInt64((uint64_t)bufferSize, "BufferSize"));
             }
 
             evt.metadata = std::move(meta);
@@ -3461,7 +3386,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                         fullFrame.onAuxLayerReady.ctxDeleter = [](void* c) { delete static_cast<AuxLayerReadyCtx*>(c); };
                     }
                 }
-                hr = m_loader->LoadToFrame(job.path.c_str(), &fullFrame, nullptr, targetW, targetH, &loader, checkCancel, nullptr, true, false, job.targetHdrHeadroomStops);
+                hr = m_loader->LoadToFrame(job.path.c_str(), &fullFrame, nullptr, targetW, targetH, &loader, checkCancel, nullptr, true, false, job.targetHdrHeadroomStops, QuickView::ColorPrimaries::SRGB, nullptr, false);
                 if (SUCCEEDED(hr)) {
                     loader = L"WIC(LOD-Fallback)";
                     QV_LOG("Worker_Route", TraceLoggingString("Phase4 InlineWIC FallbackSuccess", "Action"));

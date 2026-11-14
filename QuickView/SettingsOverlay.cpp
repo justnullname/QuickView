@@ -7288,8 +7288,12 @@ void SettingsOverlay::HandleItemKeyboardActivation(SettingsItem& item, WPARAM ke
                 } else if (m_focusedPartIdx == 1) {
                     ShellExecuteW(NULL, L"open", L"https://github.com/justnullname/QuickView/issues", NULL, NULL, SW_SHOWNORMAL);
                 } else if (m_focusedPartIdx == 2) {
-                    extern HelpOverlay g_helpOverlay;
+                    extern void EnsureHelpInitialized(HWND hwnd);
+                    extern void RequestRepaint(QuickView::PaintLayer layerMask);
+                    EnsureHelpInitialized(m_hwnd);
                     g_helpOverlay.SetVisible(true);
+                    SetVisible(false);
+                    RequestRepaint(QuickView::PaintLayer::All);
                 }
             }
             break;

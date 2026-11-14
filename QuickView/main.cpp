@@ -164,6 +164,7 @@ void ScheduleDebouncedSuperResolution(HWND hwnd);
 // WebContentHost::kCommitMessage (WM_APP+55) — document ready, need DComp Commit
 constexpr UINT_PTR TIMER_ID_STARTUP_SHOW = 992;
 constexpr UINT_PTR TIMER_ID_SR_DEBOUNCE = 3001;
+constexpr UINT_PTR TIMER_ID_UPDATE_CHECK = 3002;
 
 bool g_isBootingWithImage = false;
 
@@ -1385,6 +1386,15 @@ static void ShowFilmstrip(HWND hwnd);
 static bool OpenPathOrDirectory(HWND hwnd, const std::wstring& path, bool clearThumbCache = true);
 static void FinishGallery(HWND hwnd, GalleryFinishKind kind, int commitIndex = -1);
 static std::wstring PickFolder(HWND hwnd, const std::wstring& initialPath = L"");
+bool IsTelemetryNeeded();
+bool IsRatingNeeded();
+static void EnsureSettingsInitialized(HWND hwnd);
+void EnsureHelpInitialized(HWND hwnd);
+static void EnsureAiInitialized(HWND hwnd);
+static void EnsureThumbMgrInitialized(HWND hwnd);
+static void EnsureRatingStoreInitialized(HWND hwnd);
+static void EnsureUpdateInitialized(HWND hwnd);
+static void EnsureInfoPanelDataLoaded(HWND hwnd);
 
 static void ApplyUIScale(float scale) {
     if (scale < 0.75f) scale = 0.75f;
@@ -3524,6 +3534,7 @@ static void FinishGallery(HWND hwnd, GalleryFinishKind kind, int commitIndex) {
 }
 
 static void ShowGallery(HWND hwnd) {
+    EnsureThumbMgrInitialized(hwnd);
     if (g_gallerySession.intent == GalleryIntent::None) {
         g_gallerySession.intent = GalleryIntent::OverlayBrowse;
     }
@@ -3538,6 +3549,7 @@ static void ShowGallery(HWND hwnd) {
 }
 
 static void ShowFilmstrip(HWND hwnd) {
+    EnsureThumbMgrInitialized(hwnd);
     if (g_gallerySession.intent == GalleryIntent::None) {
         g_gallerySession.intent = GalleryIntent::OverlayBrowse;
     }
@@ -3552,6 +3564,7 @@ static void ShowFilmstrip(HWND hwnd) {
 }
 
 static bool BeginFolderGallery(HWND hwnd, const std::wstring& folder, bool clearThumbCache) {
+    EnsureThumbMgrInitialized(hwnd);
     auto& pane = GetPaneContext(PaneSlot::Primary);
     const bool hadImage = !pane.path.empty();
 
@@ -3830,24 +3843,39 @@ bool IsTelemetryNeeded() {
     if (g_runtime.ShowCompareInfo) {
         if (g_runtime.CompareHudMode == 1 || g_runtime.CompareHudMode == 0) {
             if (g_config.InfoPanelLiteItemsCompare.find(L"Sharp") != std::wstring::npos ||
-                g_config.InfoPanelLiteItemsCompare.find(L"Ent") != std::wstring::npos ||
-                g_config.InfoPanelLiteItemsCompare.find(L"BPP") != std::wstring::npos) return true;
+                g_config.InfoPanelLiteItemsCompare.find(L"Ent") != std::wstring::npos) return true;
         } else if (g_runtime.CompareHudMode == 2) {
             if (g_config.InfoPanelFullItemsCompare.find(L"Sharp") != std::wstring::npos ||
                 g_config.InfoPanelFullItemsCompare.find(L"Ent") != std::wstring::npos ||
-                g_config.InfoPanelFullItemsCompare.find(L"BPP") != std::wstring::npos ||
                 g_config.InfoPanelFullItemsCompare.find(L"Histogram") != std::wstring::npos) return true;
         }
     } else {
         if (g_runtime.ShowInfoPanel && g_runtime.InfoPanelExpanded) {
             if (g_config.InfoPanelFullItemsNormal.find(L"Histogram") != std::wstring::npos ||
                 g_config.InfoPanelFullItemsNormal.find(L"Sharp") != std::wstring::npos ||
-                g_config.InfoPanelFullItemsNormal.find(L"Ent") != std::wstring::npos ||
-                g_config.InfoPanelFullItemsNormal.find(L"BPP") != std::wstring::npos) return true;
+                g_config.InfoPanelFullItemsNormal.find(L"Ent") != std::wstring::npos) return true;
         } else if (g_runtime.ShowInfoPanel) {
             if (g_config.InfoPanelLiteItemsNormal.find(L"Sharp") != std::wstring::npos ||
-                g_config.InfoPanelLiteItemsNormal.find(L"Ent") != std::wstring::npos ||
-                g_config.InfoPanelLiteItemsNormal.find(L"BPP") != std::wstring::npos) return true;
+                g_config.InfoPanelLiteItemsNormal.find(L"Ent") != std::wstring::npos) return true;
+        }
+    }
+    return false;
+}
+
+bool IsRatingNeeded() {
+    if (g_gallery.IsVisible()) return true;
+    if (g_runtime.ShowCompareInfo) {
+        if (g_runtime.CompareHudMode == 2) {
+            if (g_config.InfoPanelFullItemsCompare.find(L"Rating") != std::wstring::npos) return true;
+        } else {
+            if (g_config.InfoPanelLiteItemsCompare.find(L"Rating") != std::wstring::npos) return true;
+        }
+    }
+    if (g_runtime.ShowInfoPanel) {
+        if (g_runtime.InfoPanelExpanded) {
+            if (g_config.InfoPanelFullItemsNormal.find(L"Rating") != std::wstring::npos) return true;
+        } else {
+            if (g_config.InfoPanelLiteItemsNormal.find(L"Rating") != std::wstring::npos) return true;
         }
     }
     return false;
@@ -7720,7 +7748,7 @@ static int RunDecodeWorker(int argc, LPWSTR* argv) {
             // [Fix] Base layer: Use LoadToFrame (returns 1:8 DC preview or 1x1 Fake Base instantly for massive JXL)
             // If --no-fake-base is specified (e.g. for LOD requests), it guarantees real decoding is not bypassed.
             // DO NOT pass a restricted QuantumArena here, as format fallbacks may need full-resolution heap memory before scaling.
-            hr = loader.LoadToFrame(inputPath.c_str(), &rawFrame, nullptr, targetW, targetH, &loaderName, {}, &meta, !noFakeBase);
+            hr = loader.LoadToFrame(inputPath.c_str(), &rawFrame, nullptr, targetW, targetH, &loaderName, {}, &meta, !noFakeBase, false, -1.0f, QuickView::ColorPrimaries::SRGB, nullptr, false);
         }
         if (FAILED(hr) || !rawFrame.IsValid()) {
             // [HEIC] Signal parent if HEVC component is missing
@@ -8138,8 +8166,11 @@ static bool TryPresentBootPreloadedFrame(HWND hwnd, const std::wstring& initialI
     bootEvt.metadata = primaryPane.metadata;
     HandleExifPreRotation(bootEvt);
 
+    const ImageID bootId = FileNavigator::PathToImageID(initialImagePath);
+    primaryPane.metadata.OwnerImageId = bootId;
+    g_currentImageId.store(bootId);
     if (g_imageEngine) {
-        g_imageEngine->PutCachedImage(initialImagePath, preloadedFrame);
+        g_imageEngine->AdoptBootFrame(initialImagePath, bootId, preloadedFrame, (std::max)(primaryPane.navigator.Index(), 0));
     }
 
     // [Presentation Pipeline Alignment]
@@ -8166,6 +8197,12 @@ static bool TryPresentBootPreloadedFrame(HWND hwnd, const std::wstring& initialI
 
     wchar_t titleBuf[2048];
     std::wstring titleName = initialImagePath.substr(initialImagePath.find_last_of(L"\\/") + 1);
+    const bool navHasPairedRaw = primaryPane.navigator.HasPairedRaw(bootId);
+    if (const auto* pairedRaw = primaryPane.navigator.GetPairedRaw(bootId)) {
+        titleName += L" (" + FileNavigator::PairedRawLabel(*pairedRaw) + L")";
+    }
+    g_toolbar.SetRawState(QuickView::IsRawPath(initialImagePath) || navHasPairedRaw,
+                          g_runtime.ForceRawDecode, navHasPairedRaw);
     swprintf_s(titleBuf, L"%s - %s", titleName.c_str(), g_szWindowTitle);
     SetWindowTextW(hwnd, titleBuf);
 
@@ -8182,43 +8219,109 @@ static bool TryPresentBootPreloadedFrame(HWND hwnd, const std::wstring& initialI
     ShowWindow(hwnd, g_initialCmdShow);
     UpdateWindow(hwnd);
     ForceForegroundWindow(hwnd);
+    g_currentCursor = LoadCursor(nullptr, IDC_ARROW);
+    SetCursor(g_currentCursor);
 
     g_isBootingWithImage = false;
     PostMessageW(hwnd, WM_DEFERRED_BOOT_HYDRATE, 0, 0);
     return true;
 }
 
+static bool g_settingsInitialized = false;
+static bool g_helpInitialized = false;
+static bool g_aiInitialized = false;
+static bool g_thumbMgrInitialized = false;
+static bool g_ratingStoreInitialized = false;
+static bool g_updateInitialized = false;
+
+static void EnsureUpdateInitialized(HWND hwnd) {
+    if (g_updateInitialized) return;
+    g_updateInitialized = true;
+    UpdateManager::Get().Init(GetAppVersionUTF8());
+    UpdateManager::Get().SetCallback([](bool found, [[maybe_unused]] const VersionInfo& info, void* context) {
+        HWND h = static_cast<HWND>(context);
+        if (IsWindow(h)) {
+            PostMessage(h, WM_UPDATE_FOUND, (WPARAM)found, 0);
+        }
+    }, hwnd);
+}
+
+void EnsureHelpInitialized(HWND hwnd) {
+    if (g_helpInitialized || !g_renderEngine) return;
+    g_helpInitialized = true;
+    g_helpOverlay.Init(g_renderEngine->GetDeviceContext(), hwnd);
+    g_helpOverlay.SetUIScale(g_uiScale);
+}
+
+static void EnsureAiInitialized(HWND hwnd) {
+    if (g_aiInitialized) return;
+    g_aiInitialized = true;
+    if (g_renderEngine) {
+        QuickView::UI::AiActionOverlay::Instance().Init(g_renderEngine->GetDeviceContext(), hwnd);
+        QuickView::UI::AiActionOverlay::Instance().SetUIScale(g_uiScale);
+    }
+    QuickView::AI::AiActionManager::Instance().Init();
+}
+
+static void EnsureSettingsInitialized(HWND hwnd) {
+    if (g_settingsInitialized || !g_renderEngine) return;
+    EnsureUpdateInitialized(hwnd);
+    EnsureAiInitialized(hwnd);
+    g_settingsInitialized = true;
+    g_settingsOverlay.Init(g_renderEngine->GetDeviceContext(), hwnd);
+    g_settingsOverlay.SetUIScale(g_uiScale);
+}
+
+static void EnsureRatingStoreInitialized(HWND hwnd) {
+    if (g_ratingStoreInitialized) return;
+    g_ratingStoreInitialized = true;
+    g_ratingStore.Initialize(hwnd);
+}
+
+static void EnsureThumbMgrInitialized(HWND hwnd) {
+    if (g_thumbMgrInitialized || !g_imageLoader) return;
+    EnsureRatingStoreInitialized(hwnd);
+    g_thumbMgrInitialized = true;
+    g_thumbMgr.Initialize(hwnd, g_imageLoader.get());
+    g_gallery.Initialize(&g_thumbMgr, &GetPaneContext(PaneSlot::Primary).navigator);
+}
+
+static void EnsureInfoPanelDataLoaded(HWND hwnd) {
+    auto& pane = GetPaneContext(PaneSlot::Primary);
+    if (pane.path.empty()) return;
+    if (!pane.metadata.IsFullMetadataLoaded && g_imageEngine) {
+        g_imageEngine->RequestFullMetadata();
+    }
+    if (IsTelemetryNeeded() && pane.metadata.HistL.empty()) {
+        UpdateHistogramAsync(hwnd, pane.path);
+    }
+    if (IsRatingNeeded() && !g_ratingStore.TryGet(FileNavigator::PathToImageID(pane.path)).has_value()) {
+        QueueRatingRead(pane.path);
+    }
+}
+
 static bool g_bootHydrated = false;
 static void EnsureBootHydrated(HWND hwnd) {
     if (g_bootHydrated) return;
     g_bootHydrated = true;
-    
+
     GetPaneContext(PaneSlot::Primary).navigator.HydrateBootNavigator();
-    
-    if (g_imageLoader) {
-        g_thumbMgr.Initialize(hwnd, g_imageLoader.get());
-        g_ratingStore.Initialize(hwnd);
-        FileNavigator::SetSelfWriteProbe(&RatingStore::WasSelfWriteJustNow);
-        g_gallery.Initialize(&g_thumbMgr, &GetPaneContext(PaneSlot::Primary).navigator);
+    FileNavigator::SetSelfWriteProbe(&RatingStore::WasSelfWriteJustNow);
+
+    if (g_runtime.ShowInfoPanel) {
+        EnsureInfoPanelDataLoaded(hwnd);
+        RequestRepaint(PaintLayer::Static);
     }
-    if (g_renderEngine) {
-        g_settingsOverlay.Init(g_renderEngine->GetDeviceContext(), hwnd);
-        g_helpOverlay.Init(g_renderEngine->GetDeviceContext(), hwnd);
-        QuickView::UI::AiActionOverlay::Instance().Init(g_renderEngine->GetDeviceContext(), hwnd);
-    }
-    QuickView::AI::AiActionManager::Instance().Init();
-    
-    UpdateManager::Get().Init(GetAppVersionUTF8());
-    UpdateManager::Get().SetCallback([](bool found, [[maybe_unused]] const VersionInfo& info, void* context) {
-        HWND h = static_cast<HWND>(context);
-        PostMessage(h, WM_UPDATE_FOUND, (WPARAM)found, 0); 
-    }, hwnd);
-    if (g_config.CheckUpdates) {
-        UpdateManager::Get().StartBackgroundCheck();
+
+    if (g_config.CheckUpdates && IsWindow(hwnd)) {
+        SetTimer(hwnd, TIMER_ID_UPDATE_CHECK, 5000, nullptr);
     }
 }
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCmdLine, int nCmdShow) {
+    MSG earlyMsg{};
+    PeekMessageW(&earlyMsg, nullptr, 0, 0, PM_NOREMOVE);
+
     // Early capture of foreground window state before any QuickView initialization/window creation
     HWND hCmdFg = QuickView::ProcessRouter::ParseFgCaller();
     if (hCmdFg) {
@@ -8247,25 +8350,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCm
         return toolExitCode;
     }
 
-    // Load config (Must happen before ETW because logs check g_config)
-    LoadConfig();
-    AppStrings::Init();
-    AppStrings::SetLanguage((AppStrings::Language)g_config.Language);
-
-    // [RAW+JPEG Pairing] Capture-time fallback reader (LibRaw for RAW, WIC
-    // for HEIF etc.; lives in ImageLoader.cpp -- FileNavigator itself must
-    // stay LibRaw/WIC-free for the unit-test binary)
-    extern int64_t ReadCaptureTimeFallback(const wchar_t* filePath);
-    FileNavigator::SetCaptureTimeFallbackReader(&ReadCaptureTimeFallback);
-
-    // Now safe to start ETW
-    EtwScope etwScope;
-
     // === Priority 1: Viewer-child bypass (spawned by Master, skip routing) ===
     const bool isViewerChild = QuickView::ProcessRouter::IsViewerChild();
 
     // === Priority 2: Chrome-level process routing ===
-    // Happens BEFORE any COM / D2D initialization.
+    // Happens BEFORE LoadConfig / COM / D2D initialization.
     if (!isViewerChild) {
         auto routeResult = QuickView::ProcessRouter::TryRoute(true);
         if (routeResult == QuickView::ProcessRouter::RouteResult::RoutedToMaster) {
@@ -8282,11 +8371,25 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCm
         if (!std::filesystem::is_directory(std::filesystem::path(initialImagePath), ec)) {
             hasInitialImage = true;
             g_imagePath = initialImagePath;
-            // [Boot Architecture] Kick off overlapped decoding pipeline at T=0ms immediately
+            // [Boot Architecture] Kick off overlapped decoding pipeline before LoadConfig/Init
             QuickView::BootPreloader::Instance().Start(initialImagePath);
         }
     }
     g_isBootingWithImage = hasInitialImage;
+
+    // Load config (Must happen before ETW because logs check g_config)
+    LoadConfig();
+    AppStrings::Init();
+    AppStrings::SetLanguage((AppStrings::Language)g_config.Language);
+
+    // [RAW+JPEG Pairing] Capture-time fallback reader (LibRaw for RAW, WIC
+    // for HEIF etc.; lives in ImageLoader.cpp -- FileNavigator itself must
+    // stay LibRaw/WIC-free for the unit-test binary)
+    extern int64_t ReadCaptureTimeFallback(const wchar_t* filePath);
+    FileNavigator::SetCaptureTimeFallbackReader(&ReadCaptureTimeFallback);
+
+    // Now safe to start ETW
+    EtwScope etwScope;
 
     // [The Golden Path] Smart Lazy Registration: Check and self-repair file associations
     // Bypass logic: Skip if Portable Mode OR if already registered for this version and path.
@@ -8946,6 +9049,8 @@ static void TriggerInpaintCurrentSelection(HWND hwnd) {
         return;
     }
 
+    EnsureAiInitialized(hwnd);
+
     std::string pendingActId = g_cropState.PendingActionId;
     std::wstring customPrompt = g_cropState.PendingCustomPrompt;
 
@@ -9267,7 +9372,9 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
                         g_config.CustomEditorPath = L"";
                         SaveConfig();
                         extern SettingsOverlay g_settingsOverlay;
-                        g_settingsOverlay.RebuildMenu();
+                        if (g_settingsInitialized) {
+                            g_settingsOverlay.RebuildMenu();
+                        }
                         g_osd.Show(hwnd, AppStrings::OSD_EditorLaunchFailed);
                     }
                 }
@@ -9880,9 +9987,7 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
                     RestoreOverlayWindowState(hwnd);
                 }
                 g_runtime.InfoPanelExpanded = (g_config.ToolbarInfoDefault == 1); // 0=Lite, 1=Full
-                if (IsTelemetryNeeded() && GetPaneContext(PaneSlot::Primary).metadata.HistR.empty() && !GetPaneContext(PaneSlot::Primary).path.empty()) {
-                    UpdateHistogramAsync(hwnd, GetPaneContext(PaneSlot::Primary).path);
-                }
+                EnsureInfoPanelDataLoaded(hwnd);
             }
  
             g_toolbar.SetExifState(g_runtime.ShowInfoPanel);
@@ -9943,6 +10048,7 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
         case IDM_LITE_INFO:
              g_runtime.ShowInfoPanel = true;
              g_runtime.InfoPanelExpanded = false; // Lite = not expanded
+             EnsureInfoPanelDataLoaded(hwnd);
              g_toolbar.SetExifState(true);
              if (g_runtime.ShowInfoPanel) {
                 AdjustWindowForOverlay(hwnd, false);
@@ -9955,9 +10061,7 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
         case IDM_FULL_INFO:
              g_runtime.ShowInfoPanel = true;
              g_runtime.InfoPanelExpanded = true; // Full = expanded
-             if (IsTelemetryNeeded() && GetPaneContext(PaneSlot::Primary).metadata.HistR.empty() && !GetPaneContext(PaneSlot::Primary).path.empty()) {
-                 UpdateHistogramAsync(hwnd, GetPaneContext(PaneSlot::Primary).path);
-             }
+             EnsureInfoPanelDataLoaded(hwnd);
              g_toolbar.SetExifState(true);
              if (g_runtime.ShowInfoPanel) {
                 AdjustWindowForOverlay(hwnd, false);
@@ -10278,6 +10382,7 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
             break;
         }
         case IDM_SETTINGS: {
+            EnsureSettingsInitialized(hwnd);
             if (g_settingsOverlay.IsVisible()) {
                 g_settingsOverlay.OpenTab(0);
             } else {
@@ -11238,6 +11343,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     case WM_UPDATE_FOUND: {
         bool found = (wParam != 0);
         if (found) {
+            EnsureSettingsInitialized(hwnd);
             const auto& info = UpdateManager::Get().GetRemoteVersion();
             auto ToWide = [](const std::string& str) -> std::wstring {
                 if (str.empty()) return L"";
@@ -11250,7 +11356,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             RequestRepaint(PaintLayer::Static);  // Settings overlay is on Static layer
         } else {
             // Just refresh UI (e.g. stop spinner)
-            g_settingsOverlay.BuildMenu();
+            if (g_settingsInitialized) {
+                g_settingsOverlay.BuildMenu();
+            }
             RequestRepaint(PaintLayer::Static);
         }
         return 0;
@@ -11528,6 +11636,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         if (wParam == TIMER_ID_SR_DEBOUNCE) {
             KillTimer(hwnd, TIMER_ID_SR_DEBOUNCE);
             TriggerDebouncedSuperResolution(hwnd);
+            return 0;
+        }
+
+        if (wParam == TIMER_ID_UPDATE_CHECK) {
+            KillTimer(hwnd, TIMER_ID_UPDATE_CHECK);
+            EnsureUpdateInitialized(hwnd);
+            if (g_config.CheckUpdates) {
+                UpdateManager::Get().StartBackgroundCheck();
+            }
             return 0;
         }
 
@@ -12523,6 +12640,7 @@ case WM_DESTROY: {
                   } else if (g_config.GalleryTriggerMode == 0) {
                       if (inGalleryTriggerZone) {
                           SaveOverlayWindowState(hwnd);
+                          EnsureThumbMgrInitialized(hwnd);
                           g_gallery.Open(GetPaneContext(PaneSlot::Primary).navigator.Index(), GalleryMode::Filmstrip);
                       }
                   } else if (g_config.GalleryTriggerMode == 1) {
@@ -13475,14 +13593,22 @@ SKIP_EDGE_NAV:;
         // has to be queued again immediately -- otherwise its rating would
         // stay blank until the user navigated somewhere else.
         g_ratingStore.Clear();
-        QueueRatingRead(GetPaneContext(PaneSlot::Primary).path);
+        if (IsRatingNeeded()) {
+            QueueRatingRead(GetPaneContext(PaneSlot::Primary).path);
+        }
         auto& nav = GetPaneContext(PaneSlot::Primary).navigator;
         const size_t oldCount = nav.Count();
         const int oldIndex = nav.Index();
+        const ImageID curId = FileNavigator::PathToImageID(GetPaneContext(PaneSlot::Primary).path);
+        const bool hadPairedRaw = (curId != 0) && nav.HasPairedRaw(curId);
         if (wParam == 1) {
             nav.RefreshExplorerCount();
         } else {
             nav.ApplyPendingScanResult();
+        }
+        const bool hasPairedRaw = (curId != 0) && nav.HasPairedRaw(curId);
+        if (hasPairedRaw != hadPairedRaw) {
+            RefreshCurrentPairIndicators(hwnd);
         }
         if (nav.Count() != oldCount || nav.Index() != oldIndex) {
             RequestRepaint(PaintLayer::Static | PaintLayer::Dynamic);
@@ -13557,6 +13683,7 @@ SKIP_EDGE_NAV:;
         if (action == SettingsAction::OpenHelp) {
              // Seamless Handoff: Close Settings -> Open Help
              // Crucial: Do NOT restore window state here. Help Overlay inherits current expanded state.
+             EnsureHelpInitialized(hwnd);
              g_helpOverlay.SetVisible(true);
              g_settingsOverlay.SetVisible(false);
              RequestRepaint(PaintLayer::All);
@@ -13595,6 +13722,7 @@ SKIP_EDGE_NAV:;
                 RECT rcWnd; GetClientRect(hwnd, &rcWnd);
                 if (IsInTopHotspot(pt, (float)(rcWnd.right - rcWnd.left), (float)(rcWnd.bottom - rcWnd.top))) {
                     SaveOverlayWindowState(hwnd);
+                    EnsureThumbMgrInitialized(hwnd);
                     g_gallery.Open(GetPaneContext(PaneSlot::Primary).navigator.Index(), GalleryMode::Filmstrip);
                     RequestRepaint(PaintLayer::All);
                     return 0;
@@ -13666,8 +13794,8 @@ SKIP_EDGE_NAV:;
 
                  case UIHitResult::PanelToggle:
                      g_runtime.InfoPanelExpanded = !g_runtime.InfoPanelExpanded;
-                     if (g_runtime.InfoPanelExpanded && GetPaneContext(PaneSlot::Primary).metadata.HistR.empty() && !GetPaneContext(PaneSlot::Primary).path.empty()) {
-                         UpdateHistogramAsync(hwnd, GetPaneContext(PaneSlot::Primary).path);
+                     if (g_runtime.ShowInfoPanel) {
+                         EnsureInfoPanelDataLoaded(hwnd);
                      }
                      if (g_runtime.ShowInfoPanel) {
                 AdjustWindowForOverlay(hwnd, false);
@@ -14335,6 +14463,7 @@ SKIP_EDGE_NAV:;
                     if (g_slideshowState.IsActive) {
                         g_config.SlideshowImmersiveMode = (g_config.SlideshowImmersiveMode == 0) ? 1 : 0;
                         if (g_config.SlideshowImmersiveMode == 1) {
+                            EnsureThumbMgrInitialized(hwnd);
                             g_gallery.SetPinned(true);
                             g_gallery.Open(GetPaneContext(PaneSlot::Primary).navigator.Index(), GalleryMode::Filmstrip);
                         } else {
@@ -15875,13 +16004,23 @@ void ProcessEngineEvents(HWND hwnd) {
                 // [v5.4 Fix] Race Condition: Prevent FullReady (Basic) from overwriting Async EXIF
                 // If Async Metadata (lazy) arrived FIRST, we must preserve it!
                 auto finalMetadata = evt.metadata; // Create mutable copy
+                finalMetadata.OwnerImageId = evt.imageId;
                 
-                // [v10.0] Measured Peak Scan (SIMD) - Only for HDR float frames
-                if (evt.rawFrame && evt.rawFrame->pixels &&
-                    (evt.rawFrame->format == QuickView::PixelFormat::R32G32B32A32_FLOAT ||
-                     evt.rawFrame->format == QuickView::PixelFormat::R16G16B16A16_FLOAT ||
-                     evt.rawFrame->format == QuickView::PixelFormat::R16G16B16A16_UNORM)) {
-                    finalMetadata.MeasuredPeakNits = g_renderEngine->EstimateFramePeakScRgb(*evt.rawFrame) * 80.0f;
+                // [v10.0] Measured Peak Scan (SIMD) - Only for HDR float or HDR PQ/HLG frames
+                if (evt.rawFrame && evt.rawFrame->pixels) {
+                    const auto tf = (evt.rawFrame->colorInfo.transfer != QuickView::TransferFunction::Unknown)
+                        ? evt.rawFrame->colorInfo.transfer
+                        : evt.rawFrame->hdrMetadata.transfer;
+                    const bool isHdrUnorm =
+                        (evt.rawFrame->format == QuickView::PixelFormat::R16G16B16A16_UNORM) &&
+                        (evt.rawFrame->hdrMetadata.isHdr ||
+                         tf == QuickView::TransferFunction::PQ ||
+                         tf == QuickView::TransferFunction::HLG);
+                    if (evt.rawFrame->format == QuickView::PixelFormat::R32G32B32A32_FLOAT ||
+                        evt.rawFrame->format == QuickView::PixelFormat::R16G16B16A16_FLOAT ||
+                        isHdrUnorm) {
+                        finalMetadata.MeasuredPeakNits = g_renderEngine->EstimateFramePeakScRgb(*evt.rawFrame) * 80.0f;
+                    }
                 }
                 
                 // [Fix] For SVG frames, explicitly set Format and dimensions
@@ -15903,105 +16042,110 @@ void ProcessEngineEvents(HWND hwnd) {
                 }
                 
                 // [v5.5] Robust Metadata Merge (First Principles)
-                // Rule: Never overwrite valid data with empty/zero data.
-                // The HeavyLane (Decoder) is the source of truth for Dimensions and Pixels.
-                // The ReadMetadata (Async) is the source of truth for EXIF/Details.
-                
-                // 1. Dimensions: Decoder knows best. Async might fail (WIC).
-                // [v10.0] Shrink Protection: Never overwrite full dimensions with smaller preview dimensions.
-                // [Phase 6 Fix] Fake Base Protection: Do not let 1x1 or 4x4 fake Titan bases overwrite global metadata.
-                // [SVG Fix] SVG has no scaled/full upgrade, so always accept SVG dimensions.
-                {
-                    bool acceptDimUpdate = (finalMetadata.Width >= GetPaneContext(PaneSlot::Primary).metadata.Width && finalMetadata.Width > 16);
+                // Only merge existing pane metadata when it belongs to the SAME image (OwnerImageId match).
+                const auto& prevMeta = GetPaneContext(PaneSlot::Primary).metadata;
+                const bool isSameImageMeta = (prevMeta.OwnerImageId == evt.imageId && evt.imageId != 0);
+                if (isSameImageMeta) {
+                    // 1. Dimensions: Decoder knows best, but protect full dimensions from smaller previews.
+                    bool acceptDimUpdate = (finalMetadata.Width >= prevMeta.Width && finalMetadata.Width > 16);
                     if ((GetPaneContext(PaneSlot::Primary).resource.isSvg || GetPaneContext(PaneSlot::Primary).resource.isWebView) && finalMetadata.Width > 0) acceptDimUpdate = true;
-                    if (acceptDimUpdate) {
-                        GetPaneContext(PaneSlot::Primary).metadata.Width = finalMetadata.Width;
-                        GetPaneContext(PaneSlot::Primary).metadata.Height = finalMetadata.Height;
+                    if (!acceptDimUpdate && prevMeta.Width > 0 && prevMeta.Height > 0) {
+                        finalMetadata.Width = prevMeta.Width;
+                        finalMetadata.Height = prevMeta.Height;
+                    }
+
+                    // 2. File Stats
+                    if (finalMetadata.FileSize == 0 && prevMeta.FileSize > 0) {
+                        finalMetadata.FileSize = prevMeta.FileSize;
+                    }
+                    if ((finalMetadata.CreationTime.dwLowDateTime == 0 && finalMetadata.CreationTime.dwHighDateTime == 0) &&
+                        (prevMeta.CreationTime.dwLowDateTime != 0 || prevMeta.CreationTime.dwHighDateTime != 0)) {
+                        finalMetadata.CreationTime = prevMeta.CreationTime;
+                    }
+                    if ((finalMetadata.LastWriteTime.dwLowDateTime == 0 && finalMetadata.LastWriteTime.dwHighDateTime == 0) &&
+                        (prevMeta.LastWriteTime.dwLowDateTime != 0 || prevMeta.LastWriteTime.dwHighDateTime != 0)) {
+                        finalMetadata.LastWriteTime = prevMeta.LastWriteTime;
+                    }
+
+                    // 3. Color Space & Format
+                    if (finalMetadata.ColorSpace.empty() && !prevMeta.ColorSpace.empty()) {
+                        finalMetadata.ColorSpace = prevMeta.ColorSpace;
+                    }
+                    if (finalMetadata.Format.empty() && !prevMeta.Format.empty()) {
+                        finalMetadata.Format = prevMeta.Format;
+                    }
+                    if (finalMetadata.FormatDetails.empty() && !prevMeta.FormatDetails.empty()) {
+                        finalMetadata.FormatDetails = prevMeta.FormatDetails;
+                    }
+
+                    // 4. GPS
+                    if (!finalMetadata.HasGPS && prevMeta.HasGPS) {
+                         finalMetadata.HasGPS = true;
+                         finalMetadata.Latitude = prevMeta.Latitude;
+                         finalMetadata.Longitude = prevMeta.Longitude;
+                         finalMetadata.Altitude = prevMeta.Altitude;
+                    }
+
+                    // 5. Camera & Exposure Info
+                    if (finalMetadata.Make.empty() && !prevMeta.Make.empty()) finalMetadata.Make = prevMeta.Make;
+                    if (finalMetadata.Model.empty() && !prevMeta.Model.empty()) finalMetadata.Model = prevMeta.Model;
+                    if (finalMetadata.Lens.empty() && !prevMeta.Lens.empty()) finalMetadata.Lens = prevMeta.Lens;
+                    if (finalMetadata.Software.empty() && !prevMeta.Software.empty()) finalMetadata.Software = prevMeta.Software;
+                    if (finalMetadata.Date.empty() && !prevMeta.Date.empty()) finalMetadata.Date = prevMeta.Date;
+                    if (finalMetadata.ISO.empty() && !prevMeta.ISO.empty()) finalMetadata.ISO = prevMeta.ISO;
+                    if (finalMetadata.Aperture.empty() && !prevMeta.Aperture.empty()) finalMetadata.Aperture = prevMeta.Aperture;
+                    if (finalMetadata.Shutter.empty() && !prevMeta.Shutter.empty()) finalMetadata.Shutter = prevMeta.Shutter;
+                    if (finalMetadata.Focal.empty() && !prevMeta.Focal.empty()) finalMetadata.Focal = prevMeta.Focal;
+                    if (finalMetadata.Focal35mm.empty() && !prevMeta.Focal35mm.empty()) finalMetadata.Focal35mm = prevMeta.Focal35mm;
+                    if (finalMetadata.ExposureBias.empty() && !prevMeta.ExposureBias.empty()) finalMetadata.ExposureBias = prevMeta.ExposureBias;
+                    if (finalMetadata.Flash.empty() && !prevMeta.Flash.empty()) finalMetadata.Flash = prevMeta.Flash;
+                    if (finalMetadata.MeteringMode.empty() && !prevMeta.MeteringMode.empty()) finalMetadata.MeteringMode = prevMeta.MeteringMode;
+                    if (finalMetadata.ExposureProgram.empty() && !prevMeta.ExposureProgram.empty()) finalMetadata.ExposureProgram = prevMeta.ExposureProgram;
+                    if (finalMetadata.WhiteBalance.empty() && !prevMeta.WhiteBalance.empty()) finalMetadata.WhiteBalance = prevMeta.WhiteBalance;
+                    if (!finalMetadata.HasEmbeddedColorProfile.has_value() && prevMeta.HasEmbeddedColorProfile.has_value()) {
+                        finalMetadata.HasEmbeddedColorProfile = prevMeta.HasEmbeddedColorProfile;
+                    }
+
+                    // 6. HDR / Pixel Workspace & ICC
+                    if (finalMetadata.colorInfo.dataSpace == QuickView::PixelDataSpace::Unknown &&
+                        prevMeta.colorInfo.dataSpace != QuickView::PixelDataSpace::Unknown) {
+                        finalMetadata.colorInfo = prevMeta.colorInfo;
+                    }
+                    if (!finalMetadata.hdrMetadata.isValid &&
+                        !finalMetadata.hdrMetadata.hasGainMap &&
+                        (prevMeta.hdrMetadata.isValid || prevMeta.hdrMetadata.hasGainMap)) {
+                        finalMetadata.hdrMetadata = prevMeta.hdrMetadata;
+                    }
+                    if (finalMetadata.iccProfileData.empty() && !prevMeta.iccProfileData.empty()) {
+                        finalMetadata.iccProfileData.assign(
+                            prevMeta.iccProfileData.begin(),
+                            prevMeta.iccProfileData.end());
+                    }
+
+                    // 7. Preserve same-image async metadata & telemetry (histogram/sharpness/entropy)
+                    if (prevMeta.IsFullMetadataLoaded) finalMetadata.IsFullMetadataLoaded = true;
+                    if (finalMetadata.LoaderName.empty() && !prevMeta.LoaderName.empty()) finalMetadata.LoaderName = prevMeta.LoaderName;
+                    if (finalMetadata.HistL.empty() && !prevMeta.HistL.empty()) {
+                        finalMetadata.HistR = prevMeta.HistR;
+                        finalMetadata.HistG = prevMeta.HistG;
+                        finalMetadata.HistB = prevMeta.HistB;
+                        finalMetadata.HistL = prevMeta.HistL;
+                        finalMetadata.HistMapRange = prevMeta.HistMapRange;
+                    }
+                    if (!finalMetadata.HasSharpness && prevMeta.HasSharpness) {
+                        finalMetadata.HasSharpness = true;
+                        finalMetadata.Sharpness = prevMeta.Sharpness;
+                    }
+                    if (!finalMetadata.HasEntropy && prevMeta.HasEntropy) {
+                        finalMetadata.HasEntropy = true;
+                        finalMetadata.Entropy = prevMeta.Entropy;
+                    }
+                    if (finalMetadata.MeasuredPeakNits < 0.0f && prevMeta.MeasuredPeakNits >= 0.0f) {
+                        finalMetadata.MeasuredPeakNits = prevMeta.MeasuredPeakNits;
                     }
                 }
-                
-                // 2. File Stats: Always trust non-zero (Source fix ensures Async has it, but safety first)
-                if (finalMetadata.FileSize == 0 && GetPaneContext(PaneSlot::Primary).metadata.FileSize > 0) {
-                    finalMetadata.FileSize = GetPaneContext(PaneSlot::Primary).metadata.FileSize;
-                }
-                if ((finalMetadata.CreationTime.dwLowDateTime == 0 && finalMetadata.CreationTime.dwHighDateTime == 0) &&
-                    (GetPaneContext(PaneSlot::Primary).metadata.CreationTime.dwLowDateTime != 0 || GetPaneContext(PaneSlot::Primary).metadata.CreationTime.dwHighDateTime != 0)) {
-                    finalMetadata.CreationTime = GetPaneContext(PaneSlot::Primary).metadata.CreationTime;
-                }
-                // (Repeat for LastWriteTime if needed, mainly Creation is used)
-                
-                // 3. Color Space: Trust Decoder (EasyExif/Native) if Async (WIC) misses it
-                // BUT: Async might have found it via deeper WIC search.
-                // Logic: If Async has it, use it. If Async is empty, keep HeavyLane.
-                if (finalMetadata.ColorSpace.empty() && !GetPaneContext(PaneSlot::Primary).metadata.ColorSpace.empty()) {
-                    finalMetadata.ColorSpace = GetPaneContext(PaneSlot::Primary).metadata.ColorSpace;
-                }
-                
-                // 4. Format: Critical for ROI detection. Preserve if HeavyLane didn't set it.
-                if (finalMetadata.Format.empty() && !GetPaneContext(PaneSlot::Primary).metadata.Format.empty()) {
-                    finalMetadata.Format = GetPaneContext(PaneSlot::Primary).metadata.Format;
-                }
-                
-                // 5. Format Details: HeavyLane often has specific codec info (e.g. "Q=95")
-                // Async might be generic.
-                if (finalMetadata.FormatDetails.empty() && !GetPaneContext(PaneSlot::Primary).metadata.FormatDetails.empty()) {
-                    finalMetadata.FormatDetails = GetPaneContext(PaneSlot::Primary).metadata.FormatDetails;
-                }
-                
-                // 5. GPS: Async usually has better GPS (WIC). Keep Async unless empty?
-                // Actually HeavyLane doesn't parse GPS (yet), so Async is primary.
-                // But just in case:
-                if (!finalMetadata.HasGPS && GetPaneContext(PaneSlot::Primary).metadata.HasGPS) {
-                     finalMetadata.HasGPS = true;
-                     finalMetadata.Latitude = GetPaneContext(PaneSlot::Primary).metadata.Latitude;
-                     finalMetadata.Longitude = GetPaneContext(PaneSlot::Primary).metadata.Longitude;
-                     finalMetadata.Altitude = GetPaneContext(PaneSlot::Primary).metadata.Altitude;
-                }
 
-                // 6. Camera Info (Universal Protection)
-                if (finalMetadata.Make.empty() && !GetPaneContext(PaneSlot::Primary).metadata.Make.empty()) finalMetadata.Make = GetPaneContext(PaneSlot::Primary).metadata.Make;
-                if (finalMetadata.Model.empty() && !GetPaneContext(PaneSlot::Primary).metadata.Model.empty()) finalMetadata.Model = GetPaneContext(PaneSlot::Primary).metadata.Model;
-                if (finalMetadata.Lens.empty() && !GetPaneContext(PaneSlot::Primary).metadata.Lens.empty()) finalMetadata.Lens = GetPaneContext(PaneSlot::Primary).metadata.Lens;
-                if (finalMetadata.Software.empty() && !GetPaneContext(PaneSlot::Primary).metadata.Software.empty()) finalMetadata.Software = GetPaneContext(PaneSlot::Primary).metadata.Software;
-                if (finalMetadata.Date.empty() && !GetPaneContext(PaneSlot::Primary).metadata.Date.empty()) finalMetadata.Date = GetPaneContext(PaneSlot::Primary).metadata.Date;
-                
-                // 7. Exposure Info
-                if (finalMetadata.ISO.empty() && !GetPaneContext(PaneSlot::Primary).metadata.ISO.empty()) finalMetadata.ISO = GetPaneContext(PaneSlot::Primary).metadata.ISO;
-                if (finalMetadata.Aperture.empty() && !GetPaneContext(PaneSlot::Primary).metadata.Aperture.empty()) finalMetadata.Aperture = GetPaneContext(PaneSlot::Primary).metadata.Aperture;
-                if (finalMetadata.Shutter.empty() && !GetPaneContext(PaneSlot::Primary).metadata.Shutter.empty()) finalMetadata.Shutter = GetPaneContext(PaneSlot::Primary).metadata.Shutter;
-                if (finalMetadata.Focal.empty() && !GetPaneContext(PaneSlot::Primary).metadata.Focal.empty()) finalMetadata.Focal = GetPaneContext(PaneSlot::Primary).metadata.Focal;
-                if (finalMetadata.Focal35mm.empty() && !GetPaneContext(PaneSlot::Primary).metadata.Focal35mm.empty()) finalMetadata.Focal35mm = GetPaneContext(PaneSlot::Primary).metadata.Focal35mm;
-                if (finalMetadata.ExposureBias.empty() && !GetPaneContext(PaneSlot::Primary).metadata.ExposureBias.empty()) finalMetadata.ExposureBias = GetPaneContext(PaneSlot::Primary).metadata.ExposureBias;
-                if (finalMetadata.Flash.empty() && !GetPaneContext(PaneSlot::Primary).metadata.Flash.empty()) finalMetadata.Flash = GetPaneContext(PaneSlot::Primary).metadata.Flash;
-                if (finalMetadata.MeteringMode.empty() && !GetPaneContext(PaneSlot::Primary).metadata.MeteringMode.empty()) finalMetadata.MeteringMode = GetPaneContext(PaneSlot::Primary).metadata.MeteringMode;
-                if (finalMetadata.ExposureProgram.empty() && !GetPaneContext(PaneSlot::Primary).metadata.ExposureProgram.empty()) finalMetadata.ExposureProgram = GetPaneContext(PaneSlot::Primary).metadata.ExposureProgram;
-                if (finalMetadata.WhiteBalance.empty() && !GetPaneContext(PaneSlot::Primary).metadata.WhiteBalance.empty()) finalMetadata.WhiteBalance = GetPaneContext(PaneSlot::Primary).metadata.WhiteBalance;
-                if (finalMetadata.ColorSpace.empty() && !GetPaneContext(PaneSlot::Primary).metadata.ColorSpace.empty()) finalMetadata.ColorSpace = GetPaneContext(PaneSlot::Primary).metadata.ColorSpace;
-                if (!finalMetadata.HasEmbeddedColorProfile.has_value() && GetPaneContext(PaneSlot::Primary).metadata.HasEmbeddedColorProfile.has_value()) {
-                    finalMetadata.HasEmbeddedColorProfile = GetPaneContext(PaneSlot::Primary).metadata.HasEmbeddedColorProfile;
-                }
-                
-                // 8. HDR / Pixel Workspace: preserve decoder-provided high-value metadata
-                if (finalMetadata.colorInfo.dataSpace == QuickView::PixelDataSpace::Unknown &&
-                    GetPaneContext(PaneSlot::Primary).metadata.colorInfo.dataSpace != QuickView::PixelDataSpace::Unknown) {
-                    finalMetadata.colorInfo = GetPaneContext(PaneSlot::Primary).metadata.colorInfo;
-                }
-                if (!finalMetadata.hdrMetadata.isValid &&
-                    !finalMetadata.hdrMetadata.hasGainMap &&
-                    (GetPaneContext(PaneSlot::Primary).metadata.hdrMetadata.isValid || GetPaneContext(PaneSlot::Primary).metadata.hdrMetadata.hasGainMap)) {
-                    finalMetadata.hdrMetadata = GetPaneContext(PaneSlot::Primary).metadata.hdrMetadata;
-                }
-                
-                 // [v5.3 Fix] Do NOT force true here.
-                 // We want UIRenderer to detect "false" and trigger RequestFullMetadata (Async).
-                 // finalMetadata.IsFullMetadataLoaded = true;
-
-                // 9. ICC Profile Data: Preserve HeavyLane's raw ICC bytes if Async didn't provide any
-                if (finalMetadata.iccProfileData.empty() && !GetPaneContext(PaneSlot::Primary).metadata.iccProfileData.empty()) {
-                    finalMetadata.iccProfileData.assign(
-                        GetPaneContext(PaneSlot::Primary).metadata.iccProfileData.begin(),
-                        GetPaneContext(PaneSlot::Primary).metadata.iccProfileData.end());
-                }
+                // ICC Profile Data from current event frame
                 if (finalMetadata.iccProfileData.empty() && evt.rawFrame && !evt.rawFrame->iccProfile.empty()) {
                     finalMetadata.iccProfileData.assign(
                         evt.rawFrame->iccProfile.begin(),
@@ -16212,6 +16356,8 @@ void ProcessEngineEvents(HWND hwnd) {
                     ShowWindow(hwnd, showMode);
                     UpdateWindow(hwnd);
                     ForceForegroundWindow(hwnd);
+                    g_currentCursor = LoadCursor(nullptr, IDC_ARROW);
+                    SetCursor(g_currentCursor);
                     KillTimer(hwnd, TIMER_ID_STARTUP_SHOW);
                 }
                 if (g_isBootingWithImage) {
@@ -16245,10 +16391,8 @@ void ProcessEngineEvents(HWND hwnd) {
                 }
 
                 // [HUD & Info Panel] Trigger metrics calculation if visible
-                if (!isPreview && (g_runtime.ShowCompareInfo || (g_runtime.ShowInfoPanel && g_runtime.InfoPanelExpanded))) {
-                    if (IsTelemetryNeeded() && GetPaneContext(PaneSlot::Primary).metadata.HistL.empty() && !GetPaneContext(PaneSlot::Primary).path.empty()) {
-                        UpdateHistogramAsync(hwnd, GetPaneContext(PaneSlot::Primary).path);
-                    }
+                if (!isPreview && (g_runtime.ShowCompareInfo || g_runtime.ShowInfoPanel)) {
+                    EnsureInfoPanelDataLoaded(hwnd);
                 }
 
                 needsRepaint = true;
@@ -16290,8 +16434,22 @@ void ProcessEngineEvents(HWND hwnd) {
         case EventType::MetadataReady: {
             // [v5.3] Async Aux Metadata handling (Split Strategy)
             if (evt.imageId == g_currentImageId.load()) {
+                 auto& primaryMeta = GetPaneContext(PaneSlot::Primary).metadata;
+                 if (primaryMeta.OwnerImageId != evt.imageId) {
+                     const UINT keepW = primaryMeta.Width;
+                     const UINT keepH = primaryMeta.Height;
+                     const int keepExif = primaryMeta.ExifOrientation;
+                     const bool keepAlpha = primaryMeta.hasAlpha;
+                     primaryMeta = {};
+                     primaryMeta.Width = keepW;
+                     primaryMeta.Height = keepH;
+                     primaryMeta.ExifOrientation = keepExif;
+                     primaryMeta.hasAlpha = keepAlpha;
+                     primaryMeta.OwnerImageId = evt.imageId;
+                 }
+
                  // Merge logic: Only overwrite fields that are present in aux data
-                 if (!evt.metadata.Date.empty()) GetPaneContext(PaneSlot::Primary).metadata.Date = evt.metadata.Date;
+                 if (!evt.metadata.Date.empty()) primaryMeta.Date = evt.metadata.Date;
                  // [Fix] Copy Make!
                  if (!evt.metadata.Make.empty()) GetPaneContext(PaneSlot::Primary).metadata.Make = evt.metadata.Make;
                  if (!evt.metadata.Model.empty()) GetPaneContext(PaneSlot::Primary).metadata.Model = evt.metadata.Model;
@@ -16948,6 +17106,18 @@ void StartNavigation(HWND hwnd, std::wstring path, [[maybe_unused]] bool showOSD
         g_pairViewRenderedPath.clear();
     }
     if (GetPaneContext(PaneSlot::Primary).path != path && !pairViewSwitch) {
+        auto& primaryMeta = GetPaneContext(PaneSlot::Primary).metadata;
+        const UINT keepW = primaryMeta.Width;
+        const UINT keepH = primaryMeta.Height;
+        const int keepExif = primaryMeta.ExifOrientation;
+        const bool keepAlpha = primaryMeta.hasAlpha;
+        primaryMeta = {};
+        primaryMeta.Width = keepW;
+        primaryMeta.Height = keepH;
+        primaryMeta.ExifOrientation = keepExif;
+        primaryMeta.hasAlpha = keepAlpha;
+        primaryMeta.OwnerImageId = 0;
+
         AppContext::GetInstance().Minimaps[0].ResetLayout();
         AppContext::GetInstance().Minimaps[1].ResetLayout();
         g_runtime.ForceRawDecode = g_config.ForceRawDecode;
@@ -17030,7 +17200,9 @@ void StartNavigation(HWND hwnd, std::wstring path, [[maybe_unused]] bool showOSD
         g_toolbar.SetRawState(QuickView::IsRawPath(path) || navHasPairedRaw,
                               g_runtime.ForceRawDecode, isPairedView);
 
-        QueueRatingRead(path);
+        if (IsRatingNeeded()) {
+            QueueRatingRead(path);
+        }
         // Whatever left the screen can now be rewritten safely.
         g_ratingStore.ReleaseResident(path);
     }
@@ -17049,19 +17221,41 @@ void StartNavigation(HWND hwnd, std::wstring path, [[maybe_unused]] bool showOSD
 
 FireAndForget UpdateHistogramAsync(HWND hwnd, std::wstring path) {
     if (path.empty() || path != GetPaneContext(PaneSlot::Primary).path) co_return;
+
+    // Capture immutable in-memory frame fallback on UI thread in case large image skipped engine cache
+    std::shared_ptr<QuickView::RawImageFrame> fallbackFrame;
+    if (GetPaneContext(PaneSlot::Primary).path == path && GetPaneContext(PaneSlot::Primary).currentFrame) {
+        fallbackFrame = GetPaneContext(PaneSlot::Primary).currentFrame;
+    } else if (GetPaneContext(PaneSlot::Left).path == path && GetPaneContext(PaneSlot::Left).currentFrame) {
+        fallbackFrame = GetPaneContext(PaneSlot::Left).currentFrame;
+    }
     
     co_await ResumeBackground{};
     
     // [v10.3.1 Optimized] Zero-Copy Histogram Calculation
     // We no longer call LoadToMemory() (which re-decodes the file from disk).
-    // Instead, we use the pixels already residing in the engine's cache.
+    // Instead, we use the pixels already residing in the engine's cache or current pane frame.
     auto frame = (g_pImageEngine) ? g_pImageEngine->GetCachedImage(path) : nullptr;
+    if ((!frame || !frame->IsValid()) && fallbackFrame && fallbackFrame->IsValid()) {
+        frame = std::move(fallbackFrame);
+    }
     if (frame && frame->IsValid()) {
-        g_pImageEngine->GetLoader()->ComputeHistogramFromFrame(*frame, &GetPaneContext(PaneSlot::Primary).metadata);
+        CImageLoader::ImageMetadata histMeta;
+        g_pImageEngine->GetLoader()->ComputeHistogramFromFrame(*frame, &histMeta);
         
         co_await ResumeMainThread(hwnd);
         if (path == GetPaneContext(PaneSlot::Primary).path) {
-            RequestRepaint(PaintLayer::Dynamic);
+            auto& primaryMeta = GetPaneContext(PaneSlot::Primary).metadata;
+            primaryMeta.HistR = std::move(histMeta.HistR);
+            primaryMeta.HistG = std::move(histMeta.HistG);
+            primaryMeta.HistB = std::move(histMeta.HistB);
+            primaryMeta.HistL = std::move(histMeta.HistL);
+            primaryMeta.HistMapRange = histMeta.HistMapRange;
+            primaryMeta.Sharpness = histMeta.Sharpness;
+            primaryMeta.Entropy = histMeta.Entropy;
+            primaryMeta.HasSharpness = histMeta.HasSharpness;
+            primaryMeta.HasEntropy = histMeta.HasEntropy;
+            RequestRepaint(PaintLayer::Static | PaintLayer::Dynamic);
         }
     } else {
         // Fallback for cases where rawFrame is missing (unlikely in current engine)
@@ -18425,6 +18619,7 @@ static void ApplyRatingToCurrentImage(HWND hwnd, int stars) {
 
     // The photo on screen is held open for display, so a rebuild of it waits
     // until the user navigates away (see RatingStore::ReleaseResident).
+    EnsureRatingStoreInitialized(hwnd);
     g_ratingStore.ApplyRatingOptimistic(FileNavigator::PathToImageID(path), stars, rendered, raw,
                                         /*isResident*/ true);
 
@@ -18445,6 +18640,9 @@ static void ApplyRatingToCurrentImage(HWND hwnd, int stars) {
 
 static void QueueRatingRead(const std::wstring& path) {
     if (path.empty()) return;
+    if (g_mainHwnd) {
+        EnsureRatingStoreInitialized(g_mainHwnd);
+    }
     const auto& nav = GetPaneContext(PaneSlot::Primary).navigator;
 
     // A folded pair is read as one photo: the rendered file carries the
@@ -18643,7 +18841,9 @@ static void HandlePairedDelete(HWND hwnd, const std::wstring& renderedPath, cons
         nav.Initialize(currentPath, hwnd);
         
         // Force gallery to refresh cache and repaint
-        g_gallery.Initialize(&g_thumbMgr, &nav);
+        if (g_thumbMgrInitialized) {
+            g_gallery.Initialize(&g_thumbMgr, &nav);
+        }
         RequestRepaint(PaintLayer::All);
     }
 }
@@ -19125,6 +19325,7 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
                 g_toolbar.SetExifState(false);
             }
             if (g_runtime.ShowInfoPanel) {
+                EnsureInfoPanelDataLoaded(hwnd);
                 AdjustWindowForOverlay(hwnd, false);
             } else {
                 AdjustWindowForOverlay(hwnd, true);
@@ -19145,20 +19346,15 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
                 }
                 g_runtime.ShowInfoPanel = true;
                 g_runtime.InfoPanelExpanded = true;
-                if (IsTelemetryNeeded() && GetPaneContext(PaneSlot::Primary).metadata.HistR.empty() && !GetPaneContext(PaneSlot::Primary).path.empty()) {
-                    UpdateHistogramAsync(hwnd, GetPaneContext(PaneSlot::Primary).path);
-                }
                 g_toolbar.SetExifState(true);
             } else if (!g_runtime.InfoPanelExpanded) {
                 g_runtime.InfoPanelExpanded = true;
-                if (IsTelemetryNeeded() && GetPaneContext(PaneSlot::Primary).metadata.HistR.empty() && !GetPaneContext(PaneSlot::Primary).path.empty()) {
-                    UpdateHistogramAsync(hwnd, GetPaneContext(PaneSlot::Primary).path);
-                }
             } else {
                 g_runtime.ShowInfoPanel = false;
                 g_toolbar.SetExifState(false);
             }
             if (g_runtime.ShowInfoPanel) {
+                EnsureInfoPanelDataLoaded(hwnd);
                 AdjustWindowForOverlay(hwnd, false);
             } else {
                 AdjustWindowForOverlay(hwnd, true);
@@ -19359,6 +19555,7 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
         return true;
 
     case HotkeyAction::AiAction:
+        EnsureAiInitialized(hwnd);
         QuickView::UI::AiActionOverlay::Instance().Toggle();
         RequestRepaint(PaintLayer::Static);
         return true;
@@ -19473,6 +19670,7 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
         return true;
 
     case HotkeyAction::Help:
+        EnsureHelpInitialized(hwnd);
         if (!g_helpOverlay.IsVisible()) {
             if (g_gallery.IsVisible()) {
                 g_gallery.Close();
@@ -19500,6 +19698,7 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
             g_slideshowState.TimerId = IDT_SLIDESHOW;
             g_slideshowState.WasGalleryPinned = g_gallery.IsPinned();
             if (g_config.SlideshowImmersiveMode == 1) {
+                EnsureThumbMgrInitialized(hwnd);
                 g_gallery.SetPinned(true);
                 g_gallery.Open(GetPaneContext(PaneSlot::Primary).navigator.Index(), GalleryMode::Filmstrip);
             }
