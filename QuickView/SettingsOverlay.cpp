@@ -2396,9 +2396,10 @@ void SettingsOverlay::BuildThemeTab(SettingsTab& tabTheme) {
     // Rounded Corners
     SettingsItem itemRounded = { AppStrings::Settings_Label_RoundedCorners, OptionType::Toggle, &g_config.RoundedCorners, {} };
     itemRounded.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-        bool enable = g_config.RoundedCorners;
-        DWM_WINDOW_CORNER_PREFERENCE preference = enable ? DWMWCP_ROUND : DWMWCP_DONOTROUND;
-        DwmSetWindowAttribute(GetActiveWindow(), DWMWA_WINDOW_CORNER_PREFERENCE, &preference, sizeof(preference));
+        HWND targetHwnd = (overlay && overlay->m_hwnd) ? overlay->m_hwnd : GetActiveWindow();
+        if (targetHwnd) {
+            SyncWindowDwmFrameAttributes(targetHwnd);
+        }
         SaveConfig();
     };
     itemRounded.tooltipText = AppStrings::Settings_Tooltip_RoundedCorners;

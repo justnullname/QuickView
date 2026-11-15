@@ -192,6 +192,30 @@ bool g_isDraggingAnimSeek = false;
 bool g_isDraggingFilmstrip = false;
 bool g_windowSizeRestoredFromConfig = false;
 static WINDOWPLACEMENT g_savedWindowPlacement = { sizeof(WINDOWPLACEMENT), 0, 0, {0,0}, {0,0}, {0,0,0,0} };
+int g_initialCmdShow = SW_SHOW;
+
+static bool IsStartupMaximizePending(HWND hwnd) {
+    return hwnd && !IsWindowVisible(hwnd) && !g_isFullScreen &&
+           (g_initialCmdShow == SW_MAXIMIZE || g_initialCmdShow == SW_SHOWMAXIMIZED);
+}
+
+static RECT GetEffectiveClientRect(HWND hwnd) {
+    RECT rc{};
+    if (IsStartupMaximizePending(hwnd)) {
+        HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO mi{};
+        mi.cbSize = sizeof(mi);
+        if (GetMonitorInfoW(hMon, &mi)) {
+            rc.left = 0;
+            rc.top = 0;
+            rc.right = mi.rcWork.right - mi.rcWork.left;
+            rc.bottom = mi.rcWork.bottom - mi.rcWork.top;
+            return rc;
+        }
+    }
+    GetClientRect(hwnd, &rc);
+    return rc;
+}
 
 #include <mutex>
 #include <condition_variable>
@@ -881,7 +905,10 @@ void SetLockWindowSize(HWND hwnd, bool locked);
 
 
 void ApplyFullScreenZoomMode(HWND hwnd) {
-    if (!GetPaneContext(PaneSlot::Primary).resource || (!g_isFullScreen && !IsZoomed(hwnd))) return;
+    if (!GetPaneContext(PaneSlot::Primary).resource ||
+        (!g_isFullScreen && !IsZoomed(hwnd) && !IsStartupMaximizePending(hwnd))) {
+        return;
+    }
 
     // 1. Obtain true intrinsic visual dimensions (imgW, imgH) unpolluted by DComp surface size
     float imgW = 0.0f;
@@ -899,7 +926,7 @@ void ApplyFullScreenZoomMode(HWND hwnd) {
     if (imgW <= 0.0f || imgH <= 0.0f) return;
 
     // 2. Get effective window client dimensions
-    RECT rc; GetClientRect(hwnd, &rc);
+    RECT rc = GetEffectiveClientRect(hwnd);
     float winW = (float)rc.right;
     float galleryH = (g_gallery.IsPinned() && g_gallery.IsVisible()) ? g_gallery.GetVisualHeight((float)rc.bottom) : 0.0f;
     float winH = (float)rc.bottom - galleryH;
@@ -2559,7 +2586,7 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
 bool RenderImageToDComp(HWND hwnd, ImageResource& res, [[maybe_unused]] bool isFastUpgrade, bool allowDownsampling, float downsampleScale) {
     if (!g_compEngine || !g_compEngine->IsInitialized()) return false;
     
-    RECT rc; GetClientRect(hwnd, &rc);
+    RECT rc = GetEffectiveClientRect(hwnd);
     UINT winW = rc.right; UINT winH = rc.bottom;
     
     // Handle Empty Resource (Clear Surface)
@@ -3918,7 +3945,7 @@ static float GetCurrentRealScale(HWND hwnd) {
         originalW = vs.IsRotated90 ? rawH : rawW;
     }
 
-    RECT rcClient; GetClientRect(hwnd, &rcClient);
+    RECT rcClient = GetEffectiveClientRect(hwnd);
     float winW = (float)(rcClient.right - rcClient.left);
     float winH = (float)(rcClient.bottom - rcClient.top);
 
@@ -4701,10 +4728,73 @@ bool CheckExtensionMismatch(std::wstring_view path, std::wstring_view format) {
     return false;
 }
 
+#ifndef DWMWA_BORDER_COLOR
+#define DWMWA_BORDER_COLOR 34
+#endif
+#ifndef DWMWA_CAPTION_COLOR
+#define DWMWA_CAPTION_COLOR 35
+#endif
+#ifndef DWMWA_COLOR_NONE
+#define DWMWA_COLOR_NONE 0xFFFFFFFE
+#endif
+#ifndef DWMWA_COLOR_DEFAULT
+#define DWMWA_COLOR_DEFAULT 0xFFFFFFFF
+#endif
+
 // --- Persistence ---
-void ApplyWindowCornerPreference(HWND hwnd, bool enable) {
-    DWM_WINDOW_CORNER_PREFERENCE preference = enable ? DWMWCP_ROUND : DWMWCP_DONOTROUND;
-    DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &preference, sizeof(preference));
+struct DwmFrameAttributeCache {
+    HWND hwnd = nullptr;
+    DWM_WINDOW_CORNER_PREFERENCE corner = DWMWCP_DEFAULT;
+    COLORREF captionColor = 0;
+    COLORREF borderColor = 0;
+    bool valid = false;
+};
+static DwmFrameAttributeCache s_dwmFrameCache;
+
+static void ResetWindowDwmFrameCache(HWND hwnd) {
+    if (s_dwmFrameCache.hwnd == hwnd) {
+        s_dwmFrameCache = {};
+    }
+}
+
+void SyncWindowDwmFrameAttributes(HWND hwnd) {
+    if (!hwnd || !SystemInfo::IsWindows11OrGreater()) return;
+
+    // Suppress rounded corners in fullscreen and maximized states; fullscreen must
+    // also explicitly disable the Win11 DWM border so WM_SIZE(SIZE_RESTORED) or
+    // theme refreshes cannot restore a 1px border around the screen edge.
+    const bool suppressCorners = g_isFullScreen || (IsZoomed(hwnd) != 0);
+    const DWM_WINDOW_CORNER_PREFERENCE targetCorner =
+        (!suppressCorners && g_config.RoundedCorners) ? DWMWCP_ROUND : DWMWCP_DONOTROUND;
+
+    // Keep caption color disabled (DWMWA_COLOR_NONE) outside Spotlight slideshow
+    // so Windows 11 never bleeds a default caption tint into transparent DComp surfaces.
+    COLORREF targetCaption = DWMWA_COLOR_NONE;
+    COLORREF targetBorder = DWMWA_COLOR_DEFAULT;
+    if (g_isFullScreen) {
+        targetBorder = DWMWA_COLOR_NONE;
+    } else if (g_slideshowState.IsActive && g_config.SlideshowImmersiveMode == 1) {
+        targetCaption = 0x00000000;
+        targetBorder = 0x00000000;
+    }
+
+    const bool cacheHit = s_dwmFrameCache.valid && s_dwmFrameCache.hwnd == hwnd;
+    if (!cacheHit || s_dwmFrameCache.corner != targetCorner) {
+        DWM_WINDOW_CORNER_PREFERENCE pref = targetCorner;
+        DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &pref, sizeof(pref));
+    }
+    if (!cacheHit || s_dwmFrameCache.captionColor != targetCaption) {
+        DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &targetCaption, sizeof(targetCaption));
+    }
+    if (!cacheHit || s_dwmFrameCache.borderColor != targetBorder) {
+        DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &targetBorder, sizeof(targetBorder));
+    }
+
+    s_dwmFrameCache.hwnd = hwnd;
+    s_dwmFrameCache.corner = targetCorner;
+    s_dwmFrameCache.captionColor = targetCaption;
+    s_dwmFrameCache.borderColor = targetBorder;
+    s_dwmFrameCache.valid = true;
 }
 
 bool IsSystemLightTheme() {
@@ -4752,25 +4842,7 @@ void ApplyWindowTheme(HWND hwnd) {
         DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdropType, sizeof(backdropType));
     }
 
-#ifndef DWMWA_BORDER_COLOR
-#define DWMWA_BORDER_COLOR 34
-#endif
-#ifndef DWMWA_CAPTION_COLOR
-#define DWMWA_CAPTION_COLOR 35
-#endif
-#ifndef DWMWA_COLOR_DEFAULT
-#define DWMWA_COLOR_DEFAULT 0xFFFFFFFF
-#endif
-
-    if (g_slideshowState.IsActive && g_config.SlideshowImmersiveMode == 1) {
-        COLORREF black = 0x00000000;
-        DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &black, sizeof(black));
-        DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &black, sizeof(black));
-    } else {
-        COLORREF def = DWMWA_COLOR_DEFAULT;
-        DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &def, sizeof(def));
-        DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &def, sizeof(def));
-    }
+    SyncWindowDwmFrameAttributes(hwnd);
 
     if (const auto setPreferredAppMode = LoadSetPreferredAppMode()) {
         setPreferredAppMode(useLightTheme ? PreferredAppMode::ForceLight : PreferredAppMode::ForceDark);
@@ -4787,6 +4859,114 @@ void ApplyWindowTheme(HWND hwnd) {
         0,
         0,
         SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+static void SetFullscreenMode(HWND hwnd, bool enter, bool restoreMaximized = false) {
+    if (!hwnd) return;
+    DWORD dwStyle = static_cast<DWORD>(GetWindowLong(hwnd, GWL_STYLE));
+
+    if (!enter) {
+        if (!g_isFullScreen) return;
+        // Set flag BEFORE SetWindowPos/SetWindowPlacement so WM_SIZE sees the updated state.
+        g_isFullScreen = false;
+
+        SetWindowLong(hwnd, GWL_STYLE, dwStyle | WS_OVERLAPPEDWINDOW);
+        bool needsFrameFlush = true;
+        if (g_savedWindowPlacement.length == sizeof(WINDOWPLACEMENT)) {
+            if (g_savedWindowPlacement.showCmd == SW_HIDE ||
+                g_savedWindowPlacement.showCmd == SW_SHOWMINIMIZED) {
+                g_savedWindowPlacement.showCmd = SW_SHOWNORMAL;
+            }
+            SetWindowPlacement(hwnd, &g_savedWindowPlacement);
+            // SW_SHOWMAXIMIZED transitions style/bounds and emits WM_NCCALCSIZE/WM_SIZE directly.
+            needsFrameFlush = (g_savedWindowPlacement.showCmd != SW_SHOWMAXIMIZED);
+        }
+        if (needsFrameFlush) {
+            SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+        }
+        SyncWindowDwmFrameAttributes(hwnd);
+        return;
+    }
+
+    RECT targetRect{};
+    if (g_runtime.CrossMonitorMode) {
+        targetRect = GetVirtualScreenRect();
+    } else {
+        MONITORINFO mi{};
+        mi.cbSize = sizeof(mi);
+        if (GetMonitorInfo(MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY), &mi)) {
+            targetRect = mi.rcMonitor;
+        }
+    }
+
+    if (IsRectEmpty(&targetRect)) return;
+
+    if (!g_isFullScreen) {
+        g_savedWindowPlacement.length = sizeof(WINDOWPLACEMENT);
+        GetWindowPlacement(hwnd, &g_savedWindowPlacement);
+        // When entering fullscreen synchronously on a hidden startup window,
+        // GetWindowPlacement returns SW_HIDE; normalize it so exiting fullscreen
+        // later restores a visible window instead of hiding it.
+        if (!IsWindowVisible(hwnd) ||
+            g_savedWindowPlacement.showCmd == SW_HIDE ||
+            g_savedWindowPlacement.showCmd == SW_SHOWMINIMIZED) {
+            const bool shouldRestoreMaximized = restoreMaximized ||
+                (g_initialCmdShow == SW_MAXIMIZE || g_initialCmdShow == SW_SHOWMAXIMIZED);
+            g_savedWindowPlacement.showCmd = shouldRestoreMaximized ? SW_SHOWMAXIMIZED : SW_SHOWNORMAL;
+        }
+    }
+
+    // Set flag BEFORE SetWindowPos so WM_SIZE sees the updated state.
+    g_isFullScreen = true;
+
+    // Strip WS_MAXIMIZE and WS_MINIMIZE so IsZoomed/IsIconic never linger in fullscreen.
+    SetWindowLong(hwnd, GWL_STYLE, dwStyle & ~(WS_OVERLAPPEDWINDOW | WS_MAXIMIZE | WS_MINIMIZE));
+    SetWindowPos(hwnd, HWND_TOP,
+                 targetRect.left, targetRect.top,
+                 targetRect.right - targetRect.left,
+                 targetRect.bottom - targetRect.top,
+                 SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+
+    // Apply AFTER SetWindowPos to guarantee DWM attributes persist.
+    SyncWindowDwmFrameAttributes(hwnd);
+}
+
+static bool ShouldAutoFullscreenForDimensions(HWND hwnd, UINT imgW, UINT imgH) {
+    if (g_config.OpenFullScreenMode == 2) return true;
+    if (g_config.OpenFullScreenMode == 1 && imgW > 0 && imgH > 0) {
+        HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO mi{};
+        mi.cbSize = sizeof(mi);
+        if (GetMonitorInfoW(hMon, &mi)) {
+            const int monW = mi.rcMonitor.right - mi.rcMonitor.left;
+            const int monH = mi.rcMonitor.bottom - mi.rcMonitor.top;
+            return imgW > static_cast<UINT>(monW) || imgH > static_cast<UINT>(monH);
+        }
+    }
+    return false;
+}
+
+static ImageID g_lastAutoFullscreenImageId = ~(0ULL);
+
+static void ApplyAutoFullscreenPolicy(HWND hwnd, ImageID imageId, const CImageLoader::ImageMetadata& meta) {
+    if (g_config.OpenFullScreenMode <= 0 || imageId == g_lastAutoFullscreenImageId) return;
+
+    UINT imgW = meta.Width;
+    UINT imgH = meta.Height;
+    if (g_config.AutoRotate &&
+        (meta.ExifOrientation == 5 || meta.ExifOrientation == 6 ||
+         meta.ExifOrientation == 7 || meta.ExifOrientation == 8)) {
+        std::swap(imgW, imgH);
+    }
+
+    const bool shouldFullscreen = ShouldAutoFullscreenForDimensions(hwnd, imgW, imgH);
+    if (shouldFullscreen && !g_isFullScreen) {
+        SetFullscreenMode(hwnd, true);
+    } else if (!shouldFullscreen && g_isFullScreen && g_config.OpenFullScreenMode == 1) {
+        SetFullscreenMode(hwnd, false);
+    }
+    g_lastAutoFullscreenImageId = imageId;
 }
 
 void ParseFixedZoomLevels() {
@@ -6483,7 +6663,7 @@ void AdjustWindowToImage(HWND hwnd) {
     // Note: Removed early return for g_settingsOverlay.IsVisible() because GetMinWindowWidth() 
     // now correctly handles overlay minimums. This allows the window to resize to fit larger 
     // images even when Settings is open, while still respecting minimum UI bounds.
-    if (g_isFullScreen || IsZoomed(hwnd)) return; // [Fix] Don't resize if in Fullscreen or Maximized mode
+    if (g_isFullScreen || IsZoomed(hwnd) || IsStartupMaximizePending(hwnd)) return; // [Fix] Don't resize if in Fullscreen or Maximized mode
 
     // [Fix] Use Centralized First-Principles Dimension Logic
     D2D1_SIZE_F effSize = GetEffectiveImageSize();
@@ -8116,7 +8296,13 @@ static void TryCleanupOldVersion(int argc, LPWSTR* argv) {
     }
 }
 HCURSOR g_currentCursor = nullptr;
-int g_initialCmdShow = SW_SHOW;
+
+static void ShowInitialWindow(HWND hwnd) {
+    const int showMode = g_isFullScreen ? SW_SHOWNORMAL : g_initialCmdShow;
+    ShowWindow(hwnd, showMode);
+    UpdateWindow(hwnd);
+    ForceForegroundWindow(hwnd);
+}
 
 struct InitialWindowMetrics {
     int x = 0;
@@ -8272,9 +8458,10 @@ static bool TryPresentBootPreloadedFrame(HWND hwnd, const std::wstring& initialI
     // [Presentation Pipeline Alignment]
     // Suppress premature WM_SIZE OnPaint/Commit while adjusting geometry
     g_deferProgrammaticZoomResizeSync = true;
+    ApplyAutoFullscreenPolicy(hwnd, bootId, primaryPane.metadata);
     AdjustWindowToImage(hwnd);
 
-    if (g_isFullScreen || IsZoomed(hwnd)) {
+    if (g_isFullScreen || IsZoomed(hwnd) || IsStartupMaximizePending(hwnd)) {
         ApplyFullScreenZoomMode(hwnd);
     }
     g_deferProgrammaticZoomResizeSync = false;
@@ -8282,7 +8469,7 @@ static bool TryPresentBootPreloadedFrame(HWND hwnd, const std::wstring& initialI
     // Update DComp Visual using the correct, up-to-date window dimensions
     RenderImageToDComp(hwnd, primaryPane.resource, false);
 
-    RECT rcClient{}; GetClientRect(hwnd, &rcClient);
+    RECT rcClient = GetEffectiveClientRect(hwnd);
     SyncDCompState(hwnd, (float)rcClient.right, (float)rcClient.bottom, false);
     SyncAnimationPlaybackTimer(hwnd, primaryPane.resource);
     if (g_uiRenderer) {
@@ -8312,9 +8499,7 @@ static bool TryPresentBootPreloadedFrame(HWND hwnd, const std::wstring& initialI
     g_isLoading = false;
     KillTimer(hwnd, TIMER_ID_STARTUP_SHOW);
 
-    ShowWindow(hwnd, g_initialCmdShow);
-    UpdateWindow(hwnd);
-    ForceForegroundWindow(hwnd);
+    ShowInitialWindow(hwnd);
     g_currentCursor = LoadCursor(nullptr, IDC_ARROW);
     SetCursor(g_currentCursor);
 
@@ -8633,15 +8818,30 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCm
 
     g_defaultIMC = ImmAssociateContext(hwnd, nullptr);
 
-    if (g_config.RememberLastWindowSizeAndPosition) {
-        if (startMaximized) {
-            nCmdShow = SW_MAXIMIZE;
+    g_initialCmdShow = (nCmdShow == SW_HIDE || nCmdShow == 0) ? SW_SHOWNORMAL : nCmdShow;
+    const bool rememberMaximized = g_config.RememberLastWindowSizeAndPosition && startMaximized;
+    if (rememberMaximized && g_initialCmdShow != SW_SHOWMAXIMIZED) {
+        g_initialCmdShow = SW_MAXIMIZE;
+    }
+
+    bool shouldStartFullscreen = false;
+    if (!hasInitialImage) {
+        shouldStartFullscreen = g_config.RememberLastWindowSizeAndPosition && startFullscreen;
+    } else if (g_config.OpenFullScreenMode == 2) {
+        shouldStartFullscreen = true;
+    } else if (g_config.OpenFullScreenMode == 1) {
+        if (peekW > 0 && peekH > 0) {
+            shouldStartFullscreen = ShouldAutoFullscreenForDimensions(
+                hwnd, static_cast<UINT>(peekW), static_cast<UINT>(peekH));
         }
-        if (startFullscreen && g_config.OpenFullScreenMode == 0) {
-            // We set g_isFullScreen to true. But wait, WM_COMMAND IDM_FULLSCREEN toggles.
-            // Let's just post a message to trigger it.
-            PostMessage(hwnd, WM_COMMAND, IDM_FULLSCREEN, 0);
-        }
+    } else {
+        shouldStartFullscreen = g_config.RememberLastWindowSizeAndPosition && startFullscreen;
+    }
+
+    if (shouldStartFullscreen) {
+        // Apply fullscreen synchronously before ShowWindow to avoid a windowed
+        // flash and the BootPreloader vs PostMessage(IDM_FULLSCREEN) race.
+        SetFullscreenMode(hwnd, true, rememberMaximized);
     }
 
     RefreshWindowDpi(hwnd);
@@ -8672,7 +8872,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCm
             }
         }, hwnd);
     }
-    ApplyWindowCornerPreference(hwnd, g_config.RoundedCorners);
     
     // Set global hwnd for RequestRepaint system
     g_mainHwnd = hwnd;
@@ -8733,7 +8932,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCm
     }
 
     // --- [v10.5] Fast-Lane Boot Integration ---
-    g_initialCmdShow = (nCmdShow == SW_HIDE || nCmdShow == 0) ? SW_SHOWNORMAL : nCmdShow;
     if (!initialImagePath.empty()) {
       g_imagePath = initialImagePath;
       std::error_code ec;
@@ -8789,8 +8987,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCm
     if (g_isBootingWithImage) {
         SetTimer(hwnd, TIMER_ID_STARTUP_SHOW, 1500, nullptr); // Safe 1500ms failsafe timeout for huge/RAW images
     } else {
-        ShowWindow(hwnd, g_initialCmdShow); UpdateWindow(hwnd);
-        ForceForegroundWindow(hwnd); // Ensure window takes focus
+        ShowInitialWindow(hwnd);
     }
     
     // Initialize Toolbar layout with window size (fixes initial rendering issue)
@@ -9669,50 +9866,7 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
             break;
         }
         case IDM_FULLSCREEN: {
-            // [Fix] True Fullscreen Implementation
-            DWORD dwStyle = GetWindowLong(hwnd, GWL_STYLE);
-            
-                if (g_isFullScreen) {
-                    // Restore to Windowed
-                    // [Fix] Set flag BEFORE SetWindowPos so WM_SIZE sees correct state
-                    g_isFullScreen = false;
-                    ApplyWindowCornerPreference(hwnd, g_config.RoundedCorners); // Restore user preference
-
-                    SetWindowLong(hwnd, GWL_STYLE, dwStyle | WS_OVERLAPPEDWINDOW);
-                    SetWindowPlacement(hwnd, &g_savedWindowPlacement);
-                    SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, 
-                                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
-                } else {
-                // Enter Fullscreen
-                RECT targetRect{};
-                
-                // [Phase 2] Cross-Monitor Spanning (Video Wall Mode)
-                if (g_runtime.CrossMonitorMode) {
-                    targetRect = GetVirtualScreenRect();
-                } else {
-                    MONITORINFO mi{}; mi.cbSize = sizeof(mi);
-                    if (GetMonitorInfo(MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY), &mi)) {
-                        targetRect = mi.rcMonitor;
-                    }
-                }
-
-                if (!IsRectEmpty(&targetRect)) {
-                    GetWindowPlacement(hwnd, &g_savedWindowPlacement);
-                    
-                    // [Fix] Set flag BEFORE SetWindowPos so WM_SIZE sees correct state
-                    g_isFullScreen = true;
-                    
-                    SetWindowLong(hwnd, GWL_STYLE, dwStyle & ~WS_OVERLAPPEDWINDOW);
-                    SetWindowPos(hwnd, HWND_TOP, 
-                                 targetRect.left, targetRect.top,
-                                 targetRect.right - targetRect.left,
-                                 targetRect.bottom - targetRect.top,
-                                 SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
-                    
-                    // [Fix] Apply AFTER SetWindowPos to ensure DWM attribute persists
-                    ApplyWindowCornerPreference(hwnd, false); // Force square corners in fullscreen
-                }
-            }
+            SetFullscreenMode(hwnd, !g_isFullScreen);
             // Trigger repaint to center/resize image
             RequestRepaint(PaintLayer::All);
             ScheduleDebouncedSuperResolution(hwnd);
@@ -10109,11 +10263,11 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
              g_runtime.CrossMonitorMode = g_config.EnableCrossMonitor;
              SaveConfig();
 
-             // If fullscreen, re-apply fullscreen to switch mode
+             // If fullscreen, re-apply fullscreen directly to avoid a windowed/maximized flash
              if (g_isFullScreen) {
-                 // Toggle OFF then ON to apply new rect
-                 SendMessage(hwnd, WM_COMMAND, IDM_FULLSCREEN, 0); // OFF
-                 SendMessage(hwnd, WM_COMMAND, IDM_FULLSCREEN, 0); // ON (with new mode)
+                 SetFullscreenMode(hwnd, true);
+                 RequestRepaint(PaintLayer::All);
+                 ScheduleDebouncedSuperResolution(hwnd);
              }
              std::wstring msg = g_runtime.CrossMonitorMode ? AppStrings::OSD_SpanOn : AppStrings::OSD_SpanOff;
              g_osd.Show(hwnd, msg, false);
@@ -10963,13 +11117,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         MARGINS margins = { 0, 0, 0, 1 };
         DwmExtendFrameIntoClientArea(hwnd, &margins);
 
-        // [Fix] Permanently disable Windows 11 default caption/background color from bleeding into our transparent DComp surface
-        // DWMWA_CAPTION_COLOR (35), DWMWA_COLOR_NONE (0xFFFFFFFE)
-        if (SystemInfo::IsWindows11OrGreater()) {
-            COLORREF captionColor = 0xFFFFFFFE;
-            DwmSetWindowAttribute(hwnd, 35, &captionColor, sizeof(captionColor));
-        }
-
         ApplyWindowTheme(hwnd);
         return 0;
     }
@@ -11684,7 +11831,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             if (!IsWindowVisible(hwnd)) {
                 // Ensure configured background (e.g. checkerboard grid) is committed to DComp
                 // so the window never reveals default OS grey/white blank background while waiting for large image.
-                RECT rc{}; GetClientRect(hwnd, &rc);
+                RECT rc = GetEffectiveClientRect(hwnd);
                 if (g_compEngine && g_compEngine->IsInitialized()) {
                     SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
                 }
@@ -11695,10 +11842,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 if (g_compEngine) {
                     g_compEngine->Commit();
                 }
-                int showMode = (g_initialCmdShow == SW_HIDE || g_initialCmdShow == 0) ? SW_SHOWNORMAL : g_initialCmdShow;
-                ShowWindow(hwnd, showMode);
-                UpdateWindow(hwnd);
-                ForceForegroundWindow(hwnd);
+                ShowInitialWindow(hwnd);
             }
             if (g_isBootingWithImage) {
                 g_isBootingWithImage = false;
@@ -12119,12 +12263,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     case WM_SIZE: {
         UpdateCropStateEdgeReached(hwnd);
         static bool s_wasMinimized = false;
-        if (wParam == SIZE_MAXIMIZED) {
-             // Force Square Corners when maximized (Standard Windows behavior)
-             ApplyWindowCornerPreference(hwnd, false);
-        } else if (wParam == SIZE_RESTORED) {
-             // Restore User Preference
-             ApplyWindowCornerPreference(hwnd, g_config.RoundedCorners);
+        if (wParam == SIZE_MAXIMIZED || wParam == SIZE_RESTORED) {
+            SyncWindowDwmFrameAttributes(hwnd);
         }
 
         if (wParam == SIZE_MINIMIZED) {
@@ -12266,44 +12406,52 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 iniPath = exeDir + L"\\QuickView.ini";
             }
 
-            const bool maximized = IsZoomed(hwnd) != 0;
+            const bool maximized = g_isFullScreen
+                ? (g_savedWindowPlacement.showCmd == SW_SHOWMAXIMIZED)
+                : (IsZoomed(hwnd) != 0);
             WritePrivateProfileStringW(L"View", L"LastWindowWasFullscreen", g_isFullScreen ? L"1" : L"0", iniPath.c_str());
             WritePrivateProfileStringW(L"View", L"LastWindowWasMaximized", maximized ? L"1" : L"0", iniPath.c_str());
 
-            if (!g_isFullScreen) {
-                if (maximized) {
-                    // For maximized window, we save its RESTORE position so it knows where to return.
-                    // Workspace coordinates from GetWindowPlacement are converted to screen coordinates
-                    // to handle custom taskbar positions (top/left) correctly.
-                    WINDOWPLACEMENT wp = {};
-                    wp.length = sizeof(WINDOWPLACEMENT);
-                    if (GetWindowPlacement(hwnd, &wp)) {
-                        MONITORINFO mi = {};
-                        mi.cbSize = sizeof(mi);
-                        if (GetMonitorInfo(MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY), &mi)) {
-                            int w = wp.rcNormalPosition.right - wp.rcNormalPosition.left;
-                            int h = wp.rcNormalPosition.bottom - wp.rcNormalPosition.top;
-                            int x = wp.rcNormalPosition.left + mi.rcWork.left;
-                            int y = wp.rcNormalPosition.top + mi.rcWork.top;
-                            
-                            WritePrivateProfileStringW(L"View", L"LastWindowW", std::to_wstring(w).c_str(), iniPath.c_str());
-                            WritePrivateProfileStringW(L"View", L"LastWindowH", std::to_wstring(h).c_str(), iniPath.c_str());
-                            WritePrivateProfileStringW(L"View", L"LastWindowX", std::to_wstring(x).c_str(), iniPath.c_str());
-                            WritePrivateProfileStringW(L"View", L"LastWindowY", std::to_wstring(y).c_str(), iniPath.c_str());
-                        }
-                    }
-                } else {
-                    // For normal or snapped window, we save its CURRENT position using GetWindowRect.
-                    // This correctly captures the actual snapped bounds in screen coordinates.
-                    RECT rc;
-                    if (GetWindowRect(hwnd, &rc)) {
-                        int w = rc.right - rc.left;
-                        int h = rc.bottom - rc.top;
-                        WritePrivateProfileStringW(L"View", L"LastWindowW", std::to_wstring(w).c_str(), iniPath.c_str());
-                        WritePrivateProfileStringW(L"View", L"LastWindowH", std::to_wstring(h).c_str(), iniPath.c_str());
-                        WritePrivateProfileStringW(L"View", L"LastWindowX", std::to_wstring(rc.left).c_str(), iniPath.c_str());
-                        WritePrivateProfileStringW(L"View", L"LastWindowY", std::to_wstring(rc.top).c_str(), iniPath.c_str());
-                    }
+            auto writeWindowBounds = [&](int x, int y, int w, int h) {
+                wchar_t buf[32];
+                swprintf_s(buf, L"%d", w); WritePrivateProfileStringW(L"View", L"LastWindowW", buf, iniPath.c_str());
+                swprintf_s(buf, L"%d", h); WritePrivateProfileStringW(L"View", L"LastWindowH", buf, iniPath.c_str());
+                swprintf_s(buf, L"%d", x); WritePrivateProfileStringW(L"View", L"LastWindowX", buf, iniPath.c_str());
+                swprintf_s(buf, L"%d", y); WritePrivateProfileStringW(L"View", L"LastWindowY", buf, iniPath.c_str());
+            };
+            auto writeNormalPlacementBounds = [&](const WINDOWPLACEMENT& wp, HMONITOR hMon) {
+                MONITORINFO mi{};
+                mi.cbSize = sizeof(mi);
+                if (GetMonitorInfoW(hMon, &mi)) {
+                    const int w = wp.rcNormalPosition.right - wp.rcNormalPosition.left;
+                    const int h = wp.rcNormalPosition.bottom - wp.rcNormalPosition.top;
+                    const int x = wp.rcNormalPosition.left + (mi.rcWork.left - mi.rcMonitor.left);
+                    const int y = wp.rcNormalPosition.top + (mi.rcWork.top - mi.rcMonitor.top);
+                    writeWindowBounds(x, y, w, h);
+                }
+            };
+
+            if (g_isFullScreen) {
+                if (g_savedWindowPlacement.length == sizeof(WINDOWPLACEMENT)) {
+                    HMONITOR hMon = MonitorFromRect(&g_savedWindowPlacement.rcNormalPosition, MONITOR_DEFAULTTONEAREST);
+                    writeNormalPlacementBounds(g_savedWindowPlacement, hMon);
+                }
+            } else if (maximized) {
+                // For maximized window, we save its RESTORE position so it knows where to return.
+                // Workspace coordinates from GetWindowPlacement are converted to screen coordinates
+                // to handle custom taskbar positions (top/left) correctly.
+                WINDOWPLACEMENT wp = {};
+                wp.length = sizeof(WINDOWPLACEMENT);
+                if (GetWindowPlacement(hwnd, &wp)) {
+                    HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY);
+                    writeNormalPlacementBounds(wp, hMon);
+                }
+            } else {
+                // For normal or snapped window, we save its CURRENT position using GetWindowRect.
+                // This correctly captures the actual snapped bounds in screen coordinates.
+                RECT rc;
+                if (GetWindowRect(hwnd, &rc)) {
+                    writeWindowBounds(rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top);
                 }
             }
         }
@@ -12325,6 +12473,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
 case WM_DESTROY: {
+            ResetWindowDwmFrameCache(hwnd);
             if (g_compEngine) {
                 g_compEngine->UnmountWebViewVisual();
                 g_compEngine->SetWebViewMode(false);
@@ -16266,30 +16415,7 @@ void ProcessEngineEvents(HWND hwnd) {
                 }
 
                 // [Feature] Auto Fullscreen on Open
-                static ImageID lastFullscreenTriggeredId = ~(0ULL);
-                if (g_config.OpenFullScreenMode > 0 && evt.imageId != lastFullscreenTriggeredId) {
-                    bool shouldFullscreen = false;
-                    if (g_config.OpenFullScreenMode == 2) {
-                        shouldFullscreen = true; // All
-                    } else if (g_config.OpenFullScreenMode == 1) {
-                        // Large Only
-                        HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-                        MONITORINFO mi{}; mi.cbSize = sizeof(mi);
-                        if (GetMonitorInfo(hMon, &mi)) {
-                            int monWidth = mi.rcMonitor.right - mi.rcMonitor.left;
-                            int monHeight = mi.rcMonitor.bottom - mi.rcMonitor.top;
-                            if (GetPaneContext(PaneSlot::Primary).metadata.Width > (UINT)monWidth || GetPaneContext(PaneSlot::Primary).metadata.Height > (UINT)monHeight) {
-                                shouldFullscreen = true;
-                            }
-                        }
-                    }
-                    if (shouldFullscreen && !g_isFullScreen) {
-                        SendMessage(hwnd, WM_COMMAND, IDM_FULLSCREEN, 0); // Enter fullscreen
-                    } else if (!shouldFullscreen && g_isFullScreen && g_config.OpenFullScreenMode == 1) {
-                        SendMessage(hwnd, WM_COMMAND, IDM_FULLSCREEN, 0); // Exit fullscreen
-                    }
-                    lastFullscreenTriggeredId = evt.imageId;
-                }
+                ApplyAutoFullscreenPolicy(hwnd, evt.imageId, GetPaneContext(PaneSlot::Primary).metadata);
 
                 // Force one Titan scheduling pass after content swap.
                 // This prevents "same size, same zoom" switches from skipping
@@ -16309,7 +16435,7 @@ void ProcessEngineEvents(HWND hwnd) {
                 }
                 
                 // Refresh Layout to recalculate Warning Icon bounds
-                RECT rc; GetClientRect(hwnd, &rc);
+                RECT rc = GetEffectiveClientRect(hwnd);
                 g_toolbar.UpdateLayout((float)rc.right, (float)rc.bottom);
 
                 // [Atomic View Transition] Reset interaction and edit state on new image presentation,
@@ -16397,7 +16523,7 @@ void ProcessEngineEvents(HWND hwnd) {
                         AdjustWindowToImage(hwnd);
 
                         // [Feature] Apply Fullscreen Zoom Mode if active (usually resets to 1.0 or Fit)
-                        if (g_isFullScreen || IsZoomed(hwnd)) {
+                        if (g_isFullScreen || IsZoomed(hwnd) || IsStartupMaximizePending(hwnd)) {
                             ApplyFullScreenZoomMode(hwnd);
                         }
                         g_deferProgrammaticZoomResizeSync = false;
@@ -16420,7 +16546,7 @@ void ProcessEngineEvents(HWND hwnd) {
                     // so WM_SIZE is never fired, leaving the DComp Transform Matrix stale (using old image AR).
                     // This fixes the "Initial Clipping/Jump" issue.
                     if (g_compEngine && g_compEngine->IsInitialized()) {
-                        RECT rc; GetClientRect(hwnd, &rc);
+                        RECT rc = GetEffectiveClientRect(hwnd);
                         SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
                     }
 
@@ -16432,17 +16558,14 @@ void ProcessEngineEvents(HWND hwnd) {
 
                 if (!IsWindowVisible(hwnd)) {
                     if (g_uiRenderer) {
-                        RECT rcUi{}; GetClientRect(hwnd, &rcUi);
+                        RECT rcUi = GetEffectiveClientRect(hwnd);
                         g_toolbar.UpdateLayout((float)rcUi.right, (float)rcUi.bottom);
                         g_uiRenderer->Render(hwnd, 0.016f);
                     }
                     if (g_compEngine) {
                         g_compEngine->Commit();
                     }
-                    int showMode = (g_initialCmdShow == SW_HIDE || g_initialCmdShow == 0) ? SW_SHOWNORMAL : g_initialCmdShow;
-                    ShowWindow(hwnd, showMode);
-                    UpdateWindow(hwnd);
-                    ForceForegroundWindow(hwnd);
+                    ShowInitialWindow(hwnd);
                     g_currentCursor = LoadCursor(nullptr, IDC_ARROW);
                     SetCursor(g_currentCursor);
                     KillTimer(hwnd, TIMER_ID_STARTUP_SHOW);

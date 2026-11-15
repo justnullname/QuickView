@@ -1590,6 +1590,7 @@ void ParseFixedZoomLevels(); // Parse comma-separated fixed zoom levels
 bool IsSystemLightTheme();
 bool IsLightThemeActive();
 void ApplyWindowTheme(HWND hwnd);
+void SyncWindowDwmFrameAttributes(HWND hwnd);
 
 // ============================================================================
 // Contrast Compensation — Automatic dim text brightness adaptation
