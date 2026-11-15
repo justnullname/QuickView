@@ -905,7 +905,6 @@ namespace AppStrings {
     extern const wchar_t* Settings_Status_AssocStoreManaged;
     extern const wchar_t* Settings_Status_AssocLegend;
     extern const wchar_t* Context_OpenWithQuickView;
-    extern const wchar_t* OSD_FileNotFound;
 
     // Hotkey Action Name resolver
     std::wstring GetHotkeyActionName(::HotkeyAction action);

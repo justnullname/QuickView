@@ -8670,13 +8670,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCm
 
     std::wstring initialImagePath = QuickView::ProcessRouter::ParseImagePath();
     bool hasInitialImage = false;
-    bool initialPathMissing = false;
     if (!initialImagePath.empty()) {
-        const bool isVfsPath = (initialImagePath.find(L'|') != std::wstring::npos);
-        const DWORD attrs = isVfsPath ? FILE_ATTRIBUTE_NORMAL : GetFileAttributesW(initialImagePath.c_str());
-        if (attrs == INVALID_FILE_ATTRIBUTES) {
-            initialPathMissing = true;
-        } else if ((attrs & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+        std::error_code ec;
+        if (!std::filesystem::is_directory(std::filesystem::path(initialImagePath), ec)) {
             hasInitialImage = true;
             g_imagePath = initialImagePath;
             // [Boot Architecture] Kick off overlapped decoding pipeline before LoadConfig/Init
@@ -9034,10 +9030,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCm
         bootFramePresented = TryPresentBootPreloadedFrame(hwnd, initialImagePath);
     }
 
-    if (initialPathMissing) {
-        RequestRepaint(PaintLayer::All);
-        g_osd.Show(hwnd, AppStrings::OSD_FileNotFound ? AppStrings::OSD_FileNotFound : L"File not found", true);
-    } else if (!initialImagePath.empty()) {
+    if (!initialImagePath.empty()) {
       std::error_code ec;
       if (std::filesystem::is_directory(std::filesystem::path(initialImagePath),
                                         ec)) {

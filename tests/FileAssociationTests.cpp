@@ -95,7 +95,7 @@ TEST(FileAssociationTest, ReconstructPathFallbackWhenMissingFile) {
         L"C:\\Missing",
         L"Folder\\photo.jpg"
     };
-    // Returns first token so caller can display OSD_FileNotFound rather than blank canvas
+    // Falls back cleanly to the first non-flag token when no joined path exists on disk
     EXPECT_EQ(
         ReconstructPathFromArgs(3, argv, &MockPathNeverExists),
         L"C:\\Missing");

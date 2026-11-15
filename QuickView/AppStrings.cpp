@@ -794,7 +794,6 @@ const wchar_t *Settings_Status_AssocPendingHint = nullptr;
 const wchar_t *Settings_Status_AssocStoreManaged = nullptr;
 const wchar_t *Settings_Status_AssocLegend = nullptr;
 const wchar_t *Context_OpenWithQuickView = nullptr;
-const wchar_t *OSD_FileNotFound = nullptr;
 const wchar_t *Settings_Action_ApplyPending = nullptr;
 
 // --- Static Constants ---
@@ -1564,7 +1563,6 @@ struct LanguageTable {
     const wchar_t *Settings_Status_AssocBrokenHint;
     const wchar_t *Settings_Status_AssocLegend;
     const wchar_t *Context_OpenWithQuickView;
-    const wchar_t *OSD_FileNotFound;
     const wchar_t *Settings_Action_ApplyPending;
     const wchar_t *Settings_Status_AssocPendingHint;
     const wchar_t *Settings_Status_AssocStoreManaged;
@@ -2333,7 +2331,6 @@ static const LanguageTable Table_EN = {
     L"Broken or unquoted command detected \u2014 click Apply or Repair to fix.", // Settings_Status_AssocBrokenHint
     L"Green dot = System Default \u00b7 Blue = Selected / Open With", // Settings_Status_AssocLegend
     L"Open with QuickView", // Context_OpenWithQuickView
-    L"File not found or path inaccessible", // OSD_FileNotFound
     L"Apply Changes*", // Settings_Action_ApplyPending
     L"Pending changes — click \"Apply Changes\" to sync Open With & Context Menu to Windows.", // Settings_Status_AssocPendingHint
     L"Microsoft Store (MSIX) Mode: Open With & Context Menu are natively managed by Windows. Click \"Set Default in Windows\" to assign default extensions." // Settings_Status_AssocStoreManaged
@@ -3102,7 +3099,6 @@ static const LanguageTable Table_CN = {
     L"检测到注册表命令缺少引号或路径失效，点击应用或修复即可自动纠正。", // Settings_Status_AssocBrokenHint
     L"绿点 = 已设系统默认 \u00b7 蓝底 = 已勾选 / 打开方式", // Settings_Status_AssocLegend
     L"使用 QuickView 打开", // Context_OpenWithQuickView
-    L"找不到目标文件或路径无效", // OSD_FileNotFound
     L"应用更改*", // Settings_Action_ApplyPending
     L"有未同步的修改 — 请点击「应用更改」以同步右键菜单和系统打开方式。", // Settings_Status_AssocPendingHint
     L"Microsoft Store (MSIX) 模式：右键菜单与「打开方式」已由系统原生托管，点击「在 Windows 中设为默认」即可设置默认程序。" // Settings_Status_AssocStoreManaged
@@ -3871,7 +3867,6 @@ static const LanguageTable Table_TW = {
     L"偵測到登錄檔命令缺少引號或路徑無效，點擊套用或修復即可自動修正。", // Settings_Status_AssocBrokenHint
     L"綠點 = 已設系統預設 \u00b7 藍底 = 已勾選 / 開啟方式", // Settings_Status_AssocLegend
     L"使用 QuickView 開啟", // Context_OpenWithQuickView
-    L"找不到目標檔案或路徑無效", // OSD_FileNotFound
     L"套用變更*", // Settings_Action_ApplyPending
     L"有未同步的變更 — 請點擊「套用變更」以同步右鍵選單與系統開啟方式。", // Settings_Status_AssocPendingHint
     L"Microsoft Store (MSIX) 模式：右鍵選單與「開啟方式」已由系統原生託管，點擊「在 Windows 中設為預設」即可設定預設程式。" // Settings_Status_AssocStoreManaged
@@ -4640,7 +4635,6 @@ static const LanguageTable Table_JA = {
     L"引用符なしや無効なコマンドを検出しました。適用または修復で修正できます。", // Settings_Status_AssocBrokenHint
     L"緑の点 = システム既定 \u00b7 青 = 選択済み / プログラムから開く", // Settings_Status_AssocLegend
     L"QuickView で開く", // Context_OpenWithQuickView
-    L"ファイルが見つからないかアクセスできません", // OSD_FileNotFound
     L"変更を適用*", // Settings_Action_ApplyPending
     L"未適用の変更があります。「変更を適用」をクリックしてシステムと同期してください。", // Settings_Status_AssocPendingHint
     L"Microsoft Store (MSIX) モード：コンテキストメニュー等は Windows が標準管理しています。「Windows で既定に設定」から関連付けを行ってください。" // Settings_Status_AssocStoreManaged
@@ -5409,7 +5403,6 @@ static const LanguageTable Table_RU = {
     L"Обнаружена поврежденная команда без кавычек — нажмите Применить или Исправить.", // Settings_Status_AssocBrokenHint
     L"Зеленая точка = по умолчанию \u00b7 Синий = выбрано / Открыть с помощью", // Settings_Status_AssocLegend
     L"Открыть в QuickView", // Context_OpenWithQuickView
-    L"Файл не найден или недоступен", // OSD_FileNotFound
     L"Применить*", // Settings_Action_ApplyPending
     L"Есть несохранённые изменения — нажмите «Применить» для синхронизации с системой.", // Settings_Status_AssocPendingHint
     L"Режим Microsoft Store (MSIX): контекстное меню и «Открыть с помощью» управляются системой Windows. Нажмите «По умолчанию в Windows» для выбора форматов." // Settings_Status_AssocStoreManaged
@@ -6178,7 +6171,6 @@ static const LanguageTable Table_DE = {
     L"Fehlerhafter Befehl ohne Anführungszeichen erkannt — zur Korrektur Anwenden klicken.", // Settings_Status_AssocBrokenHint
     L"Grüner Punkt = Systemstandard \u00b7 Blau = Ausgewählt / Öffnen mit", // Settings_Status_AssocLegend
     L"Mit QuickView öffnen", // Context_OpenWithQuickView
-    L"Datei nicht gefunden oder nicht erreichbar", // OSD_FileNotFound
     L"Anwenden*", // Settings_Action_ApplyPending
     L"Ausstehende Änderungen — klicken Sie auf \"Anwenden\", um Windows zu synchronisieren.", // Settings_Status_AssocPendingHint
     L"Microsoft Store (MSIX)-Modus: Kontextmenü & Öffnen mit werden nativ von Windows verwaltet. Klicken Sie auf „In Windows als Standard festlegen“." // Settings_Status_AssocStoreManaged
@@ -6947,7 +6939,6 @@ static const LanguageTable Table_ES = {
     L"Se detectó un comando sin comillas o inválido — haga clic en Aplicar para reparar.", // Settings_Status_AssocBrokenHint
     L"Punto verde = Predeterminado \u00b7 Azul = Seleccionado / Abrir con", // Settings_Status_AssocLegend
     L"Abrir con QuickView", // Context_OpenWithQuickView
-    L"Archivo no encontrado o ruta inaccesible", // OSD_FileNotFound
     L"Aplicar*", // Settings_Action_ApplyPending
     L"Cambios pendientes — haz clic en \"Aplicar\" para sincronizar con Windows.", // Settings_Status_AssocPendingHint
     L"Modo Microsoft Store (MSIX): el menú contextual y Abrir con son gestionados por Windows. Haz clic en «Establecer como predeterminado en Windows»." // Settings_Status_AssocStoreManaged
@@ -7716,7 +7707,6 @@ static const LanguageTable Table_FR = {
     L"Commande invalide ou sans guillemets détectée — cliquez sur Appliquer pour corriger.", // Settings_Status_AssocBrokenHint
     L"Point vert = Par défaut \u00b7 Bleu = Sélectionné / Ouvrir avec", // Settings_Status_AssocLegend
     L"Ouvrir avec QuickView", // Context_OpenWithQuickView
-    L"Fichier introuvable ou chemin inaccessible", // OSD_FileNotFound
     L"Appliquer*", // Settings_Action_ApplyPending
     L"Modifications en attente — cliquez sur « Appliquer » pour synchroniser avec Windows.", // Settings_Status_AssocPendingHint
     L"Mode Microsoft Store (MSIX) : le menu contextuel et Ouvrir avec sont gérés nativement par Windows. Cliquez sur « Définir par défaut dans Windows »." // Settings_Status_AssocStoreManaged
@@ -8484,7 +8474,6 @@ void Apply(const LanguageTable& t) {
   Settings_Status_AssocBrokenHint = t.Settings_Status_AssocBrokenHint;
   Settings_Status_AssocLegend = t.Settings_Status_AssocLegend;
   Context_OpenWithQuickView = t.Context_OpenWithQuickView;
-  OSD_FileNotFound = t.OSD_FileNotFound;
   Settings_Action_ApplyPending = t.Settings_Action_ApplyPending;
   Settings_Status_AssocPendingHint = t.Settings_Status_AssocPendingHint;
   Settings_Status_AssocStoreManaged = t.Settings_Status_AssocStoreManaged;
