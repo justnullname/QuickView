@@ -1,7 +1,9 @@
 #pragma once
 #include <string_view>
 #include <array>
+#include <span>
 #include <string>
+#include <cstdint>
 
 namespace QuickView {
 
@@ -70,12 +72,27 @@ inline constexpr auto SUPPORTED_EXTENSIONS = detail::Concat(
     detail::STANDARD_EXTENSIONS, detail::WEB_MODERN_EXTENSIONS, detail::PRO_LEGACY_EXTENSIONS,
     detail::CAMERA_RAW_EXTENSIONS, detail::ARCHIVE_EXTENSIONS_SEG);
 
+// Every extension QuickView can decode and associate (includes extended/cinema RAWs)
+inline constexpr auto ALL_ASSOCIABLE_EXTENSIONS = detail::Concat(
+    detail::STANDARD_EXTENSIONS, detail::WEB_MODERN_EXTENSIONS, detail::PRO_LEGACY_EXTENSIONS,
+    detail::CAMERA_RAW_EXTENSIONS, detail::EXTENDED_RAW_EXTENSIONS, detail::ARCHIVE_EXTENSIONS_SEG);
+
 // Every extension classified as camera RAW (decode-routing, RAW toggles, etc.)
 inline constexpr auto RAW_EXTENSIONS = detail::Concat(
     detail::CAMERA_RAW_EXTENSIONS, detail::EXTENDED_RAW_EXTENSIONS);
 
 // Archive container formats (VFS)
 inline constexpr auto ARCHIVE_EXTENSIONS = detail::ARCHIVE_EXTENSIONS_SEG;
+
+enum class AssocExtCategory : uint8_t {
+    Standard = 0,
+    WebModern,
+    ProLegacy,
+    CameraRaw,
+    ExtendedRaw,
+    Archive,
+    Count
+};
 
 // ============================================================================
 // Classification helpers (constexpr, allocation-free, case-insensitive)
@@ -178,6 +195,7 @@ constexpr bool IsRenderedPairExtension(std::wstring_view ext) {
 
 // Compile-time regression tests (zero runtime cost)
 static_assert(SUPPORTED_EXTENSIONS.size() == 71);
+static_assert(ALL_ASSOCIABLE_EXTENSIONS.size() == 92);
 static_assert(RAW_EXTENSIONS.size() == 43);
 static_assert(IsRawExtension(L".crw"));   // was missing from main.cpp's IsRawFile
 static_assert(IsRawExtension(L".CR3"));   // case-insensitive
@@ -194,6 +212,83 @@ static_assert(!IsRenderedPairExtension(L".png")); // not camera-written beside a
 static_assert(IsPlaylistImageExtension(L".JPG"));
 static_assert(IsPlaylistImageExtension(L".CR3"));
 static_assert(!IsPlaylistImageExtension(L".zip"));
+
+constexpr std::span<const std::wstring_view> GetExtensionsByCategory(AssocExtCategory cat) {
+    switch (cat) {
+        case AssocExtCategory::Standard:    return detail::STANDARD_EXTENSIONS;
+        case AssocExtCategory::WebModern:   return detail::WEB_MODERN_EXTENSIONS;
+        case AssocExtCategory::ProLegacy:   return detail::PRO_LEGACY_EXTENSIONS;
+        case AssocExtCategory::CameraRaw:   return detail::CAMERA_RAW_EXTENSIONS;
+        case AssocExtCategory::ExtendedRaw: return detail::EXTENDED_RAW_EXTENSIONS;
+        case AssocExtCategory::Archive:     return detail::ARCHIVE_EXTENSIONS_SEG;
+        default:                            return {};
+    }
+}
+
+constexpr bool IsAssociableExtension(std::wstring_view ext) {
+    for (const auto& s : ALL_ASSOCIABLE_EXTENSIONS) {
+        if (ExtEqualsIgnoreCase(ext, s)) return true;
+    }
+    return false;
+}
+
+constexpr AssocExtCategory GetCategoryOfExtension(std::wstring_view ext) {
+    for (const auto& s : detail::STANDARD_EXTENSIONS)    if (ExtEqualsIgnoreCase(ext, s)) return AssocExtCategory::Standard;
+    for (const auto& s : detail::WEB_MODERN_EXTENSIONS)   if (ExtEqualsIgnoreCase(ext, s)) return AssocExtCategory::WebModern;
+    for (const auto& s : detail::PRO_LEGACY_EXTENSIONS)   if (ExtEqualsIgnoreCase(ext, s)) return AssocExtCategory::ProLegacy;
+    for (const auto& s : detail::CAMERA_RAW_EXTENSIONS)   if (ExtEqualsIgnoreCase(ext, s)) return AssocExtCategory::CameraRaw;
+    for (const auto& s : detail::EXTENDED_RAW_EXTENSIONS) if (ExtEqualsIgnoreCase(ext, s)) return AssocExtCategory::ExtendedRaw;
+    for (const auto& s : detail::ARCHIVE_EXTENSIONS_SEG) if (ExtEqualsIgnoreCase(ext, s)) return AssocExtCategory::Archive;
+    return AssocExtCategory::Count;
+}
+
+static_assert(GetCategoryOfExtension(L".JPG") == AssocExtCategory::Standard);
+static_assert(GetCategoryOfExtension(L".braw") == AssocExtCategory::ExtendedRaw);
+static_assert(GetCategoryOfExtension(L".zip") == AssocExtCategory::Archive);
+static_assert(IsAssociableExtension(L".r3d"));
+
+namespace detail {
+inline void AppendCommaSeparatedExts(std::wstring& out, std::span<const std::wstring_view> exts) {
+    for (const auto& e : exts) {
+        if (!out.empty()) out.push_back(L',');
+        out.append(e);
+    }
+}
+} // namespace detail
+
+// Safe recommended preset: standard + web/modern formats (20 formats, excludes .zip/.rar)
+inline std::wstring GetRecommendedAssocExtensionsString() {
+    std::wstring result;
+    result.reserve(160);
+    detail::AppendCommaSeparatedExts(result, detail::STANDARD_EXTENSIONS);
+    detail::AppendCommaSeparatedExts(result, detail::WEB_MODERN_EXTENSIONS);
+    return result;
+}
+
+// All image, RAW & comic archive formats (90 formats: 88 images/RAW + .cbz/.cbr, excludes .zip/.rar)
+inline std::wstring GetAllImagesAssocExtensionsString() {
+    std::wstring result;
+    result.reserve(540);
+    detail::AppendCommaSeparatedExts(result, detail::STANDARD_EXTENSIONS);
+    detail::AppendCommaSeparatedExts(result, detail::WEB_MODERN_EXTENSIONS);
+    detail::AppendCommaSeparatedExts(result, detail::PRO_LEGACY_EXTENSIONS);
+    detail::AppendCommaSeparatedExts(result, detail::CAMERA_RAW_EXTENSIONS);
+    detail::AppendCommaSeparatedExts(result, detail::EXTENDED_RAW_EXTENSIONS);
+    static constexpr std::array<std::wstring_view, 2> kComicArchives = { L".cbz", L".cbr" };
+    detail::AppendCommaSeparatedExts(result, kComicArchives);
+    return result;
+}
+
+// Photo + Camera RAW preset (Standard + WebModern + CameraRaw + ExtendedRaw)
+inline std::wstring GetPhotoAndRawAssocExtensionsString() {
+    std::wstring result;
+    result.reserve(384);
+    detail::AppendCommaSeparatedExts(result, detail::STANDARD_EXTENSIONS);
+    detail::AppendCommaSeparatedExts(result, detail::WEB_MODERN_EXTENSIONS);
+    detail::AppendCommaSeparatedExts(result, detail::CAMERA_RAW_EXTENSIONS);
+    detail::AppendCommaSeparatedExts(result, detail::EXTENDED_RAW_EXTENSIONS);
+    return result;
+}
 
 // Generate the COMDLG filter string, e.g., "All Images\0*.jpg;*.png...\0All Files\0*.*\0\0"
 inline std::wstring GetSupportedExtensionsFilter() {

@@ -183,6 +183,53 @@ struct SystemInfo {
 #endif
     }
 
+    // Returns true when running inside an MSIX / Microsoft Store package container.
+    // Cached once at first query (zero runtime cost on repeated calls).
+    static bool IsPackagedApp() {
+#ifdef _WIN32
+        static const bool s_packaged = []() -> bool {
+            HMODULE hKernel32 = GetModuleHandleW(L"kernel32.dll");
+            if (!hKernel32) return false;
+            using FnGetCurrentPackageFullName = LONG(WINAPI*)(UINT32*, PWSTR);
+            auto fx = reinterpret_cast<FnGetCurrentPackageFullName>(
+                GetProcAddress(hKernel32, "GetCurrentPackageFullName"));
+            if (!fx) return false;
+            UINT32 len = 0;
+            const LONG rc = fx(&len, nullptr);
+            return rc == ERROR_INSUFFICIENT_BUFFER;
+        }();
+        return s_packaged;
+#else
+        return false;
+#endif
+    }
+
+    // Returns the current MSIX Application User Model ID (e.g. "VivorLoong.QuickView-FastFileViewer_jbgfn8pzmmykp!App"),
+    // or an empty string for unpackaged Win32/portable executions.
+    static const std::wstring& GetPackagedAumid() {
+#ifdef _WIN32
+        static const std::wstring s_aumid = []() -> std::wstring {
+            if (!IsPackagedApp()) return {};
+            HMODULE hKernel32 = GetModuleHandleW(L"kernel32.dll");
+            if (!hKernel32) return {};
+            using FnGetCurrentAumid = LONG(WINAPI*)(UINT32*, PWSTR);
+            auto fx = reinterpret_cast<FnGetCurrentAumid>(
+                GetProcAddress(hKernel32, "GetCurrentApplicationUserModelId"));
+            if (!fx) return {};
+            UINT32 len = 0;
+            if (fx(&len, nullptr) != ERROR_INSUFFICIENT_BUFFER || len == 0) return {};
+            std::wstring aumid(len, L'\0');
+            if (fx(&len, aumid.data()) != ERROR_SUCCESS) return {};
+            while (!aumid.empty() && aumid.back() == L'\0') aumid.pop_back();
+            return aumid;
+        }();
+        return s_aumid;
+#else
+        static const std::wstring s_empty;
+        return s_empty;
+#endif
+    }
+
     static const SystemInfo& Cached() {
         static const SystemInfo s_cached = Detect();
         return s_cached;

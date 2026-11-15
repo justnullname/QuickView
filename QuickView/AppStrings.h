@@ -872,6 +872,41 @@ namespace AppStrings {
     extern const wchar_t* AiTest_HttpErrorPrefix;
     extern const wchar_t* AiError_NoAvailableProfile;
 
+    // --- File Association Center ---
+    extern const wchar_t* Settings_Tab_FileAssoc;
+    extern const wchar_t* Settings_Header_FileAssocStatus;
+    extern const wchar_t* Settings_Header_FileAssocOptions;
+    extern const wchar_t* Settings_Header_FileAssocFormats;
+    extern const wchar_t* Settings_Label_FileAssocIconStyle;
+    extern const wchar_t* Settings_Option_FileAssocIconNative;
+    extern const wchar_t* Settings_Option_FileAssocIconApp;
+    extern const wchar_t* Settings_Label_FileAssocContextMenu;
+    extern const wchar_t* Settings_Label_FileAssocAutoRepair;
+    extern const wchar_t* Settings_Label_FileAssocPresets;
+    extern const wchar_t* Settings_Action_PresetRecommended;
+    extern const wchar_t* Settings_Action_PresetAllImages;
+    extern const wchar_t* Settings_Action_PresetPhotoRaw;
+    extern const wchar_t* Settings_Action_PresetClearAll;
+    extern const wchar_t* Settings_Action_ApplyAssoc;
+    extern const wchar_t* Settings_Action_ApplyPending;
+    extern const wchar_t* Settings_Action_SetDefaultWin;
+    extern const wchar_t* Settings_Action_RepairAssoc;
+    extern const wchar_t* Settings_Label_FileAssocCatStandard;
+    extern const wchar_t* Settings_Label_FileAssocCatModern;
+    extern const wchar_t* Settings_Label_FileAssocCatPro;
+    extern const wchar_t* Settings_Label_FileAssocCatRaw;
+    extern const wchar_t* Settings_Label_FileAssocCatExtRaw;
+    extern const wchar_t* Settings_Label_FileAssocCatArchive;
+    extern const wchar_t* Settings_Tooltip_FileAssocArchive;
+    extern const wchar_t* Settings_Status_AssocApplied;
+    extern const wchar_t* Settings_Status_AssocSummaryFormat;
+    extern const wchar_t* Settings_Status_AssocBrokenHint;
+    extern const wchar_t* Settings_Status_AssocPendingHint;
+    extern const wchar_t* Settings_Status_AssocStoreManaged;
+    extern const wchar_t* Settings_Status_AssocLegend;
+    extern const wchar_t* Context_OpenWithQuickView;
+    extern const wchar_t* OSD_FileNotFound;
+
     // Hotkey Action Name resolver
     std::wstring GetHotkeyActionName(::HotkeyAction action);
 

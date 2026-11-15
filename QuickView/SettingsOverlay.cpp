@@ -309,225 +309,221 @@ std::wstring GetSystemInfo() {
     return osVer + L" | " + arch + L" | " + simd;
 }
 
-// Read registered EXE path from registry
-static std::wstring ReadRegisteredExePath() {
-    HKEY hKey;
-    std::wstring result;
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, 
-        L"Software\\Classes\\QuickView.Image\\shell\\open\\command",
-        0, KEY_READ, &hKey) == ERROR_SUCCESS) {
-        wchar_t buffer[MAX_PATH * 2] = {0};
-        DWORD bufSize = sizeof(buffer);
-        if (RegGetValueW(hKey, NULL, NULL, RRF_RT_REG_SZ, NULL, buffer, &bufSize) == ERROR_SUCCESS) {
-            result = buffer;
-            // Extract path from "\"path\" \"%1\"" format
-            if (result.size() > 2 && result[0] == L'"') {
-                size_t endQuote = result.find(L'"', 1);
-                if (endQuote != std::wstring::npos) {
-                    result = result.substr(1, endQuote - 1);
-                }
-            }
-        }
-        RegCloseKey(hKey);
-    }
-    return result;
+QuickView::FileAssocOptions SettingsOverlay::BuildCurrentAssocOptions() {
+    QuickView::FileAssocOptions opts;
+    opts.selectedExtsCsv = g_config.FileAssocExts;
+    opts.iconStyle = static_cast<QuickView::AssocIconStyle>(g_config.FileAssocIconStyle);
+    opts.enableContextMenu = g_config.FileAssocContextMenu;
+    opts.contextMenuLabel = AppStrings::Context_OpenWithQuickView ? AppStrings::Context_OpenWithQuickView : L"Open with QuickView";
+    return opts;
 }
 
-// Helper to check if registry value already match to avoid redundant writes (AV protection)
-static bool IsRegistryValueMatch(HKEY hRoot, const wchar_t* subKey, const wchar_t* valueName, const std::wstring& expected) {
-    HKEY hKey;
-    if (RegOpenKeyExW(hRoot, subKey, 0, KEY_READ, &hKey) != ERROR_SUCCESS) return false;
-    
-    wchar_t data[MAX_PATH];
-    DWORD dataSize = sizeof(data);
-    DWORD type = 0;
-    bool match = false;
-    if (RegQueryValueExW(hKey, valueName, NULL, &type, (BYTE*)data, &dataSize) == ERROR_SUCCESS) {
-        if (type == REG_SZ) {
-            match = (expected == data);
-        }
-    }
-    RegCloseKey(hKey);
-    return match;
-}
-
-static LONG SafeRegSetString(HKEY hRoot, const wchar_t* subKey, const wchar_t* valueName, const std::wstring& value) {
-    if (IsRegistryValueMatch(hRoot, subKey, valueName, value)) return ERROR_SUCCESS;
-    
-    HKEY hKey;
-    LONG r = RegCreateKeyExW(hRoot, subKey, 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL);
-    if (r == ERROR_SUCCESS) {
-        r = RegSetValueExW(hKey, valueName, 0, REG_SZ, (BYTE*)value.c_str(), (DWORD)(value.size() + 1) * 2);
-        RegCloseKey(hKey);
-    }
-    return r;
-}
-
-// Register file associations (silent, no MessageBox)
+// Register file associations (silent, delta-synced via FileAssociationManager)
 bool SettingsOverlay::RegisterAssociations() {
-    wchar_t exePath[MAX_PATH];
-    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
-    std::wstring exePathStr = exePath;
+    const std::wstring exePathStr = QuickView::GetCurrentExecutablePath();
+    if (exePathStr.empty()) return false;
 
-    HKEY hKey;
-    LONG r;
-    
-    // 1. Register ProgID command
-    std::wstring cmd = L"\"" + exePathStr + L"\" \"%1\"";
-    SafeRegSetString(HKEY_CURRENT_USER, L"Software\\Classes\\QuickView.Image\\shell\\open\\command", NULL, cmd);
-    
-    // 2. Register DefaultIcon
-    std::wstring icon = exePathStr + L",0";
-    SafeRegSetString(HKEY_CURRENT_USER, L"Software\\Classes\\QuickView.Image\\DefaultIcon", NULL, icon);
-    
-    // 3. Register FriendlyTypeName
-    SafeRegSetString(HKEY_CURRENT_USER, L"Software\\Classes\\QuickView.Image", L"FriendlyTypeName", L"QuickView Image Viewer");
-    
-    // 4. Register specific ProgIDs and OpenWith
-    for (const auto& ext : QuickView::SUPPORTED_EXTENSIONS) {
-        std::wstring extStr(ext);
-        std::wstring baseExt = (extStr.size() > 1) ? extStr.substr(1) : extStr;
-        
-        // Generate ProgID: QuickView.EXT (e.g. QuickView.jpg)
-        std::wstring progId = L"QuickView" + extStr;
-        
-        // Generate Description: "EXT File" (e.g. "JPG File")
-        std::wstring desc = baseExt;
-        std::transform(desc.begin(), desc.end(), desc.begin(), ::towupper);
-        desc += L" File";
-
-        // Create ProgID Key
-        SafeRegSetString(HKEY_CURRENT_USER, (L"Software\\Classes\\" + progId).c_str(), L"FriendlyTypeName", desc);
-        
-        // Command
-        std::wstring cmd = L"\"" + exePathStr + L"\" \"%1\"";
-        SafeRegSetString(HKEY_CURRENT_USER, (L"Software\\Classes\\" + progId + L"\\shell\\open\\command").c_str(), NULL, cmd);
-        
-        // Icon
-        std::wstring icon = exePathStr + L",0";
-        SafeRegSetString(HKEY_CURRENT_USER, (L"Software\\Classes\\" + progId + L"\\DefaultIcon").c_str(), NULL, icon);
-
-        // Add to OpenWithProgids
-        std::wstring keyPath = L"Software\\Classes\\" + extStr + L"\\OpenWithProgids";
-        r = RegCreateKeyExW(HKEY_CURRENT_USER, keyPath.c_str(), 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL);
-        if (r == ERROR_SUCCESS) {
-            // Use Empty String ("") instead of NULL for safety
-            RegSetValueExW(hKey, progId.c_str(), 0, REG_SZ, (const BYTE*)L"", sizeof(wchar_t));
-            RegCloseKey(hKey);
-        }
+    const QuickView::FileAssocOptions opts = BuildCurrentAssocOptions();
+    if (!QuickView::SyncFileAssociations(opts, exePathStr)) {
+        return false;
     }
-    
-    // 5. Register in Applications
-    SafeRegSetString(HKEY_CURRENT_USER, L"Software\\Classes\\Applications\\QuickView.exe", L"FriendlyAppName", L"QuickView");
-    
-    // 5b. Register SupportedTypes
-    if (RegCreateKeyExW(HKEY_CURRENT_USER, 
-        L"Software\\Classes\\Applications\\QuickView.exe\\SupportedTypes",
-        0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
-        
-        for (const auto& ext : QuickView::SUPPORTED_EXTENSIONS) {
-            std::wstring extStr(ext);
-            // [Small AV Optimization] Only write if not already there
-            DWORD type;
-            if (RegQueryValueExW(hKey, extStr.c_str(), NULL, &type, NULL, NULL) != ERROR_SUCCESS) {
-                RegSetValueExW(hKey, extStr.c_str(), 0, REG_SZ, (const BYTE*)L"", sizeof(wchar_t));
-            }
-        }
-        RegCloseKey(hKey);
-    }
-
-    std::wstring applicationsCmd = L"\"" + exePathStr + L"\" \"%1\"";
-    SafeRegSetString(HKEY_CURRENT_USER, L"Software\\Classes\\Applications\\QuickView.exe\\shell\\open\\command", NULL, applicationsCmd);
-    
-    // 6. Register Capabilities
-    SafeRegSetString(HKEY_CURRENT_USER, L"Software\\QuickView\\Capabilities", L"ApplicationDescription", L"QuickView Image Viewer");
-    SafeRegSetString(HKEY_CURRENT_USER, L"Software\\QuickView\\Capabilities", L"ApplicationName", L"QuickView");
-    
-    std::wstring capKey = L"Software\\QuickView\\Capabilities\\FileAssociations";
-    if (RegCreateKeyExW(HKEY_CURRENT_USER, capKey.c_str(), 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
-        for (const auto& ext : QuickView::SUPPORTED_EXTENSIONS) {
-            std::wstring extStr(ext);
-            std::wstring progId = L"QuickView" + extStr;
-            RegSetValueExW(hKey, extStr.c_str(), 0, REG_SZ, (const BYTE*)progId.c_str(), (DWORD)(progId.size() + 1) * sizeof(wchar_t));
-        }
-        RegCloseKey(hKey);
-    }
-    
-    // 7. Register to RegisteredApplications
-    SafeRegSetString(HKEY_CURRENT_USER, L"Software\\RegisteredApplications", L"QuickView", L"Software\\QuickView\\Capabilities");
-
-    // 8. Refresh Shell
-    SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, NULL, NULL);
 
     // [The Golden Path] Persistence Update
     g_config.LastRegisteredVersion = SettingsOverlay::GetAppVersion();
     g_config.LastRegisteredPath = exePathStr;
-    
+    g_config.LastRegisteredAssocHash = QuickView::FormatAssocOptionsHash(QuickView::ComputeAssocOptionsHash(opts));
+
     extern void SaveConfig();
     SaveConfig();
 
     return true;
 }
 
-// Unregister file associations (for portable mode - clean registry)
+// Unregister file associations (for portable mode / uninstall - clean registry)
 void SettingsOverlay::UnregisterAssociations() {
-    // Delete ProgID: QuickView.Image
-    RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\Classes\\QuickView.Image");
-    
-    // Delete Applications entry
-    RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\Classes\\Applications\\QuickView.exe");
+    QuickView::UnregisterAllAssociations();
 
     // Clear Golden Path persistence to avoid false skips if user re-installs later
     g_config.LastRegisteredVersion.clear();
     g_config.LastRegisteredPath.clear();
+    g_config.LastRegisteredAssocHash.clear();
     extern void SaveConfig();
     SaveConfig();
-    
-    // Delete per-extension ProgIDs and OpenWithProgids entries
-    for (const auto& ext : QuickView::SUPPORTED_EXTENSIONS) {
-        std::wstring extStr(ext);
-        std::wstring progId = L"QuickView" + extStr;
-        
-        // Delete ProgID key (e.g. QuickView.jpg)
-        RegDeleteTreeW(HKEY_CURRENT_USER, (L"Software\\Classes\\" + progId).c_str());
-        
-        // Remove from OpenWithProgids - both QuickView.ext AND QuickView.Image
-        HKEY hKey;
-        std::wstring keyPath = L"Software\\Classes\\" + extStr + L"\\OpenWithProgids";
-        if (RegOpenKeyExW(HKEY_CURRENT_USER, keyPath.c_str(), 0, KEY_WRITE, &hKey) == ERROR_SUCCESS) {
-            RegDeleteValueW(hKey, progId.c_str());           // Remove QuickView.jpg
-            RegDeleteValueW(hKey, L"QuickView.Image");       // Remove QuickView.Image
-            RegCloseKey(hKey);
-        }
-    }
-    
-    // Delete Capabilities
-    RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\QuickView\\Capabilities");
-    
-    // Delete from RegisteredApplications
-    HKEY hRegApp;
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\RegisteredApplications", 0, KEY_WRITE, &hRegApp) == ERROR_SUCCESS) {
-        RegDeleteValueW(hRegApp, L"QuickView");
-        RegCloseKey(hRegApp);
-    }
-
-    // Refresh Shell
-    SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, NULL, NULL);
 }
 
-// Manual repair (silent, no MessageBox)
+// Manual repair check (strictly checks quoted "%1" command, icon style, and context menu parity)
 bool SettingsOverlay::IsRegistrationNeeded() {
-    wchar_t currentExe[MAX_PATH];
-    GetModuleFileNameW(nullptr, currentExe, MAX_PATH);
-    std::wstring regPath = ReadRegisteredExePath();
-    // Check if SupportedTypes exists. If not, we need to register.
-    HKEY hKeyTest;
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\Applications\\QuickView.exe\\SupportedTypes", 0, KEY_READ, &hKeyTest) != ERROR_SUCCESS) {
-        return true; 
-    }
-    RegCloseKey(hKeyTest);
+    const std::wstring exePathStr = QuickView::GetCurrentExecutablePath();
+    const QuickView::FileAssocOptions opts = BuildCurrentAssocOptions();
+    return QuickView::IsFileAssociationSyncNeeded(opts, exePathStr);
+}
 
-    return regPath.empty() || (_wcsicmp(regPath.c_str(), currentExe) != 0);
+namespace {
+
+static const wchar_t* const* GetCategoryTitlePtr(QuickView::AssocExtCategory cat) {
+    switch (cat) {
+        case QuickView::AssocExtCategory::Standard:    return &AppStrings::Settings_Label_FileAssocCatStandard;
+        case QuickView::AssocExtCategory::WebModern:   return &AppStrings::Settings_Label_FileAssocCatModern;
+        case QuickView::AssocExtCategory::ProLegacy:   return &AppStrings::Settings_Label_FileAssocCatPro;
+        case QuickView::AssocExtCategory::CameraRaw:   return &AppStrings::Settings_Label_FileAssocCatRaw;
+        case QuickView::AssocExtCategory::ExtendedRaw: return &AppStrings::Settings_Label_FileAssocCatExtRaw;
+        case QuickView::AssocExtCategory::Archive:     return &AppStrings::Settings_Label_FileAssocCatArchive;
+        default:                                       return &AppStrings::Settings_Label_FileAssocCatStandard;
+    }
+}
+
+static bool TagOptionMatches(const SettingsItem& item, std::wstring_view a, std::wstring_view b) {
+    return item.tagCloudIgnoreCase ? QuickView::ExtEqualsIgnoreCase(a, b) : (a == b);
+}
+
+static float MeasureTagPillTextWidth(IDWriteFactory* dwriteFactory, IDWriteTextFormat* textFormat,
+                                     std::wstring_view displayText, float badgeH, float scale) {
+    float textW = 0.0f;
+    if (dwriteFactory && textFormat) {
+        ComPtr<IDWriteTextLayout> layout;
+        if (SUCCEEDED(dwriteFactory->CreateTextLayout(
+                displayText.data(), static_cast<UINT32>(displayText.size()),
+                textFormat, 2000.0f, badgeH, &layout))) {
+            DWRITE_TEXT_METRICS metrics = {};
+            if (SUCCEEDED(layout->GetMetrics(&metrics))) {
+                textW = ceilf(metrics.widthIncludingTrailingWhitespace);
+            }
+        }
+    }
+    if (textW <= 0.0f) {
+        textW = static_cast<float>(displayText.size()) * 8.0f * scale;
+    }
+    return textW;
+}
+
+static uint8_t FileAssocTagStatusProbe(SettingsOverlay* overlay, std::wstring_view ext) {
+    return overlay ? overlay->QueryCachedExtState(ext) : 0;
+}
+
+} // namespace
+
+uint8_t SettingsOverlay::QueryCachedExtState(std::wstring_view ext) const {
+    if (!m_assocProbeValid) return 0;
+    const auto allExts = QuickView::ALL_ASSOCIABLE_EXTENSIONS;
+    const size_t count = (std::min)(allExts.size(), m_assocProbe.states.size());
+    for (size_t i = 0; i < count; ++i) {
+        if (QuickView::ExtEqualsIgnoreCase(allExts[i], ext)) {
+            return static_cast<uint8_t>(m_assocProbe.states[i]);
+        }
+    }
+    return 0;
+}
+
+void SettingsOverlay::RefreshFileAssocProbe() {
+    const std::wstring exePathStr = g_config.PortableMode ? L"" : QuickView::GetCurrentExecutablePath();
+    m_assocProbe = QuickView::ProbeFileAssociations(g_config.FileAssocExts, exePathStr);
+    m_assocProbeValid = true;
+
+    for (size_t ci = 0; ci < static_cast<size_t>(QuickView::AssocExtCategory::Count); ++ci) {
+        const auto cat = static_cast<QuickView::AssocExtCategory>(ci);
+        const auto exts = QuickView::GetExtensionsByCategory(cat);
+        const int selCount = QuickView::CountCategoryInCsv(g_config.FileAssocExts, cat);
+        m_assocCatToggles[ci] = (!exts.empty() && selCount == static_cast<int>(exts.size()));
+    }
+
+    wchar_t summaryBuf[256] = {};
+    const wchar_t* fmt = AppStrings::Settings_Status_AssocSummaryFormat
+        ? AppStrings::Settings_Status_AssocSummaryFormat
+        : L"%d selected \u00b7 %d system default \u00b7 %d Open With only";
+    swprintf_s(summaryBuf, fmt, m_assocProbe.selectedCount, m_assocProbe.defaultCount, m_assocProbe.openWithOnlyCount);
+    m_assocSummaryText = summaryBuf;
+}
+
+float SettingsOverlay::MeasureTagCloudHeight(const SettingsItem& item, float contentW, float s) const {
+    const float topGap = 10.0f * s;
+    const float headerH = 20.0f * s;
+    const float badgeH = 26.0f * s;
+    const float badgePadX = 12.0f * s;
+    const float badgeGapX = 6.0f * s;
+    const float badgeGapY = 8.0f * s;
+    const float dotReserve = (item.tagStatusFn != nullptr) ? (10.0f * s) : 0.0f;
+
+    float badgeX = 0.0f;
+    float badgeY = topGap + headerH + 6.0f * s;
+
+    if (item.options.empty()) {
+        return badgeY + 16.0f * s;
+    }
+
+    const std::wstring currentStr = item.pStrVal ? *item.pStrVal : L"";
+    const std::vector<std::wstring> activeItems = SplitString(currentStr, L',');
+
+    for (const auto& opt : item.options) {
+        int activeIndex = 0;
+        bool isActive = false;
+        for (size_t ai = 0; ai < activeItems.size(); ++ai) {
+            if (TagOptionMatches(item, activeItems[ai], opt)) {
+                isActive = true;
+                activeIndex = static_cast<int>(ai + 1);
+                break;
+            }
+        }
+
+        std::wstring_view optName = opt;
+        if (opt == L"Size" && item.tagCloudNoLimit) optName = L"Size & Zoom";
+
+        std::wstring displayText(optName);
+        if (isActive && !item.tagCloudNoSort) {
+            displayText = std::to_wstring(activeIndex) + L". " + std::wstring(optName);
+        }
+
+        const float textW = MeasureTagPillTextWidth(m_dwriteFactory.Get(), m_textFormatItem.Get(), displayText, badgeH, s);
+        float badgeW = textW + badgePadX * 2.0f + dotReserve;
+        if (badgeW > contentW) badgeW = contentW;
+
+        if (badgeX > 0.5f && badgeX + badgeW > contentW + 0.5f) {
+            badgeX = 0.0f;
+            badgeY += badgeH + badgeGapY;
+        }
+        badgeX += badgeW + badgeGapX;
+    }
+
+    float totalH = badgeY + badgeH + 16.0f * s;
+    if (!item.statusText.empty()) {
+        if (item.statusSetTime == 0 || (GetTickCount() - item.statusSetTime <= 3000)) {
+            totalH += 18.0f * s;
+        }
+    }
+    return totalH;
+}
+
+void SettingsOverlay::ToggleTagCloudOption(SettingsItem& item, int idx) {
+    if (idx < 0 || idx >= static_cast<int>(item.options.size()) || !item.pStrVal) return;
+
+    const std::wstring_view clickedOpt = item.options[idx];
+    if (item.tagCloudIgnoreCase) {
+        const bool currentlyActive = QuickView::IsExtensionInCsv(*item.pStrVal, clickedOpt);
+        *item.pStrVal = QuickView::ToggleExtensionInCsv(*item.pStrVal, clickedOpt, !currentlyActive);
+    } else {
+        std::vector<std::wstring> activeItems = SplitString(*item.pStrVal, L',');
+        auto it = std::find(activeItems.begin(), activeItems.end(), clickedOpt);
+        if (it != activeItems.end()) {
+            activeItems.erase(it);
+        } else {
+            if (item.tagCloudNoLimit || static_cast<int>(activeItems.size()) < kInfoPanelLiteMaxItems) {
+                activeItems.push_back(std::wstring(clickedOpt));
+            } else {
+                item.statusText = L"Limit reached (max 8 items)";
+                item.statusColor = D2D1::ColorF(1.0f, 0.35f, 0.35f, 1.0f);
+                item.statusSetTime = GetTickCount();
+            }
+        }
+
+        std::wstring newStr;
+        for (size_t i = 0; i < activeItems.size(); ++i) {
+            if (i > 0) newStr += L",";
+            newStr += activeItems[i];
+        }
+        *item.pStrVal = std::move(newStr);
+    }
+
+    if (item.onChange) item.onChange(this, &item);
+    SaveConfig();
 }
 
 SettingsOverlay::SettingsOverlay() {
@@ -4589,6 +4585,291 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
     }
 }
 
+static void ApplyAssocPreset(SettingsOverlay* overlay, QuickView::AssocPreset preset) {
+    g_config.FileAssocExts = QuickView::GetPresetCsv(preset);
+    extern void SaveConfig();
+    SaveConfig();
+    if (overlay) {
+        overlay->RefreshFileAssocProbe();
+        overlay->RequestRebuild();
+    }
+}
+
+void SettingsOverlay::BuildFileAssocTab(SettingsTab& tabFileAssoc) {
+    tabFileAssoc.name = AppStrings::Settings_Tab_FileAssoc;
+    tabFileAssoc.icon = Icons::Link;
+
+    const bool isPackaged = SystemInfo::IsPackagedApp();
+
+    // Only probe registry on demand when user actually opens the File Associations tab
+    if (m_activeTab == m_fileAssocTabIdx && !m_assocProbeValid) {
+        RefreshFileAssocProbe();
+    } else if (!m_assocProbeValid) {
+        // Zero-I/O memory summary until user visits this tab
+        int selCount = 0;
+        for (auto ext : QuickView::ALL_ASSOCIABLE_EXTENSIONS) {
+            if (QuickView::IsExtensionInCsv(g_config.FileAssocExts, ext)) {
+                ++selCount;
+            }
+        }
+        wchar_t summaryBuf[256] = {};
+        const wchar_t* fmt = AppStrings::Settings_Status_AssocSummaryFormat
+            ? AppStrings::Settings_Status_AssocSummaryFormat
+            : L"%d selected \u00b7 %d system default \u00b7 %d Open With only";
+        swprintf_s(summaryBuf, fmt, isPackaged ? static_cast<int>(QuickView::ALL_ASSOCIABLE_EXTENSIONS.size()) : selCount, 0, 0);
+        m_assocSummaryText = summaryBuf;
+
+        for (size_t ci = 0; ci < static_cast<size_t>(QuickView::AssocExtCategory::Count); ++ci) {
+            const auto cat = static_cast<QuickView::AssocExtCategory>(ci);
+            const auto exts = QuickView::GetExtensionsByCategory(cat);
+            const int catSel = QuickView::CountCategoryInCsv(g_config.FileAssocExts, cat);
+            m_assocCatToggles[ci] = (!exts.empty() && catSel == static_cast<int>(exts.size()));
+        }
+    }
+
+    // 1. Overview & Diagnostics
+    tabFileAssoc.items.push_back({ AppStrings::Settings_Header_FileAssocStatus, OptionType::Header });
+    tabFileAssoc.items.push_back({ m_assocSummaryText, OptionType::InfoLabel });
+
+    if (isPackaged) {
+        tabFileAssoc.items.push_back({ AppStrings::Settings_Status_AssocStoreManaged, OptionType::InfoLabel });
+    } else if (m_assocProbeValid && m_assocProbe.hasBrokenCommand && !g_config.PortableMode) {
+        tabFileAssoc.items.push_back({ AppStrings::Settings_Status_AssocBrokenHint, OptionType::InfoLabel });
+
+        SettingsItem itemRepair = { AppStrings::Settings_Header_FileAssocStatus, OptionType::ActionButton };
+        itemRepair.buttonText = AppStrings::Settings_Action_RepairAssoc;
+        itemRepair.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+            if (SettingsOverlay::RegisterAssociations() && overlay) {
+                overlay->m_assocAppliedTick = GetTickCount();
+                overlay->m_assocProbeValid = false;
+                overlay->RefreshFileAssocProbe();
+                overlay->RequestRebuild();
+            }
+        };
+        tabFileAssoc.items.push_back(std::move(itemRepair));
+    }
+
+    const bool showAppliedBanner = (m_assocAppliedTick != 0 && (GetTickCount() - m_assocAppliedTick) < 2500);
+    const bool hasPendingChanges = !isPackaged && !g_config.PortableMode &&
+        (QuickView::FormatAssocOptionsHash(QuickView::ComputeAssocOptionsHash(BuildCurrentAssocOptions())) != g_config.LastRegisteredAssocHash);
+
+    if (isPackaged) {
+        // Store / MSIX builds delegate Open With & Context Menu to the package manifest;
+        // only Windows Default Apps needs to be invoked (using registeredAUMID).
+        SettingsItem itemWinDefault = { L"", OptionType::ActionButton };
+        itemWinDefault.buttonText = AppStrings::Settings_Action_SetDefaultWin;
+        itemWinDefault.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+            QuickView::OpenSystemDefaultAppsSettings();
+            if (overlay) {
+                overlay->m_assocProbeValid = false;
+                overlay->RefreshFileAssocProbe();
+                overlay->RequestRebuild();
+            }
+        };
+        tabFileAssoc.items.push_back(std::move(itemWinDefault));
+    } else {
+        if (hasPendingChanges && !showAppliedBanner && AppStrings::Settings_Status_AssocPendingHint) {
+            tabFileAssoc.items.push_back({ AppStrings::Settings_Status_AssocPendingHint, OptionType::InfoLabel });
+        }
+
+        // Primary Action Bar: Apply Changes to System + Windows 10/11 Default Apps
+        SettingsItem itemApplyWin = { L"", OptionType::DualActionButton };
+        itemApplyWin.buttonText = showAppliedBanner
+            ? AppStrings::Settings_Status_AssocApplied
+            : (hasPendingChanges && AppStrings::Settings_Action_ApplyPending ? AppStrings::Settings_Action_ApplyPending : AppStrings::Settings_Action_ApplyAssoc);
+        itemApplyWin.buttonText2 = AppStrings::Settings_Action_SetDefaultWin;
+        if (g_config.PortableMode) {
+            itemApplyWin.isDisabled = true;
+            itemApplyWin.disabledText = AppStrings::Settings_Status_DisabledInPortable;
+        } else {
+            itemApplyWin.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+                if (SettingsOverlay::RegisterAssociations() && overlay) {
+                    overlay->m_assocAppliedTick = GetTickCount();
+                    overlay->m_assocProbeValid = false;
+                    overlay->RefreshFileAssocProbe();
+                    overlay->RequestRebuild();
+                }
+            };
+            itemApplyWin.onChange2 = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+                // Ensure Capabilities & ProgIDs exist in registry before opening Windows Settings
+                if (SettingsOverlay::IsRegistrationNeeded()) {
+                    SettingsOverlay::RegisterAssociations();
+                }
+                QuickView::OpenSystemDefaultAppsSettings();
+                if (overlay) {
+                    overlay->m_assocAppliedTick = GetTickCount();
+                    overlay->m_assocProbeValid = false;
+                    overlay->RefreshFileAssocProbe();
+                    overlay->RequestRebuild();
+                }
+            };
+        }
+        tabFileAssoc.items.push_back(std::move(itemApplyWin));
+    }
+
+    // 2. Integration Options
+    tabFileAssoc.items.push_back({ AppStrings::Settings_Header_FileAssocOptions, OptionType::Header });
+
+    SettingsItem itemIconStyle = {
+        AppStrings::Settings_Label_FileAssocIconStyle,
+        OptionType::Segment,
+        nullptr,
+        nullptr,
+        &g_config.FileAssocIconStyle,
+        nullptr,
+        0,
+        0,
+        { AppStrings::Settings_Option_FileAssocIconNative, AppStrings::Settings_Option_FileAssocIconApp }
+    };
+    itemIconStyle.isDisabled = isPackaged || g_config.PortableMode;
+    itemIconStyle.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        extern void SaveConfig();
+        SaveConfig();
+        if (overlay) overlay->RequestRebuild();
+    };
+    tabFileAssoc.items.push_back(std::move(itemIconStyle));
+
+    SettingsItem itemContextMenu = { AppStrings::Settings_Label_FileAssocContextMenu, OptionType::Toggle, &g_config.FileAssocContextMenu };
+    itemContextMenu.isDisabled = isPackaged || g_config.PortableMode;
+    itemContextMenu.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        extern void SaveConfig();
+        SaveConfig();
+        // Immediately scrub context menu registry keys when user unchecks the toggle
+        if (!g_config.FileAssocContextMenu && !g_config.PortableMode && !SystemInfo::IsPackagedApp()) {
+            if (SettingsOverlay::RegisterAssociations() && overlay) {
+                overlay->m_assocAppliedTick = GetTickCount();
+                overlay->m_assocProbeValid = false;
+                overlay->RefreshFileAssocProbe();
+            }
+        }
+        if (overlay) overlay->RequestRebuild();
+    };
+    tabFileAssoc.items.push_back(std::move(itemContextMenu));
+
+    SettingsItem itemAutoRepair = { AppStrings::Settings_Label_FileAssocAutoRepair, OptionType::Toggle, &g_config.FileAssocAutoRepair };
+    itemAutoRepair.isDisabled = isPackaged || g_config.PortableMode;
+    itemAutoRepair.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        extern void SaveConfig();
+        SaveConfig();
+    };
+    tabFileAssoc.items.push_back(std::move(itemAutoRepair));
+
+    // 2x2 Presets Grid
+    SettingsItem itemPresetRow1 = { AppStrings::Settings_Label_FileAssocPresets, OptionType::DualActionButton };
+    itemPresetRow1.buttonText = AppStrings::Settings_Action_PresetRecommended;
+    itemPresetRow1.buttonText2 = AppStrings::Settings_Action_PresetPhotoRaw;
+    itemPresetRow1.isDisabled = isPackaged;
+    itemPresetRow1.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        ApplyAssocPreset(overlay, QuickView::AssocPreset::Recommended);
+    };
+    itemPresetRow1.onChange2 = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        ApplyAssocPreset(overlay, QuickView::AssocPreset::PhotoAndRaw);
+    };
+    tabFileAssoc.items.push_back(std::move(itemPresetRow1));
+
+    SettingsItem itemPresetRow2 = { L" ", OptionType::DualActionButton };
+    itemPresetRow2.buttonText = AppStrings::Settings_Action_PresetAllImages;
+    itemPresetRow2.buttonText2 = AppStrings::Settings_Action_PresetClearAll;
+    itemPresetRow2.isDisabled = isPackaged;
+    itemPresetRow2.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        ApplyAssocPreset(overlay, QuickView::AssocPreset::AllImages);
+    };
+    itemPresetRow2.onChange2 = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        ApplyAssocPreset(overlay, QuickView::AssocPreset::ClearAll);
+        if (!g_config.PortableMode && !SystemInfo::IsPackagedApp()) {
+            if (SettingsOverlay::RegisterAssociations() && overlay) {
+                overlay->m_assocAppliedTick = GetTickCount();
+                overlay->m_assocProbeValid = false;
+                overlay->RefreshFileAssocProbe();
+                overlay->RequestRebuild();
+            }
+        }
+    };
+    tabFileAssoc.items.push_back(std::move(itemPresetRow2));
+
+    // 3. All 92 Supported Formats (Data-driven Category Accordion Cards)
+    tabFileAssoc.items.push_back({ AppStrings::Settings_Header_FileAssocFormats, OptionType::Header });
+    tabFileAssoc.items.push_back({ AppStrings::Settings_Status_AssocLegend, OptionType::InfoLabel });
+
+    constexpr size_t kCatCount = static_cast<size_t>(QuickView::AssocExtCategory::Count);
+    for (size_t ci = 0; ci < kCatCount; ++ci) {
+        const auto cat = static_cast<QuickView::AssocExtCategory>(ci);
+        const auto exts = QuickView::GetExtensionsByCategory(cat);
+        const int selCount = QuickView::CountCategoryInCsv(g_config.FileAssocExts, cat);
+        const wchar_t* const* titlePtr = GetCategoryTitlePtr(cat);
+        const wchar_t* titleStr = (titlePtr && *titlePtr) ? *titlePtr : L"Formats";
+
+        wchar_t cardTitle[160] = {};
+        if (isPackaged) {
+            swprintf_s(cardTitle, L"%s (%d)", titleStr, static_cast<int>(exts.size()));
+        } else {
+            swprintf_s(cardTitle, L"%s (%d/%d)", titleStr, selCount, static_cast<int>(exts.size()));
+        }
+
+        SettingsItem cardHeader = { cardTitle, OptionType::AccordionCardHeader, isPackaged ? nullptr : &m_assocCatToggles[ci] };
+        cardHeader.isActivated = m_assocCatExpanded[ci];
+        cardHeader.isDisabled = isPackaged;
+        cardHeader.onChange = [](SettingsOverlay* overlay, SettingsItem* item) {
+            if (!overlay || !item) return;
+            if (item->pBoolVal) {
+                const ptrdiff_t idx = item->pBoolVal - overlay->m_assocCatToggles;
+                if (idx >= 0 && static_cast<size_t>(idx) < kCatCount) {
+                    overlay->m_assocCatExpanded[idx] = item->isActivated;
+                }
+            } else {
+                // Packaged mode hides category switch; recover index from card order if expanded/collapsed
+                const auto& items = overlay->m_tabs[overlay->m_fileAssocTabIdx].items;
+                size_t catIdx = 0;
+                for (const auto& candidate : items) {
+                    if (candidate.type == OptionType::AccordionCardHeader) {
+                        if (&candidate == item) {
+                            if (catIdx < kCatCount) overlay->m_assocCatExpanded[catIdx] = item->isActivated;
+                            break;
+                        }
+                        ++catIdx;
+                    }
+                }
+            }
+            overlay->RequestRebuild();
+        };
+        cardHeader.onChange2 = [](SettingsOverlay* overlay, SettingsItem* item) {
+            if (!overlay || !item || !item->pBoolVal) return;
+            const ptrdiff_t idx = item->pBoolVal - overlay->m_assocCatToggles;
+            if (idx >= 0 && static_cast<size_t>(idx) < kCatCount) {
+                const auto targetCat = static_cast<QuickView::AssocExtCategory>(idx);
+                g_config.FileAssocExts = QuickView::SetCategoryInCsv(g_config.FileAssocExts, targetCat, *item->pBoolVal);
+                extern void SaveConfig();
+                SaveConfig();
+                overlay->RefreshFileAssocProbe();
+            }
+            overlay->RequestRebuild();
+        };
+        tabFileAssoc.items.push_back(std::move(cardHeader));
+
+        if (m_assocCatExpanded[ci]) {
+            SettingsItem tagCloud = { L"", OptionType::TagCloud, nullptr, nullptr, nullptr, isPackaged ? nullptr : &g_config.FileAssocExts };
+            if (cat == QuickView::AssocExtCategory::Archive && AppStrings::Settings_Tooltip_FileAssocArchive) {
+                tagCloud.label = AppStrings::Settings_Tooltip_FileAssocArchive;
+            }
+            tagCloud.isDisabled = isPackaged;
+            tagCloud.tagCloudNoLimit = true;
+            tagCloud.tagCloudNoSort = true;
+            tagCloud.tagCloudIgnoreCase = true;
+            tagCloud.tagStatusFn = FileAssocTagStatusProbe;
+            tagCloud.options.assign(exts.begin(), exts.end());
+            tagCloud.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+                if (overlay) {
+                    overlay->RefreshFileAssocProbe();
+                    overlay->RequestRebuild();
+                }
+            };
+            tabFileAssoc.items.push_back(std::move(tagCloud));
+        }
+
+        tabFileAssoc.items.push_back({ L"spacing", OptionType::Separator });
+    }
+}
+
 void SettingsOverlay::BuildAdvancedTab(SettingsTab& tabAdvanced) {
     tabAdvanced.name = AppStrings::Settings_Tab_Advanced;
     tabAdvanced.icon = Icons::Advanced;
@@ -4656,21 +4937,6 @@ void SettingsOverlay::BuildAdvancedTab(SettingsTab& tabAdvanced) {
     
     // System Helpers
     tabAdvanced.items.push_back({ AppStrings::Settings_Header_System, OptionType::Header });
-    
-    SettingsItem itemFileAssoc = { AppStrings::Settings_Label_AddToOpenWith, OptionType::ActionButton };
-    itemFileAssoc.buttonText = AppStrings::Settings_Action_Add;
-    itemFileAssoc.buttonActivatedText = AppStrings::Settings_Action_Added;
-    
-    // Disable in Portable Mode (cannot write to registry)
-    if (g_config.PortableMode) {
-        itemFileAssoc.isDisabled = true;
-        itemFileAssoc.disabledText = AppStrings::Settings_Status_DisabledInPortable;
-    } else {
-        itemFileAssoc.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-            SettingsOverlay::RegisterAssociations();
-        };
-    }
-    tabAdvanced.items.push_back(itemFileAssoc);
 
     SettingsItem itemCustomEditor = { AppStrings::Settings_Label_CustomEditor, OptionType::ActionButton };
     itemCustomEditor.buttonText = AppStrings::Context_SelectEditor;
@@ -4910,7 +5176,7 @@ void SettingsOverlay::BuildMenu() {
         m_borderStrokeOption = (g_config.GlassVectorStrokeWeightIndex == 1) ? 1 : 2; // 1=Fine, 2=Standard
     }
 
-    m_tabs.reserve(9);
+    m_tabs.reserve(10);
 
     // --- 1. General ---
     SettingsTab tabGeneral;
@@ -4949,12 +5215,19 @@ void SettingsOverlay::BuildMenu() {
     tabAiActions.isNew = true;
     m_tabs.push_back(std::move(tabAiActions));
 
-    // --- 8. Advanced ---
+    // --- 8. File Associations ---
+    SettingsTab tabFileAssoc;
+    m_fileAssocTabIdx = static_cast<int>(m_tabs.size());
+    BuildFileAssocTab(tabFileAssoc);
+    tabFileAssoc.isNew = true;
+    m_tabs.push_back(std::move(tabFileAssoc));
+
+    // --- 9. Advanced ---
     SettingsTab tabAdvanced;
     BuildAdvancedTab(tabAdvanced);
     m_tabs.push_back(std::move(tabAdvanced));
 
-    // --- 9. About ---
+    // --- 10. About ---
     SettingsTab tabAbout;
     BuildAboutTab(tabAbout);
     m_tabs.push_back(std::move(tabAbout));
@@ -5011,6 +5284,10 @@ void SettingsOverlay::SwitchTab(int delta) {
     if (newTab < 0) newTab += (int)m_tabs.size();
     m_activeTab = newTab;
     m_scrollOffset = 0.0f;
+    if (m_activeTab == m_fileAssocTabIdx && !m_assocProbeValid) {
+        RefreshFileAssocProbe();
+        RebuildMenu();
+    }
     m_focusedItemIdx = GetFirstInteractiveItemIndex(m_activeTab);
     m_focusedTagIdx = 0;
     m_focusedPartIdx = 0;
@@ -5091,6 +5368,9 @@ void SettingsOverlay::SetVisible(bool visible) {
     }
 
     if (m_visible) {
+        if (m_activeTab == m_fileAssocTabIdx && !m_assocProbeValid) {
+            RefreshFileAssocProbe();
+        }
         RebuildMenu(); // Ensure strings are up-to-date
         m_opacity = 0.0f;
         if (m_focusedItemIdx < 0) {
@@ -5116,6 +5396,7 @@ void SettingsOverlay::SetVisible(bool visible) {
             AdjustWindowForOverlay(m_hwnd, false);
         }
     } else {
+        m_assocProbeValid = false;
         m_focusedItemIdx = -1;
         m_focusedTagIdx = 0;
         m_focusedPartIdx = 0;
@@ -5356,7 +5637,7 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                 DrawNewBadge(pRT, badgeX, badgeY, s);
             }
 
-            tabY += 45.0f * s;
+            tabY += SIDEBAR_TAB_STEP * s;
         }
 
         // Draw Minimalist Keyboard Navigation Hints at Sidebar Bottom
@@ -5477,14 +5758,21 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                 // Calculate full container rect spanning all expanded items down to next Separator
                 float innerH = 0.0f;
                 if (isExpanded) {
+                    const float subAvailW = contentW - 34.0f * s;
                     for (size_t nextIdx = itemIdx + 1; nextIdx < currentTab.items.size(); ++nextIdx) {
-                        if (currentTab.items[nextIdx].type == OptionType::Separator ||
-                            currentTab.items[nextIdx].type == OptionType::Header ||
-                            currentTab.items[nextIdx].type == OptionType::AccordionCardHeader) {
+                        const auto& subItem = currentTab.items[nextIdx];
+                        if (subItem.type == OptionType::Separator ||
+                            subItem.type == OptionType::Header ||
+                            subItem.type == OptionType::AccordionCardHeader) {
                             break;
                         }
-                        if (currentTab.items[nextIdx].type == OptionType::SubHeader) innerH += 36.0f * s;
-                        else innerH += 36.0f * s;
+                        if (subItem.type == OptionType::TagCloud) {
+                            innerH += MeasureTagCloudHeight(subItem, subAvailW, s);
+                        } else if (subItem.type == OptionType::HotkeyBindRow) {
+                            innerH += 34.0f * s;
+                        } else {
+                            innerH += 36.0f * s;
+                        }
                     }
                 }
 
@@ -5883,28 +6171,39 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                 const float badgeGapX = 6.0f * s;
                 const float badgeGapY = 8.0f * s;
                 const float badgeRadius = badgeH * 0.5f; // Pill badge
+                const float dotReserve = (item.tagStatusFn != nullptr) ? (10.0f * s) : 0.0f;
 
                 contentY += topGap;
-                
-                // Draw Label / Header
-                D2D1_RECT_F headerRect = D2D1::RectF(contentX, contentY, contentX + contentW, contentY + headerH);
-                pRT->DrawText(item.label.c_str(), (UINT32)item.label.length(), m_textFormatItem.Get(), headerRect, m_brushText.Get());
 
-                float badgeX = contentX;
-                float badgeY = contentY + headerH + 6.0f * s;
-                float maxLineRight = contentX + contentW;
-                
+                float headerTop = contentY;
+                float badgeY = contentY;
+                if (!item.label.empty()) {
+                    D2D1_RECT_F headerRect = D2D1::RectF(rowContentX, contentY, rowContentX + rowContentW, contentY + headerH);
+                    pRT->DrawText(item.label.c_str(), (UINT32)item.label.length(), m_textFormatItem.Get(), headerRect, m_brushTextDim.Get());
+                    badgeY += headerH + 6.0f * s;
+                } else {
+                    badgeY += 2.0f * s;
+                }
+
+                float badgeX = rowContentX;
+                float maxLineRight = rowContentX + rowContentW;
+
                 // Parse current items
                 std::wstring currentStr = item.pStrVal ? *item.pStrVal : L"";
                 std::vector<std::wstring> activeItems = SplitString(currentStr, L',');
-                
+
                 item.optionRects.clear();
 
                 for (const auto& opt : item.options) {
-                    // Check if active
-                    auto it = std::find(activeItems.begin(), activeItems.end(), opt);
-                    bool isActive = (it != activeItems.end());
-                    int activeIndex = isActive ? (int)(std::distance(activeItems.begin(), it) + 1) : 0;
+                    int activeIndex = 0;
+                    bool isActive = false;
+                    for (size_t ai = 0; ai < activeItems.size(); ++ai) {
+                        if (TagOptionMatches(item, activeItems[ai], opt)) {
+                            isActive = true;
+                            activeIndex = static_cast<int>(ai + 1);
+                            break;
+                        }
+                    }
 
                     // Build display string
                     std::wstring_view optName = opt;
@@ -5915,29 +6214,13 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                         displayText = std::to_wstring(activeIndex) + L". " + std::wstring(optName);
                     }
 
-                    float textW = 0.0f;
-                    if (m_dwriteFactory && m_textFormatItem) {
-                        ComPtr<IDWriteTextLayout> layout;
-                        if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(
-                            displayText.c_str(),
-                            (UINT32)displayText.length(),
-                            m_textFormatItem.Get(),
-                            2000.0f,
-                            badgeH,
-                            &layout))) {
-                            DWRITE_TEXT_METRICS metrics = {};
-                            if (SUCCEEDED(layout->GetMetrics(&metrics))) {
-                                textW = ceilf(metrics.widthIncludingTrailingWhitespace);
-                            }
-                        }
-                    }
-                    if (textW <= 0.0f) textW = (float)displayText.length() * 8.0f * s;
+                    float textW = MeasureTagPillTextWidth(m_dwriteFactory.Get(), m_textFormatItem.Get(), displayText, badgeH, s);
 
-                    float badgeW = textW + badgePadX * 2.0f;
-                    if (badgeW > contentW) badgeW = contentW;
+                    float badgeW = textW + badgePadX * 2.0f + dotReserve;
+                    if (badgeW > rowContentW) badgeW = rowContentW;
 
-                    if (badgeX + badgeW > maxLineRight + 0.5f) {
-                        badgeX = contentX;
+                    if (badgeX > rowContentX + 0.5f && badgeX + badgeW > maxLineRight + 0.5f) {
+                        badgeX = rowContentX;
                         badgeY += badgeH + badgeGapY;
                     }
 
@@ -5945,7 +6228,11 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                     item.optionRects.push_back(badgeRect);
 
                     D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(badgeRect, badgeRadius, badgeRadius);
-                    
+                    D2D1_RECT_F pillTextRect = badgeRect;
+                    if (dotReserve > 0.0f) {
+                        pillTextRect.left += dotReserve * 0.75f;
+                    }
+
                     if (isActive) {
                         // Active: Fill with Accent Blue, draw white text for contrast
                         pRT->FillRoundedRectangle(rr, m_brushAccent.Get());
@@ -5953,14 +6240,32 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                         m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                         ComPtr<ID2D1SolidColorBrush> badgeTextBrush;
                         pRT->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &badgeTextBrush);
-                        pRT->DrawText(displayText.c_str(), (UINT32)displayText.length(), m_textFormatItem.Get(), badgeRect, badgeTextBrush.Get());
+                        pRT->DrawText(displayText.c_str(), (UINT32)displayText.length(), m_textFormatItem.Get(), pillTextRect, badgeTextBrush.Get());
                     } else {
                         // Inactive: Draw border and dim text
                         pRT->FillRoundedRectangle(rr, m_brushControlBg.Get());
                         pRT->DrawRoundedRectangle(rr, m_brushBorder.Get(), 1.0f * s);
                         m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
                         m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                        pRT->DrawText(displayText.c_str(), (UINT32)displayText.length(), m_textFormatItem.Get(), badgeRect, m_brushTextDim.Get());
+                        pRT->DrawText(displayText.c_str(), (UINT32)displayText.length(), m_textFormatItem.Get(), pillTextRect, m_brushTextDim.Get());
+                    }
+
+                    // Optional per-extension OS status dot (2 = OS default green, 1 = OpenWith registered blue)
+                    if (item.tagStatusFn != nullptr) {
+                        const uint8_t st = item.tagStatusFn(this, opt);
+                        if (st > 0) {
+                            const float dotR = 3.0f * s;
+                            const float dotCx = badgeRect.left + badgePadX * 0.65f + dotR;
+                            const float dotCy = badgeRect.top + badgeH * 0.5f;
+                            const D2D1_COLOR_F dotColor = (st == 2)
+                                ? D2D1::ColorF(0.22f, 0.90f, 0.45f, 1.0f)
+                                : (isActive ? D2D1::ColorF(0.75f, 0.92f, 1.0f, 0.95f) : palette.accent);
+                            ComPtr<ID2D1SolidColorBrush> dotBrush;
+                            pRT->CreateSolidColorBrush(dotColor, &dotBrush);
+                            if (dotBrush) {
+                                pRT->FillEllipse(D2D1::Ellipse(D2D1::Point2F(dotCx, dotCy), dotR, dotR), dotBrush.Get());
+                            }
+                        }
                     }
 
                     if (isFocused && m_focusedTagIdx == (int)item.optionRects.size() - 1) {
@@ -5983,13 +6288,13 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                 if (!item.statusText.empty()) {
                     ComPtr<ID2D1SolidColorBrush> statusBrush;
                     pRT->CreateSolidColorBrush(item.statusColor, &statusBrush);
-                    D2D1_RECT_F statusR = D2D1::RectF(contentX, contentY - 12.0f * s, contentX + contentW, contentY + 6.0f * s);
+                    D2D1_RECT_F statusR = D2D1::RectF(rowContentX, contentY - 12.0f * s, rowContentX + rowContentW, contentY + 6.0f * s);
                     pRT->DrawText(item.statusText.c_str(), (UINT32)item.statusText.length(), m_textFormatItem.Get(), statusR, statusBrush.Get());
                     contentY += 18.0f * s;
                 }
 
                 // Define overall item.rect and interactRect for scrolling / containment hit testing
-                item.rect = D2D1::RectF(contentX, headerRect.top, contentX + contentW, contentY);
+                item.rect = D2D1::RectF(rowContentX, headerTop, rowContentX + rowContentW, contentY);
                 item.interactRect = item.rect;
                 
                 m_settingsContentHeight = (contentY - startContentY > m_settingsContentHeight) ? (contentY - startContentY) : m_settingsContentHeight;
@@ -7238,34 +7543,8 @@ void SettingsOverlay::HandleItemKeyboardActivation(SettingsItem& item, WPARAM ke
                     m_focusedTagIdx = (m_focusedTagIdx > 0) ? m_focusedTagIdx - 1 : tagCount - 1;
                 } else if (key == VK_RIGHT) {
                     m_focusedTagIdx = (m_focusedTagIdx + 1) % tagCount;
-                } else if (key == VK_SPACE || key == VK_RETURN) {
-                    if (m_focusedTagIdx >= 0 && m_focusedTagIdx < tagCount && item.pStrVal) {
-                        std::wstring_view clickedOpt = item.options[m_focusedTagIdx];
-                        std::wstring currentStr = *item.pStrVal;
-                        std::vector<std::wstring> activeItems = SplitString(currentStr, L',');
-
-                        auto it = std::find(activeItems.begin(), activeItems.end(), clickedOpt);
-                        if (it != activeItems.end()) {
-                            activeItems.erase(it);
-                        } else {
-                            if (item.tagCloudNoLimit || (int)activeItems.size() < kInfoPanelLiteMaxItems) {
-                                activeItems.push_back(std::wstring(clickedOpt));
-                            } else {
-                                item.statusText = L"Limit reached (max 8 items)";
-                                item.statusColor = D2D1::ColorF(1.0f, 0.35f, 0.35f, 1.0f);
-                                item.statusSetTime = GetTickCount();
-                            }
-                        }
-
-                        std::wstring newStr;
-                        for (size_t i = 0; i < activeItems.size(); ++i) {
-                            if (i > 0) newStr += L",";
-                            newStr += activeItems[i];
-                        }
-                        *item.pStrVal = newStr;
-                        if (item.onChange) item.onChange(this, &item);
-                        SaveConfig();
-                    }
+                } else if ((key == VK_SPACE || key == VK_RETURN) && !item.isDisabled) {
+                    ToggleTagCloudOption(item, m_focusedTagIdx);
                 }
             }
             break;
@@ -7899,7 +8178,7 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
     // Sidebar & Close button cursor hit testing
     float sidebarW = SIDEBAR_WIDTH * m_uiScale;
     float backH = 50.0f * m_uiScale;
-    float tabStep = 45.0f * m_uiScale;
+    float tabStep = SIDEBAR_TAB_STEP * m_uiScale;
     float sidebarInteractiveHeight = backH + (float)m_tabs.size() * tabStep;
     if (x >= m_hudX && x < m_hudX + sidebarW && y >= m_hudY && y <= m_hudY + sidebarInteractiveHeight) {
         g_currentCursor = ::LoadCursor(NULL, IDC_HAND);
@@ -8150,7 +8429,7 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
     const float sidebarW = SIDEBAR_WIDTH * m_uiScale;
     const float backH = 50.0f * m_uiScale;
     const float tabH = 40.0f * m_uiScale;
-    const float tabStep = 45.0f * m_uiScale;
+    const float tabStep = SIDEBAR_TAB_STEP * m_uiScale;
 
     // 1. Sidebar Click (hudX <= x < hudX + sidebarW)
     if (x >= hudX && x < hudX + sidebarW) {
@@ -8176,6 +8455,10 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
                 if (m_activeTab != i) {
                     m_activeTab = i;
                     m_scrollOffset = 0.0f;
+                    if (m_activeTab == m_fileAssocTabIdx && !m_assocProbeValid) {
+                        RefreshFileAssocProbe();
+                        RebuildMenu();
+                    }
                 }
                 return SettingsAction::RepaintAll;
             }
@@ -8463,31 +8746,7 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
             }
             
             if (clickedIdx != -1 && m_pHoverItem->pStrVal) {
-                std::wstring_view clickedOpt = m_pHoverItem->options[clickedIdx];
-                std::wstring currentStr = *m_pHoverItem->pStrVal;
-                std::vector<std::wstring> activeItems = SplitString(currentStr, L',');
-                
-                auto it = std::find(activeItems.begin(), activeItems.end(), clickedOpt);
-                if (it != activeItems.end()) {
-                    activeItems.erase(it);
-                } else {
-                    if (m_pHoverItem->tagCloudNoLimit || (int)activeItems.size() < kInfoPanelLiteMaxItems) {
-                        activeItems.push_back(std::wstring(clickedOpt));
-                    } else {
-                        m_pHoverItem->statusText = L"Limit reached (max 8 items)";
-                        m_pHoverItem->statusColor = D2D1::ColorF(1.0f, 0.35f, 0.35f, 1.0f);
-                        m_pHoverItem->statusSetTime = GetTickCount();
-                    }
-                }
-                
-                std::wstring newStr;
-                for (size_t i = 0; i < activeItems.size(); ++i) {
-                    if (i > 0) newStr += L",";
-                    newStr += activeItems[i];
-                }
-                *m_pHoverItem->pStrVal = newStr;
-                
-                if (m_pHoverItem->onChange) m_pHoverItem->onChange(this, m_pHoverItem);
+                ToggleTagCloudOption(*m_pHoverItem, clickedIdx);
                 return SettingsAction::RepaintAll;
             }
             return SettingsAction::RepaintStatic;

@@ -1165,9 +1165,15 @@ struct AppConfig {
     int InfoPanelScale = 0; // 0=Global, 1=100%, 2=125%, 3=150%, 4=175%, 5=200%
     std::wstring InfoPanelLiteSeparator = L" \u00b7 ";
     
-    // --- Save Options --- (Functional options removed, fully automated/smart)
+    // --- File Association & Registry Maintenance ---
     std::wstring LastRegisteredVersion;
     std::wstring LastRegisteredPath;
+    std::wstring LastRegisteredAssocHash;
+    bool FileAssocInitialized = false;
+    std::wstring FileAssocExts;
+    int FileAssocIconStyle = 0;         // 0=SystemNative, 1=QuickViewLogo
+    bool FileAssocContextMenu = false;
+    bool FileAssocAutoRepair = true;
 
 
     // Existing / Internal (Defaults for Runtime)

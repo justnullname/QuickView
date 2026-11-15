@@ -41,6 +41,7 @@ static UINT GetSvgSurfaceSizeLimit();
 #include "InputController.h"  // Quantum Stream: Warp Mode
 #include "LosslessTransform.h"
 #include "EditState.h"
+#include "FileAssociationManager.h"
 #include "StringUtils.h"
 #include "PaneContext.h"
 #include "AppStrings.h"
@@ -5316,6 +5317,12 @@ void FlushConfigSnapshotToDisk(
     // [Registry]
     sec.AddString(L"RegVer", cfg.LastRegisteredVersion);
     sec.AddString(L"RegPath", cfg.LastRegisteredPath);
+    sec.AddString(L"RegHash", cfg.LastRegisteredAssocHash);
+    sec.AddBool(L"FileAssocInitialized", cfg.FileAssocInitialized);
+    sec.AddString(L"FileAssocExts", cfg.FileAssocExts);
+    sec.AddInt(L"FileAssocIconStyle", cfg.FileAssocIconStyle);
+    sec.AddBool(L"FileAssocContextMenu", cfg.FileAssocContextMenu);
+    sec.AddBool(L"FileAssocAutoRepair", cfg.FileAssocAutoRepair);
     sec.Flush(L"Registry", pIni);
 
     // [Hotkeys]
@@ -5907,11 +5914,27 @@ void LoadConfig() {
     g_config.AutoSaveOnSwitch = GetPrivateProfileIntW(L"General", L"AutoSaveOnSwitch", 0, iniPath.c_str()) != 0;
 
     // Registry persistence
-    wchar_t bufVer[64], bufPath[MAX_PATH];
+    wchar_t bufVer[64], bufPath[MAX_PATH * 2], bufHash[32], bufExts[4096];
     GetPrivateProfileStringW(L"Registry", L"RegVer", L"", bufVer, 64, iniPath.c_str());
-    GetPrivateProfileStringW(L"Registry", L"RegPath", L"", bufPath, MAX_PATH, iniPath.c_str());
+    GetPrivateProfileStringW(L"Registry", L"RegPath", L"", bufPath, MAX_PATH * 2, iniPath.c_str());
+    GetPrivateProfileStringW(L"Registry", L"RegHash", L"", bufHash, 32, iniPath.c_str());
     g_config.LastRegisteredVersion = bufVer;
     g_config.LastRegisteredPath = bufPath;
+    g_config.LastRegisteredAssocHash = bufHash;
+
+    g_config.FileAssocInitialized = GetPrivateProfileIntW(L"Registry", L"FileAssocInitialized", 0, iniPath.c_str()) != 0;
+    GetPrivateProfileStringW(L"Registry", L"FileAssocExts", L"", bufExts, 4096, iniPath.c_str());
+    g_config.FileAssocExts = bufExts;
+    g_config.FileAssocIconStyle = std::clamp<int>(GetPrivateProfileIntW(L"Registry", L"FileAssocIconStyle", 0, iniPath.c_str()), 0, 1);
+    g_config.FileAssocContextMenu = GetPrivateProfileIntW(L"Registry", L"FileAssocContextMenu", 0, iniPath.c_str()) != 0;
+    g_config.FileAssocAutoRepair = GetPrivateProfileIntW(L"Registry", L"FileAssocAutoRepair", 1, iniPath.c_str()) != 0;
+
+    if (!g_config.FileAssocInitialized) {
+        if (g_config.FileAssocExts.empty()) {
+            g_config.FileAssocExts = QuickView::GetRecommendedAssocExtensionsString();
+        }
+        g_config.FileAssocInitialized = true;
+    }
 
     // Load Multi-Rule Hotkeys
     int hotkeyRuleCount = GetPrivateProfileIntW(L"Hotkeys", L"HotkeyRuleCount", -1, iniPath.c_str());
@@ -8647,9 +8670,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCm
 
     std::wstring initialImagePath = QuickView::ProcessRouter::ParseImagePath();
     bool hasInitialImage = false;
+    bool initialPathMissing = false;
     if (!initialImagePath.empty()) {
-        std::error_code ec;
-        if (!std::filesystem::is_directory(std::filesystem::path(initialImagePath), ec)) {
+        const bool isVfsPath = (initialImagePath.find(L'|') != std::wstring::npos);
+        const DWORD attrs = isVfsPath ? FILE_ATTRIBUTE_NORMAL : GetFileAttributesW(initialImagePath.c_str());
+        if (attrs == INVALID_FILE_ATTRIBUTES) {
+            initialPathMissing = true;
+        } else if ((attrs & FILE_ATTRIBUTE_DIRECTORY) == 0) {
             hasInitialImage = true;
             g_imagePath = initialImagePath;
             // [Boot Architecture] Kick off overlapped decoding pipeline before LoadConfig/Init
@@ -8672,21 +8699,21 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCm
     // Now safe to start ETW
     EtwScope etwScope;
 
-    // [The Golden Path] Smart Lazy Registration: Check and self-repair file associations
-    // Bypass logic: Skip if Portable Mode OR if already registered for this version and path.
-    if (!g_config.PortableMode) {
+    // [The Golden Path] Smart Lazy Registration: Check and self-repair user-selected associations.
+    // Bypass logic: Skip if MSIX/Store packaged, Portable Mode, AutoRepair disabled, or already synced.
+    if (!SystemInfo::IsPackagedApp() && !g_config.PortableMode && g_config.FileAssocAutoRepair) {
         std::wstring currentVer = SettingsOverlay::GetAppVersion();
-        
-        wchar_t currentExePath[MAX_PATH];
-        GetModuleFileNameW(nullptr, currentExePath, MAX_PATH);
-        std::wstring currentPath = currentExePath;
+        std::wstring currentPath = QuickView::GetCurrentExecutablePath();
+
+        const QuickView::FileAssocOptions assocOpts = SettingsOverlay::BuildCurrentAssocOptions();
+        std::wstring currentHash = QuickView::FormatAssocOptionsHash(QuickView::ComputeAssocOptionsHash(assocOpts));
 
         const bool versionMatch = (currentVer == g_config.LastRegisteredVersion);
         const bool pathMatch = (_wcsicmp(currentPath.c_str(), g_config.LastRegisteredPath.c_str()) == 0);
-        const bool needsCheck = !versionMatch || !pathMatch;
+        const bool hashMatch = (currentHash == g_config.LastRegisteredAssocHash);
+        const bool needsCheck = !versionMatch || !pathMatch || !hashMatch;
 
-        // [The Golden Path] Optimization:
-        // If version/path changed, we defer the heavy IO check/repair until the window is idle (delay 500ms).
+        // Defer registry check/repair until the window is idle (1000ms timer).
         if (needsCheck) {
             g_pendingRegistryCheck = true;
         }
@@ -9007,7 +9034,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCm
         bootFramePresented = TryPresentBootPreloadedFrame(hwnd, initialImagePath);
     }
 
-    if (!initialImagePath.empty()) {
+    if (initialPathMissing) {
+        RequestRepaint(PaintLayer::All);
+        g_osd.Show(hwnd, AppStrings::OSD_FileNotFound ? AppStrings::OSD_FileNotFound : L"File not found", true);
+    } else if (!initialImagePath.empty()) {
       std::error_code ec;
       if (std::filesystem::is_directory(std::filesystem::path(initialImagePath),
                                         ec)) {
@@ -11872,18 +11902,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             KillTimer(hwnd, TIMER_ID_REGISTRY_CHECK);
             g_pendingRegistryCheck = false;
             
-            if (!g_config.PortableMode) {
-                std::wstring currentVer = SettingsOverlay::GetAppVersion();
-                wchar_t exePath[MAX_PATH];
-                GetModuleFileNameW(nullptr, exePath, MAX_PATH);
-                std::wstring currentPath = exePath;
-
+            if (!SystemInfo::IsPackagedApp() && !g_config.PortableMode && g_config.FileAssocAutoRepair) {
                 if (SettingsOverlay::IsRegistrationNeeded()) {
-                    SettingsOverlay::RegisterAssociations(); // Internally updates INI and saves
+                    SettingsOverlay::RegisterAssociations(); // Syncs delta changes and updates INI hash
                 } else {
-                    // Sync INI state to enable true O(1) skip on next startup
-                    g_config.LastRegisteredVersion = currentVer;
-                    g_config.LastRegisteredPath = currentPath;
+                    const QuickView::FileAssocOptions assocOpts = SettingsOverlay::BuildCurrentAssocOptions();
+
+                    g_config.LastRegisteredVersion = SettingsOverlay::GetAppVersion();
+                    g_config.LastRegisteredPath = QuickView::GetCurrentExecutablePath();
+                    g_config.LastRegisteredAssocHash = QuickView::FormatAssocOptionsHash(QuickView::ComputeAssocOptionsHash(assocOpts));
                     SaveConfig();
                 }
             }

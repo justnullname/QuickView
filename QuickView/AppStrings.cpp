@@ -763,6 +763,39 @@ const wchar_t *AiTest_ConnSuccess = nullptr;
 const wchar_t *AiTest_AuthFailedPrefix = nullptr;
 const wchar_t *AiTest_HttpErrorPrefix = nullptr;
 const wchar_t *AiError_NoAvailableProfile = nullptr;
+const wchar_t *Settings_Tab_FileAssoc = nullptr;
+const wchar_t *Settings_Header_FileAssocStatus = nullptr;
+const wchar_t *Settings_Header_FileAssocOptions = nullptr;
+const wchar_t *Settings_Header_FileAssocFormats = nullptr;
+const wchar_t *Settings_Label_FileAssocIconStyle = nullptr;
+const wchar_t *Settings_Option_FileAssocIconNative = nullptr;
+const wchar_t *Settings_Option_FileAssocIconApp = nullptr;
+const wchar_t *Settings_Label_FileAssocContextMenu = nullptr;
+const wchar_t *Settings_Label_FileAssocAutoRepair = nullptr;
+const wchar_t *Settings_Label_FileAssocPresets = nullptr;
+const wchar_t *Settings_Action_PresetRecommended = nullptr;
+const wchar_t *Settings_Action_PresetAllImages = nullptr;
+const wchar_t *Settings_Action_PresetPhotoRaw = nullptr;
+const wchar_t *Settings_Action_PresetClearAll = nullptr;
+const wchar_t *Settings_Action_ApplyAssoc = nullptr;
+const wchar_t *Settings_Action_SetDefaultWin = nullptr;
+const wchar_t *Settings_Action_RepairAssoc = nullptr;
+const wchar_t *Settings_Label_FileAssocCatStandard = nullptr;
+const wchar_t *Settings_Label_FileAssocCatModern = nullptr;
+const wchar_t *Settings_Label_FileAssocCatPro = nullptr;
+const wchar_t *Settings_Label_FileAssocCatRaw = nullptr;
+const wchar_t *Settings_Label_FileAssocCatExtRaw = nullptr;
+const wchar_t *Settings_Label_FileAssocCatArchive = nullptr;
+const wchar_t *Settings_Tooltip_FileAssocArchive = nullptr;
+const wchar_t *Settings_Status_AssocApplied = nullptr;
+const wchar_t *Settings_Status_AssocSummaryFormat = nullptr;
+const wchar_t *Settings_Status_AssocBrokenHint = nullptr;
+const wchar_t *Settings_Status_AssocPendingHint = nullptr;
+const wchar_t *Settings_Status_AssocStoreManaged = nullptr;
+const wchar_t *Settings_Status_AssocLegend = nullptr;
+const wchar_t *Context_OpenWithQuickView = nullptr;
+const wchar_t *OSD_FileNotFound = nullptr;
+const wchar_t *Settings_Action_ApplyPending = nullptr;
 
 // --- Static Constants ---
 const wchar_t *Settings_Text_Copyright = L"\u00A9 2025\u2013%s Vivor Loong (GitHub: @justnullname)";
@@ -1502,6 +1535,39 @@ struct LanguageTable {
     const wchar_t *AiTest_AuthFailedPrefix;
     const wchar_t *AiTest_HttpErrorPrefix;
     const wchar_t *AiError_NoAvailableProfile;
+    const wchar_t *Settings_Tab_FileAssoc;
+    const wchar_t *Settings_Header_FileAssocStatus;
+    const wchar_t *Settings_Header_FileAssocOptions;
+    const wchar_t *Settings_Header_FileAssocFormats;
+    const wchar_t *Settings_Label_FileAssocIconStyle;
+    const wchar_t *Settings_Option_FileAssocIconNative;
+    const wchar_t *Settings_Option_FileAssocIconApp;
+    const wchar_t *Settings_Label_FileAssocContextMenu;
+    const wchar_t *Settings_Label_FileAssocAutoRepair;
+    const wchar_t *Settings_Label_FileAssocPresets;
+    const wchar_t *Settings_Action_PresetRecommended;
+    const wchar_t *Settings_Action_PresetAllImages;
+    const wchar_t *Settings_Action_PresetPhotoRaw;
+    const wchar_t *Settings_Action_PresetClearAll;
+    const wchar_t *Settings_Action_ApplyAssoc;
+    const wchar_t *Settings_Action_SetDefaultWin;
+    const wchar_t *Settings_Action_RepairAssoc;
+    const wchar_t *Settings_Label_FileAssocCatStandard;
+    const wchar_t *Settings_Label_FileAssocCatModern;
+    const wchar_t *Settings_Label_FileAssocCatPro;
+    const wchar_t *Settings_Label_FileAssocCatRaw;
+    const wchar_t *Settings_Label_FileAssocCatExtRaw;
+    const wchar_t *Settings_Label_FileAssocCatArchive;
+    const wchar_t *Settings_Tooltip_FileAssocArchive;
+    const wchar_t *Settings_Status_AssocApplied;
+    const wchar_t *Settings_Status_AssocSummaryFormat;
+    const wchar_t *Settings_Status_AssocBrokenHint;
+    const wchar_t *Settings_Status_AssocLegend;
+    const wchar_t *Context_OpenWithQuickView;
+    const wchar_t *OSD_FileNotFound;
+    const wchar_t *Settings_Action_ApplyPending;
+    const wchar_t *Settings_Status_AssocPendingHint;
+    const wchar_t *Settings_Status_AssocStoreManaged;
 };
 
 // ----------------------------------------------------------------
@@ -2237,7 +2303,40 @@ static const LanguageTable Table_EN = {
     L"Connection successful and credentials authorized.", // AiTest_ConnSuccess
     L"Invalid API key or unauthorized (HTTP ", // AiTest_AuthFailedPrefix
     L"Server returned HTTP ", // AiTest_HttpErrorPrefix,
-    L"No available AI model profile found. Please check Settings."
+    L"No available AI model profile found. Please check Settings.", // AiError_NoAvailableProfile
+    L"File Assoc", // Settings_Tab_FileAssoc
+    L"Association Diagnostics", // Settings_Header_FileAssocStatus
+    L"Behavior & Customization", // Settings_Header_FileAssocOptions
+    L"Supported Formats (92)", // Settings_Header_FileAssocFormats
+    L"Explorer File Icon", // Settings_Label_FileAssocIconStyle
+    L"System Native", // Settings_Option_FileAssocIconNative
+    L"QuickView Logo", // Settings_Option_FileAssocIconApp
+    L"Explorer Context Menu (\"Open with QuickView\")", // Settings_Label_FileAssocContextMenu
+    L"Auto-repair registered paths on startup / upgrade", // Settings_Label_FileAssocAutoRepair
+    L"Quick Presets", // Settings_Label_FileAssocPresets
+    L"Recommended", // Settings_Action_PresetRecommended
+    L"All Images", // Settings_Action_PresetAllImages
+    L"Photo & RAW", // Settings_Action_PresetPhotoRaw
+    L"Clear All", // Settings_Action_PresetClearAll
+    L"Apply Changes to System", // Settings_Action_ApplyAssoc
+    L"Set Default in Windows", // Settings_Action_SetDefaultWin
+    L"Repair Broken Paths", // Settings_Action_RepairAssoc
+    L"Standard Raster", // Settings_Label_FileAssocCatStandard
+    L"Modern & Vector", // Settings_Label_FileAssocCatModern
+    L"Pro / HDR / Legacy", // Settings_Label_FileAssocCatPro
+    L"Camera RAW", // Settings_Label_FileAssocCatRaw
+    L"Extended / Cinema RAW", // Settings_Label_FileAssocCatExtRaw
+    L"Archives & Comics", // Settings_Label_FileAssocCatArchive
+    L"Recommended: .cbz / .cbr only. Enable .zip / .rar only if you want QuickView in their Open With menu.", // Settings_Tooltip_FileAssocArchive
+    L"Associations synced to Windows registry", // Settings_Status_AssocApplied
+    L"%d selected \u00b7 %d system default \u00b7 %d Open With only", // Settings_Status_AssocSummaryFormat
+    L"Broken or unquoted command detected \u2014 click Apply or Repair to fix.", // Settings_Status_AssocBrokenHint
+    L"Green dot = System Default \u00b7 Blue = Selected / Open With", // Settings_Status_AssocLegend
+    L"Open with QuickView", // Context_OpenWithQuickView
+    L"File not found or path inaccessible", // OSD_FileNotFound
+    L"Apply Changes*", // Settings_Action_ApplyPending
+    L"Pending changes — click \"Apply Changes\" to sync Open With & Context Menu to Windows.", // Settings_Status_AssocPendingHint
+    L"Microsoft Store (MSIX) Mode: Open With & Context Menu are natively managed by Windows. Click \"Set Default in Windows\" to assign default extensions." // Settings_Status_AssocStoreManaged
 };
 
 // ----------------------------------------------------------------
@@ -2973,7 +3072,40 @@ static const LanguageTable Table_CN = {
     L"连接正常且凭据鉴权通过。", // AiTest_ConnSuccess
     L"API 密钥无效或未授权 (HTTP ", // AiTest_AuthFailedPrefix
     L"服务器返回 HTTP ", // AiTest_HttpErrorPrefix,
-    L"未找到可用的 AI 模型预设，请检查设置。"
+    L"未找到可用的 AI 模型预设，请检查设置。", // AiError_NoAvailableProfile
+    L"文件关联", // Settings_Tab_FileAssoc
+    L"关联状态诊断", // Settings_Header_FileAssocStatus
+    L"行为与个性化", // Settings_Header_FileAssocOptions
+    L"支持格式管理 (92)", // Settings_Header_FileAssocFormats
+    L"资源管理器文件图标", // Settings_Label_FileAssocIconStyle
+    L"系统原生图标", // Settings_Option_FileAssocIconNative
+    L"QuickView 图标", // Settings_Option_FileAssocIconApp
+    L"资源管理器右键菜单 (\"使用 QuickView 打开\")", // Settings_Label_FileAssocContextMenu
+    L"启动 / 升级时自动校验并修复关联路径", // Settings_Label_FileAssocAutoRepair
+    L"快捷情景预设", // Settings_Label_FileAssocPresets
+    L"日常推荐", // Settings_Action_PresetRecommended
+    L"全选图像", // Settings_Action_PresetAllImages
+    L"摄影 RAW", // Settings_Action_PresetPhotoRaw
+    L"全部清空", // Settings_Action_PresetClearAll
+    L"应用更改到系统", // Settings_Action_ApplyAssoc
+    L"在 Windows 中设为默认", // Settings_Action_SetDefaultWin
+    L"修复异常关联", // Settings_Action_RepairAssoc
+    L"常用标准图像", // Settings_Label_FileAssocCatStandard
+    L"现代与 Web / 矢量", // Settings_Label_FileAssocCatModern
+    L"专业设计与传统", // Settings_Label_FileAssocCatPro
+    L"相机 RAW", // Settings_Label_FileAssocCatRaw
+    L"扩展 / 电影 RAW", // Settings_Label_FileAssocCatExtRaw
+    L"漫画与归档", // Settings_Label_FileAssocCatArchive
+    L"建议仅关联 .cbz / .cbr；若不希望抢占压缩软件的右键打开方式，请勿勾选 .zip / .rar。", // Settings_Tooltip_FileAssocArchive
+    L"文件关联已同步至注册表", // Settings_Status_AssocApplied
+    L"已选 %d 项 \u00b7 系统默认 %d 项 \u00b7 仅打开方式 %d 项", // Settings_Status_AssocSummaryFormat
+    L"检测到注册表命令缺少引号或路径失效，点击应用或修复即可自动纠正。", // Settings_Status_AssocBrokenHint
+    L"绿点 = 已设系统默认 \u00b7 蓝底 = 已勾选 / 打开方式", // Settings_Status_AssocLegend
+    L"使用 QuickView 打开", // Context_OpenWithQuickView
+    L"找不到目标文件或路径无效", // OSD_FileNotFound
+    L"应用更改*", // Settings_Action_ApplyPending
+    L"有未同步的修改 — 请点击「应用更改」以同步右键菜单和系统打开方式。", // Settings_Status_AssocPendingHint
+    L"Microsoft Store (MSIX) 模式：右键菜单与「打开方式」已由系统原生托管，点击「在 Windows 中设为默认」即可设置默认程序。" // Settings_Status_AssocStoreManaged
 };
 
 // ----------------------------------------------------------------
@@ -3709,7 +3841,40 @@ static const LanguageTable Table_TW = {
     L"連線正常且憑證鑑權通過。", // AiTest_ConnSuccess
     L"API 金鑰無效或未授權 (HTTP ", // AiTest_AuthFailedPrefix
     L"伺服器傳回 HTTP ", // AiTest_HttpErrorPrefix,
-    L"未找到可用的 AI 模型預設，請檢查設定。"
+    L"未找到可用的 AI 模型預設，請檢查設定。", // AiError_NoAvailableProfile
+    L"檔案關聯", // Settings_Tab_FileAssoc
+    L"關聯狀態診斷", // Settings_Header_FileAssocStatus
+    L"行為與個人化", // Settings_Header_FileAssocOptions
+    L"支援格式管理 (92)", // Settings_Header_FileAssocFormats
+    L"檔案總管圖示風格", // Settings_Label_FileAssocIconStyle
+    L"系統原生圖示", // Settings_Option_FileAssocIconNative
+    L"QuickView 圖示", // Settings_Option_FileAssocIconApp
+    L"檔案總管右鍵選單 (\"使用 QuickView 開啟\")", // Settings_Label_FileAssocContextMenu
+    L"啟動 / 升級時自動校驗並修復關聯路徑", // Settings_Label_FileAssocAutoRepair
+    L"快速情景預設", // Settings_Label_FileAssocPresets
+    L"日常推薦", // Settings_Action_PresetRecommended
+    L"全選影像", // Settings_Action_PresetAllImages
+    L"攝影 RAW", // Settings_Action_PresetPhotoRaw
+    L"全部清空", // Settings_Action_PresetClearAll
+    L"套用變更至系統", // Settings_Action_ApplyAssoc
+    L"在 Windows 中設為預設", // Settings_Action_SetDefaultWin
+    L"修復異常關聯", // Settings_Action_RepairAssoc
+    L"常用標準影像", // Settings_Label_FileAssocCatStandard
+    L"現代與 Web / 向量", // Settings_Label_FileAssocCatModern
+    L"專業設計與傳統", // Settings_Label_FileAssocCatPro
+    L"相機 RAW", // Settings_Label_FileAssocCatRaw
+    L"擴展 / 電影 RAW", // Settings_Label_FileAssocCatExtRaw
+    L"漫畫與封存檔", // Settings_Label_FileAssocCatArchive
+    L"建議僅關聯 .cbz / .cbr；若不希望干擾壓縮軟體的開啟方式，請勿勾選 .zip / .rar。", // Settings_Tooltip_FileAssocArchive
+    L"檔案關聯已同步至登錄檔", // Settings_Status_AssocApplied
+    L"已選 %d 項 \u00b7 系統預設 %d 項 \u00b7 僅開啟方式 %d 項", // Settings_Status_AssocSummaryFormat
+    L"偵測到登錄檔命令缺少引號或路徑無效，點擊套用或修復即可自動修正。", // Settings_Status_AssocBrokenHint
+    L"綠點 = 已設系統預設 \u00b7 藍底 = 已勾選 / 開啟方式", // Settings_Status_AssocLegend
+    L"使用 QuickView 開啟", // Context_OpenWithQuickView
+    L"找不到目標檔案或路徑無效", // OSD_FileNotFound
+    L"套用變更*", // Settings_Action_ApplyPending
+    L"有未同步的變更 — 請點擊「套用變更」以同步右鍵選單與系統開啟方式。", // Settings_Status_AssocPendingHint
+    L"Microsoft Store (MSIX) 模式：右鍵選單與「開啟方式」已由系統原生託管，點擊「在 Windows 中設為預設」即可設定預設程式。" // Settings_Status_AssocStoreManaged
 };
 
 // ----------------------------------------------------------------
@@ -4445,7 +4610,40 @@ static const LanguageTable Table_JA = {
     L"接続に成功し、認証が承認されました。", // AiTest_ConnSuccess
     L"API キーが無効または未認証です (HTTP ", // AiTest_AuthFailedPrefix
     L"サーバーから HTTP ", // AiTest_HttpErrorPrefix,
-    L"利用可能な AI モデルプロファイルが見つかりません。設定を確認してください。"
+    L"利用可能な AI モデルプロファイルが見つかりません。設定を確認してください。", // AiError_NoAvailableProfile
+    L"関連付け", // Settings_Tab_FileAssoc
+    L"関連付け診断", // Settings_Header_FileAssocStatus
+    L"動作とカスタマイズ", // Settings_Header_FileAssocOptions
+    L"対応フォーマット管理 (92)", // Settings_Header_FileAssocFormats
+    L"エクスプローラーのアイコン", // Settings_Label_FileAssocIconStyle
+    L"システム標準", // Settings_Option_FileAssocIconNative
+    L"QuickView ロゴ", // Settings_Option_FileAssocIconApp
+    L"コンテキストメニュー (\"QuickView で開く\")", // Settings_Label_FileAssocContextMenu
+    L"起動・更新時に登録パスを自動修復する", // Settings_Label_FileAssocAutoRepair
+    L"クイックプリセット", // Settings_Label_FileAssocPresets
+    L"推奨", // Settings_Action_PresetRecommended
+    L"すべての画像", // Settings_Action_PresetAllImages
+    L"写真 & RAW", // Settings_Action_PresetPhotoRaw
+    L"すべて解除", // Settings_Action_PresetClearAll
+    L"システムに変更を適用", // Settings_Action_ApplyAssoc
+    L"Windows で既定に設定", // Settings_Action_SetDefaultWin
+    L"破損パスを修復", // Settings_Action_RepairAssoc
+    L"標準ラスター画像", // Settings_Label_FileAssocCatStandard
+    L"モダン / Web / ベクター", // Settings_Label_FileAssocCatModern
+    L"プロ / HDR / レガシー", // Settings_Label_FileAssocCatPro
+    L"カメラ RAW", // Settings_Label_FileAssocCatRaw
+    L"拡張 / シネマ RAW", // Settings_Label_FileAssocCatExtRaw
+    L"アーカイブ / コミック", // Settings_Label_FileAssocCatArchive
+    L"推奨: .cbz / .cbr のみ。.zip / .rar は解凍ソフトとの競合を避けるため必要な場合のみ選択してください。", // Settings_Tooltip_FileAssocArchive
+    L"関連付けをレジストリに同期しました", // Settings_Status_AssocApplied
+    L"%d 件選択 \u00b7 既定 %d 件 \u00b7 プログラムから開く %d 件", // Settings_Status_AssocSummaryFormat
+    L"引用符なしや無効なコマンドを検出しました。適用または修復で修正できます。", // Settings_Status_AssocBrokenHint
+    L"緑の点 = システム既定 \u00b7 青 = 選択済み / プログラムから開く", // Settings_Status_AssocLegend
+    L"QuickView で開く", // Context_OpenWithQuickView
+    L"ファイルが見つからないかアクセスできません", // OSD_FileNotFound
+    L"変更を適用*", // Settings_Action_ApplyPending
+    L"未適用の変更があります。「変更を適用」をクリックしてシステムと同期してください。", // Settings_Status_AssocPendingHint
+    L"Microsoft Store (MSIX) モード：コンテキストメニュー等は Windows が標準管理しています。「Windows で既定に設定」から関連付けを行ってください。" // Settings_Status_AssocStoreManaged
 };
 
 // ----------------------------------------------------------------
@@ -5181,7 +5379,40 @@ static const LanguageTable Table_RU = {
     L"Подключение успешно установлено, авторизация пройдена.", // AiTest_ConnSuccess
     L"Недействительный API-ключ или нет доступа (HTTP ", // AiTest_AuthFailedPrefix
     L"Сервер вернул HTTP ", // AiTest_HttpErrorPrefix,
-    L"Профиль AI модели не найден. Проверьте настройки."
+    L"Профиль AI модели не найден. Проверьте настройки.", // AiError_NoAvailableProfile
+    L"Ассоциации", // Settings_Tab_FileAssoc
+    L"Диагностика ассоциаций", // Settings_Header_FileAssocStatus
+    L"Поведение и настройка", // Settings_Header_FileAssocOptions
+    L"Поддерживаемые форматы (92)", // Settings_Header_FileAssocFormats
+    L"Иконка файлов в проводнике", // Settings_Label_FileAssocIconStyle
+    L"Системная", // Settings_Option_FileAssocIconNative
+    L"Логотип QuickView", // Settings_Option_FileAssocIconApp
+    L"Контекстное меню (\"Открыть в QuickView\")", // Settings_Label_FileAssocContextMenu
+    L"Автоисправление путей при запуске / обновлении", // Settings_Label_FileAssocAutoRepair
+    L"Быстрые пресеты", // Settings_Label_FileAssocPresets
+    L"Рекомендуемые", // Settings_Action_PresetRecommended
+    L"Все изображения", // Settings_Action_PresetAllImages
+    L"Фото и RAW", // Settings_Action_PresetPhotoRaw
+    L"Очистить все", // Settings_Action_PresetClearAll
+    L"Применить к системе", // Settings_Action_ApplyAssoc
+    L"По умолчанию в Windows", // Settings_Action_SetDefaultWin
+    L"Исправить пути", // Settings_Action_RepairAssoc
+    L"Стандартный растр", // Settings_Label_FileAssocCatStandard
+    L"Современные и вектор", // Settings_Label_FileAssocCatModern
+    L"Профессиональные и HDR", // Settings_Label_FileAssocCatPro
+    L"Камера RAW", // Settings_Label_FileAssocCatRaw
+    L"Расширенные / Кино RAW", // Settings_Label_FileAssocCatExtRaw
+    L"Архивы и комиксы", // Settings_Label_FileAssocCatArchive
+    L"Рекомендуется: только .cbz / .cbr. Выбирайте .zip / .rar, только если хотите видеть QuickView в «Открыть с помощью».", // Settings_Tooltip_FileAssocArchive
+    L"Ассоциации синхронизированы с реестром", // Settings_Status_AssocApplied
+    L"Выбрано: %d \u00b7 По умолчанию: %d \u00b7 Только «Открыть с помощью»: %d", // Settings_Status_AssocSummaryFormat
+    L"Обнаружена поврежденная команда без кавычек — нажмите Применить или Исправить.", // Settings_Status_AssocBrokenHint
+    L"Зеленая точка = по умолчанию \u00b7 Синий = выбрано / Открыть с помощью", // Settings_Status_AssocLegend
+    L"Открыть в QuickView", // Context_OpenWithQuickView
+    L"Файл не найден или недоступен", // OSD_FileNotFound
+    L"Применить*", // Settings_Action_ApplyPending
+    L"Есть несохранённые изменения — нажмите «Применить» для синхронизации с системой.", // Settings_Status_AssocPendingHint
+    L"Режим Microsoft Store (MSIX): контекстное меню и «Открыть с помощью» управляются системой Windows. Нажмите «По умолчанию в Windows» для выбора форматов." // Settings_Status_AssocStoreManaged
 };
 
 // ----------------------------------------------------------------
@@ -5917,7 +6148,40 @@ static const LanguageTable Table_DE = {
     L"Verbindung erfolgreich und Authentifizierung bestätigt.", // AiTest_ConnSuccess
     L"Ungültiger API-Schlüssel oder nicht autorisiert (HTTP ", // AiTest_AuthFailedPrefix
     L"Server antwortet mit HTTP ", // AiTest_HttpErrorPrefix,
-    L"Kein verfügbares AI-Modellprofil gefunden. Bitte Einstellungen prüfen."
+    L"Kein verfügbares AI-Modellprofil gefunden. Bitte Einstellungen prüfen.", // AiError_NoAvailableProfile
+    L"Dateitypen", // Settings_Tab_FileAssoc
+    L"Zuordnungsdiagnose", // Settings_Header_FileAssocStatus
+    L"Verhalten & Anpassung", // Settings_Header_FileAssocOptions
+    L"Unterstützte Formate (92)", // Settings_Header_FileAssocFormats
+    L"Explorer-Dateisymbol", // Settings_Label_FileAssocIconStyle
+    L"Systemstandard", // Settings_Option_FileAssocIconNative
+    L"QuickView-Logo", // Settings_Option_FileAssocIconApp
+    L"Explorer-Kontextmenü (\"Mit QuickView öffnen\")", // Settings_Label_FileAssocContextMenu
+    L"Registrierte Pfade beim Start automatisch reparieren", // Settings_Label_FileAssocAutoRepair
+    L"Schnellvorlagen", // Settings_Label_FileAssocPresets
+    L"Empfohlen", // Settings_Action_PresetRecommended
+    L"Alle Bilder", // Settings_Action_PresetAllImages
+    L"Foto & RAW", // Settings_Action_PresetPhotoRaw
+    L"Alle löschen", // Settings_Action_PresetClearAll
+    L"Auf System anwenden", // Settings_Action_ApplyAssoc
+    L"Windows-Standard festlegen", // Settings_Action_SetDefaultWin
+    L"Pfade reparieren", // Settings_Action_RepairAssoc
+    L"Standard-Raster", // Settings_Label_FileAssocCatStandard
+    L"Modern & Vektor", // Settings_Label_FileAssocCatModern
+    L"Pro / HDR / Legacy", // Settings_Label_FileAssocCatPro
+    L"Kamera-RAW", // Settings_Label_FileAssocCatRaw
+    L"Erweitertes / Kino-RAW", // Settings_Label_FileAssocCatExtRaw
+    L"Archive & Comics", // Settings_Label_FileAssocCatArchive
+    L"Empfohlen: nur .cbz / .cbr. Aktivieren Sie .zip / .rar nur bei Bedarf für „Öffnen mit“.", // Settings_Tooltip_FileAssocArchive
+    L"Dateizuordnungen mit der Registrierung synchronisiert", // Settings_Status_AssocApplied
+    L"%d ausgewählt \u00b7 %d Systemstandard \u00b7 %d nur Öffnen mit", // Settings_Status_AssocSummaryFormat
+    L"Fehlerhafter Befehl ohne Anführungszeichen erkannt — zur Korrektur Anwenden klicken.", // Settings_Status_AssocBrokenHint
+    L"Grüner Punkt = Systemstandard \u00b7 Blau = Ausgewählt / Öffnen mit", // Settings_Status_AssocLegend
+    L"Mit QuickView öffnen", // Context_OpenWithQuickView
+    L"Datei nicht gefunden oder nicht erreichbar", // OSD_FileNotFound
+    L"Anwenden*", // Settings_Action_ApplyPending
+    L"Ausstehende Änderungen — klicken Sie auf \"Anwenden\", um Windows zu synchronisieren.", // Settings_Status_AssocPendingHint
+    L"Microsoft Store (MSIX)-Modus: Kontextmenü & Öffnen mit werden nativ von Windows verwaltet. Klicken Sie auf „In Windows als Standard festlegen“." // Settings_Status_AssocStoreManaged
 };
 
 // ----------------------------------------------------------------
@@ -6653,7 +6917,40 @@ static const LanguageTable Table_ES = {
     L"Conexión exitosa y credenciales autorizadas.", // AiTest_ConnSuccess
     L"Clave de API no válida o no autorizada (HTTP ", // AiTest_AuthFailedPrefix
     L"El servidor devolvió HTTP ", // AiTest_HttpErrorPrefix,
-    L"No se encontró un perfil de modelo de IA disponible. Verifique la configuración."
+    L"No se encontró un perfil de modelo de IA disponible. Verifique la configuración.", // AiError_NoAvailableProfile
+    L"Asociaciones", // Settings_Tab_FileAssoc
+    L"Diagnóstico de asociaciones", // Settings_Header_FileAssocStatus
+    L"Comportamiento y personalización", // Settings_Header_FileAssocOptions
+    L"Formatos compatibles (92)", // Settings_Header_FileAssocFormats
+    L"Icono de archivo en el Explorador", // Settings_Label_FileAssocIconStyle
+    L"Nativo del sistema", // Settings_Option_FileAssocIconNative
+    L"Logo de QuickView", // Settings_Option_FileAssocIconApp
+    L"Menú contextual (\"Abrir con QuickView\")", // Settings_Label_FileAssocContextMenu
+    L"Reparar rutas automáticamente al iniciar / actualizar", // Settings_Label_FileAssocAutoRepair
+    L"Preajustes rápidos", // Settings_Label_FileAssocPresets
+    L"Recomendados", // Settings_Action_PresetRecommended
+    L"Todas las imágenes", // Settings_Action_PresetAllImages
+    L"Foto y RAW", // Settings_Action_PresetPhotoRaw
+    L"Borrar todo", // Settings_Action_PresetClearAll
+    L"Aplicar al sistema", // Settings_Action_ApplyAssoc
+    L"Predeterminar en Windows", // Settings_Action_SetDefaultWin
+    L"Reparar rutas", // Settings_Action_RepairAssoc
+    L"Ráster estándar", // Settings_Label_FileAssocCatStandard
+    L"Modernos y vectoriales", // Settings_Label_FileAssocCatModern
+    L"Pro / HDR / Clásicos", // Settings_Label_FileAssocCatPro
+    L"RAW de cámara", // Settings_Label_FileAssocCatRaw
+    L"RAW extendido / Cine", // Settings_Label_FileAssocCatExtRaw
+    L"Archivos y cómics", // Settings_Label_FileAssocCatArchive
+    L"Recomendado: solo .cbz / .cbr. Habilite .zip / .rar solo si desea ver QuickView en Abrir con.", // Settings_Tooltip_FileAssocArchive
+    L"Asociaciones sincronizadas con el registro", // Settings_Status_AssocApplied
+    L"%d seleccionados \u00b7 %d predeterminados \u00b7 %d solo Abrir con", // Settings_Status_AssocSummaryFormat
+    L"Se detectó un comando sin comillas o inválido — haga clic en Aplicar para reparar.", // Settings_Status_AssocBrokenHint
+    L"Punto verde = Predeterminado \u00b7 Azul = Seleccionado / Abrir con", // Settings_Status_AssocLegend
+    L"Abrir con QuickView", // Context_OpenWithQuickView
+    L"Archivo no encontrado o ruta inaccesible", // OSD_FileNotFound
+    L"Aplicar*", // Settings_Action_ApplyPending
+    L"Cambios pendientes — haz clic en \"Aplicar\" para sincronizar con Windows.", // Settings_Status_AssocPendingHint
+    L"Modo Microsoft Store (MSIX): el menú contextual y Abrir con son gestionados por Windows. Haz clic en «Establecer como predeterminado en Windows»." // Settings_Status_AssocStoreManaged
 };
 
 // ----------------------------------------------------------------
@@ -7389,7 +7686,40 @@ static const LanguageTable Table_FR = {
     L"Connexion réussie et informations d'identification validées.", // AiTest_ConnSuccess
     L"Clé API invalide ou non autorisée (HTTP ", // AiTest_AuthFailedPrefix
     L"Le serveur a renvoyé HTTP ", // AiTest_HttpErrorPrefix,
-    L"Aucun profil de modèle IA disponible trouvé. Veuillez vérifier les paramètres."
+    L"Aucun profil de modèle IA disponible trouvé. Veuillez vérifier les paramètres.", // AiError_NoAvailableProfile
+    L"Associations", // Settings_Tab_FileAssoc
+    L"Diagnostic des associations", // Settings_Header_FileAssocStatus
+    L"Comportement et personnalisation", // Settings_Header_FileAssocOptions
+    L"Formats pris en charge (92)", // Settings_Header_FileAssocFormats
+    L"Icône de fichier dans l'Explorateur", // Settings_Label_FileAssocIconStyle
+    L"Natif du système", // Settings_Option_FileAssocIconNative
+    L"Logo QuickView", // Settings_Option_FileAssocIconApp
+    L"Menu contextuel (\"Ouvrir avec QuickView\")", // Settings_Label_FileAssocContextMenu
+    L"Réparer les chemins automatiquement au démarrage", // Settings_Label_FileAssocAutoRepair
+    L"Préréglages rapides", // Settings_Label_FileAssocPresets
+    L"Recommandés", // Settings_Action_PresetRecommended
+    L"Toutes les images", // Settings_Action_PresetAllImages
+    L"Photo & RAW", // Settings_Action_PresetPhotoRaw
+    L"Tout effacer", // Settings_Action_PresetClearAll
+    L"Appliquer au système", // Settings_Action_ApplyAssoc
+    L"Définir par défaut dans Windows", // Settings_Action_SetDefaultWin
+    L"Réparer les chemins", // Settings_Action_RepairAssoc
+    L"Matriciel standard", // Settings_Label_FileAssocCatStandard
+    L"Moderne & Vectoriel", // Settings_Label_FileAssocCatModern
+    L"Pro / HDR / Hérité", // Settings_Label_FileAssocCatPro
+    L"RAW appareil photo", // Settings_Label_FileAssocCatRaw
+    L"RAW étendu / Cinéma", // Settings_Label_FileAssocCatExtRaw
+    L"Archives & BD", // Settings_Label_FileAssocCatArchive
+    L"Recommandé : .cbz / .cbr uniquement. N'activez .zip / .rar que pour le menu Ouvrir avec.", // Settings_Tooltip_FileAssocArchive
+    L"Associations synchronisées avec le registre", // Settings_Status_AssocApplied
+    L"%d sélectionnés \u00b7 %d par défaut \u00b7 %d Ouvrir avec uniquement", // Settings_Status_AssocSummaryFormat
+    L"Commande invalide ou sans guillemets détectée — cliquez sur Appliquer pour corriger.", // Settings_Status_AssocBrokenHint
+    L"Point vert = Par défaut \u00b7 Bleu = Sélectionné / Ouvrir avec", // Settings_Status_AssocLegend
+    L"Ouvrir avec QuickView", // Context_OpenWithQuickView
+    L"Fichier introuvable ou chemin inaccessible", // OSD_FileNotFound
+    L"Appliquer*", // Settings_Action_ApplyPending
+    L"Modifications en attente — cliquez sur « Appliquer » pour synchroniser avec Windows.", // Settings_Status_AssocPendingHint
+    L"Mode Microsoft Store (MSIX) : le menu contextuel et Ouvrir avec sont gérés nativement par Windows. Cliquez sur « Définir par défaut dans Windows »." // Settings_Status_AssocStoreManaged
 };
 
 // ----------------------------------------------------------------
@@ -8125,6 +8455,39 @@ void Apply(const LanguageTable& t) {
   AiTest_AuthFailedPrefix = t.AiTest_AuthFailedPrefix;
   AiTest_HttpErrorPrefix = t.AiTest_HttpErrorPrefix;
   AiError_NoAvailableProfile = t.AiError_NoAvailableProfile;
+  Settings_Tab_FileAssoc = t.Settings_Tab_FileAssoc;
+  Settings_Header_FileAssocStatus = t.Settings_Header_FileAssocStatus;
+  Settings_Header_FileAssocOptions = t.Settings_Header_FileAssocOptions;
+  Settings_Header_FileAssocFormats = t.Settings_Header_FileAssocFormats;
+  Settings_Label_FileAssocIconStyle = t.Settings_Label_FileAssocIconStyle;
+  Settings_Option_FileAssocIconNative = t.Settings_Option_FileAssocIconNative;
+  Settings_Option_FileAssocIconApp = t.Settings_Option_FileAssocIconApp;
+  Settings_Label_FileAssocContextMenu = t.Settings_Label_FileAssocContextMenu;
+  Settings_Label_FileAssocAutoRepair = t.Settings_Label_FileAssocAutoRepair;
+  Settings_Label_FileAssocPresets = t.Settings_Label_FileAssocPresets;
+  Settings_Action_PresetRecommended = t.Settings_Action_PresetRecommended;
+  Settings_Action_PresetAllImages = t.Settings_Action_PresetAllImages;
+  Settings_Action_PresetPhotoRaw = t.Settings_Action_PresetPhotoRaw;
+  Settings_Action_PresetClearAll = t.Settings_Action_PresetClearAll;
+  Settings_Action_ApplyAssoc = t.Settings_Action_ApplyAssoc;
+  Settings_Action_SetDefaultWin = t.Settings_Action_SetDefaultWin;
+  Settings_Action_RepairAssoc = t.Settings_Action_RepairAssoc;
+  Settings_Label_FileAssocCatStandard = t.Settings_Label_FileAssocCatStandard;
+  Settings_Label_FileAssocCatModern = t.Settings_Label_FileAssocCatModern;
+  Settings_Label_FileAssocCatPro = t.Settings_Label_FileAssocCatPro;
+  Settings_Label_FileAssocCatRaw = t.Settings_Label_FileAssocCatRaw;
+  Settings_Label_FileAssocCatExtRaw = t.Settings_Label_FileAssocCatExtRaw;
+  Settings_Label_FileAssocCatArchive = t.Settings_Label_FileAssocCatArchive;
+  Settings_Tooltip_FileAssocArchive = t.Settings_Tooltip_FileAssocArchive;
+  Settings_Status_AssocApplied = t.Settings_Status_AssocApplied;
+  Settings_Status_AssocSummaryFormat = t.Settings_Status_AssocSummaryFormat;
+  Settings_Status_AssocBrokenHint = t.Settings_Status_AssocBrokenHint;
+  Settings_Status_AssocLegend = t.Settings_Status_AssocLegend;
+  Context_OpenWithQuickView = t.Context_OpenWithQuickView;
+  OSD_FileNotFound = t.OSD_FileNotFound;
+  Settings_Action_ApplyPending = t.Settings_Action_ApplyPending;
+  Settings_Status_AssocPendingHint = t.Settings_Status_AssocPendingHint;
+  Settings_Status_AssocStoreManaged = t.Settings_Status_AssocStoreManaged;
 }
 
 void Init() { SetLanguage(Language::Auto); }

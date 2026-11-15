@@ -99,6 +99,7 @@ set(QUICKVIEW_SOURCES
     QuickView/ThumbnailManager.cpp
     QuickView/Toolbar.cpp
     QuickView/SettingsOverlay.cpp
+    QuickView/FileAssociationManager.cpp
     QuickView/HelpOverlay.cpp
     QuickView/UpdateManager.cpp
     QuickView/PreviewExtractor.cpp
@@ -461,6 +462,7 @@ add_executable(QuickViewTests
     tests/RatingMetadataTests.cpp
     tests/TileJpegTests.cpp
     tests/AiActionManagerTests.cpp
+    tests/FileAssociationTests.cpp
     QuickView/AiActionManager.cpp
     QuickView/GeekWidgets.cpp
     QuickView/GeekIconLibrary.cpp
@@ -481,6 +483,7 @@ add_executable(QuickViewTests
     QuickView/RatingStore.cpp
     QuickView/QuickViewETW.cpp
     QuickView/AppStrings.cpp
+    QuickView/FileAssociationManager.cpp
     QuickView/Plugin/PluginHost.cpp
     QuickView/AsyncJob.cpp
     QuickView/StringUtils.cpp

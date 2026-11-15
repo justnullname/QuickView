@@ -7,6 +7,7 @@
 
 #include "pch.h"
 #include "ProcessRouter.h"
+#include "FileAssociationManager.h"
 #include <vector>
 #include <mutex>
 #include <thread>
@@ -422,24 +423,7 @@ std::wstring ParseImagePath() {
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (!argv) return {};
 
-    std::wstring result;
-
-    // Pattern 1: --viewer-child "path"
-    for (int i = 1; i + 1 < argc; ++i) {
-        if (argv[i] && _wcsicmp(argv[i], kViewerChildArg) == 0) {
-            if (argv[i + 1]) result = argv[i + 1];
-            LocalFree(argv);
-            return result;
-        }
-    }
-
-    // Pattern 2: Normal launch — first non-flag argument is the image path.
-    for (int i = 1; i < argc; ++i) {
-        if (argv[i] && argv[i][0] != L'-') {
-            result = argv[i];
-            break;
-        }
-    }
+    std::wstring result = QuickView::ReconstructPathFromArgs(argc, argv);
     LocalFree(argv);
     return result;
 }

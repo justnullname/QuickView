@@ -7,6 +7,7 @@
 #include "GeekGlass.h"
 #include "GeekIconLibrary.h"
 #include "EditState.h"
+#include "FileAssociationManager.h"
 
 // [Fix] Resolve Windows macro interference
 #undef LoadIcon
@@ -96,6 +97,8 @@ struct SettingsItem {
     float step = 0.0f; // If 0.0f, defaults to 1% of the (maxVal - minVal) range.
     bool tagCloudNoLimit = false;
     bool tagCloudNoSort = false;
+    bool tagCloudIgnoreCase = false;
+    uint8_t (*tagStatusFn)(SettingsOverlay* overlay, std::wstring_view opt) = nullptr;
 
     float progress = -1.0f; // < 0.0f: disabled, 0.0f ~ 1.0f: semi-transparent progress fill
     bool isSuccess = false; // Green indicator
@@ -121,6 +124,7 @@ public:
     static constexpr float HUD_HEIGHT = 560.0f;
     static constexpr float LABEL_COLUMN_WIDTH = 280.0f;
     static constexpr float SIDEBAR_WIDTH = 175.0f;
+    static constexpr float SIDEBAR_TAB_STEP = 45.0f;
     static constexpr float ITEM_HEIGHT = 36.0f;
     static constexpr float CONTROL_INSET_Y = 4.0f;
     static constexpr float PADDING = 16.0f;
@@ -165,7 +169,10 @@ public:
     static bool RegisterAssociations();
     static void UnregisterAssociations(); 
     static bool IsRegistrationNeeded();
+    static QuickView::FileAssocOptions BuildCurrentAssocOptions();
     static std::wstring GetAppVersion();
+    void RefreshFileAssocProbe();
+    uint8_t QueryCachedExtState(std::wstring_view ext) const;
 
     void RequestRebuild() {
         m_pendingRebuild.store(true, std::memory_order_release);
@@ -189,8 +196,12 @@ private:
     void BuildKeysTab(SettingsTab& tabKeys);
     void BuildImageTab(SettingsTab& tabImage);
     void BuildPluginsTab(SettingsTab& tabPlugins);
+    void BuildFileAssocTab(SettingsTab& tabFileAssoc);
     void BuildAdvancedTab(SettingsTab& tabAdvanced);
     void BuildAboutTab(SettingsTab& tabAbout);
+    
+    float MeasureTagCloudHeight(const SettingsItem& item, float contentW, float s) const;
+    void ToggleTagCloudOption(SettingsItem& item, int idx);
     
     void DrawToggle(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rect, bool isOn, bool isHovered);
     void DrawSlider(ID2D1DeviceContext *pRT, const D2D1_RECT_F &rect, float val,
@@ -354,5 +365,14 @@ private:
 
     static int s_controlSubTab;
     static int s_gesturePresetIdx;
+
+    // File Association Center state
+    QuickView::FileAssocProbeSummary m_assocProbe{};
+    bool m_assocProbeValid = false;
+    int m_fileAssocTabIdx = -1;
+    DWORD m_assocAppliedTick = 0;
+    std::wstring m_assocSummaryText;
+    bool m_assocCatExpanded[static_cast<size_t>(QuickView::AssocExtCategory::Count)] = { true, true, false, false, false, false };
+    bool m_assocCatToggles[static_cast<size_t>(QuickView::AssocExtCategory::Count)] = {};
 };
 
