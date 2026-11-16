@@ -886,11 +886,13 @@ struct AppConfig {
     int UIScalePreset = 0;               // 0=Auto(DPI), 1=75%, 2=90%, 3=100%, 4=110%, 5=125%, 6=150%, 7=175%, 8=200%, 9=225%, 10=250%, 11=300%
 
     // --- View ---
-    int ThemeMode = 0;                  // 0=Auto, 1=Dark, 2=Light, 3=Custom
-    float ThemeCustomAccentR = 0.00f;   // Custom Accent Color
+    int ThemeMode = 0;                  // 0=Auto, 1=Dark, 2=Light
+    int AccentMode = 0;                 // 0=System, 1=Custom
+    int WindowBorderAccentMode = 0;     // 0=Follow System (ColorPrevalence), 1=Follow Theme Accent, 2=Off (Gray)
+    float ThemeCustomAccentR = 0.00f;   // Custom Accent Color (used when AccentMode == 1)
     float ThemeCustomAccentG = 0.47f;
     float ThemeCustomAccentB = 0.84f;
-    float ThemeCustomTextR = 1.0f;      // Custom Text Color
+    float ThemeCustomTextR = 1.0f;      // Legacy Custom Text Color (kept for .ini/.qvtheme migration)
     float ThemeCustomTextG = 1.0f;
     float ThemeCustomTextB = 1.0f;
     int MenuBackdropStyle = 0;          // 0=Acrylic, 1=Mica, 2=Mica Alt
@@ -954,7 +956,7 @@ struct AppConfig {
     bool RememberLastWindowSizeAndPosition = false;
     bool UpscaleSmallImagesWhenLocked = false;
 
-    int ShowBorderIndicator = 1; // 0=Off, 1=On (Accent Color), 2=Custom Color
+    int ShowBorderIndicator = 1; // 0=Off, 1=Accent (Follow Theme Accent), 2=Custom Color
     float BorderIndicatorCustomR = 0.20f;
     float BorderIndicatorCustomG = 0.60f;
     float BorderIndicatorCustomB = 1.00f;
@@ -1219,8 +1221,7 @@ struct AppConfig {
     }
 
     /// <summary>
-    /// Apply a theme preset: full overwrite of all glass material parameters.
-    /// Called when user clicks Dark/Light preset buttons.
+    /// Apply a theme preset: reset glass material parameters without overwriting accent color.
     /// </summary>
     void ApplyThemePreset(const ThemePreset& preset) {
         GlassBlurSigma = preset.blurSigma;
@@ -1231,38 +1232,12 @@ struct AppConfig {
         GlassPanelsOpacity = preset.panelsOpacity;
         GlassModalsOpacity = preset.modalsOpacity;
         GlassMenusOpacity = preset.menusOpacity;
-        
-        // Synchronize Custom Theme slots to follow the preset
-        // This ensures a seamless transition when the user later switches to ThemeMode 3 (Custom)
-        ThemeCustomAccentR = preset.accentColor.r;
-        ThemeCustomAccentG = preset.accentColor.g;
-        ThemeCustomAccentB = preset.accentColor.b;
-        ThemeCustomTextR = preset.textColor.r;
-        ThemeCustomTextG = preset.textColor.g;
-        ThemeCustomTextB = preset.textColor.b;
 
-        // Force reset the tint profile to Auto when applying a preset
+        // Force reset the tint profile to Auto when resetting glass material
         GlassTintProfile = 0;
         GlassCustomTintR = preset.tintColor.r;
         GlassCustomTintG = preset.tintColor.g;
         GlassCustomTintB = preset.tintColor.b;
-    }
-
-    /// <summary>
-    /// Capture current preset colors into custom slots without affecting other material parameters.
-    /// Used when transitioning to 'Custom' mode to ensure a seamless visual base.
-    /// </summary>
-    void CaptureThemeColors(bool isLight) {
-        const auto& p = isLight ? PRESET_LIGHT : PRESET_DARK;
-        ThemeCustomAccentR = p.accentColor.r;
-        ThemeCustomAccentG = p.accentColor.g;
-        ThemeCustomAccentB = p.accentColor.b;
-        ThemeCustomTextR = p.textColor.r;
-        ThemeCustomTextG = p.textColor.g;
-        ThemeCustomTextB = p.textColor.b;
-        GlassCustomTintR = p.tintColor.r;
-        GlassCustomTintG = p.tintColor.g;
-        GlassCustomTintB = p.tintColor.b;
     }
 
     /// <summary>
@@ -1596,7 +1571,7 @@ void ParseFixedZoomLevels(); // Parse comma-separated fixed zoom levels
 bool IsSystemLightTheme();
 bool IsLightThemeActive();
 void ApplyWindowTheme(HWND hwnd);
-void SyncWindowDwmFrameAttributes(HWND hwnd);
+void SyncWindowDwmFrameAttributes(HWND hwnd, int activeOverride = -1);
 
 // ============================================================================
 // Contrast Compensation — Automatic dim text brightness adaptation

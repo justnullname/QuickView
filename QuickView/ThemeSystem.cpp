@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "ThemeSystem.h"
+#include "ThemePalette.h"
 #include "AiActionManager.h"
 #include "yyjson.h"
 #include <commdlg.h>
@@ -125,8 +126,10 @@ namespace QuickView::UI::ThemeSystem {
         yyjson_mut_val *root = yyjson_mut_obj(doc);
         yyjson_mut_doc_set_root(doc, root);
 
-        yyjson_mut_obj_add_real(doc, root, "version", 1.0);
+        yyjson_mut_obj_add_real(doc, root, "version", 1.2);
         yyjson_mut_obj_add_int(doc, root, "theme_mode", config.ThemeMode);
+        yyjson_mut_obj_add_int(doc, root, "accent_mode", config.AccentMode);
+        yyjson_mut_obj_add_int(doc, root, "window_border_accent_mode", config.WindowBorderAccentMode);
         yyjson_mut_obj_add_int(doc, root, "menu_backdrop_style", config.MenuBackdropStyle);
         yyjson_mut_obj_add_bool(doc, root, "glass_enabled", config.EnableGeekGlass);
         yyjson_mut_obj_add_bool(doc, root, "animations", config.GlassUIAnimations);
@@ -229,7 +232,12 @@ namespace QuickView::UI::ThemeSystem {
             }
         };
 
+        float importedVersion = 1.0f;
+        int importedAccentMode = -1;
+        get_double("version", importedVersion);
         get_int("theme_mode", config.ThemeMode);
+        get_int("accent_mode", importedAccentMode);
+        get_int("window_border_accent_mode", config.WindowBorderAccentMode);
         get_int("menu_backdrop_style", config.MenuBackdropStyle);
         get_bool("glass_enabled", config.EnableGeekGlass);
         get_bool("animations", config.GlassUIAnimations);
@@ -254,7 +262,21 @@ namespace QuickView::UI::ThemeSystem {
         get_int("canvas_effect_style", config.CanvasEffectStyle);
         get_color("canvas_custom", config.CanvasCustomR, config.CanvasCustomG, config.CanvasCustomB);
 
+        const int schemaVersion = (importedVersion >= 1.19f) ? 2 : 1;
+        if (config.WindowBorderAccentMode < 0 || config.WindowBorderAccentMode > 2) {
+            config.WindowBorderAccentMode = 0;
+        }
+        QuickView::UI::Theme::MigrateLegacyThemeConfig(
+            config.ThemeMode,
+            importedAccentMode,
+            schemaVersion,
+            config.GlassTintProfile,
+            config.GlassCustomTintR, config.GlassCustomTintG, config.GlassCustomTintB,
+            config.ThemeCustomTextR, config.ThemeCustomTextG, config.ThemeCustomTextB,
+            config.ThemeCustomAccentR, config.ThemeCustomAccentG, config.ThemeCustomAccentB);
+        config.AccentMode = importedAccentMode;
         config.EnforceGlassSafetyLimits();
+        QuickView::UI::Theme::RefreshThemePalette(config);
         ::SaveConfig(); // Persist to QuickView.ini as requested
         yyjson_doc_free(doc);
         return true;

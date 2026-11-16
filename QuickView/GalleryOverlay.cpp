@@ -9,6 +9,7 @@
 #include "EditState.h"
 #include "GeekContextMenu.h"
 #include "UIRenderer.h"
+#include "ThemePalette.h"
 #include <algorithm>
 #include <cmath>
 
@@ -466,7 +467,7 @@ bool GalleryOverlay::HitTestArea(int x, int y, float winW, float winH) const {
 void GalleryOverlay::CreateDeviceResources(ID2D1RenderTarget* pDC) {
     if (!pDC) return;
     if (!m_brushBg) pDC->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 1.0f), &m_brushBg);
-    if (!m_brushSelection) pDC->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::DodgerBlue), &m_brushSelection);
+    if (!m_brushSelection) pDC->CreateSolidColorBrush(QuickView::UI::Theme::GetThemePalette().accentFill, &m_brushSelection);
     if (!m_brushText) pDC->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &m_brushText);
     if (!m_brushOverlay) pDC->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.5f), &m_brushOverlay);
 }
@@ -616,15 +617,16 @@ void GalleryOverlay::Render(ID2D1DeviceContext *pDC, const D2D1_SIZE_F &size,
         }
     }
 
-    if (!m_brushSelection) pDC->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::DodgerBlue), &m_brushSelection);
+    const auto& tp = QuickView::UI::Theme::GetThemePalette();
+    if (!m_brushSelection) pDC->CreateSolidColorBrush(tp.accentFill, &m_brushSelection);
     if (!m_brushText) pDC->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &m_brushText);
     if (!m_brushOverlay) pDC->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.5f), &m_brushOverlay);
 
-    bool isLightForText = IsLightThemeActive();
+    bool isLightForText = tp.isLight;
     D2D1_COLOR_F txtClr = isLightForText ? D2D1::ColorF(0.12f, 0.12f, 0.15f, 1.0f) : D2D1::ColorF(D2D1::ColorF::White);
-    D2D1_COLOR_F accClr = isLightForText ? D2D1::ColorF(0.0f, 0.45f, 0.9f, 1.0f) : D2D1::ColorF(D2D1::ColorF::DodgerBlue);
-    
-    m_brushSelection->SetColor(accClr);
+    D2D1_COLOR_F accClr = tp.accentText;
+
+    m_brushSelection->SetColor(tp.accentFill);
     m_brushText->SetColor(txtClr);
     
     // 2. Text Format Initialization
@@ -838,8 +840,9 @@ void GalleryOverlay::Render(ID2D1DeviceContext *pDC, const D2D1_SIZE_F &size,
                 pDC->FillRoundedRectangle(D2D1::RoundedRect(badge, br, br), m_brushBg.Get());
 
                 D2D1_COLOR_F prevStarTxt = m_brushText->GetColor();
-                // Filled stars use the theme accent color for visual clarity on dark chips
-                const D2D1_COLOR_F accentColor = D2D1::ColorF(g_config.ThemeCustomAccentR, g_config.ThemeCustomAccentG, g_config.ThemeCustomAccentB, 1.0f);
+                // Filled stars always sit on a dark chip regardless of light/dark UI mode
+                const D2D1_COLOR_F accentColor = QuickView::UI::Theme::ClampCustomAccentText(
+                    tp.isLight ? tp.accentFill : tp.accentText, false);
                 m_brushText->SetColor(accentColor);
                 m_brushText->SetOpacity(m_transitionProgress * 0.95f);
                 pDC->DrawText(stars.data(), (UINT32)stars.length(), m_textFormatBadge.Get(), badge, m_brushText.Get());

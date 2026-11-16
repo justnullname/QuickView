@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "GeekWidgets.h"
+#include "ThemePalette.h"
 #include "GeekIconRenderer.h"
 #include "SettingsSliderMath.h"
 #include <algorithm>
@@ -128,7 +129,7 @@ void DrawPillButton(
         } else {
             bgClr = palette.accent;
         }
-        textClr = palette.white;
+        textClr = (palette.onAccentText.a > 0.01f) ? palette.onAccentText : palette.white;
     } else if (style == ButtonStyle::Destructive) {
         if (state == ButtonState::Hovered) {
             bgClr = palette.error;
@@ -142,7 +143,7 @@ void DrawPillButton(
     } else { // Secondary / Subtle / Ghost
         if (state == ButtonState::Hovered) {
             bgClr = palette.accent;
-            textClr = palette.white;
+            textClr = (palette.onAccentText.a > 0.01f) ? palette.onAccentText : palette.white;
         } else {
             bgClr = (style == ButtonStyle::Ghost) ? D2D1::ColorF(0, 0, 0, 0.0f) : palette.controlBg;
             borderClr = (style == ButtonStyle::Ghost) ? D2D1::ColorF(0, 0, 0, 0.0f) : palette.border;
@@ -217,6 +218,7 @@ void DrawSegmentGroup(
     dc->FillRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), brush.Get());
 
     // 2. Selected Highlight (Flush Segment)
+    D2D1_COLOR_F selectedTextClr = (palette.onAccentText.a > 0.01f) ? palette.onAccentText : palette.white;
     if (selectedIdx >= 0 && selectedIdx < static_cast<int>(count)) {
         float selX = rect.left;
         for (int i = 0; i < selectedIdx; ++i) {
@@ -225,7 +227,9 @@ void DrawSegmentGroup(
         D2D1_RECT_F selRect = D2D1::RectF(selX, rect.top, selX + itemWidths[selectedIdx], rect.bottom);
 
         if (!isDisabled && customColorRGB != nullptr) {
-            brush->SetColor(D2D1::ColorF(customColorRGB[0], customColorRGB[1], customColorRGB[2], 1.0f));
+            const D2D1_COLOR_F customFill = D2D1::ColorF(customColorRGB[0], customColorRGB[1], customColorRGB[2], 1.0f);
+            brush->SetColor(customFill);
+            selectedTextClr = QuickView::UI::Theme::ComputeOnAccentText(customFill);
         } else {
             brush->SetColor(isDisabled ? palette.controlBg : palette.accent);
         }
@@ -262,7 +266,7 @@ void DrawSegmentGroup(
         for (size_t i = 0; i < count; i++) {
             D2D1_RECT_F tRect = D2D1::RectF(curX, rect.top, curX + itemWidths[i], rect.bottom);
             bool isSel = (static_cast<int>(i) == selectedIdx);
-            brush->SetColor(isDisabled ? palette.textDim : (isSel ? palette.white : palette.text));
+            brush->SetColor(isDisabled ? palette.textDim : (isSel ? selectedTextClr : palette.text));
             dc->PushAxisAlignedClip(tRect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
             dc->DrawText(options[i].data(), static_cast<UINT32>(options[i].length()), textFormat, tRect, brush.Get());
             dc->PopAxisAlignedClip();
@@ -318,14 +322,15 @@ void DrawDualActionButton(
 
     // 5. Button Texts
     if (textFormat) {
+        const D2D1_COLOR_F hoverTextClr = (palette.onAccentText.a > 0.01f) ? palette.onAccentText : palette.white;
         textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
-        brush->SetColor(isDisabled ? palette.textDim : (hover1 ? palette.white : palette.text));
+        brush->SetColor(isDisabled ? palette.textDim : (hover1 ? hoverTextClr : palette.text));
         dc->DrawText(text1.data(), static_cast<UINT32>(text1.length()), textFormat, r1, brush.Get());
 
         if (!text2.empty()) {
-            brush->SetColor(isDisabled ? palette.textDim : (hover2 ? palette.white : palette.text));
+            brush->SetColor(isDisabled ? palette.textDim : (hover2 ? hoverTextClr : palette.text));
             dc->DrawText(text2.data(), static_cast<UINT32>(text2.length()), textFormat, r2, brush.Get());
         }
         textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
@@ -564,7 +569,7 @@ void DrawResetButton(
         textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         D2D1_RECT_F emojiRect = rect;
         emojiRect.top += 1.0f * s;
-        brush->SetColor(isHovered ? palette.white : palette.textDim);
+        brush->SetColor(isHovered ? palette.text : palette.textDim);
         dc->DrawText(L"↺", 1, textFormat, emojiRect, brush.Get());
         textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
     }

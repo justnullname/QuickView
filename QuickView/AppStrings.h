@@ -742,7 +742,13 @@ namespace AppStrings {
     extern const wchar_t* Settings_Label_AmbientDimmer;
     extern const wchar_t* Settings_Tooltip_AmbientDimmer;
     extern const wchar_t* Settings_Label_AccentColor;
-    extern const wchar_t* Settings_Label_TextColor;
+    extern const wchar_t* Settings_Option_AccentSystem;
+    extern const wchar_t* Settings_Option_AccentCustom;
+    extern const wchar_t* Settings_Label_WindowBorderAccent;
+    extern const wchar_t* Settings_Option_BorderFollowSystem;
+    extern const wchar_t* Settings_Option_BorderAccent;
+    extern const wchar_t* Settings_Label_ResetGlass;
+    extern const wchar_t* Settings_Action_ResetGlass;
     extern const wchar_t* Settings_Header_ThemeManagement;
     extern const wchar_t* Settings_Action_ExportTheme;
     extern const wchar_t* Settings_Action_ImportTheme;

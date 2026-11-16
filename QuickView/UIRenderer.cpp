@@ -18,6 +18,7 @@
 #include "PrintPreviewUI.h"
 #include "ExportPanel.h"
 #include "AiActionOverlay.h"
+#include "ThemePalette.h"
 #include <functional> // For std::hash
 
 namespace {
@@ -788,7 +789,7 @@ bool UIRenderer::RenderAll(HWND hwnd, float deltaTime) {
     // ===== Dynamic Layer (Topmost, High Freq) =====
     if (m_isDynamicDirty) {
         // Smart Dirty Rects: Only use local updates when OSD changes
-        bool useOSDDirtyRect = m_osdDirty && !m_dynamicFullDirty && !m_tooltipDirty && !AppContext::GetInstance().Loupe.active;
+        bool useOSDDirtyRect = m_osdDirty && !m_dynamicFullDirty && !m_tooltipDirty && !AppContext::GetInstance().Loupe.active && !m_borderGlowActive;
         
         if (useOSDDirtyRect && m_osdOpacity > 0.01f) {
             // Only OSD needs update - use Dirty Rects
@@ -835,10 +836,11 @@ void UIRenderer::RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd) {
 
     // [Geek Glass] Initialize lazily here (we have valid context on the UI static layer)
     m_geekGlass.InitializeResources(dc);
+    const auto& themePal = QuickView::UI::Theme::GetThemePalette();
     ComPtr<ID2D1SolidColorBrush> whiteBrush, blackBrush, accentBrush;
     dc->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &whiteBrush);
     dc->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 0.6f), &blackBrush);
-    dc->CreateSolidColorBrush(D2D1::ColorF(0.2f, 0.6f, 1.0f), &accentBrush);
+    dc->CreateSolidColorBrush(themePal.accentFill, &accentBrush);
     
     m_whiteBrush = whiteBrush;
     m_blackBrush = blackBrush;
@@ -918,11 +920,6 @@ void UIRenderer::RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd) {
         }
     }
     
-    // Border Indicators (disabled in Compare Mode and Crop Mode)
-    if (g_config.ShowBorderIndicator != 0 && !isAnyOverlayActive && !IsCompareModeActive() && !g_cropState.IsActive) {
-        DrawBorderIndicators(dc);
-    }
-
     // Minimap / Navigator (disabled in Crop Mode and Overlays)
     if (!isAnyOverlayActive && !g_cropState.IsActive) {
         DrawNavigator(dc);
@@ -1203,14 +1200,18 @@ void UIRenderer::DrawLoupe(ID2D1DeviceContext* dc, HWND hwnd) {
 
 void UIRenderer::RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd) {
     // Create brushes
+    const auto& themePal = QuickView::UI::Theme::GetThemePalette();
     ComPtr<ID2D1SolidColorBrush> whiteBrush, blackBrush, accentBrush;
     dc->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &whiteBrush);
     dc->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 0.6f), &blackBrush);
-    dc->CreateSolidColorBrush(D2D1::ColorF(0.2f, 0.6f, 1.0f), &accentBrush);
+    dc->CreateSolidColorBrush(themePal.accentFill, &accentBrush);
     
     m_whiteBrush = whiteBrush;
     m_blackBrush = blackBrush;
     m_accentBrush = accentBrush;
+
+    // Edge Overflow Vignette Glow (FPS hit-indicator style, pan/zoom triggered)
+    DrawBorderIndicators(dc, hwnd);
 
     // OSD
     DrawOSD(dc, hwnd);
@@ -1329,7 +1330,7 @@ void UIRenderer::RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd) {
                     float ringAlpha = (1.0f - progress) * 0.6f;
                     
                     D2D1_ELLIPSE ring = D2D1::Ellipse(D2D1::Point2F(cx, iconY + iconSize / 2.0f), rippleRadius, rippleRadius);
-                    m_accentBrush->SetColor(D2D1::ColorF(D2D1::ColorF::DodgerBlue));
+                    m_accentBrush->SetColor(QuickView::UI::Theme::GetThemePalette().accentText);
                     m_accentBrush->SetOpacity(ringAlpha);
                     dc->DrawEllipse(ring, m_accentBrush.Get(), 1.5f * m_uiScale);
                     
@@ -1338,10 +1339,10 @@ void UIRenderer::RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd) {
                 }
             }
             
-            // Icon color: semi-transparent white normally, DodgerBlue opaque when hovered
+            // Icon color: semi-transparent white normally, theme accentText opaque when hovered
             ID2D1SolidColorBrush* pIconBrush = nullptr;
             if (iconHovered) {
-                m_accentBrush->SetColor(D2D1::ColorF(D2D1::ColorF::DodgerBlue));
+                m_accentBrush->SetColor(QuickView::UI::Theme::GetThemePalette().accentText);
                 m_accentBrush->SetOpacity(1.0f);
                 pIconBrush = m_accentBrush.Get();
             } else {
@@ -1420,7 +1421,8 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
 
             if (text.find(L'\u2605') != std::wstring::npos) {
                 ComPtr<ID2D1SolidColorBrush> starAccentBrush;
-                D2D1_COLOR_F accentClr = D2D1::ColorF(g_config.ThemeCustomAccentR, g_config.ThemeCustomAccentG, g_config.ThemeCustomAccentB, m_osdOpacity);
+                const auto& tp = QuickView::UI::Theme::GetThemePalette();
+                D2D1_COLOR_F accentClr = D2D1::ColorF(tp.accentText.r, tp.accentText.g, tp.accentText.b, m_osdOpacity);
                 dc->CreateSolidColorBrush(accentClr, &starAccentBrush);
                 ApplyStarAccent(layout.Get(), text, starAccentBrush.Get());
             }
@@ -1506,7 +1508,8 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
     }
     if (textLayout && m_osdText.find(L'\u2605') != std::wstring::npos) {
         ComPtr<ID2D1SolidColorBrush> starAccentBrush;
-        D2D1_COLOR_F accentClr = D2D1::ColorF(g_config.ThemeCustomAccentR, g_config.ThemeCustomAccentG, g_config.ThemeCustomAccentB, m_osdOpacity);
+        const auto& tp = QuickView::UI::Theme::GetThemePalette();
+        D2D1_COLOR_F accentClr = D2D1::ColorF(tp.accentText.r, tp.accentText.g, tp.accentText.b, m_osdOpacity);
         dc->CreateSolidColorBrush(accentClr, &starAccentBrush);
         ApplyStarAccent(textLayout.Get(), m_osdText, starAccentBrush.Get());
     }
@@ -1610,21 +1613,23 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
             dc->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.25f * m_osdOpacity), &railBrush);
             dc->FillRoundedRectangle(D2D1::RoundedRect(railRect, barH * 0.5f, barH * 0.5f), railBrush.Get());
 
-            // Active progress fill with high-tech cyan/emerald luminous glow
+            // Active progress fill with theme-accent luminous glow
             float fillRight = trackLeft + trackW * p;
             if (fillRight > trackLeft + 1.0f) {
                 D2D1_RECT_F fillRect = D2D1::RectF(trackLeft, barY, fillRight, barY + barH);
                 D2D1_RECT_F glowRect = D2D1::RectF(trackLeft, barY - 1.0f * s, fillRight, barY + barH + 1.0f * s);
 
-                ComPtr<ID2D1SolidColorBrush> glowBrush, fillBrush;
-                D2D1_COLOR_F glowColor = D2D1::ColorF(g_config.ThemeCustomAccentR, g_config.ThemeCustomAccentG, g_config.ThemeCustomAccentB, 0.40f * m_osdOpacity);
-                D2D1_COLOR_F barColor  = D2D1::ColorF(g_config.ThemeCustomAccentR, g_config.ThemeCustomAccentG, g_config.ThemeCustomAccentB, 0.95f * m_osdOpacity);
+                const auto& tp = QuickView::UI::Theme::GetThemePalette();
+                ComPtr<ID2D1SolidColorBrush> workBrush;
+                D2D1_COLOR_F glowColor = D2D1::ColorF(tp.accentGlow.r, tp.accentGlow.g, tp.accentGlow.b, 0.40f * m_osdOpacity);
+                D2D1_COLOR_F barColor  = D2D1::ColorF(tp.accentFill.r, tp.accentFill.g, tp.accentFill.b, 0.95f * m_osdOpacity);
 
-                dc->CreateSolidColorBrush(glowColor, &glowBrush);
-                dc->CreateSolidColorBrush(barColor, &fillBrush);
-
-                dc->FillRoundedRectangle(D2D1::RoundedRect(glowRect, (barH + 2.0f * s) * 0.5f, (barH + 2.0f * s) * 0.5f), glowBrush.Get());
-                dc->FillRoundedRectangle(D2D1::RoundedRect(fillRect, barH * 0.5f, barH * 0.5f), fillBrush.Get());
+                dc->CreateSolidColorBrush(glowColor, &workBrush);
+                if (workBrush) {
+                    dc->FillRoundedRectangle(D2D1::RoundedRect(glowRect, (barH + 2.0f * s) * 0.5f, (barH + 2.0f * s) * 0.5f), workBrush.Get());
+                    workBrush->SetColor(barColor);
+                    dc->FillRoundedRectangle(D2D1::RoundedRect(fillRect, barH * 0.5f, barH * 0.5f), workBrush.Get());
+                }
             }
         }
     }
@@ -1733,24 +1738,22 @@ void UIRenderer::DrawDecodingStatus(ID2D1DeviceContext* dc, HWND hwnd) {
     D2D1_RECT_F fullBar = D2D1::RectF(0.0f, barY, drawW, barY + barThickness);
     D2D1_RECT_F fullBarShadow = D2D1::RectF(0.0f, barY + 1.0f, drawW, barY + barThickness + 2.0f);
 
-    ComPtr<ID2D1SolidColorBrush> trackBrush;
-    D2D1_COLOR_F trackColor = D2D1::ColorF(0.20f, 0.45f, 0.85f, 0.25f * alpha); // [Fix] Deeper blue track
+    const auto& tp = QuickView::UI::Theme::GetThemePalette();
+    ComPtr<ID2D1SolidColorBrush> workBrush;
+    D2D1_COLOR_F trackColor = D2D1::ColorF(tp.accentFill.r, tp.accentFill.g, tp.accentFill.b, 0.25f * alpha);
     if (alpha > 0.0f) {
-        ComPtr<ID2D1SolidColorBrush> trackShadowBrush;
-        D2D1_COLOR_F trackShadow = D2D1::ColorF(0.08f, 0.15f, 0.25f, 0.90f * alpha); // [Fix] Deeper shadow
-        dc->CreateSolidColorBrush(trackShadow, &trackShadowBrush);
-        dc->FillRectangle(fullBarShadow, trackShadowBrush.Get());
+        dc->CreateSolidColorBrush(D2D1::ColorF(0.06f, 0.10f, 0.16f, 0.90f * alpha), &workBrush);
+        if (!workBrush) return;
+        dc->FillRectangle(fullBarShadow, workBrush.Get());
 
-        dc->CreateSolidColorBrush(trackColor, &trackBrush);
-        dc->FillRectangle(fullBar, trackBrush.Get());
+        workBrush->SetColor(trackColor);
+        dc->FillRectangle(fullBar, workBrush.Get());
 
-        ComPtr<ID2D1SolidColorBrush> trackStrokeBrush;
-        D2D1_COLOR_F trackStroke = D2D1::ColorF(0.40f, 0.65f, 0.95f, 0.40f * alpha); // [Fix] Deeper stroke
-        dc->CreateSolidColorBrush(trackStroke, &trackStrokeBrush);
-        dc->FillRectangle(D2D1::RectF(0.0f, barY, drawW, barY + 1.0f), trackStrokeBrush.Get());
+        workBrush->SetColor(D2D1::ColorF(tp.accentText.r, tp.accentText.g, tp.accentText.b, 0.40f * alpha));
+        dc->FillRectangle(D2D1::RectF(0.0f, barY, drawW, barY + 1.0f), workBrush.Get());
     }
 
-    if (alpha > 0.0f && scanningMode) {
+    if (alpha > 0.0f && scanningMode && workBrush) {
         // Electric-arc flow: one-directional packet with trailing streaks.
         m_decodeScanPhase += 0.005f; // [Fix] Slower scanning mode (was 0.012f)
         if (m_decodeScanPhase >= 1.0f) m_decodeScanPhase -= 1.0f;
@@ -1770,17 +1773,14 @@ void UIRenderer::DrawDecodingStatus(ID2D1DeviceContext* dc, HWND hwnd) {
             D2D1_RECT_F segGlow = D2D1::RectF(left, barY - glowPad, right, barY + barThickness + glowPad);
             D2D1_RECT_F segShadow = D2D1::RectF(left, barY + 1.0f, right, barY + barThickness + 2.0f);
 
-            ComPtr<ID2D1SolidColorBrush> segShadowBrush;
-            dc->CreateSolidColorBrush(D2D1::ColorF(0.08f, 0.15f, 0.25f, 0.90f * alpha), &segShadowBrush);
-            dc->FillRectangle(segShadow, segShadowBrush.Get());
+            workBrush->SetColor(D2D1::ColorF(0.06f, 0.10f, 0.16f, 0.90f * alpha));
+            dc->FillRectangle(segShadow, workBrush.Get());
 
-            ComPtr<ID2D1SolidColorBrush> segGlowBrush;
-            dc->CreateSolidColorBrush(D2D1::ColorF(0.20f, 0.50f, 0.95f, (glowAlpha + 0.06f) * alpha), &segGlowBrush);
-            dc->FillRectangle(segGlow, segGlowBrush.Get());
+            workBrush->SetColor(D2D1::ColorF(tp.accentGlow.r, tp.accentGlow.g, tp.accentGlow.b, (glowAlpha + 0.06f) * alpha));
+            dc->FillRectangle(segGlow, workBrush.Get());
 
-            ComPtr<ID2D1SolidColorBrush> segBrush;
-            dc->CreateSolidColorBrush(D2D1::ColorF(0.40f, 0.70f, 1.0f, (bodyAlpha + 0.04f) * alpha), &segBrush);
-            dc->FillRectangle(seg, segBrush.Get());
+            workBrush->SetColor(D2D1::ColorF(tp.accentText.r, tp.accentText.g, tp.accentText.b, (bodyAlpha + 0.04f) * alpha));
+            dc->FillRectangle(seg, workBrush.Get());
         };
 
         // Head and trailing arc fragments
@@ -1791,7 +1791,7 @@ void UIRenderer::DrawDecodingStatus(ID2D1DeviceContext* dc, HWND hwnd) {
         // Spark fragment near head for "arc" feel.
         float sparkOffset = sinf((float)now * 0.006f) * packetW * 0.08f;
         DrawArcSegment(xHead + packetW * 0.46f + sparkOffset, xHead + packetW * 0.56f + sparkOffset, 0.98f, 0.34f);
-    } else if (alpha > 0.0f) {
+    } else if (alpha > 0.0f && workBrush) {
         float fillW = progress * drawW;
         if (fillW < 0.0f) fillW = 0.0f;
         if (fillW > drawW) fillW = drawW;
@@ -1799,7 +1799,6 @@ void UIRenderer::DrawDecodingStatus(ID2D1DeviceContext* dc, HWND hwnd) {
         D2D1_RECT_F fillRect = D2D1::RectF(0.0f, barY, fillW, barY + barThickness);
         D2D1_RECT_F fillGlow = D2D1::RectF(0.0f, barY - glowPad, fillW, barY + barThickness + glowPad);
         D2D1_RECT_F fillShadow = D2D1::RectF(0.0f, barY + 1.0f, fillW, barY + barThickness + 2.0f);
-        ComPtr<ID2D1SolidColorBrush> fillBrush;
 
         float flashBoost = 0.0f;
         if (finishingMode) {
@@ -1810,25 +1809,19 @@ void UIRenderer::DrawDecodingStatus(ID2D1DeviceContext* dc, HWND hwnd) {
             }
         }
 
-        D2D1_COLOR_F fillColor = D2D1::ColorF(0.30f, 0.60f, 0.95f, alpha + flashBoost); // [Fix] Deeper fill
-        if (fillColor.a > 1.0f) fillColor.a = 1.0f;
-        ComPtr<ID2D1SolidColorBrush> fillGlowBrush;
-        D2D1_COLOR_F glowColor = D2D1::ColorF(0.15f, 0.40f, 0.85f, 0.40f * alpha + flashBoost * 0.40f); // [Fix] Deeper glow
-        if (glowColor.a > 1.0f) glowColor.a = 1.0f;
-        dc->CreateSolidColorBrush(glowColor, &fillGlowBrush);
-        ComPtr<ID2D1SolidColorBrush> fillShadowBrush;
-        D2D1_COLOR_F fillShadowColor = D2D1::ColorF(0.08f, 0.15f, 0.25f, 0.90f * alpha); // [Fix] Deeper shadow
-        dc->CreateSolidColorBrush(fillShadowColor, &fillShadowBrush);
-        dc->FillRectangle(fillShadow, fillShadowBrush.Get());
-        dc->FillRectangle(fillGlow, fillGlowBrush.Get());
-        dc->CreateSolidColorBrush(fillColor, &fillBrush);
-        dc->FillRectangle(fillRect, fillBrush.Get());
+        D2D1_COLOR_F fillColor = D2D1::ColorF(tp.accentFill.r, tp.accentFill.g, tp.accentFill.b, (std::min)(1.0f, alpha + flashBoost));
+        D2D1_COLOR_F glowColor = D2D1::ColorF(tp.accentGlow.r, tp.accentGlow.g, tp.accentGlow.b, (std::min)(1.0f, 0.40f * alpha + flashBoost * 0.40f));
 
-        ComPtr<ID2D1SolidColorBrush> fillStrokeBrush;
-        D2D1_COLOR_F fillStroke = D2D1::ColorF(0.60f, 0.80f, 1.0f, 0.46f * alpha + flashBoost * 0.50f); // [Fix] Deeper stroke
-        if (fillStroke.a > 1.0f) fillStroke.a = 1.0f;
-        dc->CreateSolidColorBrush(fillStroke, &fillStrokeBrush);
-        dc->FillRectangle(D2D1::RectF(0.0f, barY, fillW, barY + 1.0f), fillStrokeBrush.Get());
+        workBrush->SetColor(D2D1::ColorF(0.06f, 0.10f, 0.16f, 0.90f * alpha));
+        dc->FillRectangle(fillShadow, workBrush.Get());
+        workBrush->SetColor(glowColor);
+        dc->FillRectangle(fillGlow, workBrush.Get());
+        workBrush->SetColor(fillColor);
+        dc->FillRectangle(fillRect, workBrush.Get());
+
+        D2D1_COLOR_F fillStroke = D2D1::ColorF(tp.accentText.r, tp.accentText.g, tp.accentText.b, (std::min)(1.0f, 0.46f * alpha + flashBoost * 0.50f));
+        workBrush->SetColor(fillStroke);
+        dc->FillRectangle(D2D1::RectF(0.0f, barY, fillW, barY + 1.0f), workBrush.Get());
 
         // Progress head highlight: improves readability on bright/complex images.
         if (fillW > 1.0f && fillW < drawW) {
@@ -1836,11 +1829,9 @@ void UIRenderer::DrawDecodingStatus(ID2D1DeviceContext* dc, HWND hwnd) {
             if (headW < 2.0f) headW = 2.0f;
             if (headW > 6.0f) headW = 6.0f;
             D2D1_RECT_F headRect = D2D1::RectF(fillW - headW, barY - glowPad * 0.35f, fillW, barY + barThickness + glowPad * 0.35f);
-            ComPtr<ID2D1SolidColorBrush> headBrush;
-            D2D1_COLOR_F headColor = D2D1::ColorF(0.70f, 0.85f, 1.0f, 0.46f * alpha + flashBoost * 0.35f); // [Fix] Deeper highlight
-            if (headColor.a > 1.0f) headColor.a = 1.0f;
-            dc->CreateSolidColorBrush(headColor, &headBrush);
-            dc->FillRectangle(headRect, headBrush.Get());
+            D2D1_COLOR_F headColor = D2D1::ColorF(tp.accentText.r, tp.accentText.g, tp.accentText.b, (std::min)(1.0f, 0.52f * alpha + flashBoost * 0.35f));
+            workBrush->SetColor(headColor);
+            dc->FillRectangle(headRect, workBrush.Get());
         }
     }
 
@@ -2005,7 +1996,7 @@ void UIRenderer::DrawWindowControls(ID2D1DeviceContext* dc, HWND hwnd) {
 
     ComPtr<ID2D1SolidColorBrush> foregroundBrush, accentBrush;
     dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(D2D1::ColorF::Black) : D2D1::ColorF(D2D1::ColorF::White), &foregroundBrush);
-    dc->CreateSolidColorBrush(D2D1::ColorF(0.2f, 0.6f, 1.0f), &accentBrush);
+    dc->CreateSolidColorBrush(QuickView::UI::Theme::GetThemePalette().accentText, &accentBrush);
     
     auto DrawIcon = [&](Icons::IconGlyph icon, D2D1_RECT_F rect, ID2D1Brush* brush, float iconScale) {
         if (!icon) return;
@@ -2035,17 +2026,65 @@ void UIRenderer::DrawWindowControls(ID2D1DeviceContext* dc, HWND hwnd) {
     if (useLayer) dc->PopLayer();
 }
 
-void UIRenderer::DrawBorderIndicators(ID2D1DeviceContext* dc) {
-    if (IsCompareModeActive()) return;
-    if (m_width <= 0 || m_height <= 0) return;
+float UIRenderer::ComputeBorderGlowAlpha() noexcept {
+    if (!m_borderGlowActive) return 0.0f;
+    if (g_config.ShowBorderIndicator == 0) {
+        m_borderGlowActive = false;
+        return 0.0f;
+    }
+
+    const uint64_t now = ::GetTickCount64();
+    const auto& app = AppContext::GetInstance();
+    const bool keepLit =
+        app.SmoothZoom.Active ||
+        g_viewState.IsDragging ||
+        g_viewState.IsRightButtonDragZoom ||
+        (app.Loupe.active && app.Loupe.isViewportMode);
+
+    if (keepLit) {
+        m_borderGlowLastTriggerMs = now;
+        return 1.0f;
+    }
+
+    const uint64_t elapsed = (now >= m_borderGlowLastTriggerMs) ? (now - m_borderGlowLastTriggerMs) : 0;
+    constexpr uint64_t kHoldMs = 450;
+    constexpr uint64_t kFadeMs = 350;
+    if (elapsed <= kHoldMs) {
+        return 1.0f;
+    }
+    if (elapsed < kHoldMs + kFadeMs) {
+        const float t = static_cast<float>(elapsed - kHoldMs) / static_cast<float>(kFadeMs);
+        const float inv = 1.0f - t;
+        return inv * inv; // Quadratic ease-out
+    }
+
+    m_borderGlowActive = false;
+    return 0.0f;
+}
+
+void UIRenderer::DrawBorderIndicators(ID2D1DeviceContext* dc, HWND hwnd) {
+    if (g_config.ShowBorderIndicator == 0) {
+        m_borderGlowActive = false;
+        return;
+    }
+    const bool isFullGridGallery = g_gallery.IsVisible() && g_gallery.GetMode() == GalleryMode::FullGrid;
+    if (g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible() || isFullGridGallery ||
+        IsCompareModeActive() || g_cropState.IsActive) {
+        return;
+    }
+
+    const float glowAlpha = ComputeBorderGlowAlpha();
+    if (glowAlpha <= 0.001f) return;
+    if (!dc || m_width <= 0 || m_height <= 0) return;
+
     D2D1_SIZE_F imgSize = GetEffectiveImageSize();
     if (imgSize.width <= 0.0f || imgSize.height <= 0.0f) return;
 
-    float winW = (float)m_width;
-    float winH = (float)m_height;
+    const float winW = (float)m_width;
+    const float winH = (float)m_height;
 
     // Match SyncDCompState: pin-mode filmstrip reduces effective vertical viewport.
-    float galleryH = (g_gallery.IsPinned() && g_gallery.IsVisible())
+    const float galleryH = (g_gallery.IsPinned() && g_gallery.IsVisible())
         ? g_gallery.GetVisualHeight(winH) : 0.0f;
     float effWinH = winH - galleryH;
     if (effWinH < 1.0f) effWinH = 1.0f;
@@ -2072,23 +2111,23 @@ void UIRenderer::DrawBorderIndicators(ID2D1DeviceContext* dc) {
         panX = AppContext::GetInstance().SmoothZoom.CurrentPanX;
         panY = AppContext::GetInstance().SmoothZoom.CurrentPanY;
     }
-    float scaledW = imgSize.width * targetZoom;
-    float scaledH = imgSize.height * targetZoom;
+    const float scaledW = imgSize.width * targetZoom;
+    const float scaledH = imgSize.height * targetZoom;
 
     // Image center is shifted down by galleryH/2 when filmstrip is pinned (SyncDCompState).
-    float centerY = (winH * 0.5f) + galleryH * 0.5f;
-    float imgLeft = (winW * 0.5f) - (scaledW * 0.5f) + panX;
-    float imgRight = (winW * 0.5f) + (scaledW * 0.5f) + panX;
-    float imgTop = centerY - (scaledH * 0.5f) + panY;
-    float imgBottom = centerY + (scaledH * 0.5f) + panY;
+    const float centerY = (winH * 0.5f) + galleryH * 0.5f;
+    const float imgLeft = (winW * 0.5f) - (scaledW * 0.5f) + panX;
+    const float imgRight = (winW * 0.5f) + (scaledW * 0.5f) + panX;
+    const float imgTop = centerY - (scaledH * 0.5f) + panY;
+    const float imgBottom = centerY + (scaledH * 0.5f) + panY;
 
     // Buffer to avoid flickering at exact edge bounds
-    const float edgeBuffer = 1.0f;
+    constexpr float edgeBuffer = 1.0f;
 
-    bool drawLeft = (imgLeft < -edgeBuffer);
-    bool drawRight = (imgRight > winW + edgeBuffer);
-    bool drawTop = (imgTop < -edgeBuffer);
-    bool drawBottom = (imgBottom > winH + edgeBuffer);
+    const bool drawLeft = (imgLeft < -edgeBuffer);
+    const bool drawRight = (imgRight > winW + edgeBuffer);
+    const bool drawTop = (imgTop < -edgeBuffer);
+    const bool drawBottom = (imgBottom > effWinH + edgeBuffer);
 
     if (!drawLeft && !drawRight && !drawTop && !drawBottom) return;
 
@@ -2096,63 +2135,106 @@ void UIRenderer::DrawBorderIndicators(ID2D1DeviceContext* dc) {
     if (g_config.ShowBorderIndicator == 2) {
         indicatorClr = D2D1::ColorF(g_config.BorderIndicatorCustomR, g_config.BorderIndicatorCustomG, g_config.BorderIndicatorCustomB, 1.0f);
     } else {
-        indicatorClr = D2D1::ColorF(g_config.ThemeCustomAccentR, g_config.ThemeCustomAccentG, g_config.ThemeCustomAccentB, 1.0f);
+        indicatorClr = QuickView::UI::Theme::GetThemePalette().accentFill;
     }
 
-    ComPtr<ID2D1SolidColorBrush> borderBrush;
-    dc->CreateSolidColorBrush(indicatorClr, &borderBrush);
-
-    float s = m_uiScale;
-    float thickness = 2.0f * s; // 2.0px thick crisp line, scaled (matched with compare indicator)
-
+    const float s = m_uiScale;
     float padX = 0.0f;
     float padY = 0.0f;
-    extern HWND g_mainHwnd;
-    GetMaximizedWindowPaddings(g_mainHwnd, m_isFullscreen, padX, padY);
+    GetMaximizedWindowPaddings(hwnd, m_isFullscreen, padX, padY);
 
-    bool hasRoundCorner = (!m_isFullscreen && !IsZoomed(g_mainHwnd) && g_config.RoundedCorners);
-    float cornerR = hasRoundCorner ? (8.0f * s) : 0.0f;
+    const float L = padX;
+    const float T = padY;
+    const float R = winW - padX;
+    const float B = (std::min)(winH - padY, effWinH);
+    const float drawW = R - L;
+    const float drawH = B - T;
+    if (drawW < 16.0f || drawH < 16.0f) return;
 
-    if (cornerR > 0.0f) {
-        float inset = thickness * 0.5f;
-        D2D1_RECT_F outerRect = D2D1::RectF(padX + inset, padY + inset, winW - padX - inset, winH - padY - inset);
+    const float glowDepth = (std::min)(32.0f * s, (std::min)(drawW, drawH) * 0.28f);
+    if (glowDepth <= 1.0f) return;
 
-        auto drawClippedEdge = [&](const D2D1_RECT_F& clipRect) {
-            dc->PushAxisAlignedClip(clipRect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-            dc->DrawRoundedRectangle(D2D1::RoundedRect(outerRect, cornerR, cornerR), borderBrush.Get(), thickness);
-            dc->PopAxisAlignedClip();
+    ComPtr<ID2D1Factory> factory;
+    dc->GetFactory(&factory);
+    if (!factory) return;
+
+    const bool brushColorChanged =
+        (m_borderGlowCachedDc != dc) ||
+        (fabsf(m_borderGlowCachedColor.r - indicatorClr.r) > 0.002f) ||
+        (fabsf(m_borderGlowCachedColor.g - indicatorClr.g) > 0.002f) ||
+        (fabsf(m_borderGlowCachedColor.b - indicatorClr.b) > 0.002f);
+
+    if (!m_borderGlowBrush || brushColorChanged) {
+        m_borderGlowBrush.Reset();
+        const D2D1_GRADIENT_STOP stops[5] = {
+            { 0.00f, D2D1::ColorF(indicatorClr.r, indicatorClr.g, indicatorClr.b, 0.42f) },
+            { 0.06f, D2D1::ColorF(indicatorClr.r, indicatorClr.g, indicatorClr.b, 0.30f) },
+            { 0.28f, D2D1::ColorF(indicatorClr.r, indicatorClr.g, indicatorClr.b, 0.14f) },
+            { 0.62f, D2D1::ColorF(indicatorClr.r, indicatorClr.g, indicatorClr.b, 0.035f) },
+            { 1.00f, D2D1::ColorF(indicatorClr.r, indicatorClr.g, indicatorClr.b, 0.00f) },
         };
 
-        if (drawLeft) {
-            drawClippedEdge(D2D1::RectF(padX, padY, padX + thickness + cornerR, winH - padY));
+        ComPtr<ID2D1GradientStopCollection> stopCollection;
+        if (FAILED(dc->CreateGradientStopCollection(stops, 5, D2D1_GAMMA_1_0, D2D1_EXTEND_MODE_CLAMP, &stopCollection)) || !stopCollection) {
+            return;
         }
-        if (drawRight) {
-            drawClippedEdge(D2D1::RectF(winW - padX - thickness - cornerR, padY, winW - padX, winH - padY));
+
+        D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES brushProps = D2D1::LinearGradientBrushProperties(D2D1::Point2F(0, 0), D2D1::Point2F(glowDepth, 0));
+        if (FAILED(dc->CreateLinearGradientBrush(brushProps, stopCollection.Get(), &m_borderGlowBrush)) || !m_borderGlowBrush) {
+            return;
         }
-        if (drawTop) {
-            drawClippedEdge(D2D1::RectF(padX, padY, winW - padX, padY + thickness + cornerR));
-        }
-        if (drawBottom) {
-            drawClippedEdge(D2D1::RectF(padX, winH - padY - thickness - cornerR, winW - padX, winH - padY));
-        }
-    } else {
-        // If an edge is outside the window, draw an indicator along that window edge.
-        if (drawLeft) {
-            D2D1_RECT_F rect = D2D1::RectF(padX, padY, padX + thickness, winH - padY);
-            dc->FillRectangle(rect, borderBrush.Get());
-        }
-        if (drawRight) {
-            D2D1_RECT_F rect = D2D1::RectF(winW - padX - thickness, padY, winW - padX, winH - padY);
-            dc->FillRectangle(rect, borderBrush.Get());
-        }
-        if (drawTop) {
-            D2D1_RECT_F rect = D2D1::RectF(padX, padY, winW - padX, padY + thickness);
-            dc->FillRectangle(rect, borderBrush.Get());
-        }
-        if (drawBottom) {
-            D2D1_RECT_F rect = D2D1::RectF(padX, winH - padY - thickness, winW - padX, winH - padY);
-            dc->FillRectangle(rect, borderBrush.Get());
-        }
+        m_borderGlowCachedDc = dc;
+        m_borderGlowCachedColor = indicatorClr;
+    }
+
+    m_borderGlowBrush->SetOpacity(glowAlpha);
+
+    auto fillMiteredEdge = [&](D2D1_POINT_2F gradStart, D2D1_POINT_2F gradEnd,
+                               D2D1_POINT_2F p0, D2D1_POINT_2F p1, D2D1_POINT_2F p2, D2D1_POINT_2F p3) {
+        ComPtr<ID2D1PathGeometry> geo;
+        if (FAILED(factory->CreatePathGeometry(&geo)) || !geo) return;
+        ComPtr<ID2D1GeometrySink> sink;
+        if (FAILED(geo->Open(&sink)) || !sink) return;
+        sink->BeginFigure(p0, D2D1_FIGURE_BEGIN_FILLED);
+        sink->AddLine(p1);
+        sink->AddLine(p2);
+        sink->AddLine(p3);
+        sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+        if (FAILED(sink->Close())) return;
+
+        m_borderGlowBrush->SetStartPoint(gradStart);
+        m_borderGlowBrush->SetEndPoint(gradEnd);
+        dc->FillGeometry(geo.Get(), m_borderGlowBrush.Get());
+    };
+
+    const float miterL = drawLeft ? glowDepth : 0.0f;
+    const float miterR = drawRight ? glowDepth : 0.0f;
+    const float miterT = drawTop ? glowDepth : 0.0f;
+    const float miterB = drawBottom ? glowDepth : 0.0f;
+
+    if (drawLeft) {
+        fillMiteredEdge(
+            D2D1::Point2F(L, T), D2D1::Point2F(L + glowDepth, T),
+            D2D1::Point2F(L, T), D2D1::Point2F(L + glowDepth, T + miterT),
+            D2D1::Point2F(L + glowDepth, B - miterB), D2D1::Point2F(L, B));
+    }
+    if (drawRight) {
+        fillMiteredEdge(
+            D2D1::Point2F(R, T), D2D1::Point2F(R - glowDepth, T),
+            D2D1::Point2F(R, T), D2D1::Point2F(R, B),
+            D2D1::Point2F(R - glowDepth, B - miterB), D2D1::Point2F(R - glowDepth, T + miterT));
+    }
+    if (drawTop) {
+        fillMiteredEdge(
+            D2D1::Point2F(L, T), D2D1::Point2F(L, T + glowDepth),
+            D2D1::Point2F(L, T), D2D1::Point2F(R, T),
+            D2D1::Point2F(R - miterR, T + glowDepth), D2D1::Point2F(L + miterL, T + glowDepth));
+    }
+    if (drawBottom) {
+        fillMiteredEdge(
+            D2D1::Point2F(L, B), D2D1::Point2F(L, B - glowDepth),
+            D2D1::Point2F(L + miterL, B - glowDepth), D2D1::Point2F(R - miterR, B - glowDepth),
+            D2D1::Point2F(R, B), D2D1::Point2F(L, B));
     }
 }
 
@@ -2207,7 +2289,7 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
     ComPtr<ID2D1SolidColorBrush> redBrush, yellowBrush, greenBrush, blueBrush, grayBrush, blackTransBrush, whiteBrush;
     dc->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Red), &redBrush);
     dc->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Yellow), &yellowBrush);
-    dc->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::DodgerBlue), &blueBrush);
+    dc->CreateSolidColorBrush(QuickView::UI::Theme::GetThemePalette().accentText, &blueBrush);
     dc->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Lime), &greenBrush);
     dc->CreateSolidColorBrush(D2D1::ColorF(0.3f, 0.3f, 0.3f), &grayBrush);
     dc->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.8f), &blackTransBrush); // Darker
@@ -3830,7 +3912,7 @@ void UIRenderer::DrawInfoGrid(ID2D1DeviceContext* dc, float startX, float startY
             }
             if (valLayout) {
                 ComPtr<ID2D1SolidColorBrush> starAccentBrush;
-                D2D1_COLOR_F accentClr = D2D1::ColorF(g_config.ThemeCustomAccentR, g_config.ThemeCustomAccentG, g_config.ThemeCustomAccentB, 1.0f);
+                D2D1_COLOR_F accentClr = QuickView::UI::Theme::GetThemePalette().accentText;
                 dc->CreateSolidColorBrush(accentClr, &starAccentBrush);
                 ApplyStarAccent(valLayout.Get(), row.displayText, starAccentBrush.Get());
                 dc->DrawTextLayout(D2D1::Point2F(valueRect.left, valueRect.top), valLayout.Get(), brushDim.Get());
@@ -4225,7 +4307,7 @@ void UIRenderer::DrawCompactInfo(ID2D1DeviceContext* dc) {
         }
         if (infoLayout) {
             ComPtr<ID2D1SolidColorBrush> starAccentBrush;
-            D2D1_COLOR_F accentClr = D2D1::ColorF(g_config.ThemeCustomAccentR, g_config.ThemeCustomAccentG, g_config.ThemeCustomAccentB, 1.0f);
+            D2D1_COLOR_F accentClr = QuickView::UI::Theme::GetThemePalette().accentText;
             dc->CreateSolidColorBrush(accentClr, &starAccentBrush);
             ApplyStarAccent(infoLayout.Get(), info, starAccentBrush.Get());
             dc->DrawTextLayout(D2D1::Point2F(textRect.left, textRect.top), infoLayout.Get(), brushText.Get());
@@ -4397,10 +4479,8 @@ UIRenderer::AdaptiveUiPalette UIRenderer::BuildAdaptivePalette(float luminance, 
         D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f),
         D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f),
         blend);
-    palette.accent = LerpColor(
-        D2D1::ColorF(0.25f, 0.68f, 1.0f, 0.98f),
-        D2D1::ColorF(0.12f, 0.36f, 0.70f, 0.96f),
-        blend);
+    const auto& tp = QuickView::UI::Theme::GetThemePalette();
+    palette.accent = tp.isLight ? tp.accentFill : tp.accentText;
     palette.success = LerpColor(
         D2D1::ColorF(0.20f, 0.90f, 0.40f, 1.00f),
         D2D1::ColorF(0.02f, 0.45f, 0.15f, 0.98f),
@@ -4787,46 +4867,91 @@ void UIRenderer::DrawComparePaneIndicator(ID2D1DeviceContext* dc, HWND hwnd) {
     bool isWipe = false;
     if (!GetCompareIndicatorState(pane, splitRatio, isWipe)) return;
 
-    if (splitRatio <= 0.05f || splitRatio >= 0.95f) splitRatio = 0.5f;
-    const float s = m_uiScale;
-    const float thickness = 2.0f * s;
-    const float inset = thickness * 0.5f;
     if (m_width < 20.0f || m_height < 20.0f) return;
 
+    const float s = m_uiScale;
     float padX = 0.0f;
     float padY = 0.0f;
     GetMaximizedWindowPaddings(hwnd, m_isFullscreen, padX, padY);
 
-    const float drawWidth = m_width - padX * 2.0f;
-    const float drawHeight = m_height - padY * 2.0f;
-    const float splitX = isWipe ? (padX + drawWidth * splitRatio) : (padX + drawWidth * 0.5f);
+    const float drawWidth = (float)m_width - padX * 2.0f;
+    const float drawHeight = (float)m_height - padY * 2.0f;
+    const float galleryH = (g_gallery.IsPinned() && g_gallery.IsVisible())
+        ? g_gallery.GetVisualHeight((float)m_height) : 0.0f;
+    const float effBottom = (std::min)(padY + drawHeight, (float)m_height - galleryH);
+    const float effHeight = effBottom - padY;
+    if (drawWidth < 40.0f || effHeight < 40.0f) return;
 
-    D2D1_COLOR_F accentClr = D2D1::ColorF(g_config.ThemeCustomAccentR, g_config.ThemeCustomAccentG, g_config.ThemeCustomAccentB, 1.0f);
+    const float margin = (std::min)(5.0f * s, (std::min)(drawWidth, effHeight) * 0.1f);
+    const float thickness = 3.0f * s;
+    const float armLen = (std::min)(11.0f * s, (std::min)(drawWidth, effHeight) * 0.25f);
+
+    const bool hasRoundCorner = (!m_isFullscreen && !IsZoomed(hwnd) && g_config.RoundedCorners);
+    const float cornerR = (std::min)(hasRoundCorner ? (5.0f * s) : (3.0f * s), armLen * 0.6f);
+
+    D2D1_COLOR_F accentClr = QuickView::UI::Theme::GetThemePalette().accentFill;
     ComPtr<ID2D1SolidColorBrush> brush;
     dc->CreateSolidColorBrush(accentClr, &brush);
     if (!brush) return;
 
-    bool hasRoundCorner = (!m_isFullscreen && !IsZoomed(hwnd) && g_config.RoundedCorners);
-    float cornerR = hasRoundCorner ? (8.0f * s) : 0.0f;
+    ComPtr<ID2D1Factory> factory;
+    dc->GetFactory(&factory);
+    if (!factory) return;
 
-    D2D1_RECT_F fullRect = D2D1::RectF(padX + inset, padY + inset, padX + drawWidth - inset, padY + drawHeight - inset);
+    if (!m_roundStrokeStyle) {
+        D2D1_STROKE_STYLE_PROPERTIES strokeProps = D2D1::StrokeStyleProperties(
+            D2D1_CAP_STYLE_ROUND,
+            D2D1_CAP_STYLE_ROUND,
+            D2D1_CAP_STYLE_ROUND,
+            D2D1_LINE_JOIN_ROUND);
+        factory->CreateStrokeStyle(strokeProps, nullptr, 0, &m_roundStrokeStyle);
+    }
 
-    D2D1_RECT_F clipRect{};
+    auto drawCornerBracket = [&](float x0, float y0, float dirX, float dirY) {
+        ComPtr<ID2D1PathGeometry> geo;
+        if (FAILED(factory->CreatePathGeometry(&geo)) || !geo) return;
+        ComPtr<ID2D1GeometrySink> sink;
+        if (FAILED(geo->Open(&sink)) || !sink) return;
+
+        const D2D1_POINT_2F pStart = D2D1::Point2F(x0 + dirX * armLen, y0);
+        const D2D1_POINT_2F pArcStart = D2D1::Point2F(x0 + dirX * cornerR, y0);
+        const D2D1_POINT_2F pArcEnd = D2D1::Point2F(x0, y0 + dirY * cornerR);
+        const D2D1_POINT_2F pEnd = D2D1::Point2F(x0, y0 + dirY * armLen);
+
+        const D2D1_SWEEP_DIRECTION sweep = (dirX * dirY > 0.0f)
+            ? D2D1_SWEEP_DIRECTION_COUNTER_CLOCKWISE
+            : D2D1_SWEEP_DIRECTION_CLOCKWISE;
+
+        sink->BeginFigure(pStart, D2D1_FIGURE_BEGIN_HOLLOW);
+        sink->AddLine(pArcStart);
+        sink->AddArc(D2D1::ArcSegment(
+            pArcEnd,
+            D2D1::SizeF(cornerR, cornerR),
+            0.0f,
+            sweep,
+            D2D1_ARC_SIZE_SMALL));
+        sink->AddLine(pEnd);
+        sink->EndFigure(D2D1_FIGURE_END_OPEN);
+        if (FAILED(sink->Close())) return;
+
+        dc->DrawGeometry(geo.Get(), brush.Get(), thickness, m_roundStrokeStyle.Get());
+    };
+
+    const float topY = padY + margin;
+    const float botY = effBottom - margin;
+
     if (pane == 0) {
-        clipRect = D2D1::RectF(padX, padY, splitX + inset, padY + drawHeight);
+        const float leftX = padX + margin;
+        drawCornerBracket(leftX, topY, 1.0f, 1.0f);   // Top-left inset corner
+        drawCornerBracket(leftX, botY, 1.0f, -1.0f);  // Bottom-left inset corner
     } else {
-        clipRect = D2D1::RectF(splitX - inset, padY, padX + drawWidth, padY + drawHeight);
+        const float rightX = padX + drawWidth - margin;
+        const bool controlsVisible = (m_showControls || m_winCtrlHover != -1);
+        if (!controlsVisible) {
+            drawCornerBracket(rightX, topY, -1.0f, 1.0f); // Top-right inset corner (hidden when WindowControls pill is shown)
+        }
+        drawCornerBracket(rightX, botY, -1.0f, -1.0f);     // Bottom-right inset corner
     }
-
-    if (clipRect.right <= clipRect.left || clipRect.bottom <= clipRect.top) return;
-
-    dc->PushAxisAlignedClip(clipRect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-    if (cornerR > 0.0f) {
-        dc->DrawRoundedRectangle(D2D1::RoundedRect(fullRect, cornerR, cornerR), brush.Get(), thickness);
-    } else {
-        dc->DrawRectangle(fullRect, brush.Get(), thickness);
-    }
-    dc->PopAxisAlignedClip();
 }
 
 namespace {
@@ -5209,7 +5334,7 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
                     }
                     if (metricLayout) {
                         ComPtr<ID2D1SolidColorBrush> starAccentBrush;
-                        D2D1_COLOR_F accentClr = D2D1::ColorF(g_config.ThemeCustomAccentR, g_config.ThemeCustomAccentG, g_config.ThemeCustomAccentB, 1.0f);
+                        D2D1_COLOR_F accentClr = QuickView::UI::Theme::GetThemePalette().accentText;
                         dc->CreateSolidColorBrush(accentClr, &starAccentBrush);
                         ApplyStarAccent(metricLayout.Get(), m.val, starAccentBrush.Get());
                         dc->DrawTextLayout(D2D1::Point2F(r.left, r.top), metricLayout.Get(), b);
@@ -5472,9 +5597,10 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
     float hudLuma = IsLightThemeActive() ? 1.0f : 0.0f;
     const AdaptiveUiPalette basePalette = BuildAdaptivePalette(hudLuma, nullptr);
 
+    const auto& tp = QuickView::UI::Theme::GetThemePalette();
     ComPtr<ID2D1SolidColorBrush> brushBg, brushBorder, brushText, brushLabel, brushGood, brushBad, brushWarn, brushWinner;
     dc->CreateSolidColorBrush(D2D1::ColorF(0.005f, 0.005f, 0.008f, g_config.GlassPanelsOpacity / 100.0f), &brushBg); // [HUD Adjust] Apply User Alpha
-    dc->CreateSolidColorBrush(D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.6f), &brushBorder);
+    dc->CreateSolidColorBrush(D2D1::ColorF(tp.accentText.r, tp.accentText.g, tp.accentText.b, 0.55f), &brushBorder);
     dc->CreateSolidColorBrush(basePalette.foreground, &brushText);
     dc->CreateSolidColorBrush(basePalette.textDim, &brushLabel);
     dc->CreateSolidColorBrush(basePalette.success, &brushGood);
@@ -5738,7 +5864,7 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
 	                    if (valLayout) {
 	                        valLayout->SetTextAlignment(isLeft ? DWRITE_TEXT_ALIGNMENT_TRAILING : DWRITE_TEXT_ALIGNMENT_LEADING);
 	                        ComPtr<ID2D1SolidColorBrush> starAccentBrush;
-	                        D2D1_COLOR_F accentClr = D2D1::ColorF(g_config.ThemeCustomAccentR, g_config.ThemeCustomAccentG, g_config.ThemeCustomAccentB, 1.0f);
+	                        D2D1_COLOR_F accentClr = QuickView::UI::Theme::GetThemePalette().accentText;
 	                        dc->CreateSolidColorBrush(accentClr, &starAccentBrush);
 	                        ApplyStarAccent(valLayout.Get(), val, starAccentBrush.Get());
 	                        dc->DrawTextLayout(D2D1::Point2F(valRect.left, valRect.top), valLayout.Get(), brushLabel.Get());
@@ -5876,6 +6002,9 @@ void UIRenderer::DrawWelcomeScreen(ID2D1DeviceContext *dc) {
   // Ensure DWrite text formats are initialized with current UI scale
   EnsureTextFormats();
 
+  const auto& tp = QuickView::UI::Theme::GetThemePalette();
+  const D2D1_COLOR_F af = tp.accentFill;
+
   // 1. Draw Smooth Linear Gradient Window Background (No Color Banding)
   {
     ComPtr<ID2D1LinearGradientBrush> bgBrush;
@@ -5883,21 +6012,17 @@ void UIRenderer::DrawWelcomeScreen(ID2D1DeviceContext *dc) {
     std::array<D2D1_GRADIENT_STOP, 3> bgStops;
     if (IsLightThemeActive()) {
       bgStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(0.98f, 0.98f, 0.99f, 1.0f)};
-      bgStops[1] = D2D1_GRADIENT_STOP{0.75f, D2D1::ColorF(0.95f, 0.96f, 0.98f, 1.0f)};
-      bgStops[2] = D2D1_GRADIENT_STOP{1.0f, D2D1::ColorF(0.92f, 0.94f, 0.97f, 1.0f)};
+      bgStops[1] = D2D1_GRADIENT_STOP{0.72f, D2D1::ColorF(0.955f + af.r * 0.01f, 0.960f + af.g * 0.01f, 0.975f + af.b * 0.01f, 1.0f)};
+      bgStops[2] = D2D1_GRADIENT_STOP{1.0f, D2D1::ColorF(0.92f + af.r * 0.03f, 0.93f + af.g * 0.03f, 0.95f + af.b * 0.03f, 1.0f)};
     } else {
-      // Smooth space blue-black gradient
-      bgStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(0.006f, 0.006f, 0.008f,
-                                       1.0f)}; // Top: pitch black space
-      bgStops[1] = D2D1_GRADIENT_STOP{0.75f, D2D1::ColorF(0.015f, 0.02f, 0.035f,
-                                        1.0f)}; // Mid: fading space blue
-      bgStops[2] = D2D1_GRADIENT_STOP{1.0f,
-                    D2D1::ColorF(0.03f, 0.06f, 0.12f,
-                                 1.0f)}; // Bottom: ambient atmosphere blue
+      // Deep space void softly tinted by subtle ambient accent atmosphere
+      bgStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(0.006f, 0.006f, 0.008f, 1.0f)};
+      bgStops[1] = D2D1_GRADIENT_STOP{0.72f, D2D1::ColorF(0.008f + af.r * 0.014f, 0.009f + af.g * 0.014f, 0.012f + af.b * 0.014f, 1.0f)};
+      bgStops[2] = D2D1_GRADIENT_STOP{1.0f, D2D1::ColorF(0.012f + af.r * 0.060f, 0.014f + af.g * 0.060f, 0.018f + af.b * 0.060f, 1.0f)};
     }
 
     if (SUCCEEDED(
-            dc->CreateGradientStopCollection(bgStops.data(), static_cast<UINT32>(bgStops.size()), &bgStopCollection))) {
+            dc->CreateGradientStopCollection(bgStops.data(), static_cast<UINT32>(bgStops.size()), D2D1_GAMMA_1_0, D2D1_EXTEND_MODE_CLAMP, &bgStopCollection))) {
       if (SUCCEEDED(dc->CreateLinearGradientBrush(
               D2D1::LinearGradientBrushProperties(
                   D2D1::Point2F(m_width / 2.0f, 0.0f),
@@ -5909,42 +6034,53 @@ void UIRenderer::DrawWelcomeScreen(ID2D1DeviceContext *dc) {
     }
   }
 
-  // 2. Draw Space Station Horizon Glow (Cyberpunk/Fluent style glowing Bezier
-  // horizon)
+  // 2. Draw Space Station Horizon Glow (Smooth Gaussian falloff with linear gamma blending)
   {
     float w = (float)m_width;
     float h = (float)m_height;
     float s = m_uiScale;
 
-    // --- 1. Atmospheric Glow Brush (Soft radial gradient to fill the
-    // crescents) ---
-    float curvePeakY =
-        h - 57.5f * s; // The actual physical peak of the bezier curve
+    float curvePeakY = h - 57.5f * s;
+    const D2D1_COLOR_F skyGlowBase = tp.isLight ? tp.accentFill : tp.accentText;
+    const D2D1_COLOR_F horizonGlowColor = tp.isLight ? tp.accentFill : tp.accentGlow;
 
-    ComPtr<ID2D1RadialGradientBrush> glowBrush;
-    ComPtr<ID2D1GradientStopCollection> glowStopsCol;
-    std::array<D2D1_GRADIENT_STOP, 3> glowStops;
-
-    if (IsLightThemeActive()) {
-      glowStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(0.6f, 0.85f, 1.0f, 1.0f)};
-      glowStops[1] = D2D1_GRADIENT_STOP{0.2f, D2D1::ColorF(0.6f, 0.85f, 1.0f, 0.5f)};
-      glowStops[2] = D2D1_GRADIENT_STOP{1.0f, D2D1::ColorF(0.6f, 0.85f, 1.0f, 0.0f)};
-    } else {
-      // Paler cyan core, not too blue
-      glowStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(0.4f, 0.9f, 1.0f, 0.95f)}; 
-      // Strengthened core density (+20%)
-      glowStops[1] = D2D1_GRADIENT_STOP{0.20f, D2D1::ColorF(0.2f, 0.7f, 0.95f, 0.35f)}; 
-      // Long, sparsely foggy tail fading to transparent
-      glowStops[2] = D2D1_GRADIENT_STOP{1.0f, D2D1::ColorF(0.1f, 0.4f, 0.7f, 0.0f)}; 
+    // Smooth 6-stop Gaussian-like falloff in linear light (D2D1_GAMMA_1_0) to eliminate banding & edge cutoff
+    ComPtr<ID2D1RadialGradientBrush> upGlowBrush;
+    {
+      ComPtr<ID2D1GradientStopCollection> upStopsCol;
+      const float peakA = tp.isLight ? 0.24f : 0.34f;
+      const std::array<D2D1_GRADIENT_STOP, 6> upStops = {{
+          { 0.00f, D2D1::ColorF(skyGlowBase.r, skyGlowBase.g, skyGlowBase.b, peakA) },
+          { 0.16f, D2D1::ColorF(horizonGlowColor.r, horizonGlowColor.g, horizonGlowColor.b, peakA * 0.62f) },
+          { 0.34f, D2D1::ColorF(af.r, af.g, af.b, peakA * 0.28f) },
+          { 0.56f, D2D1::ColorF(af.r, af.g, af.b, peakA * 0.10f) },
+          { 0.78f, D2D1::ColorF(af.r, af.g, af.b, peakA * 0.025f) },
+          { 1.00f, D2D1::ColorF(af.r, af.g, af.b, 0.0f) }
+      }};
+      if (SUCCEEDED(dc->CreateGradientStopCollection(upStops.data(), static_cast<UINT32>(upStops.size()), D2D1_GAMMA_1_0, D2D1_EXTEND_MODE_CLAMP, &upStopsCol))) {
+        dc->CreateRadialGradientBrush(
+            D2D1::RadialGradientBrushProperties(D2D1::Point2F(w * 0.5f, curvePeakY), D2D1::Point2F(0.0f, 0.0f), w * 0.50f, 68.0f * s),
+            upStopsCol.Get(), &upGlowBrush);
+      }
     }
 
-    if (SUCCEEDED(dc->CreateGradientStopCollection(glowStops.data(), static_cast<UINT32>(glowStops.size()), &glowStopsCol))) {
-      // Increased vertical thickness by exactly 20% (ry = 42s)
-      dc->CreateRadialGradientBrush(
-          D2D1::RadialGradientBrushProperties(D2D1::Point2F(w / 2.0f, curvePeakY),
-                                              D2D1::Point2F(0.0f, 0.0f), 
-                                              w / 2.0f, 42.0f * s),
-          glowStopsCol.Get(), &glowBrush);
+    ComPtr<ID2D1RadialGradientBrush> downGlowBrush;
+    {
+      ComPtr<ID2D1GradientStopCollection> downStopsCol;
+      const float peakA = tp.isLight ? 0.48f : 0.65f;
+      const std::array<D2D1_GRADIENT_STOP, 6> downStops = {{
+          { 0.00f, D2D1::ColorF(skyGlowBase.r, skyGlowBase.g, skyGlowBase.b, peakA) },
+          { 0.16f, D2D1::ColorF(horizonGlowColor.r, horizonGlowColor.g, horizonGlowColor.b, peakA * 0.58f) },
+          { 0.34f, D2D1::ColorF(af.r, af.g, af.b, peakA * 0.26f) },
+          { 0.56f, D2D1::ColorF(af.r, af.g, af.b, peakA * 0.09f) },
+          { 0.78f, D2D1::ColorF(af.r, af.g, af.b, peakA * 0.02f) },
+          { 1.00f, D2D1::ColorF(af.r, af.g, af.b, 0.0f) }
+      }};
+      if (SUCCEEDED(dc->CreateGradientStopCollection(downStops.data(), static_cast<UINT32>(downStops.size()), D2D1_GAMMA_1_0, D2D1_EXTEND_MODE_CLAMP, &downStopsCol))) {
+        dc->CreateRadialGradientBrush(
+            D2D1::RadialGradientBrushProperties(D2D1::Point2F(w * 0.5f, curvePeakY), D2D1::Point2F(0.0f, 0.0f), w * 0.50f, 48.0f * s),
+            downStopsCol.Get(), &downGlowBrush);
+      }
     }
 
     // --- 2. Linear Gradient Brush for fading out at left/right ends with
@@ -5953,12 +6089,8 @@ void UIRenderer::DrawWelcomeScreen(ID2D1DeviceContext *dc) {
     ComPtr<ID2D1GradientStopCollection> linearStopsCol;
     std::array<D2D1_GRADIENT_STOP, 7> linearStops;
 
-    D2D1_COLOR_F coreColor = IsLightThemeActive()
-                                 ? D2D1::ColorF(0.2f, 0.6f, 1.0f, 1.0f)
-                                 : D2D1::ColorF(0.0f, 0.63f, 1.0f, 1.0f);
-    D2D1_COLOR_F highlightColor = IsLightThemeActive()
-                                      ? D2D1::ColorF(0.7f, 0.88f, 1.0f, 1.0f)
-                                      : D2D1::ColorF(0.8f, 0.95f, 1.0f, 1.0f);
+    D2D1_COLOR_F coreColor = D2D1::ColorF(tp.accentFill.r, tp.accentFill.g, tp.accentFill.b, 1.0f);
+    D2D1_COLOR_F highlightColor = D2D1::ColorF(tp.accentText.r, tp.accentText.g, tp.accentText.b, 1.0f);
     D2D1_COLOR_F fadeColor = coreColor;
     fadeColor.a = 0.0f;
 
@@ -5986,6 +6118,11 @@ void UIRenderer::DrawWelcomeScreen(ID2D1DeviceContext *dc) {
       float horizonBaseY = h - 20.0f * s;
       float horizonCurveY = h - 95.0f * s;
 
+      // Render upward atmospheric scatter BEFORE Earth core so the upper edge has zero geometry clipping
+      if (upGlowBrush) {
+        dc->FillEllipse(D2D1::Ellipse(D2D1::Point2F(w * 0.5f, curvePeakY), w * 0.50f, 68.0f * s), upGlowBrush.Get());
+      }
+
       // Draw Earth dark core (solid block strictly below horizon curve)
       ComPtr<ID2D1PathGeometry> earthGeometry;
       if (SUCCEEDED(factory->CreatePathGeometry(&earthGeometry))) {
@@ -6002,57 +6139,29 @@ void UIRenderer::DrawWelcomeScreen(ID2D1DeviceContext *dc) {
           sink->Close();
         }
         ComPtr<ID2D1SolidColorBrush> earthBrush;
-        dc->CreateSolidColorBrush(
-            IsLightThemeActive() ? D2D1::ColorF(0.92f, 0.94f, 0.97f, 1.0f)
-                                 : D2D1::ColorF(0.003f, 0.006f, 0.012f, 1.0f),
-            &earthBrush);
+        const D2D1_COLOR_F earthColor = IsLightThemeActive()
+            ? D2D1::ColorF(0.92f + af.r * 0.025f, 0.93f + af.g * 0.025f, 0.95f + af.b * 0.025f, 1.0f)
+            : D2D1::ColorF(0.004f + af.r * 0.008f, 0.004f + af.g * 0.008f, 0.006f + af.b * 0.008f, 1.0f);
+        dc->CreateSolidColorBrush(earthColor, &earthBrush);
         dc->FillGeometry(earthGeometry.Get(), earthBrush.Get());
-      }
 
-      // Downward Glow Area (Using bezier geometry to pinch the ends, filled
-      // with radial soft gradient)
-      ComPtr<ID2D1PathGeometry> downGeo;
-      if (SUCCEEDED(factory->CreatePathGeometry(&downGeo))) {
-        ComPtr<ID2D1GeometrySink> sink;
-        if (SUCCEEDED(downGeo->Open(&sink))) {
-          sink->BeginFigure(D2D1::Point2F(0.0f, horizonBaseY),
-                            D2D1_FIGURE_BEGIN_FILLED);
-          sink->AddQuadraticBezier(D2D1::QuadraticBezierSegment(
-              D2D1::Point2F(w / 2.0f, horizonCurveY),
-              D2D1::Point2F(w, horizonBaseY)));
-          // Strengthened downward thickness (+20%)
-          sink->AddQuadraticBezier(D2D1::QuadraticBezierSegment(
-              D2D1::Point2F(w / 2.0f, horizonCurveY + 85.0f * s),
-              D2D1::Point2F(0.0f, horizonBaseY)));
-          sink->EndFigure(D2D1_FIGURE_END_CLOSED);
-          sink->Close();
-        }
-        if (glowBrush) {
-          glowBrush->SetOpacity(0.7f);
-          dc->FillGeometry(downGeo.Get(), glowBrush.Get());
-        }
-      }
-
-      // Upward Glow Area (Using bezier geometry to pinch the ends)
-      ComPtr<ID2D1PathGeometry> upGeo;
-      if (SUCCEEDED(factory->CreatePathGeometry(&upGeo))) {
-        ComPtr<ID2D1GeometrySink> sink;
-        if (SUCCEEDED(upGeo->Open(&sink))) {
-          sink->BeginFigure(D2D1::Point2F(0.0f, horizonBaseY),
-                            D2D1_FIGURE_BEGIN_FILLED);
-          // Strengthened upward thickness (+20%)
-          sink->AddQuadraticBezier(D2D1::QuadraticBezierSegment(
-              D2D1::Point2F(w / 2.0f, horizonCurveY - 60.0f * s),
-              D2D1::Point2F(w, horizonBaseY)));
-          sink->AddQuadraticBezier(D2D1::QuadraticBezierSegment(
-              D2D1::Point2F(w / 2.0f, horizonCurveY),
-              D2D1::Point2F(0.0f, horizonBaseY)));
-          sink->EndFigure(D2D1_FIGURE_END_CLOSED);
-          sink->Close();
-        }
-        if (glowBrush) {
-          glowBrush->SetOpacity(0.3f); // Upward sky glow is softer
-          dc->FillGeometry(upGeo.Get(), glowBrush.Get());
+        // Inner planetary glow strictly inside Earth geometry (generous ry ensures fade completes before bottom clip)
+        if (downGlowBrush) {
+          ComPtr<ID2D1PathGeometry> downGeo;
+          if (SUCCEEDED(factory->CreatePathGeometry(&downGeo))) {
+            ComPtr<ID2D1GeometrySink> downSink;
+            if (SUCCEEDED(downGeo->Open(&downSink))) {
+              downSink->BeginFigure(D2D1::Point2F(0.0f, horizonBaseY), D2D1_FIGURE_BEGIN_FILLED);
+              downSink->AddQuadraticBezier(D2D1::QuadraticBezierSegment(
+                  D2D1::Point2F(w * 0.5f, horizonCurveY),
+                  D2D1::Point2F(w, horizonBaseY)));
+              downSink->AddLine(D2D1::Point2F(w, h));
+              downSink->AddLine(D2D1::Point2F(0.0f, h));
+              downSink->EndFigure(D2D1_FIGURE_END_CLOSED);
+              downSink->Close();
+            }
+            dc->FillGeometry(downGeo.Get(), downGlowBrush.Get());
+          }
         }
       }
 
@@ -6094,17 +6203,16 @@ void UIRenderer::DrawWelcomeScreen(ID2D1DeviceContext *dc) {
   {
     ComPtr<ID2D1RadialGradientBrush> glowBrush;
     ComPtr<ID2D1GradientStopCollection> glowStopsCol;
-    std::array<D2D1_GRADIENT_STOP, 2> glowStops;
-    if (IsLightThemeActive()) {
-      glowStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.12f)};
-      glowStops[1] = D2D1_GRADIENT_STOP{1.0f, D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.0f)};
-    } else {
-      glowStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.18f)};
-      glowStops[1] = D2D1_GRADIENT_STOP{1.0f, D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.0f)};
-    }
+    std::array<D2D1_GRADIENT_STOP, 4> glowStops;
+    const D2D1_COLOR_F iconGlow = tp.isLight ? tp.accentFill : tp.accentText;
+    const float iconPeakAlpha = IsLightThemeActive() ? 0.14f : 0.20f;
+    glowStops[0] = D2D1_GRADIENT_STOP{0.00f, D2D1::ColorF(iconGlow.r, iconGlow.g, iconGlow.b, iconPeakAlpha)};
+    glowStops[1] = D2D1_GRADIENT_STOP{0.35f, D2D1::ColorF(af.r, af.g, af.b, iconPeakAlpha * 0.45f)};
+    glowStops[2] = D2D1_GRADIENT_STOP{0.70f, D2D1::ColorF(af.r, af.g, af.b, iconPeakAlpha * 0.10f)};
+    glowStops[3] = D2D1_GRADIENT_STOP{1.00f, D2D1::ColorF(af.r, af.g, af.b, 0.0f)};
 
     if (SUCCEEDED(
-            dc->CreateGradientStopCollection(glowStops.data(), static_cast<UINT32>(glowStops.size()), &glowStopsCol))) {
+            dc->CreateGradientStopCollection(glowStops.data(), static_cast<UINT32>(glowStops.size()), D2D1_GAMMA_1_0, D2D1_EXTEND_MODE_CLAMP, &glowStopsCol))) {
       float glowCenterX = iconX + iconSize / 2.0f;
       float glowCenterY = iconY + iconSize / 2.0f;
       float glowRadius = iconSize * 1.5f;
@@ -6199,16 +6307,19 @@ void UIRenderer::DrawWelcomeButton(ID2D1DeviceContext *dc, const D2D1_RECT_F &r,
   std::array<D2D1_GRADIENT_STOP, 2> bgStops;
   const float s = m_uiScale;
 
+  const auto& tp = QuickView::UI::Theme::GetThemePalette();
+  const D2D1_COLOR_F af = tp.accentFill;
+
   if (hoverState != 0) {
-    if (IsLightThemeActive()) {
-      bgStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.28f)};
-      bgStops[1] = D2D1_GRADIENT_STOP{1.0f, D2D1::ColorF(0.12f, 0.48f, 0.9f, 0.38f)};
+    if (tp.isLight) {
+      bgStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(af.r, af.g, af.b, 0.24f)};
+      bgStops[1] = D2D1_GRADIENT_STOP{1.0f, D2D1::ColorF(af.r, af.g, af.b, 0.34f)};
     } else {
-      bgStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.42f)};
-      bgStops[1] = D2D1_GRADIENT_STOP{1.0f, D2D1::ColorF(0.12f, 0.48f, 0.9f, 0.52f)};
+      bgStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(af.r, af.g, af.b, 0.38f)};
+      bgStops[1] = D2D1_GRADIENT_STOP{1.0f, D2D1::ColorF(af.r, af.g, af.b, 0.48f)};
     }
   } else {
-    if (IsLightThemeActive()) {
+    if (tp.isLight) {
       bgStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.03f)};
       bgStops[1] = D2D1_GRADIENT_STOP{1.0f, D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.07f)};
     } else {
@@ -6231,24 +6342,24 @@ void UIRenderer::DrawWelcomeButton(ID2D1DeviceContext *dc, const D2D1_RECT_F &r,
                              btnBgBrush.Get());
   } else {
     ComPtr<ID2D1SolidColorBrush> fallbackBrush;
-    D2D1_COLOR_F fallbackColor = IsLightThemeActive()
+    D2D1_COLOR_F fallbackColor = tp.isLight
                                      ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.05f)
                                      : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f);
     if (hoverState != 0)
-      fallbackColor = IsLightThemeActive()
-                          ? D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.2f)
-                          : D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.35f);
+      fallbackColor = tp.isLight
+                          ? D2D1::ColorF(af.r, af.g, af.b, 0.20f)
+                          : D2D1::ColorF(af.r, af.g, af.b, 0.35f);
     dc->CreateSolidColorBrush(fallbackColor, &fallbackBrush);
     dc->FillRoundedRectangle(D2D1::RoundedRect(r, pillRadius, pillRadius),
                              fallbackBrush.Get());
   }
 
   // Button border
-  D2D1_COLOR_F btnBorderColor = IsLightThemeActive()
+  D2D1_COLOR_F btnBorderColor = tp.isLight
                                     ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.1f)
                                     : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f);
   if (hoverState != 0) {
-    btnBorderColor = D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.6f);
+    btnBorderColor = D2D1::ColorF(af.r, af.g, af.b, 0.65f);
   }
   ComPtr<ID2D1SolidColorBrush> borderBrush;
   dc->CreateSolidColorBrush(btnBorderColor, &borderBrush);
@@ -6258,12 +6369,11 @@ void UIRenderer::DrawWelcomeButton(ID2D1DeviceContext *dc, const D2D1_RECT_F &r,
   // Interactive Micro-displacement (0-overhead elastic touch)
   float hoverOffset = (hoverState != 0) ? (1.0f * s) : 0.0f;
 
-  D2D1_COLOR_F contentColor = IsLightThemeActive()
+  D2D1_COLOR_F contentColor = tp.isLight
                                   ? D2D1::ColorF(0.15f, 0.15f, 0.15f, 0.9f)
                                   : D2D1::ColorF(0.9f, 0.9f, 0.9f, 0.95f);
   if (hoverState != 0) {
-    contentColor = IsLightThemeActive() ? D2D1::ColorF(0.0f, 0.45f, 0.9f, 1.0f)
-                                        : D2D1::ColorF(0.4f, 0.75f, 1.0f, 1.0f);
+    contentColor = tp.accentText;
   }
   ComPtr<ID2D1SolidColorBrush> contentBrush;
   dc->CreateSolidColorBrush(contentColor, &contentBrush);
@@ -6512,10 +6622,11 @@ void UIRenderer::DrawNavigator(ID2D1DeviceContext* dc) {
             geo.imgDrawY + (vpCenterY + vpHInImg * 0.5f) * geo.fitScale
         );
         
+        const auto& tp = QuickView::UI::Theme::GetThemePalette();
         ComPtr<ID2D1SolidColorBrush> viewRectBgBrush;
-        dc->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.47f, 0.83f, 0.15f), &viewRectBgBrush);
+        dc->CreateSolidColorBrush(D2D1::ColorF(tp.accentFill.r, tp.accentFill.g, tp.accentFill.b, 0.15f), &viewRectBgBrush);
         ComPtr<ID2D1SolidColorBrush> viewRectBorderBrush;
-        dc->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.47f, 0.83f, 0.85f), &viewRectBorderBrush);
+        dc->CreateSolidColorBrush(D2D1::ColorF(tp.accentFill.r, tp.accentFill.g, tp.accentFill.b, 0.85f), &viewRectBorderBrush);
         
         dc->FillRectangle(viewRect, viewRectBgBrush.Get());
         dc->DrawRectangle(viewRect, viewRectBorderBrush.Get(), 1.5f * s);
@@ -6617,10 +6728,11 @@ void UIRenderer::DrawCropOverlay(ID2D1DeviceContext* dc, HWND hwnd) {
         dc->FillRectangle(D2D1::RectF(0, sTop, sLeft, sBottom), dimBrush.Get());
         dc->FillRectangle(D2D1::RectF(sRight, sTop, vpW, sBottom), dimBrush.Get());
 
-        // 2. Selection border & soft tint (Cyan/Light Blue)
+        // 2. Selection border & soft tint
+        const auto& tp = QuickView::UI::Theme::GetThemePalette();
         ComPtr<ID2D1SolidColorBrush> inpaintBorderBrush, inpaintFillBrush;
-        dc->CreateSolidColorBrush(D2D1::ColorF(0.20f, 0.65f, 1.0f, 0.95f), &inpaintBorderBrush);
-        dc->CreateSolidColorBrush(D2D1::ColorF(0.20f, 0.65f, 1.0f, 0.06f), &inpaintFillBrush);
+        dc->CreateSolidColorBrush(D2D1::ColorF(tp.accentText.r, tp.accentText.g, tp.accentText.b, 0.95f), &inpaintBorderBrush);
+        dc->CreateSolidColorBrush(D2D1::ColorF(tp.accentFill.r, tp.accentFill.g, tp.accentFill.b, 0.08f), &inpaintFillBrush);
         dc->FillRectangle(cropRect, inpaintFillBrush.Get());
         dc->DrawRectangle(cropRect, inpaintBorderBrush.Get(), 1.5f * m_uiScale);
 
@@ -6668,11 +6780,12 @@ void UIRenderer::DrawCropOverlay(ID2D1DeviceContext* dc, HWND hwnd) {
             D2D1_RECT_F capRect = D2D1::RectF(capX, capY, capX + capW, capY + capH);
             g_cropState.InpaintCapsuleRect = capRect;
 
+            const auto& tp = QuickView::UI::Theme::GetThemePalette();
             ComPtr<ID2D1SolidColorBrush> capBg, capBorder, btnBg, btnHover;
             dc->CreateSolidColorBrush(D2D1::ColorF(0.09f, 0.10f, 0.13f, 0.94f), &capBg);
             dc->CreateSolidColorBrush(D2D1::ColorF(0.25f, 0.30f, 0.40f, 0.85f), &capBorder);
-            dc->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.48f, 0.88f, 1.0f), &btnBg);
-            dc->CreateSolidColorBrush(D2D1::ColorF(0.12f, 0.58f, 0.98f, 1.0f), &btnHover);
+            dc->CreateSolidColorBrush(tp.accentFill, &btnBg);
+            dc->CreateSolidColorBrush(D2D1::ColorF(tp.accentFill.r, tp.accentFill.g, tp.accentFill.b, 0.85f), &btnHover);
 
             D2D1_ROUNDED_RECT roundCap = D2D1::RoundedRect(capRect, 8.0f * m_uiScale, 8.0f * m_uiScale);
             dc->FillRoundedRectangle(roundCap, capBg.Get());
@@ -6693,7 +6806,9 @@ void UIRenderer::DrawCropOverlay(ID2D1DeviceContext* dc, HWND hwnd) {
             if (execLayout) {
                 execLayout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
                 execLayout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                dc->DrawTextLayout(D2D1::Point2F(execBtnRect.left, execBtnRect.top), execLayout.Get(), m_whiteBrush.Get());
+                ComPtr<ID2D1SolidColorBrush> onAccentBrush;
+                dc->CreateSolidColorBrush(tp.onAccentText, &onAccentBrush);
+                dc->DrawTextLayout(D2D1::Point2F(execBtnRect.left, execBtnRect.top), execLayout.Get(), onAccentBrush ? onAccentBrush.Get() : m_whiteBrush.Get());
             }
 
             // Close Button (✕ 取消)

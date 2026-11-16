@@ -326,7 +326,13 @@ const wchar_t *Settings_Option_ThemeCustom = nullptr;
 const wchar_t *Settings_Label_AmbientDimmer = nullptr;
 const wchar_t *Settings_Tooltip_AmbientDimmer = nullptr;
 const wchar_t *Settings_Label_AccentColor = nullptr;
-const wchar_t *Settings_Label_TextColor = nullptr;
+const wchar_t *Settings_Option_AccentSystem = nullptr;
+const wchar_t *Settings_Option_AccentCustom = nullptr;
+const wchar_t *Settings_Label_WindowBorderAccent = nullptr;
+const wchar_t *Settings_Option_BorderFollowSystem = nullptr;
+const wchar_t *Settings_Option_BorderAccent = nullptr;
+const wchar_t *Settings_Label_ResetGlass = nullptr;
+const wchar_t *Settings_Action_ResetGlass = nullptr;
 const wchar_t *Settings_Header_ThemeManagement = nullptr;
 const wchar_t *Settings_Action_ExportTheme = nullptr;
 const wchar_t *Settings_Action_ImportTheme = nullptr;
@@ -1092,7 +1098,13 @@ struct LanguageTable {
     const wchar_t *Settings_Label_AmbientDimmer;
     const wchar_t *Settings_Tooltip_AmbientDimmer;
     const wchar_t *Settings_Label_AccentColor;
-    const wchar_t *Settings_Label_TextColor;
+    const wchar_t *Settings_Option_AccentSystem;
+    const wchar_t *Settings_Option_AccentCustom;
+    const wchar_t *Settings_Label_WindowBorderAccent;
+    const wchar_t *Settings_Option_BorderFollowSystem;
+    const wchar_t *Settings_Option_BorderAccent;
+    const wchar_t *Settings_Label_ResetGlass;
+    const wchar_t *Settings_Action_ResetGlass;
     const wchar_t *Settings_Header_ThemeManagement;
     const wchar_t *Settings_Action_ExportTheme;
     const wchar_t *Settings_Action_ImportTheme;
@@ -1860,7 +1872,13 @@ static const LanguageTable Table_EN = {
     L"Modal Dimmer", // Settings_Label_AmbientDimmer
     L"Dim the background when a modal or settings window is open.", // Settings_Tooltip_AmbientDimmer
     L"Accent Color", // Settings_Label_AccentColor
-    L"Text Color", // Settings_Label_TextColor
+    L"System", // Settings_Option_AccentSystem
+    L"Custom", // Settings_Option_AccentCustom
+    L"Active Window Border", // Settings_Label_WindowBorderAccent
+    L"System", // Settings_Option_BorderFollowSystem
+    L"Accent", // Settings_Option_BorderAccent
+    L"Material Preset", // Settings_Label_ResetGlass
+    L"Reset Defaults", // Settings_Action_ResetGlass
     L"Theme Engine", // Settings_Header_ThemeManagement
     L"Export", // Settings_Action_ExportTheme
     L"Import", // Settings_Action_ImportTheme
@@ -1878,7 +1896,7 @@ static const LanguageTable Table_EN = {
     L"Minimum Window Width", // Settings_Label_WindowMinSize
     L"Maximum Start Size (%)", // Settings_Label_WindowMaxSizePercent
     L"Show Edge Overflow Indicators", // Settings_Label_ShowBorderIndicator
-    L"Shows an indicator line in the direction where the image exceeds the window borders.", // Settings_Tooltip_ShowBorderIndicator
+    L"Shows a soft edge glow along directions where the image exceeds the viewport while panning or zooming, then fades out automatically.", // Settings_Tooltip_ShowBorderIndicator
     L"Show Minimap", // Settings_Label_ShowNavigator
     L"When mouse is over minimap, Wheel / Thumb Wheel (Shift + Wheel) pans image", // Settings_Tooltip_ShowNavigator
     L"Keep Window Size on Navigation", // Settings_Label_KeepWindowSizeOnNav
@@ -2329,7 +2347,7 @@ static const LanguageTable Table_EN = {
     L"Associations synced to Windows registry", // Settings_Status_AssocApplied
     L"%d selected \u00b7 %d system default \u00b7 %d Open With only", // Settings_Status_AssocSummaryFormat
     L"Broken or unquoted command detected \u2014 click Apply or Repair to fix.", // Settings_Status_AssocBrokenHint
-    L"Green dot = System Default \u00b7 Blue = Selected / Open With", // Settings_Status_AssocLegend
+    L"Green dot = System Default \u00b7 Highlighted = Selected / Open With", // Settings_Status_AssocLegend
     L"Open with QuickView", // Context_OpenWithQuickView
     L"Apply Changes*", // Settings_Action_ApplyPending
     L"Pending changes — click \"Apply Changes\" to sync Open With & Context Menu to Windows.", // Settings_Status_AssocPendingHint
@@ -2628,7 +2646,13 @@ static const LanguageTable Table_CN = {
     L"环境遮罩", // Settings_Label_AmbientDimmer
     L"在画廊模式、设置窗口或对话框开启时，在后端添加沉浸式阴影遮罩。", // Settings_Tooltip_AmbientDimmer
     L"强调色", // Settings_Label_AccentColor
-    L"文本颜色", // Settings_Label_TextColor
+    L"跟随系统", // Settings_Option_AccentSystem
+    L"自定义", // Settings_Option_AccentCustom
+    L"前台窗口边框强调色", // Settings_Label_WindowBorderAccent
+    L"跟随系统", // Settings_Option_BorderFollowSystem
+    L"强调色", // Settings_Option_BorderAccent
+    L"材质预设", // Settings_Label_ResetGlass
+    L"重置默认", // Settings_Action_ResetGlass
     L"导入导出 (.qvtheme)", // Settings_Header_ThemeManagement
     L"导出", // Settings_Action_ExportTheme
     L"导入", // Settings_Action_ImportTheme
@@ -2646,7 +2670,7 @@ static const LanguageTable Table_CN = {
     L"默认最小窗口宽度", // Settings_Label_WindowMinSize
     L"默认最大启动尺寸 (%)", // Settings_Label_WindowMaxSizePercent
     L"显示边界溢出指示器", // Settings_Label_ShowBorderIndicator
-    L"在图片超出窗口边框的方向上显示提示线条。", // Settings_Tooltip_ShowBorderIndicator
+    L"在平移或缩放时，于图片超出视口的边缘显示柔和辉光，停留片刻后自动淡出。", // Settings_Tooltip_ShowBorderIndicator
     L"显示缩略导航图", // Settings_Label_ShowNavigator
     L"鼠标位于导航图上方时，使用滚轮 / 拇指滚轮 (Shift + 滚轮) 可直接平移图片", // Settings_Tooltip_ShowNavigator
     L"导航时保持窗口尺寸不变", // Settings_Label_KeepWindowSizeOnNav
@@ -3097,7 +3121,7 @@ static const LanguageTable Table_CN = {
     L"文件关联已同步至注册表", // Settings_Status_AssocApplied
     L"已选 %d 项 \u00b7 系统默认 %d 项 \u00b7 仅打开方式 %d 项", // Settings_Status_AssocSummaryFormat
     L"检测到注册表命令缺少引号或路径失效，点击应用或修复即可自动纠正。", // Settings_Status_AssocBrokenHint
-    L"绿点 = 已设系统默认 \u00b7 蓝底 = 已勾选 / 打开方式", // Settings_Status_AssocLegend
+    L"绿点 = 已设系统默认 \u00b7 高亮 = 已勾选 / 打开方式", // Settings_Status_AssocLegend
     L"使用 QuickView 打开", // Context_OpenWithQuickView
     L"应用更改*", // Settings_Action_ApplyPending
     L"有未同步的修改 — 请点击「应用更改」以同步右键菜单和系统打开方式。", // Settings_Status_AssocPendingHint
@@ -3396,7 +3420,13 @@ static const LanguageTable Table_TW = {
     L"環境遮罩", // Settings_Label_AmbientDimmer
     L"在畫廊模式、設定視窗或對話方塊開啟時，為背景添加沉浸式陰影。", // Settings_Tooltip_AmbientDimmer
     L"強調色", // Settings_Label_AccentColor
-    L"文字顏色", // Settings_Label_TextColor
+    L"跟隨系統", // Settings_Option_AccentSystem
+    L"自定義", // Settings_Option_AccentCustom
+    L"前景視窗邊框強調色", // Settings_Label_WindowBorderAccent
+    L"跟隨系統", // Settings_Option_BorderFollowSystem
+    L"強調色", // Settings_Option_BorderAccent
+    L"材質預設", // Settings_Label_ResetGlass
+    L"重設預設", // Settings_Action_ResetGlass
     L"匯入匯出 (.qvtheme)", // Settings_Header_ThemeManagement
     L"匯出", // Settings_Action_ExportTheme
     L"匯入", // Settings_Action_ImportTheme
@@ -3414,7 +3444,7 @@ static const LanguageTable Table_TW = {
     L"預設最小視窗寬度", // Settings_Label_WindowMinSize
     L"預設最大啟動尺寸 (%)", // Settings_Label_WindowMaxSizePercent
     L"顯示邊界溢出指示器", // Settings_Label_ShowBorderIndicator
-    L"在圖片超出視窗邊框的方向上顯示提示線條。", // Settings_Tooltip_ShowBorderIndicator
+    L"在平移或縮放時，於圖片超出視口的邊緣顯示柔和輝光，停留片刻後自動淡出。", // Settings_Tooltip_ShowBorderIndicator
     L"顯示縮略導航圖", // Settings_Label_ShowNavigator
     L"滑鼠位於導航圖上方時，使用滾輪 / 側鍵滾輪 (Shift + 滾輪) 可直接平移圖片", // Settings_Tooltip_ShowNavigator
     L"導航時保持視窗尺寸不變", // Settings_Label_KeepWindowSizeOnNav
@@ -3865,7 +3895,7 @@ static const LanguageTable Table_TW = {
     L"檔案關聯已同步至登錄檔", // Settings_Status_AssocApplied
     L"已選 %d 項 \u00b7 系統預設 %d 項 \u00b7 僅開啟方式 %d 項", // Settings_Status_AssocSummaryFormat
     L"偵測到登錄檔命令缺少引號或路徑無效，點擊套用或修復即可自動修正。", // Settings_Status_AssocBrokenHint
-    L"綠點 = 已設系統預設 \u00b7 藍底 = 已勾選 / 開啟方式", // Settings_Status_AssocLegend
+    L"綠點 = 已設系統預設 \u00b7 高亮 = 已勾選 / 開啟方式", // Settings_Status_AssocLegend
     L"使用 QuickView 開啟", // Context_OpenWithQuickView
     L"套用變更*", // Settings_Action_ApplyPending
     L"有未同步的變更 — 請點擊「套用變更」以同步右鍵選單與系統開啟方式。", // Settings_Status_AssocPendingHint
@@ -4164,7 +4194,13 @@ static const LanguageTable Table_JA = {
     L"モーダル減光", // Settings_Label_AmbientDimmer
     L"モーダルや設定ウィンドウが開いているときに背景を暗くします。", // Settings_Tooltip_AmbientDimmer
     L"アクセントカラー", // Settings_Label_AccentColor
-    L"文字色", // Settings_Label_TextColor
+    L"システム", // Settings_Option_AccentSystem
+    L"カスタム", // Settings_Option_AccentCustom
+    L"ウィンドウ枠の強調色", // Settings_Label_WindowBorderAccent
+    L"システム", // Settings_Option_BorderFollowSystem
+    L"アクセント", // Settings_Option_BorderAccent
+    L"マテリアル", // Settings_Label_ResetGlass
+    L"リセット", // Settings_Action_ResetGlass
     L"テーマエンジン", // Settings_Header_ThemeManagement
     L"エクスポート", // Settings_Action_ExportTheme
     L"インポート", // Settings_Action_ImportTheme
@@ -4182,7 +4218,7 @@ static const LanguageTable Table_JA = {
     L"最小ウィンドウ幅", // Settings_Label_WindowMinSize
     L"最大初期サイズ (%)", // Settings_Label_WindowMaxSizePercent
     L"境界オーバーフローインジケーターを表示", // Settings_Label_ShowBorderIndicator
-    L"画像がウィンドウ枠からはみ出している方向にインジケーター線を表示します。", // Settings_Tooltip_ShowBorderIndicator
+    L"パンやズーム操作中に画像がウィンドウからはみ出している側の縁へソフトなグローを表示し、しばらくすると自動的にフェードアウトします。", // Settings_Tooltip_ShowBorderIndicator
     L"ミニマップを表示", // Settings_Label_ShowNavigator
     L"When mouse is over minimap, Wheel / Thumb Wheel (Shift + Wheel) pans image", // Settings_Tooltip_ShowNavigator
     L"画像移動時にウィンドウサイズを維持", // Settings_Label_KeepWindowSizeOnNav
@@ -4633,7 +4669,7 @@ static const LanguageTable Table_JA = {
     L"関連付けをレジストリに同期しました", // Settings_Status_AssocApplied
     L"%d 件選択 \u00b7 既定 %d 件 \u00b7 プログラムから開く %d 件", // Settings_Status_AssocSummaryFormat
     L"引用符なしや無効なコマンドを検出しました。適用または修復で修正できます。", // Settings_Status_AssocBrokenHint
-    L"緑の点 = システム既定 \u00b7 青 = 選択済み / プログラムから開く", // Settings_Status_AssocLegend
+    L"緑の点 = システム既定 \u00b7 ハイライト = 選択済み / プログラムから開く", // Settings_Status_AssocLegend
     L"QuickView で開く", // Context_OpenWithQuickView
     L"変更を適用*", // Settings_Action_ApplyPending
     L"未適用の変更があります。「変更を適用」をクリックしてシステムと同期してください。", // Settings_Status_AssocPendingHint
@@ -4932,7 +4968,13 @@ static const LanguageTable Table_RU = {
     L"Затемнение (диммер)", // Settings_Label_AmbientDimmer
     L"Затемнять фон, когда открыто модальное окно или окно настроек.", // Settings_Tooltip_AmbientDimmer
     L"Акцентный цвет", // Settings_Label_AccentColor
-    L"Цвет текста", // Settings_Label_TextColor
+    L"Система", // Settings_Option_AccentSystem
+    L"Свой", // Settings_Option_AccentCustom
+    L"Рамка активного окна", // Settings_Label_WindowBorderAccent
+    L"Система", // Settings_Option_BorderFollowSystem
+    L"Акцент", // Settings_Option_BorderAccent
+    L"Материал", // Settings_Label_ResetGlass
+    L"Сбросить", // Settings_Action_ResetGlass
     L"Темы", // Settings_Header_ThemeManagement
     L"Экспорт", // Settings_Action_ExportTheme
     L"Импорт", // Settings_Action_ImportTheme
@@ -4950,7 +4992,7 @@ static const LanguageTable Table_RU = {
     L"Минимальная ширина окна", // Settings_Label_WindowMinSize
     L"Максимальный начальный размер", // Settings_Label_WindowMaxSizePercent
     L"Индикаторы переполнения границ", // Settings_Label_ShowBorderIndicator
-    L"Показывать индикаторную линию в направлении, где изображение выходит за границы окна.", // Settings_Tooltip_ShowBorderIndicator
+    L"При панорамировании и масштабировании подсвечивает мягким свечением края, за которые выходит изображение, и плавно затухает.", // Settings_Tooltip_ShowBorderIndicator
     L"Показывать миникарту", // Settings_Label_ShowNavigator
     L"Когда мышь находится над миникартой, колёсико/боковое колёсико (Shift + колёсико) перемещает изображение.", // Settings_Tooltip_ShowNavigator
     L"Не менять размер окна при навигации", // Settings_Label_KeepWindowSizeOnNav
@@ -5401,7 +5443,7 @@ static const LanguageTable Table_RU = {
     L"Ассоциации синхронизированы с реестром", // Settings_Status_AssocApplied
     L"Выбрано: %d \u00b7 По умолчанию: %d \u00b7 Только «Открыть с помощью»: %d", // Settings_Status_AssocSummaryFormat
     L"Обнаружена поврежденная команда без кавычек — нажмите Применить или Исправить.", // Settings_Status_AssocBrokenHint
-    L"Зеленая точка = по умолчанию \u00b7 Синий = выбрано / Открыть с помощью", // Settings_Status_AssocLegend
+    L"Зеленая точка = по умолчанию \u00b7 Выделено = выбрано / Открыть с помощью", // Settings_Status_AssocLegend
     L"Открыть в QuickView", // Context_OpenWithQuickView
     L"Применить*", // Settings_Action_ApplyPending
     L"Есть несохранённые изменения — нажмите «Применить» для синхронизации с системой.", // Settings_Status_AssocPendingHint
@@ -5700,7 +5742,13 @@ static const LanguageTable Table_DE = {
     L"Hintergrund abdunkeln", // Settings_Label_AmbientDimmer
     L"Dim the background when a modal or settings window is open.", // Settings_Tooltip_AmbientDimmer
     L"Accent Color", // Settings_Label_AccentColor
-    L"Text Color", // Settings_Label_TextColor
+    L"System", // Settings_Option_AccentSystem
+    L"Custom", // Settings_Option_AccentCustom
+    L"Active Window Border", // Settings_Label_WindowBorderAccent
+    L"System", // Settings_Option_BorderFollowSystem
+    L"Accent", // Settings_Option_BorderAccent
+    L"Material Preset", // Settings_Label_ResetGlass
+    L"Reset Defaults", // Settings_Action_ResetGlass
     L"Theme Engine", // Settings_Header_ThemeManagement
     L"Export", // Settings_Action_ExportTheme
     L"Import", // Settings_Action_ImportTheme
@@ -5718,7 +5766,7 @@ static const LanguageTable Table_DE = {
     L"Minimale Fensterbreite", // Settings_Label_WindowMinSize
     L"Maximale Startgröße (%)", // Settings_Label_WindowMaxSizePercent
     L"Rand-Überlauf-Indikatoren anzeigen", // Settings_Label_ShowBorderIndicator
-    L"Zeigt eine Indikatorlinie in der Richtung an, in der das Bild die Fenstergrenzen überschreitet.", // Settings_Tooltip_ShowBorderIndicator
+    L"Zeigt beim Schwenken oder Zoomen ein weiches Randleuchten in Richtungen an, in denen das Bild über den Ansichtsbereich hinausragt, und blendet automatisch aus.", // Settings_Tooltip_ShowBorderIndicator
     L"Minimap anzeigen", // Settings_Label_ShowNavigator
     L"When mouse is over minimap, Wheel / Thumb Wheel (Shift + Wheel) pans image", // Settings_Tooltip_ShowNavigator
     L"Fenstergröße bei Navigation beibehalten", // Settings_Label_KeepWindowSizeOnNav
@@ -6169,7 +6217,7 @@ static const LanguageTable Table_DE = {
     L"Dateizuordnungen mit der Registrierung synchronisiert", // Settings_Status_AssocApplied
     L"%d ausgewählt \u00b7 %d Systemstandard \u00b7 %d nur Öffnen mit", // Settings_Status_AssocSummaryFormat
     L"Fehlerhafter Befehl ohne Anführungszeichen erkannt — zur Korrektur Anwenden klicken.", // Settings_Status_AssocBrokenHint
-    L"Grüner Punkt = Systemstandard \u00b7 Blau = Ausgewählt / Öffnen mit", // Settings_Status_AssocLegend
+    L"Grüner Punkt = Systemstandard \u00b7 Hervorgehoben = Ausgewählt / Öffnen mit", // Settings_Status_AssocLegend
     L"Mit QuickView öffnen", // Context_OpenWithQuickView
     L"Anwenden*", // Settings_Action_ApplyPending
     L"Ausstehende Änderungen — klicken Sie auf \"Anwenden\", um Windows zu synchronisieren.", // Settings_Status_AssocPendingHint
@@ -6468,7 +6516,13 @@ static const LanguageTable Table_ES = {
     L"Atenuador modal", // Settings_Label_AmbientDimmer
     L"Atenuar el fondo cuando hay una ventana modal o de configuración abierta.", // Settings_Tooltip_AmbientDimmer
     L"Color de acento", // Settings_Label_AccentColor
-    L"Color de texto", // Settings_Label_TextColor
+    L"Sistema", // Settings_Option_AccentSystem
+    L"Personalizado", // Settings_Option_AccentCustom
+    L"Borde de ventana activa", // Settings_Label_WindowBorderAccent
+    L"Sistema", // Settings_Option_BorderFollowSystem
+    L"Acento", // Settings_Option_BorderAccent
+    L"Preajuste", // Settings_Label_ResetGlass
+    L"Restablecer", // Settings_Action_ResetGlass
     L"Gestión de temas", // Settings_Header_ThemeManagement
     L"Exportar", // Settings_Action_ExportTheme
     L"Importar", // Settings_Action_ImportTheme
@@ -6486,7 +6540,7 @@ static const LanguageTable Table_ES = {
     L"Anchura mínima de ventana", // Settings_Label_WindowMinSize
     L"Tamaño máximo de inicio (%)", // Settings_Label_WindowMaxSizePercent
     L"Mostrar indicadores de desbordamiento de borde", // Settings_Label_ShowBorderIndicator
-    L"Muestra una línea indicadora en la dirección donde la imagen excede los límites de la ventana.", // Settings_Tooltip_ShowBorderIndicator
+    L"Muestra un brillo suave en los bordes hacia donde la imagen excede la ventana al desplazarse o hacer zoom, y se desvanece automáticamente.", // Settings_Tooltip_ShowBorderIndicator
     L"Mostrar minimapa", // Settings_Label_ShowNavigator
     L"When mouse is over minimap, Wheel / Thumb Wheel (Shift + Wheel) pans image", // Settings_Tooltip_ShowNavigator
     L"Mantener el tamaño de la ventana al navegar", // Settings_Label_KeepWindowSizeOnNav
@@ -6937,7 +6991,7 @@ static const LanguageTable Table_ES = {
     L"Asociaciones sincronizadas con el registro", // Settings_Status_AssocApplied
     L"%d seleccionados \u00b7 %d predeterminados \u00b7 %d solo Abrir con", // Settings_Status_AssocSummaryFormat
     L"Se detectó un comando sin comillas o inválido — haga clic en Aplicar para reparar.", // Settings_Status_AssocBrokenHint
-    L"Punto verde = Predeterminado \u00b7 Azul = Seleccionado / Abrir con", // Settings_Status_AssocLegend
+    L"Punto verde = Predeterminado \u00b7 Resaltado = Seleccionado / Abrir con", // Settings_Status_AssocLegend
     L"Abrir con QuickView", // Context_OpenWithQuickView
     L"Aplicar*", // Settings_Action_ApplyPending
     L"Cambios pendientes — haz clic en \"Aplicar\" para sincronizar con Windows.", // Settings_Status_AssocPendingHint
@@ -7236,7 +7290,13 @@ static const LanguageTable Table_FR = {
     L"Modal Dimmer", // Settings_Label_AmbientDimmer
     L"Dim the background when a modal or settings window is open.", // Settings_Tooltip_AmbientDimmer
     L"Accent Color", // Settings_Label_AccentColor
-    L"Text Color", // Settings_Label_TextColor
+    L"System", // Settings_Option_AccentSystem
+    L"Custom", // Settings_Option_AccentCustom
+    L"Active Window Border", // Settings_Label_WindowBorderAccent
+    L"System", // Settings_Option_BorderFollowSystem
+    L"Accent", // Settings_Option_BorderAccent
+    L"Material Preset", // Settings_Label_ResetGlass
+    L"Reset Defaults", // Settings_Action_ResetGlass
     L"Theme Engine", // Settings_Header_ThemeManagement
     L"Export", // Settings_Action_ExportTheme
     L"Import", // Settings_Action_ImportTheme
@@ -7254,7 +7314,7 @@ static const LanguageTable Table_FR = {
     L"Minimum Window Width", // Settings_Label_WindowMinSize
     L"Maximum Start Size (%)", // Settings_Label_WindowMaxSizePercent
     L"Show Edge Overflow Indicators", // Settings_Label_ShowBorderIndicator
-    L"Shows an indicator line in the direction where the image exceeds the window borders.", // Settings_Tooltip_ShowBorderIndicator
+    L"Shows a soft edge glow along directions where the image exceeds the viewport while panning or zooming, then fades out automatically.", // Settings_Tooltip_ShowBorderIndicator
     L"Show Minimap", // Settings_Label_ShowNavigator
     L"When mouse is over minimap, Wheel / Thumb Wheel (Shift + Wheel) pans image", // Settings_Tooltip_ShowNavigator
     L"Keep Window Size on Navigation", // Settings_Label_KeepWindowSizeOnNav
@@ -7705,7 +7765,7 @@ static const LanguageTable Table_FR = {
     L"Associations synchronisées avec le registre", // Settings_Status_AssocApplied
     L"%d sélectionnés \u00b7 %d par défaut \u00b7 %d Ouvrir avec uniquement", // Settings_Status_AssocSummaryFormat
     L"Commande invalide ou sans guillemets détectée — cliquez sur Appliquer pour corriger.", // Settings_Status_AssocBrokenHint
-    L"Point vert = Par défaut \u00b7 Bleu = Sélectionné / Ouvrir avec", // Settings_Status_AssocLegend
+    L"Point vert = Par défaut \u00b7 Surligné = Sélectionné / Ouvrir avec", // Settings_Status_AssocLegend
     L"Ouvrir avec QuickView", // Context_OpenWithQuickView
     L"Appliquer*", // Settings_Action_ApplyPending
     L"Modifications en attente — cliquez sur « Appliquer » pour synchroniser avec Windows.", // Settings_Status_AssocPendingHint
@@ -8011,7 +8071,13 @@ void Apply(const LanguageTable& t) {
   Settings_Label_AmbientDimmer = t.Settings_Label_AmbientDimmer;
   Settings_Tooltip_AmbientDimmer = t.Settings_Tooltip_AmbientDimmer;
   Settings_Label_AccentColor = t.Settings_Label_AccentColor;
-  Settings_Label_TextColor = t.Settings_Label_TextColor;
+  Settings_Option_AccentSystem = t.Settings_Option_AccentSystem;
+  Settings_Option_AccentCustom = t.Settings_Option_AccentCustom;
+  Settings_Label_WindowBorderAccent = t.Settings_Label_WindowBorderAccent;
+  Settings_Option_BorderFollowSystem = t.Settings_Option_BorderFollowSystem;
+  Settings_Option_BorderAccent = t.Settings_Option_BorderAccent;
+  Settings_Label_ResetGlass = t.Settings_Label_ResetGlass;
+  Settings_Action_ResetGlass = t.Settings_Action_ResetGlass;
   Settings_Header_ThemeManagement = t.Settings_Header_ThemeManagement;
   Settings_Action_ExportTheme = t.Settings_Action_ExportTheme;
   Settings_Action_ImportTheme = t.Settings_Action_ImportTheme;

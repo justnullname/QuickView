@@ -114,6 +114,7 @@ set(QUICKVIEW_SOURCES
     QuickView/ComputeEngine.cpp
     QuickView/DisplayColorInfo.cpp
     QuickView/ProcessRouter.cpp
+    QuickView/ThemePalette.cpp
     QuickView/ThemeSystem.cpp
     QuickView/ImageLoaderSimd.cpp
     QuickView/WebPAnimator.cpp
@@ -463,8 +464,10 @@ add_executable(QuickViewTests
     tests/TileJpegTests.cpp
     tests/AiActionManagerTests.cpp
     tests/FileAssociationTests.cpp
+    tests/ThemeSystemTests.cpp
     QuickView/AiActionManager.cpp
     QuickView/GeekWidgets.cpp
+    QuickView/ThemePalette.cpp
     QuickView/GeekIconLibrary.cpp
     QuickView/GeekIconData.cpp
     QuickView/GeekIconRenderer.cpp

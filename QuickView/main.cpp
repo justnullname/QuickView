@@ -41,6 +41,7 @@ static UINT GetSvgSurfaceSizeLimit();
 #include "InputController.h"  // Quantum Stream: Warp Mode
 #include "LosslessTransform.h"
 #include "EditState.h"
+#include "ThemePalette.h"
 #include "FileAssociationManager.h"
 #include "StringUtils.h"
 #include "PaneContext.h"
@@ -289,21 +290,6 @@ enum class PreferredAppMode {
 
 using SetPreferredAppModeFn = PreferredAppMode(WINAPI*)(PreferredAppMode);
 using FlushMenuThemesFn = void (WINAPI*)();
-
-bool ReadAppsUseLightThemeRegistry(bool defaultValue) {
-    DWORD value = defaultValue ? 1u : 0u;
-    DWORD size = sizeof(value);
-    const LONG status = RegGetValueW(
-        HKEY_CURRENT_USER,
-        L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-        L"AppsUseLightTheme",
-        RRF_RT_REG_DWORD,
-        nullptr,
-        &value,
-        &size);
-    if (status != ERROR_SUCCESS) return defaultValue;
-    return value != 0;
-}
 
 SetPreferredAppModeFn LoadSetPreferredAppMode() {
     static const auto fn = []() -> SetPreferredAppModeFn {
@@ -744,6 +730,7 @@ static constexpr UINT_PTR IDT_SVG_RERENDER = 44; // [SVG Lossless] Timer for laz
 static constexpr UINT_PTR IDT_INTERACTION = 1001; // Interaction debounce for HQ redraw/surface upgrade
 
 static constexpr UINT_PTR IDT_SMOOTH_ZOOM = 1003; // Drive transform-only smooth zoom animation
+static constexpr UINT_PTR BORDER_GLOW_TIMER_ID = 3005; // Pan/zoom edge vignette glow fade timer
 
 
 // Phase 2: Queue Drop Debounce (single-slot sliding window)
@@ -2136,7 +2123,7 @@ static void EnterPassthroughMode(HWND hwnd) {
     DialogResult result = AppContext::GetInstance().DialogCtrl->ShowDialog(hwnd,
         AppStrings::Dialog_PassthroughTitle,
         AppStrings::Dialog_PassthroughContent,
-        D2D1::ColorF(D2D1::ColorF::DodgerBlue),
+        QuickView::UI::Theme::GetThemePalette().accentFill,
         { { DialogResult::Yes, AppStrings::Dialog_ButtonContinue, true }, { DialogResult::Cancel, AppStrings::Dialog_Cancel } });
 
     if (result != DialogResult::Yes) return;
@@ -3296,6 +3283,13 @@ void RequestRepaint(PaintLayer layer) {
   }
 }
 
+static inline void NotifyBorderGlowInteraction(HWND hwnd) {
+    if (g_config.ShowBorderIndicator == 0 || !g_uiRenderer || !hwnd) return;
+    if (IsCompareModeActive() || g_cropState.IsActive) return;
+    g_uiRenderer->TriggerBorderGlow();
+    SetTimer(hwnd, BORDER_GLOW_TIMER_ID, 16, nullptr);
+}
+
 static void RefreshDisplayColorPipeline(HWND hwnd, bool requestFullRepaint) {
     if (!g_compEngine) return;
 
@@ -4126,6 +4120,7 @@ static void PerformZoom100(HWND hwnd, bool allowResizeWindow = true) {
             g_osd.Show(hwnd, AppStrings::OSD_Zoom100, false, false, D2D1::ColorF(0.4f, 1.0f, 0.4f));
     }
     TryUpgradeBitmapSurface(hwnd);
+    NotifyBorderGlowInteraction(hwnd);
     RequestRepaint(PaintLayer::All);
     GetPaneContext(PaneSlot::Primary).view.IsInteracting = true;
     SetTimer(hwnd, IDT_INTERACTION, 150, nullptr);
@@ -4335,6 +4330,7 @@ static void PerformZoomFit(HWND hwnd, float maxScreenPct = 1.0f, bool allowResiz
             GetPaneContext(PaneSlot::Primary).view.PanX = 0;
             GetPaneContext(PaneSlot::Primary).view.PanY = 0;
             g_osd.Show(hwnd, AppStrings::OSD_ZoomFitWindow, false, false, D2D1::ColorF(D2D1::ColorF::White));
+            NotifyBorderGlowInteraction(hwnd);
             RequestRepaint(PaintLayer::All);
             GetPaneContext(PaneSlot::Primary).view.IsInteracting = true;
             SetTimer(hwnd, IDT_INTERACTION, 150, nullptr);
@@ -4425,6 +4421,7 @@ static void PerformZoomFill(HWND hwnd) {
             GetPaneContext(PaneSlot::Primary).view.PanY = 0;
             
             g_osd.Show(hwnd, AppStrings::OSD_ZoomFill, false, false, D2D1::ColorF(D2D1::ColorF::White));
+            NotifyBorderGlowInteraction(hwnd);
             RequestRepaint(PaintLayer::All);
             GetPaneContext(PaneSlot::Primary).view.IsInteracting = true;
             SetTimer(hwnd, IDT_INTERACTION, 150, nullptr);
@@ -4758,7 +4755,7 @@ static void ResetWindowDwmFrameCache(HWND hwnd) {
     }
 }
 
-void SyncWindowDwmFrameAttributes(HWND hwnd) {
+void SyncWindowDwmFrameAttributes(HWND hwnd, int activeOverride) {
     if (!hwnd || !SystemInfo::IsWindows11OrGreater()) return;
 
     // Suppress rounded corners in fullscreen and maximized states; fullscreen must
@@ -4768,16 +4765,16 @@ void SyncWindowDwmFrameAttributes(HWND hwnd) {
     const DWM_WINDOW_CORNER_PREFERENCE targetCorner =
         (!suppressCorners && g_config.RoundedCorners) ? DWMWCP_ROUND : DWMWCP_DONOTROUND;
 
+    const bool isActiveWindow = (activeOverride >= 0)
+        ? (activeOverride != 0)
+        : (GetForegroundWindow() == hwnd || GetActiveWindow() == hwnd);
+    const bool isSpotlightSlideshow = (g_slideshowState.IsActive && g_config.SlideshowImmersiveMode == 1);
+
     // Keep caption color disabled (DWMWA_COLOR_NONE) outside Spotlight slideshow
     // so Windows 11 never bleeds a default caption tint into transparent DComp surfaces.
-    COLORREF targetCaption = DWMWA_COLOR_NONE;
-    COLORREF targetBorder = DWMWA_COLOR_DEFAULT;
-    if (g_isFullScreen) {
-        targetBorder = DWMWA_COLOR_NONE;
-    } else if (g_slideshowState.IsActive && g_config.SlideshowImmersiveMode == 1) {
-        targetCaption = 0x00000000;
-        targetBorder = 0x00000000;
-    }
+    COLORREF targetCaption = isSpotlightSlideshow ? 0x00000000 : DWMWA_COLOR_NONE;
+    COLORREF targetBorder = static_cast<COLORREF>(QuickView::UI::Theme::ResolveEffectiveWindowBorderColor(
+        g_config, isActiveWindow, g_isFullScreen, isSpotlightSlideshow));
 
     const bool cacheHit = s_dwmFrameCache.valid && s_dwmFrameCache.hwnd == hwnd;
     if (!cacheHit || s_dwmFrameCache.corner != targetCorner) {
@@ -4799,24 +4796,16 @@ void SyncWindowDwmFrameAttributes(HWND hwnd) {
 }
 
 bool IsSystemLightTheme() {
-    return ReadAppsUseLightThemeRegistry(false);
+    return QuickView::UI::Theme::IsSystemLightThemeCached();
 }
 
 bool IsLightThemeActive() {
-    switch (g_config.ThemeMode) {
-        case 1: return false; // Dark
-        case 2: return true;  // Light
-        case 3: // Custom
-        {
-            float luma = g_config.GlassCustomTintR * 0.299f + g_config.GlassCustomTintG * 0.587f + g_config.GlassCustomTintB * 0.114f;
-            return luma > 0.5f; // If custom base is bright, use Light UI style
-        }
-        default: return IsSystemLightTheme();
-    }
+    return QuickView::UI::Theme::ResolveEffectiveLightTheme(g_config);
 }
 
 void ApplyWindowTheme(HWND hwnd) {
     if (!hwnd) return;
+    QuickView::UI::Theme::RefreshThemePalette(g_config);
 
     const bool useLightTheme = IsLightThemeActive();
     const BOOL useDarkFrame = useLightTheme ? FALSE : TRUE;
@@ -5121,6 +5110,9 @@ void FlushConfigSnapshotToDisk(
 
     // [Theme]
     sec.AddInt(L"ThemeMode", cfg.ThemeMode);
+    sec.AddInt(L"AccentMode", cfg.AccentMode);
+    sec.AddInt(L"AccentSchema", 2);
+    sec.AddInt(L"WindowBorderAccentMode", cfg.WindowBorderAccentMode);
     sec.AddFloat(L"CustomAccentR", cfg.ThemeCustomAccentR);
     sec.AddFloat(L"CustomAccentG", cfg.ThemeCustomAccentG);
     sec.AddFloat(L"CustomAccentB", cfg.ThemeCustomAccentB);
@@ -5470,7 +5462,10 @@ void LoadConfig() {
         g_config.PortableMode = false;
     }
     
-    if (GetFileAttributesW(iniPath.c_str()) == INVALID_FILE_ATTRIBUTES) return;
+    if (GetFileAttributesW(iniPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        QuickView::UI::Theme::RefreshThemePalette(g_config);
+        return;
+    }
 
     // General
     g_config.Language = GetPrivateProfileIntW(L"General", L"Language", 0, iniPath.c_str());
@@ -5507,7 +5502,12 @@ void LoadConfig() {
     if (g_config.ThemeMode == -1) {
         g_config.ThemeMode = GetPrivateProfileIntW(L"View", L"ThemeMode", 0, iniPath.c_str()); // Fallback to old key
     }
-    if (g_config.ThemeMode < 0 || g_config.ThemeMode > 3) g_config.ThemeMode = 0;
+    int loadedAccentMode = GetPrivateProfileIntW(L"Theme", L"AccentMode", -1, iniPath.c_str());
+    int accentSchema = GetPrivateProfileIntW(L"Theme", L"AccentSchema", 1, iniPath.c_str());
+    g_config.WindowBorderAccentMode = GetPrivateProfileIntW(L"Theme", L"WindowBorderAccentMode", 0, iniPath.c_str());
+    if (g_config.WindowBorderAccentMode < 0 || g_config.WindowBorderAccentMode > 2) {
+        g_config.WindowBorderAccentMode = 0;
+    }
 
     wchar_t bufTCAR[32], bufTCAG[32], bufTCAB[32];
     GetPrivateProfileStringW(L"Theme", L"CustomAccentR", L"0.00", bufTCAR, 32, iniPath.c_str());
@@ -5577,6 +5577,17 @@ void LoadConfig() {
     g_config.GlassCustomTintR = (float)_wtof(bufGCTR);
     g_config.GlassCustomTintG = (float)_wtof(bufGCTG);
     g_config.GlassCustomTintB = (float)_wtof(bufGCTB);
+
+    QuickView::UI::Theme::MigrateLegacyThemeConfig(
+        g_config.ThemeMode,
+        loadedAccentMode,
+        accentSchema,
+        g_config.GlassTintProfile,
+        g_config.GlassCustomTintR, g_config.GlassCustomTintG, g_config.GlassCustomTintB,
+        g_config.ThemeCustomTextR, g_config.ThemeCustomTextG, g_config.ThemeCustomTextB,
+        g_config.ThemeCustomAccentR, g_config.ThemeCustomAccentG, g_config.ThemeCustomAccentB);
+    g_config.AccentMode = loadedAccentMode;
+    QuickView::UI::Theme::RefreshThemePalette(g_config);
 
     g_config.MenuBackdropStyle = GetPrivateProfileIntW(L"View", L"MenuBackdropStyle", 0, iniPath.c_str());
     g_config.CanvasColor = GetPrivateProfileIntW(L"View", L"CanvasColor", 2, iniPath.c_str());
@@ -7012,7 +7023,7 @@ static void TriggerDebouncedSuperResolution(HWND hwnd, bool forceManual = false)
     // [Vector / SVG Guard] Vector graphics scale losslessly without super-resolution
     if (primaryPane.resource.isSvg || primaryPane.resource.isWebView) {
         if (forceManual) {
-            g_osd.Show(hwnd, AppStrings::OSD_SrVectorLosslessSkipped, false, false, D2D1::ColorF(0.4f, 0.8f, 1.0f), OSDPosition::Bottom, 3000);
+            g_osd.Show(hwnd, AppStrings::OSD_SrVectorLosslessSkipped, false, false, QuickView::UI::Theme::GetThemePalette().accentText, OSDPosition::Bottom, 3000);
             RequestRepaint(PaintLayer::Dynamic);
         }
         return;
@@ -9201,6 +9212,7 @@ static void UpdatePanFromMinimapClick(int idx, POINT pt, HWND hwnd) {
         RequestRepaint(PaintLayer::Image | PaintLayer::Static | PaintLayer::Dynamic);
     } else {
         // Static: minimap view-rect + edge overflow indicators (WebView is DComp-only).
+        NotifyBorderGlowInteraction(hwnd);
         RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic | PaintLayer::Static);
     }
 }
@@ -9377,7 +9389,7 @@ static void TriggerInpaintCurrentSelection(HWND hwnd) {
     wchar_t startMsg[256] = { 0 };
     const wchar_t* prepFmt = AppStrings::OSD_AiPreparing ? AppStrings::OSD_AiPreparing : L"✨ AI: %s 准备中 (Esc取消)...";
     swprintf_s(startMsg, prepFmt, actName.c_str());
-    g_osd.StartPersistentTask(hwnd, startMsg, D2D1::ColorF(0.4f, 0.8f, 1.0f), OSDPosition::Bottom, 0.05f);
+    g_osd.StartPersistentTask(hwnd, startMsg, QuickView::UI::Theme::GetThemePalette().accentText, OSDPosition::Bottom, 0.05f);
 
     auto taskFinished = std::make_shared<std::atomic<bool>>(false);
 
@@ -9490,7 +9502,7 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
                 size_t pos = fileName.find_last_of(L"\\/");
                 if (pos != std::wstring::npos) fileName = fileName.substr(pos + 1);
                 
-                g_osd.Show(hwnd, L"Proofing: " + fileName, false, false, D2D1::ColorF(D2D1::ColorF::Cyan));
+                g_osd.Show(hwnd, L"Proofing: " + fileName, false, false, QuickView::UI::Theme::GetThemePalette().accentText);
                 
                 RefreshImageDisplay(hwnd);
                 if (!contextLeft) ScheduleGamutWarningAnalysis(hwnd);
@@ -9795,7 +9807,7 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
                                    pane.metadata.Height >= 8192 ||
                                    pane.resource.isWebView;
                     if (isHeavy) {
-                        g_osd.Show(hwnd, AppStrings::OSD_PixelsExtracting, false, false, D2D1::ColorF(0.4f, 0.8f, 1.0f), OSDPosition::Bottom, 60000);
+                        g_osd.Show(hwnd, AppStrings::OSD_PixelsExtracting, false, false, QuickView::UI::Theme::GetThemePalette().accentText, OSDPosition::Bottom, 60000);
                     } else {
                         g_osd.Show(hwnd, g_cropState.IsActive ? AppStrings::OSD_CropCopied : AppStrings::OSD_PixelsCopied, false);
                     }
@@ -11082,6 +11094,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
     case WM_ACTIVATE:
+        SyncWindowDwmFrameAttributes(hwnd, (LOWORD(wParam) != WA_INACTIVE) ? 1 : 0);
         if (LOWORD(wParam) != WA_INACTIVE) {
             g_hasBeenForeground = true;
             // [Fix] If the window is activated while minimized (e.g. taskbar single-click in custom-frame mode),
@@ -11227,10 +11240,29 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         RefreshDisplayColorPipeline(hwnd, true);
         break;
     }
-    case WM_SETTINGCHANGE:
+    case WM_DWMCOLORIZATIONCOLORCHANGED: {
+        if (g_config.ThemeMode == 0 || g_config.AccentMode == 0 || g_config.WindowBorderAccentMode == 0) {
+            QuickView::UI::Theme::RefreshThemePalette(g_config);
+            ApplyWindowTheme(hwnd);
+            RequestRepaint(PaintLayer::All);
+        }
+        break;
+    }
+    case WM_SETTINGCHANGE: {
+        const bool isImmersiveColorSet =
+            (lParam != 0) && (wcscmp(reinterpret_cast<LPCWSTR>(lParam), L"ImmersiveColorSet") == 0);
+        if (isImmersiveColorSet && (g_config.ThemeMode == 0 || g_config.AccentMode == 0 || g_config.WindowBorderAccentMode == 0)) {
+            QuickView::DisplayColorInfo::InvalidateHardwareCache();
+            QuickView::UI::Theme::RefreshThemePalette(g_config);
+            ApplyWindowTheme(hwnd);
+            RequestRepaint(PaintLayer::All);
+        }
+        break;
+    }
     case WM_THEMECHANGED: {
         QuickView::DisplayColorInfo::InvalidateHardwareCache();
-        if (g_config.ThemeMode == 0) {
+        if (g_config.ThemeMode == 0 || g_config.AccentMode == 0 || g_config.WindowBorderAccentMode == 0) {
+            QuickView::UI::Theme::RefreshThemePalette(g_config);
             ApplyWindowTheme(hwnd);
             RequestRepaint(PaintLayer::All);
         }
@@ -12008,6 +12040,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 TryUpgradeBitmapSurface(hwnd);
             }
             // Keep minimap + edge overflow indicators in sync while DComp zoom animates.
+            if (g_uiRenderer && g_uiRenderer->IsBorderGlowActive()) {
+                g_uiRenderer->TriggerBorderGlow();
+            }
             RequestRepaint(PaintLayer::Static | PaintLayer::Dynamic);
             return 0;
         }
@@ -12057,12 +12092,22 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             return 0;
         }
         
-        // OSD Timer (999) - Heartbeat/Expiration check
+        // OSD Timer (994) - Heartbeat/Expiration check
         if (wParam == OSD_TIMER_ID) {
              RequestRepaint(PaintLayer::Dynamic);  // Heartbeat for smooth fade
              if (!g_osd.IsVisible()) {
                  KillTimer(hwnd, OSD_TIMER_ID);
              }
+        }
+
+        // Edge Overflow Glow Fade Timer (3005)
+        if (wParam == BORDER_GLOW_TIMER_ID) {
+             if (g_uiRenderer && g_uiRenderer->TickBorderGlow()) {
+                 RequestRepaint(PaintLayer::Dynamic);
+             } else {
+                 KillTimer(hwnd, BORDER_GLOW_TIMER_ID);
+             }
+             return 0;
         }
 
         // Gallery Fade Timer (998)
@@ -12694,6 +12739,7 @@ case WM_DESTROY: {
                               leftPane.view.PanY += (float)dy;
                           }
                       }
+                      NotifyBorderGlowInteraction(hwnd);
                       RequestRepaint(PaintLayer::All);
                   }
                   return 0;
@@ -13441,6 +13487,7 @@ SKIP_EDGE_NAV:;
 
                  RECT rc; GetClientRect(hwnd, &rc);
                  SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
+                 NotifyBorderGlowInteraction(hwnd);
                  if (UseSvgViewportRendering(GetPaneContext(PaneSlot::Primary).resource)) {
                      RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic | PaintLayer::Static);
                  } else {
@@ -15146,6 +15193,7 @@ SKIP_EDGE_NAV:;
                     GetPaneContext(PaneSlot::Primary).view.PanX += dx;
                     RECT rc; GetClientRect(hwnd, &rc);
                     SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
+                    NotifyBorderGlowInteraction(hwnd);
                     RequestRepaint(PaintLayer::Dynamic | PaintLayer::Static);
                     RefreshSvgSurfaceAfterZoom(hwnd);
                 }
@@ -15166,6 +15214,7 @@ SKIP_EDGE_NAV:;
                     GetPaneContext(PaneSlot::Primary).view.PanY += dy;
                     RECT rc; GetClientRect(hwnd, &rc);
                     SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
+                    NotifyBorderGlowInteraction(hwnd);
                     RequestRepaint(PaintLayer::Dynamic | PaintLayer::Static);
                     RefreshSvgSurfaceAfterZoom(hwnd);
                 }
@@ -18546,7 +18595,8 @@ void PerformSmartZoom(HWND hwnd, float newTotalScale, const POINT* centerPt, boo
          }
          
          GetPaneContext(PaneSlot::Primary).view.Zoom = newZoom;
-         
+         NotifyBorderGlowInteraction(hwnd);
+
          if (g_compEngine && g_compEngine->IsInitialized()) {
               if (useSmoothZoomAnimation) {
                   AppContext::GetInstance().ZoomAnimCtrl->Configure(hwnd,
@@ -19837,7 +19887,7 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
                 int selectedIdx = defaultSelectIdx;
                 bool defaultOpenInCompare = QuickView::PluginHost::Instance().IsSrOpenInCompareMode();
                 DialogResult dlgRes = AppContext::GetInstance().DialogCtrl->ShowChoiceDialog(
-                    hwnd, dlgTitle, dlgMsg, D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f),
+                    hwnd, dlgTitle, dlgMsg, QuickView::UI::Theme::GetThemePalette().accentFill,
                     modelOptions, selectedIdx, buttons,
                     true, chk1Text, defaultOpenInCompare,
                     true, chk2Text, false);
@@ -20031,6 +20081,7 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
                             }
                         }
 
+                        NotifyBorderGlowInteraction(hwnd);
                         RequestRepaint(PaintLayer::All);
                         return true;
                     }
@@ -20208,6 +20259,7 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
 
             RECT rc; GetClientRect(hwnd, &rc);
             SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
+            NotifyBorderGlowInteraction(hwnd);
             if (UseSvgViewportRendering(GetPaneContext(PaneSlot::Primary).resource)) {
                 RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic | PaintLayer::Static);
             } else {

@@ -4,6 +4,7 @@
 #include "AppContext.h"
 #include "CompareController.h"
 #include "ThemeSystem.h"
+#include "ThemePalette.h"
 #include "OSDState.h"
 #include "EditState.h"
 #include "AppStrings.h"
@@ -115,13 +116,14 @@ void AiActionOverlay::SetUIScale(float scale) {
 void AiActionOverlay::CreateDeviceResources(ID2D1DeviceContext* dc) {
     if (!dc) return;
 
-    bool isLight = IsLightThemeActive();
+    const auto& tp = QuickView::UI::Theme::GetThemePalette();
+    bool isLight = tp.isLight;
     D2D1_COLOR_F bgClr = isLight ? D2D1::ColorF(0.96f, 0.96f, 0.98f, 0.98f) : D2D1::ColorF(0.12f, 0.12f, 0.14f, 0.98f);
     D2D1_COLOR_F cardClr = isLight ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.8f) : D2D1::ColorF(0.18f, 0.18f, 0.22f, 0.85f);
-    D2D1_COLOR_F hoverClr = isLight ? D2D1::ColorF(0.0f, 0.45f, 0.9f, 0.12f) : D2D1::ColorF(0.0f, 0.5f, 1.0f, 0.25f);
-    D2D1_COLOR_F selectClr = isLight ? D2D1::ColorF(0.0f, 0.45f, 0.9f, 0.25f) : D2D1::ColorF(0.0f, 0.5f, 1.0f, 0.40f);
+    D2D1_COLOR_F hoverClr = D2D1::ColorF(tp.accentFill.r, tp.accentFill.g, tp.accentFill.b, isLight ? 0.12f : 0.22f);
+    D2D1_COLOR_F selectClr = D2D1::ColorF(tp.accentFill.r, tp.accentFill.g, tp.accentFill.b, isLight ? 0.22f : 0.35f);
     D2D1_COLOR_F borderClr = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.15f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f);
-    D2D1_COLOR_F accentClr = isLight ? D2D1::ColorF(0.0f, 0.45f, 0.95f, 1.0f) : D2D1::ColorF(0.2f, 0.65f, 1.0f, 1.0f);
+    D2D1_COLOR_F accentClr = tp.accentText;
     D2D1_COLOR_F textClr = isLight ? D2D1::ColorF(0.1f, 0.1f, 0.12f, 1.0f) : D2D1::ColorF(0.95f, 0.95f, 0.98f, 1.0f);
     D2D1_COLOR_F textDimClr = isLight ? D2D1::ColorF(0.45f, 0.45f, 0.5f, 1.0f) : D2D1::ColorF(0.6f, 0.6f, 0.65f, 1.0f);
     D2D1_COLOR_F badgeClr = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.08f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f);
@@ -647,7 +649,7 @@ void AiActionOverlay::TriggerAction(size_t filteredIndex) {
         wchar_t guide[256] = { 0 };
         const wchar_t* guideFmt = AppStrings::OSD_AiInpaintGuideActionFormat ? AppStrings::OSD_AiInpaintGuideActionFormat : L"请使用鼠标左键框选区域，按 Enter 执行 [%s]";
         swprintf_s(guide, guideFmt, act.name.c_str());
-        g_osd.Show(m_hwnd ? m_hwnd : g_mainHwnd, guide, false, false, D2D1::ColorF(0.4f, 0.8f, 1.0f), OSDPosition::Bottom, 5000);
+        g_osd.Show(m_hwnd ? m_hwnd : g_mainHwnd, guide, false, false, QuickView::UI::Theme::GetThemePalette().accentText, OSDPosition::Bottom, 5000);
         return;
     }
 
@@ -737,7 +739,7 @@ void AiActionOverlay::StartInpaintSelection(std::wstring customPrompt, std::stri
     g_cropState.PendingActionId = std::move(pendingActionId);
 
     const wchar_t* guide = AppStrings::OSD_AiInpaintGuide ? AppStrings::OSD_AiInpaintGuide : L"请使用鼠标左键框选局部重绘区域 (Enter 执行, Esc 取消)";
-    g_osd.Show(m_hwnd ? m_hwnd : g_mainHwnd, guide, false, false, D2D1::ColorF(0.4f, 0.8f, 1.0f), OSDPosition::Bottom, 4000);
+    g_osd.Show(m_hwnd ? m_hwnd : g_mainHwnd, guide, false, false, QuickView::UI::Theme::GetThemePalette().accentText, OSDPosition::Bottom, 4000);
     RequestRepaint(QuickView::PaintLayer::All);
 }
 

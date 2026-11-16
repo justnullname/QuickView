@@ -4,6 +4,7 @@
 #include "SettingsOverlay.h"
 #include "SettingsSliderMath.h"
 #include "ThemeSystem.h"
+#include "ThemePalette.h"
 #include "HelpOverlay.h"
 #include "GalleryOverlay.h"
 #include "AppStrings.h"
@@ -59,6 +60,8 @@ struct SettingsThemePalette {
     D2D1_COLOR_F text;
     D2D1_COLOR_F textDim;
     D2D1_COLOR_F accent;
+    D2D1_COLOR_F accentText;
+    D2D1_COLOR_F onAccentText;
     D2D1_COLOR_F controlBg;
     D2D1_COLOR_F border;
     D2D1_COLOR_F success;
@@ -83,6 +86,7 @@ struct SettingsThemePalette {
             .hoverTint = hoverTint,
             .panelBg = panelBg,
             .shadow = shadow,
+            .onAccentText = onAccentText,
         };
     }
 };
@@ -92,87 +96,24 @@ inline QuickView::UI::WidgetPalette ToWidgetPalette(const SettingsThemePalette& 
 }
 
 SettingsThemePalette GetSettingsThemePalette() {
-    if (g_config.ThemeMode == 3) {
-        D2D1_COLOR_F accent = D2D1::ColorF(g_config.ThemeCustomAccentR, g_config.ThemeCustomAccentG, g_config.ThemeCustomAccentB);
-        D2D1_COLOR_F text = D2D1::ColorF(g_config.ThemeCustomTextR, g_config.ThemeCustomTextG, g_config.ThemeCustomTextB);
-        
-        float textBrightness = (text.r * 299.0f + text.g * 587.0f + text.b * 114.0f) / 1000.0f;
-        bool isLightText = textBrightness > 0.5f;
-
-        D2D1_COLOR_F textDim = text;
-        textDim.a = 0.75f;
-
-        if (isLightText) {
-            return {
-                D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.4f),
-                text,
-                textDim,
-                accent,
-                D2D1::ColorF(0.25f, 0.25f, 0.25f, 0.70f),
-                D2D1::ColorF(0.3f, 0.3f, 0.3f),
-                D2D1::ColorF(0.1f, 0.8f, 0.1f),
-                D2D1::ColorF(0.8f, 0.1f, 0.1f),
-                D2D1::ColorF(0.08f, 0.08f, 0.10f, g_config.GlassModalsOpacity / 100.0f),
-                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f),
-                D2D1::ColorF(0.3f, 0.3f, 0.3f, 0.5f),
-                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f),
-                D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.20f),
-                D2D1::ColorF(0.14f, 0.14f, 0.16f, 0.96f),
-            };
-        } else {
-            return {
-                D2D1::ColorF(0.94f, 0.96f, 0.99f, 0.52f),
-                text,
-                textDim,
-                accent,
-                D2D1::ColorF(0.92f, 0.94f, 0.97f, 0.70f),
-                D2D1::ColorF(0.80f, 0.84f, 0.89f),
-                D2D1::ColorF(0.11f, 0.62f, 0.23f),
-                D2D1::ColorF(0.79f, 0.19f, 0.16f),
-                D2D1::ColorF(0.985f, 0.99f, 1.0f, g_config.GlassModalsOpacity / 100.0f),
-                D2D1::ColorF(0.0f, 0.18f, 0.42f, 0.10f),
-                D2D1::ColorF(0.85f, 0.88f, 0.92f, 0.65f),
-                D2D1::ColorF(0.06f, 0.08f, 0.12f, 0.06f),
-                D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f),
-                D2D1::ColorF(0.96f, 0.97f, 0.99f, 0.96f),
-            };
-        }
-    }
-
-    if (IsLightThemeActive()) {
-        return {
-            D2D1::ColorF(0.94f, 0.96f, 0.99f, 0.52f),
-            D2D1::ColorF(0.10f, 0.12f, 0.15f),
-            D2D1::ColorF(0.35f, 0.40f, 0.48f),
-            D2D1::ColorF(0.02f, 0.43f, 0.78f),
-            D2D1::ColorF(0.92f, 0.94f, 0.97f, 0.70f),
-            D2D1::ColorF(0.80f, 0.84f, 0.89f),
-            D2D1::ColorF(0.11f, 0.62f, 0.23f),
-            D2D1::ColorF(0.79f, 0.19f, 0.16f),
-            D2D1::ColorF(0.985f, 0.99f, 1.0f, g_config.GlassModalsOpacity / 100.0f),
-            D2D1::ColorF(0.0f, 0.18f, 0.42f, 0.10f),
-            D2D1::ColorF(0.85f, 0.88f, 0.92f, 0.65f),
-            D2D1::ColorF(0.06f, 0.08f, 0.12f, 0.06f),
-            D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f),
-            D2D1::ColorF(0.96f, 0.97f, 0.99f, 0.96f),
-        };
-    }
-
+    const auto& tp = QuickView::UI::Theme::GetThemePalette();
     return {
-        D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.4f),
-        D2D1::ColorF(1.0f, 1.0f, 1.0f),
-        D2D1::ColorF(0.75f, 0.75f, 0.75f),
-        D2D1::ColorF(0.0f, 0.47f, 0.84f),
-        D2D1::ColorF(0.25f, 0.25f, 0.25f, 0.70f),
-        D2D1::ColorF(0.3f, 0.3f, 0.3f),
-        D2D1::ColorF(0.1f, 0.8f, 0.1f),
-        D2D1::ColorF(0.8f, 0.1f, 0.1f),
-        D2D1::ColorF(0.08f, 0.08f, 0.10f, g_config.GlassModalsOpacity / 100.0f),
-        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f),
-        D2D1::ColorF(0.3f, 0.3f, 0.3f, 0.5f),
-        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f),
-        D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.20f),
-        D2D1::ColorF(0.14f, 0.14f, 0.16f, 0.96f),
+        .dimmer = tp.dimmer,
+        .text = tp.text,
+        .textDim = tp.textDim,
+        .accent = tp.accentFill,
+        .accentText = tp.accentText,
+        .onAccentText = tp.onAccentText,
+        .controlBg = tp.controlBg,
+        .border = tp.border,
+        .success = tp.success,
+        .error = tp.error,
+        .panelBg = D2D1::ColorF(tp.panelBg.r, tp.panelBg.g, tp.panelBg.b, g_config.GlassModalsOpacity / 100.0f),
+        .hoverTint = tp.hoverTint,
+        .disabledFill = tp.disabledFill,
+        .subtleTint = tp.subtleTint,
+        .shadow = tp.shadow,
+        .tooltipBg = tp.tooltipBg,
     };
 }
 
@@ -225,26 +166,9 @@ std::wstring SettingsOverlay::GetRealWindowsVersion() {
     return L"Windows (Unknown)"; 
 }
 
-void SettingsOverlay::AutoSwitchToCustom(bool save) {
-    if (g_config.ThemeMode != 3) {
-        // [UX Fix] If moving from a fixed preset (Dark/Light), capture its current tint 
-        // into custom slots to prevent the UI from jumping to Dark base (system default)
-        // when ThemeMode becomes 3 (Custom).
-        if (g_config.GlassTintProfile == 0) {
-            bool currentlyLight = IsLightThemeActive();
-            auto& base = currentlyLight ? PRESET_LIGHT : PRESET_DARK;
-            g_config.GlassCustomTintR = base.tintColor.r;
-            g_config.GlassCustomTintG = base.tintColor.g;
-            g_config.GlassCustomTintB = base.tintColor.b;
-            g_config.GlassTintProfile = 1; // Lock the current visual base
-        }
-        
-        g_config.ThemeMode = 3;
-        // Defer layout change (adding new rows) until mouse release if currently dragging
-        if (!m_pActiveSlider) m_pendingRebuild = true;
-        else m_needsLayoutRebuild = true;
-    }
+void SettingsOverlay::OnGlassMaterialChanged(bool save) {
     g_config.EnforceGlassSafetyLimits();
+    QuickView::UI::Theme::RefreshThemePalette(g_config);
     if (save) SaveConfig();
     if (m_hwnd) InvalidateRect(m_hwnd, NULL, FALSE);
 }
@@ -659,7 +583,7 @@ void SettingsOverlay::RenderUpdateToast(ID2D1DeviceContext* pRT, float /*hudX*/,
     // 5. Built with Love Message
     float loveY = l.bg.top + 75.0f; 
     D2D1_RECT_F loveTitleR = D2D1::RectF(l.bg.left + 20, loveY, l.bg.right - 20, loveY + 25.0f);
-    pRT->DrawText(AppStrings::Dialog_Update_LoveTitle, (UINT32)wcslen(AppStrings::Dialog_Update_LoveTitle), m_textFormatItem.Get(), loveTitleR, m_brushAccent.Get());
+    pRT->DrawText(AppStrings::Dialog_Update_LoveTitle, (UINT32)wcslen(AppStrings::Dialog_Update_LoveTitle), m_textFormatItem.Get(), loveTitleR, m_brushAccentText.Get());
     
     // Give the message more breathing room (increase height allocation)
     D2D1_RECT_F loveMsgR = D2D1::RectF(l.bg.left + 20, loveY + 30.0f, l.bg.right - 20, loveY + 125.0f);
@@ -749,7 +673,10 @@ void SettingsOverlay::RenderUpdateToast(ID2D1DeviceContext* pRT, float /*hudX*/,
         } else {
             m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
             m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            pRT->DrawText(text, (UINT32)wcslen(text), m_textFormatItem.Get(), r, m_brushText.Get());
+            ID2D1SolidColorBrush* btnTextBrush = (hover && baseBrush.Get() == m_brushAccent.Get() && m_brushOnAccent)
+                ? m_brushOnAccent.Get()
+                : m_brushText.Get();
+            pRT->DrawText(text, (UINT32)wcslen(text), m_textFormatItem.Get(), r, btnTextBrush);
         }
         
         m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
@@ -794,6 +721,8 @@ void SettingsOverlay::CreateResources(ID2D1DeviceContext* pRT) {
         pRT->CreateSolidColorBrush(palette.text, &m_brushText);
         pRT->CreateSolidColorBrush(palette.textDim, &m_brushTextDim);
         pRT->CreateSolidColorBrush(palette.accent, &m_brushAccent);
+        pRT->CreateSolidColorBrush(palette.accentText, &m_brushAccentText);
+        pRT->CreateSolidColorBrush(palette.onAccentText, &m_brushOnAccent);
         pRT->CreateSolidColorBrush(palette.controlBg, &m_brushControlBg);
         pRT->CreateSolidColorBrush(palette.border, &m_brushBorder);
         pRT->CreateSolidColorBrush(palette.success, &m_brushSuccess);
@@ -808,6 +737,8 @@ void SettingsOverlay::CreateResources(ID2D1DeviceContext* pRT) {
         m_brushText->SetColor(palette.text);
         m_brushTextDim->SetColor(palette.textDim);
         m_brushAccent->SetColor(palette.accent);
+        if (m_brushAccentText) m_brushAccentText->SetColor(palette.accentText);
+        if (m_brushOnAccent) m_brushOnAccent->SetColor(palette.onAccentText);
         m_brushControlBg->SetColor(palette.controlBg);
         m_brushBorder->SetColor(palette.border);
         m_brushSuccess->SetColor(palette.success);
@@ -1584,7 +1515,7 @@ namespace {
 
                         s_aiUi.profileIsFetchingModels[pIdx] = true;
                         const wchar_t* fetchMsg = AppStrings::OSD_AiFetchingModels ? AppStrings::OSD_AiFetchingModels : L"Fetching model list...";
-                        ::g_osd.Show(::g_mainHwnd, fetchMsg, false, false, D2D1::ColorF(D2D1::ColorF::LightSkyBlue), OSDPosition::Bottom, 3000);
+                        ::g_osd.Show(::g_mainHwnd, fetchMsg, false, false, QuickView::UI::Theme::GetThemePalette().accentText, OSDPosition::Bottom, 3000);
                         if (ov) ov->RequestRebuild();
 
                         std::string targetUrl = (pIdx < s_aiUi.profileUrls.size() && !s_aiUi.profileUrls[pIdx].empty()) ? 
@@ -1702,7 +1633,7 @@ namespace {
                     }
 
                     const wchar_t* probeMsg = AppStrings::OSD_AiTestingConnection ? AppStrings::OSD_AiTestingConnection : L"Testing connection...";
-                    ::g_osd.Show(::g_mainHwnd, probeMsg, false, false, D2D1::ColorF(D2D1::ColorF::LightSkyBlue), OSDPosition::Bottom, 3000);
+                    ::g_osd.Show(::g_mainHwnd, probeMsg, false, false, QuickView::UI::Theme::GetThemePalette().accentText, OSDPosition::Bottom, 3000);
 
                     std::string targetUrl = (pIdx < s_aiUi.profileUrls.size() && !s_aiUi.profileUrls[pIdx].empty()) ? 
                                             WideToUtf8(s_aiUi.profileUrls[pIdx]) : pr[pIdx].baseUrl;
@@ -2365,25 +2296,98 @@ void SettingsOverlay::BuildThemeTab(SettingsTab& tabTheme) {
         nullptr,
         0,
         0,
-        { AppStrings::Settings_Option_ThemeAuto, AppStrings::Settings_Option_ThemeDark, AppStrings::Settings_Option_ThemeLight, AppStrings::Settings_Option_ThemeCustom }
+        { AppStrings::Settings_Option_ThemeAuto, AppStrings::Settings_Option_ThemeDark, AppStrings::Settings_Option_ThemeLight }
     };
     itemThemeMode.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-        if (g_config.ThemeMode < 0 || g_config.ThemeMode > 3) g_config.ThemeMode = 0;
-        // Preset-driven full overwrite: clicking Dark/Light applies the built-in preset
-        if (g_config.ThemeMode == 1) {
-            g_config.ApplyThemePreset(PRESET_DARK);
-        } else if (g_config.ThemeMode == 2) {
-            g_config.ApplyThemePreset(PRESET_LIGHT);
-        }
+        if (g_config.ThemeMode < 0 || g_config.ThemeMode > 2) g_config.ThemeMode = 0;
+        QuickView::UI::Theme::RefreshThemePalette(g_config);
         SaveConfig();
         if (overlay->m_hwnd) {
             ApplyWindowTheme(overlay->m_hwnd);
             InvalidateRect(overlay->m_hwnd, nullptr, FALSE);
         }
-        // Needs a rebuild to show/hide the custom color choosers
-        overlay->m_pendingRebuild = true;
     };
     tabTheme.items.push_back(itemThemeMode);
+
+    SettingsItem itemAccentMode = {
+        AppStrings::Settings_Label_AccentColor,
+        OptionType::Segment,
+        nullptr,
+        nullptr,
+        &g_config.AccentMode,
+        nullptr,
+        0,
+        0,
+        { AppStrings::Settings_Option_AccentSystem, AppStrings::Settings_Option_AccentCustom }
+    };
+    itemAccentMode.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        if (g_config.AccentMode < 0 || g_config.AccentMode > 1) g_config.AccentMode = 0;
+        QuickView::UI::Theme::RefreshThemePalette(g_config);
+        SaveConfig();
+        if (overlay && overlay->m_hwnd) {
+            SyncWindowDwmFrameAttributes(overlay->m_hwnd);
+            InvalidateRect(overlay->m_hwnd, nullptr, FALSE);
+        }
+        if (overlay) overlay->m_pendingRebuild = true;
+    };
+    itemAccentMode.isNewOption = true;
+    tabTheme.items.push_back(itemAccentMode);
+
+    if (g_config.AccentMode == 1) {
+        SettingsItem itemAccentColor = { AppStrings::Settings_Label_GlassCustomColor, OptionType::CustomColorRow, nullptr, {} };
+        itemAccentColor.pFloatVal = &g_config.ThemeCustomAccentR;
+        itemAccentColor.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+            HWND hwnd = GetActiveWindow();
+            static COLORREF acrCustClr[16];
+            CHOOSECOLOR cc{}; cc.lStructSize = sizeof(cc);
+            cc.hwndOwner = hwnd;
+            cc.lpCustColors = acrCustClr;
+            cc.rgbResult = RGB((int)(g_config.ThemeCustomAccentR * 255.0f), (int)(g_config.ThemeCustomAccentG * 255.0f), (int)(g_config.ThemeCustomAccentB * 255.0f));
+            cc.Flags = CC_FULLOPEN | CC_RGBINIT;
+
+            if (ChooseColor(&cc)) {
+                g_config.ThemeCustomAccentR = GetRValue(cc.rgbResult) / 255.0f;
+                g_config.ThemeCustomAccentG = GetGValue(cc.rgbResult) / 255.0f;
+                g_config.ThemeCustomAccentB = GetBValue(cc.rgbResult) / 255.0f;
+                QuickView::UI::Theme::RefreshThemePalette(g_config);
+                SaveConfig();
+                HWND targetHwnd = (overlay && overlay->m_hwnd) ? overlay->m_hwnd : hwnd;
+                if (targetHwnd) {
+                    SyncWindowDwmFrameAttributes(targetHwnd);
+                    InvalidateRect(targetHwnd, nullptr, FALSE);
+                }
+            }
+        };
+        tabTheme.items.push_back(itemAccentColor);
+    }
+
+    SettingsItem itemBorderAccent = {
+        AppStrings::Settings_Label_WindowBorderAccent,
+        OptionType::Segment,
+        nullptr,
+        nullptr,
+        &g_config.WindowBorderAccentMode,
+        nullptr,
+        0,
+        0,
+        { AppStrings::Settings_Option_BorderFollowSystem, AppStrings::Settings_Option_On, AppStrings::Settings_Option_Off }
+    };
+    itemBorderAccent.isNewOption = true;
+    itemBorderAccent.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        if (g_config.WindowBorderAccentMode < 0 || g_config.WindowBorderAccentMode > 2) {
+            g_config.WindowBorderAccentMode = 0;
+        }
+        QuickView::UI::Theme::RefreshThemePalette(g_config);
+        HWND targetHwnd = (overlay && overlay->m_hwnd) ? overlay->m_hwnd : GetActiveWindow();
+        if (targetHwnd) {
+            SyncWindowDwmFrameAttributes(targetHwnd);
+        }
+        SaveConfig();
+    };
+    if (!IsWindows11()) {
+        itemBorderAccent.isDisabled = true;
+    }
+    tabTheme.items.push_back(itemBorderAccent);
 
     SettingsItem itemDimmer = { AppStrings::Settings_Label_AmbientDimmer, OptionType::Toggle, &g_config.EnableAmbientDimmer, {} };
     itemDimmer.tooltipText = AppStrings::Settings_Tooltip_AmbientDimmer;
@@ -2403,53 +2407,6 @@ void SettingsOverlay::BuildThemeTab(SettingsTab& tabTheme) {
         itemRounded.isDisabled = true;
     }
     tabTheme.items.push_back(itemRounded);
-
-
-    if (g_config.ThemeMode == 3) {
-        // Custom Theme Mode options
-        SettingsItem itemAccentColor = { AppStrings::Settings_Label_AccentColor, OptionType::CustomColorRow, nullptr, {} };
-        itemAccentColor.pFloatVal = &g_config.ThemeCustomAccentR;
-        itemAccentColor.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-            HWND hwnd = GetActiveWindow();
-            static COLORREF acrCustClr[16]; 
-            CHOOSECOLOR cc{}; cc.lStructSize = sizeof(cc);
-            cc.hwndOwner = hwnd;
-            cc.lpCustColors = acrCustClr;
-            cc.rgbResult = RGB((int)(g_config.ThemeCustomAccentR * 255.0f), (int)(g_config.ThemeCustomAccentG * 255.0f), (int)(g_config.ThemeCustomAccentB * 255.0f));
-            cc.Flags = CC_FULLOPEN | CC_RGBINIT;
-            
-            if (ChooseColor(&cc)) {
-                g_config.ThemeCustomAccentR = GetRValue(cc.rgbResult) / 255.0f;
-                g_config.ThemeCustomAccentG = GetGValue(cc.rgbResult) / 255.0f;
-                g_config.ThemeCustomAccentB = GetBValue(cc.rgbResult) / 255.0f;
-                SaveConfig();
-                if (overlay->m_hwnd) InvalidateRect(overlay->m_hwnd, nullptr, FALSE);
-            }
-        };
-        tabTheme.items.push_back(itemAccentColor);
-
-        SettingsItem itemTextColor = { AppStrings::Settings_Label_TextColor, OptionType::CustomColorRow };
-        itemTextColor.pFloatVal = &g_config.ThemeCustomTextR;
-        itemTextColor.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-            HWND hwnd = GetActiveWindow();
-            static COLORREF acrCustClr[16]; 
-            CHOOSECOLOR cc{};
-            cc.lStructSize = sizeof(CHOOSECOLOR);
-            cc.hwndOwner = hwnd;
-            cc.lpCustColors = acrCustClr;
-            cc.rgbResult = RGB((int)(g_config.ThemeCustomTextR * 255.0f), (int)(g_config.ThemeCustomTextG * 255.0f), (int)(g_config.ThemeCustomTextB * 255.0f));
-            cc.Flags = CC_FULLOPEN | CC_RGBINIT;
-            
-            if (ChooseColor(&cc)) {
-                g_config.ThemeCustomTextR = GetRValue(cc.rgbResult) / 255.0f;
-                g_config.ThemeCustomTextG = GetGValue(cc.rgbResult) / 255.0f;
-                g_config.ThemeCustomTextB = GetBValue(cc.rgbResult) / 255.0f;
-                SaveConfig();
-                if (overlay->m_hwnd) InvalidateRect(overlay->m_hwnd, nullptr, FALSE);
-            }
-        };
-        tabTheme.items.push_back(itemTextColor);
-    }
     
     // Geek Glass Engine
     tabTheme.items.push_back({ AppStrings::Settings_Header_GeekGlass, OptionType::Header });
@@ -2528,7 +2485,7 @@ void SettingsOverlay::BuildThemeTab(SettingsTab& tabTheme) {
     itemBlur.minVal = 1.0f;
     itemBlur.maxVal = 40.0f;
     itemBlur.displayFormat = L"%.0f px";
-    itemBlur.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->AutoSwitchToCustom(false); };
+    itemBlur.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->OnGlassMaterialChanged(false); };
     if (glassDisabled) {
         itemBlur.isDisabled = true;
         itemBlur.pFloatVal = &fZero;
@@ -2541,7 +2498,7 @@ void SettingsOverlay::BuildThemeTab(SettingsTab& tabTheme) {
     itemTintAlpha.maxVal = 1.0f;
     itemTintAlpha.displayFormat = L"%.0f %%";
     itemTintAlpha.tooltipText = AppStrings::Settings_Tooltip_TintDensity;
-    itemTintAlpha.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->AutoSwitchToCustom(false); };
+    itemTintAlpha.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->OnGlassMaterialChanged(false); };
     // [Fix] Keep TintAlpha enabled in Traditional Mode to allow background density control
     tabTheme.items.push_back(itemTintAlpha);
 
@@ -2550,7 +2507,7 @@ void SettingsOverlay::BuildThemeTab(SettingsTab& tabTheme) {
     itemSpecular.maxVal = 0.50f;
     itemSpecular.displayFormat = L"%.0f %%";
     itemSpecular.tooltipText = AppStrings::Settings_Tooltip_SpecularOpacity;
-    itemSpecular.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->AutoSwitchToCustom(false); };
+    itemSpecular.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->OnGlassMaterialChanged(false); };
     if (glassDisabled) {
         itemSpecular.isDisabled = true;
         itemSpecular.pFloatVal = &fZero;
@@ -2562,7 +2519,7 @@ void SettingsOverlay::BuildThemeTab(SettingsTab& tabTheme) {
     itemShadow.maxVal = 1.0f;
     itemShadow.displayFormat = L"%.0f %%";
     itemShadow.tooltipText = AppStrings::Settings_Tooltip_ShadowIntensity;
-    itemShadow.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->AutoSwitchToCustom(false); };
+    itemShadow.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->OnGlassMaterialChanged(false); };
     if (glassDisabled) {
         itemShadow.isDisabled = true;
         itemShadow.pFloatVal = &fZero;
@@ -2591,7 +2548,7 @@ void SettingsOverlay::BuildThemeTab(SettingsTab& tabTheme) {
     tabTheme.items.push_back({ AppStrings::Settings_Header_GlassTint, OptionType::Header });
     SettingsItem itemTintProfile = { AppStrings::Settings_Label_TintProfile, OptionType::Segment, nullptr, nullptr, &g_config.GlassTintProfile, nullptr, 0, 0, { AppStrings::Settings_Option_TintAuto, AppStrings::Settings_Option_TintCustom } };
     itemTintProfile.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { 
-        overlay->AutoSwitchToCustom();
+        overlay->OnGlassMaterialChanged();
         overlay->m_pendingRebuild = true; 
     };
     tabTheme.items.push_back(itemTintProfile);
@@ -2613,7 +2570,7 @@ void SettingsOverlay::BuildThemeTab(SettingsTab& tabTheme) {
                 g_config.GlassCustomTintR = GetRValue(cc.rgbResult) / 255.0f;
                 g_config.GlassCustomTintG = GetGValue(cc.rgbResult) / 255.0f;
                 g_config.GlassCustomTintB = GetBValue(cc.rgbResult) / 255.0f;
-                overlay->AutoSwitchToCustom();
+                overlay->OnGlassMaterialChanged();
             }
         };
         tabTheme.items.push_back(itemTintColor);
@@ -2625,19 +2582,19 @@ void SettingsOverlay::BuildThemeTab(SettingsTab& tabTheme) {
     SettingsItem itemOsd = { AppStrings::Settings_Label_OsdDensity, OptionType::Slider, nullptr, &g_config.GlassOsdOpacity };
     itemOsd.minVal = 0.0f; itemOsd.maxVal = 100.0f; itemOsd.displayFormat = L"%.0f %%";
     itemOsd.tooltipText = AppStrings::Settings_Tooltip_OsdDensity;
-    itemOsd.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->AutoSwitchToCustom(false); };
+    itemOsd.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->OnGlassMaterialChanged(false); };
     tabTheme.items.push_back(itemOsd);
 
     SettingsItem itemPanels = { AppStrings::Settings_Label_PanelsDensity, OptionType::Slider, nullptr, &g_config.GlassPanelsOpacity };
     itemPanels.minVal = 0.0f; itemPanels.maxVal = 100.0f; itemPanels.displayFormat = L"%.0f %%";
     itemPanels.tooltipText = AppStrings::Settings_Tooltip_PanelsDensity;
-    itemPanels.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->AutoSwitchToCustom(false); };
+    itemPanels.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->OnGlassMaterialChanged(false); };
     tabTheme.items.push_back(itemPanels);
 
     SettingsItem itemModals = { AppStrings::Settings_Label_ModalsDensity, OptionType::Slider, nullptr, &g_config.GlassModalsOpacity };
     itemModals.minVal = 0.0f; itemModals.maxVal = 100.0f; itemModals.displayFormat = L"%.0f %%";
     itemModals.tooltipText = AppStrings::Settings_Tooltip_ModalsDensity;
-    itemModals.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->AutoSwitchToCustom(false); };
+    itemModals.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->OnGlassMaterialChanged(false); };
     tabTheme.items.push_back(itemModals);
 
     SettingsItem itemMenus = { AppStrings::Settings_Label_MenusDensity, OptionType::Slider, nullptr, &g_config.GlassMenusOpacity };
@@ -2648,8 +2605,24 @@ void SettingsOverlay::BuildThemeTab(SettingsTab& tabTheme) {
         itemMenus.isDisabled = true;
         itemMenus.pFloatVal = &fZero;
     }
-    itemMenus.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->AutoSwitchToCustom(false); };
+    itemMenus.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->OnGlassMaterialChanged(false); };
     tabTheme.items.push_back(itemMenus);
+
+    SettingsItem itemResetGlass = { AppStrings::Settings_Label_ResetGlass, OptionType::ActionButton };
+    itemResetGlass.buttonText = AppStrings::Settings_Action_ResetGlass;
+    itemResetGlass.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        g_config.ApplyThemePreset(IsLightThemeActive() ? PRESET_LIGHT : PRESET_DARK);
+        if (!g_config.GlassShowBorders) {
+            overlay->m_borderStrokeOption = 0;
+        } else {
+            overlay->m_borderStrokeOption = (g_config.GlassVectorStrokeWeightIndex == 1) ? 1 : 2;
+        }
+        QuickView::UI::Theme::RefreshThemePalette(g_config);
+        SaveConfig();
+        if (overlay->m_hwnd) InvalidateRect(overlay->m_hwnd, nullptr, FALSE);
+        overlay->m_pendingRebuild = true;
+    };
+    tabTheme.items.push_back(itemResetGlass);
 
 
     // Theme Management
@@ -2812,7 +2785,8 @@ void SettingsOverlay::BuildVisualsTab(SettingsTab& tabVisuals) {
     };
     tabVisuals.items.push_back(itemGalleryMin);
 
-    SettingsItem itemBorderInd = { AppStrings::Settings_Label_ShowBorderIndicator, OptionType::Segment, nullptr, &g_config.BorderIndicatorCustomR, &g_config.ShowBorderIndicator, nullptr, 0, 0, {AppStrings::Settings_Option_Off, AppStrings::Settings_Option_On, AppStrings::Settings_Option_Custom} };
+    SettingsItem itemBorderInd = { AppStrings::Settings_Label_ShowBorderIndicator, OptionType::Segment, nullptr, &g_config.BorderIndicatorCustomR, &g_config.ShowBorderIndicator, nullptr, 0, 0, {AppStrings::Settings_Option_Off, AppStrings::Settings_Option_BorderAccent, AppStrings::Settings_Option_Custom} };
+    itemBorderInd.isNewOption = true;
     itemBorderInd.tooltipText = AppStrings::Settings_Tooltip_ShowBorderIndicator;
     itemBorderInd.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         if (g_config.ShowBorderIndicator == 2) {
@@ -5610,7 +5584,7 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
             D2D1_RECT_F iconRect = D2D1::RectF(hudX + 15.0f * s, tabY, hudX + 15.0f * s + 40.0f * s, tabY + 40.0f * s);
             if (tab.icon) {
                 QuickView::UI::GeekIconRenderer::DrawVectorIcon(
-                    pRT, *tab.icon, FitSquareIcon(iconRect, 0.36f), isActive ? m_brushAccent.Get() : m_brushText.Get());
+                    pRT, *tab.icon, FitSquareIcon(iconRect, 0.36f), isActive ? m_brushAccentText.Get() : m_brushText.Get());
             }
 
             // Text
@@ -6234,13 +6208,11 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                     }
 
                     if (isActive) {
-                        // Active: Fill with Accent Blue, draw white text for contrast
+                        // Active: Fill with Accent, draw high-contrast onAccentText
                         pRT->FillRoundedRectangle(rr, m_brushAccent.Get());
                         m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
                         m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                        ComPtr<ID2D1SolidColorBrush> badgeTextBrush;
-                        pRT->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &badgeTextBrush);
-                        pRT->DrawText(displayText.c_str(), (UINT32)displayText.length(), m_textFormatItem.Get(), pillTextRect, badgeTextBrush.Get());
+                        pRT->DrawText(displayText.c_str(), (UINT32)displayText.length(), m_textFormatItem.Get(), pillTextRect, m_brushOnAccent.Get());
                     } else {
                         // Inactive: Draw border and dim text
                         pRT->FillRoundedRectangle(rr, m_brushControlBg.Get());
@@ -6259,7 +6231,7 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                             const float dotCy = badgeRect.top + badgeH * 0.5f;
                             const D2D1_COLOR_F dotColor = (st == 2)
                                 ? D2D1::ColorF(0.22f, 0.90f, 0.45f, 1.0f)
-                                : (isActive ? D2D1::ColorF(0.75f, 0.92f, 1.0f, 0.95f) : palette.accent);
+                                : (isActive ? palette.onAccentText : palette.accent);
                             ComPtr<ID2D1SolidColorBrush> dotBrush;
                             pRT->CreateSolidColorBrush(dotColor, &dotBrush);
                             if (dotBrush) {
@@ -6545,7 +6517,7 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                         m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                         D2D1_RECT_F emojiRect = item.interactRect2;
                         emojiRect.top += 1.0f * s;
-                        pRT->DrawText(L"↺", 1, m_textFormatItem.Get(), emojiRect, item.isHovered2 ? m_brushWhite.Get() : m_brushTextDim.Get());
+                        pRT->DrawText(L"↺", 1, m_textFormatItem.Get(), emojiRect, item.isHovered2 ? m_brushText.Get() : m_brushTextDim.Get());
                         m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
                     } else {
                         item.interactRect2 = {};
@@ -6605,7 +6577,7 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                     D2D1_RECT_F emojiRect = item.interactRect2;
                     emojiRect.top += 1.0f * s;
                     pRT->DrawText(L"↺", 1, m_textFormatItem.Get(), emojiRect,
-                                  item.isHovered2 ? m_brushWhite.Get()
+                                  item.isHovered2 ? m_brushText.Get()
                                                   : m_brushTextDim.Get());
 
                     m_textFormatItem->SetTextAlignment(
@@ -6631,12 +6603,9 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                         segRect = D2D1::RectF(controlX, segCy - segH * 0.5f, controlX + controlW - padRight, segCy + segH * 0.5f);
                     }
                     item.interactRect = segRect;
-                    if (item.isDisabled) {
-                        // Grayed out segment
-                        DrawSegment(pRT, segRect, (item.pIntVal ? *item.pIntVal : 0), item.options, true, item.pFloatVal);
-                    } else {
-                        DrawSegment(pRT, segRect, (item.pIntVal ? *item.pIntVal : 0), item.options, false, item.pFloatVal);
-                    }
+                    const int selectedIdx = item.pIntVal ? *item.pIntVal : 0;
+                    const float* segCustomColor = (item.pFloatVal != nullptr && selectedIdx == 2) ? item.pFloatVal : nullptr;
+                    DrawSegment(pRT, segRect, selectedIdx, item.options, item.isDisabled, segCustomColor);
                     if (isFocused) {
                         float segR = (segRect.bottom - segRect.top) * 0.5f;
                         pRT->DrawRoundedRectangle(D2D1::RoundedRect(segRect, segR, segR), m_brushAccent.Get(), 1.5f * s);
@@ -6697,7 +6666,7 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                          if (pLayer && pClipGeom) {
                              pRT->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), pClipGeom.Get()), pLayer.Get());
                              Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushProg;
-                             pRT->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.55f, 1.0f, 0.40f), &brushProg);
+                             pRT->CreateSolidColorBrush(D2D1::ColorF(palette.accent.r, palette.accent.g, palette.accent.b, 0.40f), &brushProg);
                              if (brushProg) {
                                  pRT->FillRectangle(progRect, brushProg.Get());
                              }
@@ -7089,7 +7058,7 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                         D2D1_RECT_F rArrow = D2D1::RectF(arrowX, top, arrowX + arrowW, bot);
                         m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                         m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-                        pRT->DrawText(L"\u2794", 1, m_textFormatItem.Get(), rArrow, m_brushAccent.Get());
+                        pRT->DrawText(L"\u2794", 1, m_textFormatItem.Get(), rArrow, m_brushAccentText.Get());
                         m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
 
                         float actX = rArrow.right + 10.0f * s;
@@ -7898,15 +7867,14 @@ void SettingsOverlay::DrawToggle(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rec
         knobSize * 0.5f);
 
     if (isOn) {
-        // Active: Always crisp pure white knob on colored accent track
-        pRT->FillEllipse(knob, m_brushWhite.Get());
+        // Active: High-contrast knob on colored accent track
+        pRT->FillEllipse(knob, m_brushOnAccent.Get());
     } else {
         if (isLight) {
-            // Option 2: Elegant slate blue-gray tone echoing the theme accent
             const auto palette = GetSettingsThemePalette();
             const D2D1_COLOR_F knobClr = isHovered
-                ? D2D1::ColorF(0.26f, 0.35f, 0.48f, 1.0f)
-                : D2D1::ColorF(0.38f, 0.46f, 0.58f, 1.0f);
+                ? D2D1::ColorF(0.28f, 0.28f, 0.31f, 1.0f)
+                : D2D1::ColorF(0.40f, 0.40f, 0.44f, 1.0f);
             m_brushBorder->SetColor(knobClr);
             pRT->FillEllipse(knob, m_brushBorder.Get());
             m_brushBorder->SetColor(palette.border); // Restore
@@ -8536,7 +8504,7 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
                              plainKey = QuickView::WideToUtf8(s_aiUi.profileKeys[pIdx]);
                          }
 
-                         ::g_osd.Show(::g_mainHwnd, AppStrings::OSD_AiFetchingModels ? AppStrings::OSD_AiFetchingModels : L"Discovering available models...", false, false, D2D1::ColorF(D2D1::ColorF::LightSkyBlue), OSDPosition::Bottom, 2500);
+                         ::g_osd.Show(::g_mainHwnd, AppStrings::OSD_AiFetchingModels ? AppStrings::OSD_AiFetchingModels : L"Discovering available models...", false, false, QuickView::UI::Theme::GetThemePalette().accentText, OSDPosition::Bottom, 2500);
 
                          auto* ctx = new FetchModelsSettingsCtx{ pIdx, this };
                          m.FetchModelsAsync(pr[pIdx].baseUrl, plainKey, pr[pIdx].protocol, QuickView::AI::ModelsCallback(
@@ -9171,7 +9139,7 @@ void SettingsOverlay::DrawComboDropdown(ID2D1DeviceContext* pRT) {
         
         // Text
         D2D1_RECT_F textRect = D2D1::RectF(itemRect.left + 10.0f * s, y, itemRect.right - 6.0f * s, y + itemH);
-        ID2D1SolidColorBrush* textBrush = isHover ? m_brushWhite.Get() : m_brushText.Get();
+        ID2D1SolidColorBrush* textBrush = isHover ? m_brushOnAccent.Get() : m_brushText.Get();
         QuickView::UI::GeekWidgets::DrawMarqueeText(
             pRT, textRect, m_pActiveCombo->options[idx], isHover, false,
             m_textFormatItem.Get(), textBrush, s, m_dwriteFactory.Get());
@@ -9320,7 +9288,7 @@ void SettingsOverlay::OnHotkeyCaptured(const KeyCombo& combo) {
             m_hwnd,
             AppStrings::Settings_Hotkey_Conflict,
             contentBuf,
-            D2D1::ColorF(D2D1::ColorF::DodgerBlue),
+            QuickView::UI::Theme::GetThemePalette().accentFill,
             buttons
         );
 
@@ -9342,7 +9310,7 @@ void SettingsOverlay::OnHotkeyCaptured(const KeyCombo& combo) {
 }
 
 void SettingsOverlay::DrawNewBadge(ID2D1DeviceContext* pRT, float badgeX, float badgeY, float s) {
-    if (!pRT || !m_brushAccent || !m_brushWhite || !m_textFormatBadge) return;
+    if (!pRT || !m_brushAccent || !m_brushOnAccent || !m_textFormatBadge) return;
 
     float badgeW = 24.0f * s;
     float badgeH = 11.0f * s;
@@ -9358,7 +9326,7 @@ void SettingsOverlay::DrawNewBadge(ID2D1DeviceContext* pRT, float badgeX, float 
     // Draw Micro text "NEW" strictly centered horizontally and vertically
     m_textFormatBadge->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
     m_textFormatBadge->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-    pRT->DrawText(L"NEW", 3, m_textFormatBadge.Get(), badgeRect, m_brushWhite.Get());
+    pRT->DrawText(L"NEW", 3, m_textFormatBadge.Get(), badgeRect, m_brushOnAccent.Get());
 }
 
 D2D1_RECT_F SettingsOverlay::GetGestureDropdownRect() const {
@@ -9474,7 +9442,7 @@ void SettingsOverlay::DrawGestureDropdown(ID2D1DeviceContext* pRT) {
         }
 
         D2D1_RECT_F textRect = D2D1::RectF(itemRect.left + 10.0f * s, y, itemRect.right - 6.0f * s, y + itemH);
-        ID2D1SolidColorBrush* textBrush = isHover ? m_brushWhite.Get() : m_brushText.Get();
+        ID2D1SolidColorBrush* textBrush = isHover ? m_brushOnAccent.Get() : m_brushText.Get();
         QuickView::UI::GeekWidgets::DrawMarqueeText(
             pRT, textRect, m_activeGestureDropdown.options[idx], isHover, false,
             m_textFormatItem.Get(), textBrush, s, m_dwriteFactory.Get());

@@ -9,6 +9,7 @@
 #include "EditState.h"
 #include "HeavyLanePool.h"
 #include "GeekWidgets.h"
+#include "ThemePalette.h"
 #include "ImageLoader.h"
 #include "RenderEngine.h"
 #include <commdlg.h>
@@ -1432,10 +1433,8 @@ void ExportPanel::Render(ID2D1DeviceContext* dc, float width, float height, IDWr
     }
 
     // 3. Accent Color Border Outline
-    D2D1_COLOR_F accentClr = AppContext::GetInstance().Dialog.AccentColor;
-    if (accentClr.a <= 0.01f) {
-        accentClr = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f);
-    }
+    const auto& tp = QuickView::UI::Theme::GetThemePalette();
+    D2D1_COLOR_F accentClr = tp.accentFill;
     ComPtr<ID2D1SolidColorBrush> pBorderBrush;
     dc->CreateSolidColorBrush(accentClr, &pBorderBrush);
     dc->DrawRoundedRectangle(D2D1::RoundedRect(m_panelRect, 10.0f * s, 10.0f * s), pBorderBrush.Get(), 2.0f * s);
@@ -1467,6 +1466,7 @@ void ExportPanel::Render(ID2D1DeviceContext* dc, float width, float height, IDWr
     widgetPal.text = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f) : D2D1::ColorF(0.95f, 0.95f, 0.98f);
     widgetPal.textDim = isLight ? D2D1::ColorF(0.35f, 0.35f, 0.40f) : D2D1::ColorF(0.75f, 0.75f, 0.80f);
     widgetPal.white = D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
+    widgetPal.onAccentText = tp.onAccentText;
 
     // 5. Width & Height Capsules + Reset Buttons ([↺] [W] [🔒] [H] [↺])
     QuickView::UI::GeekWidgets::DrawResetButton(dc, layout.widthResetRect, m_hoverState == HoverState::WidthResetBtn, textFormat, s, widgetPal);
@@ -1565,10 +1565,7 @@ void ExportPanel::DrawCapsule(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, [
     bool isFocused = (m_focusedState == id);
     bool isLight = IsLightThemeActive();
 
-    D2D1_COLOR_F accentClr = AppContext::GetInstance().Dialog.AccentColor;
-    if (accentClr.a <= 0.01f) {
-        accentClr = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f);
-    }
+    D2D1_COLOR_F accentClr = QuickView::UI::Theme::GetThemePalette().accentFill;
 
     float pillRadius = (rect.bottom - rect.top) * 0.5f;
     ComPtr<ID2D1SolidColorBrush> brush;
@@ -1632,14 +1629,15 @@ void DrawDropdownPopupInternal(
         textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     }
 
+    const auto& tp = QuickView::UI::Theme::GetThemePalette();
     for (int i = 0; i < visibleCount && i < static_cast<int>(itemNames.size()); ++i) {
         D2D1_RECT_F itemRect = { popupRect.left + 2.0f * s, popupY + i * itemH, popupRect.right - 2.0f * s, popupY + (i + 1) * itemH };
 
         if (i == hoverIndex) {
-            brush->SetColor(isLight ? D2D1::ColorF(0.0f, 0.48f, 0.8f, 0.18f) : D2D1::ColorF(0.0f, 0.48f, 0.8f, 0.35f));
+            brush->SetColor(D2D1::ColorF(tp.accentFill.r, tp.accentFill.g, tp.accentFill.b, isLight ? 0.18f : 0.35f));
             dc->FillRoundedRectangle(D2D1::RoundedRect(itemRect, 4.0f * s, 4.0f * s), brush.Get());
         } else if (i == selectedIndex) {
-            brush->SetColor(isLight ? D2D1::ColorF(0.0f, 0.48f, 0.8f, 0.08f) : D2D1::ColorF(0.0f, 0.48f, 0.8f, 0.18f));
+            brush->SetColor(D2D1::ColorF(tp.accentFill.r, tp.accentFill.g, tp.accentFill.b, isLight ? 0.08f : 0.18f));
             dc->FillRoundedRectangle(D2D1::RoundedRect(itemRect, 4.0f * s, 4.0f * s), brush.Get());
         }
 
@@ -1669,9 +1667,10 @@ void ExportPanel::DrawFormatDropdown(ID2D1DeviceContext* dc, const D2D1_RECT_F& 
         label = m_availableFormats[m_selectedFormatIndex].DisplayName;
     }
 
+    const auto& tp = QuickView::UI::Theme::GetThemePalette();
     QuickView::UI::WidgetPalette pal = {};
-    pal.accent = AppContext::GetInstance().Dialog.AccentColor;
-    if (pal.accent.a <= 0.01f) pal.accent = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f);
+    pal.accent = tp.accentFill;
+    pal.onAccentText = tp.onAccentText;
     pal.controlBg = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.05f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.06f);
     pal.border = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.18f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f);
     pal.text = isLight ? D2D1::ColorF(0.15f, 0.15f, 0.18f, 1.0f) : D2D1::ColorF(0.88f, 0.88f, 0.92f, 1.0f);
@@ -1705,9 +1704,10 @@ void ExportPanel::DrawIccDropdown(ID2D1DeviceContext* dc, const D2D1_RECT_F& rec
         label = m_iccProfiles[m_selectedIccIndex].displayName;
     }
 
+    const auto& tp = QuickView::UI::Theme::GetThemePalette();
     QuickView::UI::WidgetPalette pal = {};
-    pal.accent = AppContext::GetInstance().Dialog.AccentColor;
-    if (pal.accent.a <= 0.01f) pal.accent = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f);
+    pal.accent = tp.accentFill;
+    pal.onAccentText = tp.onAccentText;
     pal.controlBg = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.05f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.06f);
     pal.border = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.18f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f);
     pal.text = isLight ? D2D1::ColorF(0.15f, 0.15f, 0.18f, 1.0f) : D2D1::ColorF(0.88f, 0.88f, 0.92f, 1.0f);
@@ -1735,11 +1735,10 @@ void ExportPanel::DrawCheckbox(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, 
     bool isHovered = (m_hoverState == id);
     bool isLight = IsLightThemeActive();
 
+    const auto& tp = QuickView::UI::Theme::GetThemePalette();
     QuickView::UI::WidgetPalette pal = {};
-    pal.accent = AppContext::GetInstance().Dialog.AccentColor;
-    if (pal.accent.a <= 0.01f) {
-        pal.accent = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f);
-    }
+    pal.accent = tp.accentFill;
+    pal.onAccentText = tp.onAccentText;
     pal.controlBg = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.06f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f);
     pal.border = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.35f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.45f);
     pal.text = isLight ? D2D1::ColorF(0.15f, 0.15f, 0.18f, 1.0f) : D2D1::ColorF(0.92f, 0.92f, 0.95f, 1.0f);
@@ -1762,6 +1761,7 @@ void ExportPanel::DrawButton(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, co
 
     WidgetPalette pal = {};
     pal.accent = baseColor;
+    pal.onAccentText = QuickView::UI::Theme::ComputeOnAccentText(baseColor);
     pal.controlBg = baseColor;
     pal.border = IsLightThemeActive() ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.15f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f);
     pal.text = IsLightThemeActive() ? D2D1::ColorF(0.12f, 0.12f, 0.15f) : D2D1::ColorF(0.95f, 0.95f, 0.98f);
@@ -1805,9 +1805,10 @@ void ExportPanel::DrawQualitySlider(ID2D1DeviceContext* dc, const D2D1_RECT_F& r
         swprintf_s(dispBuf, L"Quality: %d%%", m_jpegQuality);
     }
 
+    const auto& tp = QuickView::UI::Theme::GetThemePalette();
     QuickView::UI::WidgetPalette pal = {};
-    pal.accent = AppContext::GetInstance().Dialog.AccentColor;
-    if (pal.accent.a <= 0.01f) pal.accent = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f);
+    pal.accent = tp.accentFill;
+    pal.onAccentText = tp.onAccentText;
     pal.controlBg = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.05f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.06f);
     pal.border = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.18f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f);
     pal.text = isLight ? D2D1::ColorF(0.15f, 0.15f, 0.18f, 1.0f) : D2D1::ColorF(0.88f, 0.88f, 0.92f, 1.0f);

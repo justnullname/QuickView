@@ -5,6 +5,7 @@
 #include "OSDState.h"
 #include "AppStrings.h"
 #include "GeekWidgets.h"
+#include "ThemePalette.h"
 #include <dwrite.h>
 #include <dwmapi.h>
 #include <wrl/client.h>
@@ -16,29 +17,11 @@
 
 extern int GetEffectiveExifOrientation(int baseExif, const EditState& editState);
 
-static bool ReadAppsUseLightThemeRegistry(bool defaultValue) {
-    DWORD value = defaultValue ? 1u : 0u;
-    DWORD size = sizeof(value);
-    const LONG status = RegGetValueW(
-        HKEY_CURRENT_USER,
-        L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-        L"AppsUseLightTheme",
-        RRF_RT_REG_DWORD,
-        nullptr,
-        &value,
-        &size);
-    if (status != ERROR_SUCCESS) return defaultValue;
-    return value != 0;
-}
-
 extern AppConfig g_config;
 extern float g_uiScale;
 
 static bool IsLightTheme() {
-    if (g_config.ThemeMode == 2) return true;
-    if (g_config.ThemeMode == 1) return false;
-    if (g_config.ThemeMode == 0) return ReadAppsUseLightThemeRegistry(false);
-    return g_config.ThemeCustomTextR < 0.5f;
+    return IsLightThemeActive();
 }
 
 struct PrintStrings {
@@ -246,8 +229,10 @@ void PrintPreviewUI::DrawButton(ID2D1DeviceContext* ctx, const D2D1_RECT_F& rect
     ButtonStyle style = isSelected ? ButtonStyle::Primary : ButtonStyle::Secondary;
     ButtonState state = isHovered ? ButtonState::Hovered : ButtonState::Normal;
 
+    const auto& tp = QuickView::UI::Theme::GetThemePalette();
     WidgetPalette pal = {};
-    pal.accent = D2D1::ColorF(g_config.ThemeCustomAccentR, g_config.ThemeCustomAccentG, g_config.ThemeCustomAccentB, 1.0f);
+    pal.accent = tp.accentFill;
+    pal.onAccentText = tp.onAccentText;
     pal.controlBg = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.95f, 1.0f) : D2D1::ColorF(0.18f, 0.18f, 0.20f, 1.0f);
     pal.border = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.15f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f);
     pal.text = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f) : D2D1::ColorF(0.95f, 0.95f, 0.98f);
@@ -376,8 +361,10 @@ void PrintPreviewUI::RenderNumericCapsule(
     }
 
     bool isLight = IsLightTheme();
+    const auto& tp = QuickView::UI::Theme::GetThemePalette();
     QuickView::UI::WidgetPalette pal = {};
-    pal.accent = D2D1::ColorF(g_config.ThemeCustomAccentR, g_config.ThemeCustomAccentG, g_config.ThemeCustomAccentB, 1.0f);
+    pal.accent = tp.accentFill;
+    pal.onAccentText = tp.onAccentText;
     pal.controlBg = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.95f, 1.0f) : D2D1::ColorF(0.15f, 0.15f, 0.15f, 1.0f);
     pal.border = isLight ? D2D1::ColorF(0.8f, 0.8f, 0.8f, 1.0f) : D2D1::ColorF(0.3f, 0.3f, 0.3f, 1.0f);
     pal.text = isLight ? D2D1::ColorF(0.1f, 0.1f, 0.1f, 1.0f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
@@ -730,8 +717,10 @@ void PrintPreviewUI::Render(ID2D1DeviceContext* ctx, float winW, float winH) {
     DrawButton(ctx, m_ui.btnRotate, rotText.c_str(), false);
     cy += 35;
 
+    const auto& tp = QuickView::UI::Theme::GetThemePalette();
     QuickView::UI::WidgetPalette pal = {};
-    pal.accent = D2D1::ColorF(g_config.ThemeCustomAccentR, g_config.ThemeCustomAccentG, g_config.ThemeCustomAccentB, 1.0f);
+    pal.accent = tp.accentFill;
+    pal.onAccentText = tp.onAccentText;
     pal.controlBg = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.95f, 1.0f) : D2D1::ColorF(0.18f, 0.18f, 0.20f, 1.0f);
     pal.border = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.15f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f);
     pal.text = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f) : D2D1::ColorF(0.95f, 0.95f, 0.98f);

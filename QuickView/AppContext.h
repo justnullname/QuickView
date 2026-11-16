@@ -38,7 +38,7 @@ struct DialogState {
     std::wstring Title;
     std::wstring Message;
     std::wstring QualityText; 
-    D2D1_COLOR_F AccentColor = D2D1::ColorF(D2D1::ColorF::DodgerBlue);
+    D2D1_COLOR_F AccentColor = D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f);
     std::vector<DialogButton> Buttons;
     int SelectedButtonIndex = 0;
     bool HasCheckbox = false;

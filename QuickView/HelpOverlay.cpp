@@ -4,6 +4,7 @@
 #include "AppStrings.h"
 #include "EditState.h"
 #include "GeekIconRenderer.h"
+#include "ThemePalette.h"
 
 extern AppConfig g_config;
 
@@ -35,10 +36,11 @@ void HelpOverlay::SetUIScale(float scale) {
 
 void HelpOverlay::CreateResources(ID2D1RenderTarget* pRT) {
     if (!m_brushBg) {
-        bool isLight = IsLightThemeActive();
+        const auto& tp = QuickView::UI::Theme::GetThemePalette();
+        bool isLight = tp.isLight;
         D2D1_COLOR_F bgClr = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 1.0f) : D2D1::ColorF(0.08f, 0.08f, 0.10f, 1.0f);
         D2D1_COLOR_F txtClr = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f, 1.0f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
-        D2D1_COLOR_F headClr = isLight ? D2D1::ColorF(0.0f, 0.45f, 0.9f, 1.0f) : D2D1::ColorF(0.2f, 0.6f, 1.0f, 1.0f);
+        D2D1_COLOR_F headClr = tp.accentText;
         D2D1_COLOR_F keyClr = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f, 0.7f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.7f);
         D2D1_COLOR_F bordClr = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.15f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f);
 
@@ -53,10 +55,11 @@ void HelpOverlay::CreateResources(ID2D1RenderTarget* pRT) {
     }
 
     if (m_brushBg) {
-        bool isLight = IsLightThemeActive();
+        const auto& tp = QuickView::UI::Theme::GetThemePalette();
+        bool isLight = tp.isLight;
         D2D1_COLOR_F bgClr = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 1.0f) : D2D1::ColorF(0.08f, 0.08f, 0.10f, 1.0f);
         D2D1_COLOR_F txtClr = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f, 1.0f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
-        D2D1_COLOR_F headClr = isLight ? D2D1::ColorF(0.0f, 0.45f, 0.9f, 1.0f) : D2D1::ColorF(0.2f, 0.6f, 1.0f, 1.0f);
+        D2D1_COLOR_F headClr = tp.accentText;
         D2D1_COLOR_F keyClr = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f, 0.7f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.7f);
         D2D1_COLOR_F bordClr = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.15f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f);
         D2D1_COLOR_F scrlBg = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.05f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f);

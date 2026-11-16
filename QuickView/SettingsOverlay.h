@@ -290,6 +290,8 @@ private:
     ComPtr<ID2D1SolidColorBrush> m_brushText;    
     ComPtr<ID2D1SolidColorBrush> m_brushTextDim; 
     ComPtr<ID2D1SolidColorBrush> m_brushAccent;  
+    ComPtr<ID2D1SolidColorBrush> m_brushAccentText;
+    ComPtr<ID2D1SolidColorBrush> m_brushOnAccent;
     ComPtr<ID2D1SolidColorBrush> m_brushControlBg; 
     ComPtr<ID2D1SolidColorBrush> m_brushBorder;
     ComPtr<ID2D1SolidColorBrush> m_brushSuccess;
@@ -313,7 +315,7 @@ private:
     bool m_isHoveringCopyright = false;
     
     std::wstring GetRealWindowsVersion();
-    void AutoSwitchToCustom(bool save = true);
+    void OnGlassMaterialChanged(bool save = true);
 
     bool m_showUpdateToast = false;
     std::wstring m_updateVersion;

@@ -19,6 +19,7 @@ namespace GeekIcons {
 }
 #include "OSDState.h"
 #include "GeekGlass.h"
+#include "ThemePalette.h"
 #include <dwrite.h>
 
 // ============================================================================
@@ -112,6 +113,9 @@ public:
         m_glassCache.clear();
         
         m_bgCommandList.Reset();
+        m_borderGlowBrush.Reset();
+        m_borderGlowCachedDc = nullptr;
+        m_roundStrokeStyle.Reset();
     }
     
     // ===== Layered Rendering Control =====
@@ -166,6 +170,17 @@ public:
     void SetRuntimeConfig(const RuntimeConfig& cfg) { m_runtime = cfg; MarkStaticDirty(); }
     void SetWindowControlHover(int hoverIndex) { m_winCtrlHover = hoverIndex; MarkStaticDirty(); }
     void SetControlsVisible(bool visible) { m_showControls = visible; MarkStaticDirty(); }
+    void TriggerBorderGlow() noexcept {
+        m_borderGlowActive = true;
+        m_borderGlowLastTriggerMs = ::GetTickCount64();
+        MarkDynamicDirty();
+    }
+    bool TickBorderGlow() noexcept {
+        if (!m_borderGlowActive) return false;
+        (void)ComputeBorderGlowAlpha();
+        return true;
+    }
+    bool IsBorderGlowActive() const noexcept { return m_borderGlowActive; }
     void SetPinActive(bool active) { m_pinActive = active; MarkStaticDirty(); }
     void SetFullscreenState(bool isFullscreen) { m_isFullscreen = isFullscreen; }
     void SetUIScale(float scale);
@@ -203,7 +218,7 @@ private:
         D2D1_COLOR_F hoverFill = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f);
         D2D1_COLOR_F capsuleFill = D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.18f);
         D2D1_COLOR_F capsuleStroke = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.14f);
-        D2D1_COLOR_F accent = D2D1::ColorF(0.2f, 0.6f, 1.0f, 1.0f);
+        D2D1_COLOR_F accent = QuickView::UI::Theme::GetThemePalette().accentText;
         D2D1_COLOR_F success = D2D1::ColorF(0.2f, 0.9f, 0.4f, 1.0f);
         D2D1_COLOR_F warning = D2D1::ColorF(1.0f, 0.85f, 0.0f, 1.0f);
         D2D1_COLOR_F danger = D2D1::ColorF(1.0f, 0.3f, 0.3f, 1.0f);
@@ -246,7 +261,8 @@ private:
     // [Loupe] press-and-hold magnifier overlay (shows the region at actual pixels)
     void DrawLoupe(ID2D1DeviceContext* dc, HWND hwnd);
     void DrawWindowControls(ID2D1DeviceContext* dc, HWND hwnd);
-    void DrawBorderIndicators(ID2D1DeviceContext* dc);
+    void DrawBorderIndicators(ID2D1DeviceContext* dc, HWND hwnd);
+    float ComputeBorderGlowAlpha() noexcept;
     void DrawNavigator(ID2D1DeviceContext* dc);
     void DrawDebugHUD(ID2D1DeviceContext* dc);
     void EnsureTextFormats();
@@ -371,6 +387,12 @@ private:
     float m_decodeDisplayedProgress = 0.0f;
     bool m_decodeWasActive = false;
     DWORD m_decodeFinishTime = 0;
+    bool m_borderGlowActive = false;
+    uint64_t m_borderGlowLastTriggerMs = 0;
+    ComPtr<ID2D1LinearGradientBrush> m_borderGlowBrush;
+    ID2D1DeviceContext* m_borderGlowCachedDc = nullptr;
+    D2D1_COLOR_F m_borderGlowCachedColor = { -1.0f, -1.0f, -1.0f, -1.0f };
+    ComPtr<ID2D1StrokeStyle> m_roundStrokeStyle;
     void DrawDecodingStatus(ID2D1DeviceContext* dc, HWND hwnd);
     void DrawWelcomeScreen(ID2D1DeviceContext* dc);
     void DrawWelcomeButton(ID2D1DeviceContext* dc, const D2D1_RECT_F& r, const wchar_t* text, const GeekIcons::VectorIcon& icon, int hoverState);

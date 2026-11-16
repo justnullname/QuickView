@@ -9,6 +9,7 @@
 #include "GalleryOverlay.h"
 #include "SettingsOverlay.h"
 #include "HelpOverlay.h"
+#include "ThemePalette.h"
 
 using QuickView::UI::GeekIconRenderer;
 
@@ -91,8 +92,8 @@ void Toolbar::CreateResources(ID2D1RenderTarget *pRT) {
                                &m_brushBg); // Master placeholder
     pRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f),
                                &m_brushIcon);
-    pRT->CreateSolidColorBrush(D2D1::ColorF(0.4f, 0.6f, 1.0f, 1.0f),
-                               &m_brushIconActive); // Blue for active
+    pRT->CreateSolidColorBrush(QuickView::UI::Theme::GetThemePalette().accentText,
+                               &m_brushIconActive); // Active accent color
     pRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.3f),
                                &m_brushIconDisabled);
     pRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.3f, 0.3f, 1.0f),
@@ -103,6 +104,8 @@ void Toolbar::CreateResources(ID2D1RenderTarget *pRT) {
                                &m_brushGreen); // Green for Apply/Confirm
     pRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.3f, 0.3f, 1.0f),
                                &m_brushRed);   // Red for Cancel/Close
+    pRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f),
+                               &m_brushWork);  // Reusable working brush
 
     // Font
     DWriteCreateFactory(
@@ -646,17 +649,11 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
 
   CreateResources(pRT);
 
-  bool isLight = IsLightThemeActive();
+  const auto& tp = QuickView::UI::Theme::GetThemePalette();
+  bool isLight = tp.isLight;
   m_brushBg->SetColor(isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 1.0f) : D2D1::ColorF(0.08f, 0.08f, 0.10f, 1.0f));
   m_brushIcon->SetColor(isLight ? D2D1::ColorF(D2D1::ColorF::Black) : D2D1::ColorF(D2D1::ColorF::White));
-  
-  D2D1_COLOR_F accentClr;
-  if (g_config.ThemeMode == 3) {
-      accentClr = D2D1::ColorF(g_config.ThemeCustomAccentR, g_config.ThemeCustomAccentG, g_config.ThemeCustomAccentB, 1.0f);
-  } else {
-      accentClr = isLight ? D2D1::ColorF(0.0f, 0.478f, 1.0f, 1.0f) : D2D1::ColorF(0.35f, 0.65f, 1.0f, 1.0f);
-  }
-  m_brushIconActive->SetColor(accentClr);
+  m_brushIconActive->SetColor(tp.accentText);
   m_brushIconDisabled->SetColor(isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.3f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.3f));
   m_brushWarning->SetColor(D2D1::ColorF(1.0f, 0.3f, 0.3f, 1.0f));
   m_brushHover->SetColor(isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.05f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f));
@@ -744,27 +741,28 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
       D2D1_RECT_F trackRect = D2D1::RectF(barLeft, barY - halfH, barRight, barY + halfH);
       
       // Track (subtle)
-      ComPtr<ID2D1SolidColorBrush> trackBr;
-      pRT->CreateSolidColorBrush(D2D1::ColorF(0.3f, 0.3f, 0.4f, 0.3f), &trackBr);
-      pRT->FillRoundedRectangle(D2D1::RoundedRect(trackRect, cornerRadius, cornerRadius), trackBr.Get());
+      m_brushWork->SetColor(D2D1::ColorF(0.3f, 0.3f, 0.4f, 0.3f));
+      pRT->FillRoundedRectangle(D2D1::RoundedRect(trackRect, cornerRadius, cornerRadius), m_brushWork.Get());
       
-      // Fill (accent blue)
+      // Fill (theme accent when playing, caution orange when paused)
       if (fillW > 0.5f) {
         D2D1_COLOR_F accentColor = m_animPlaying
-          ? D2D1::ColorF(0.25f, 0.56f, 1.0f, 0.8f) // Blue when playing
-          : D2D1::ColorF(1.0f, 0.72f, 0.18f, 0.85f); // Orange when paused
-        ComPtr<ID2D1SolidColorBrush> fillBr;
-        pRT->CreateSolidColorBrush(accentColor, &fillBr);
+          ? D2D1::ColorF(tp.accentFill.r, tp.accentFill.g, tp.accentFill.b, 0.88f)
+          : D2D1::ColorF(1.0f, 0.72f, 0.18f, 0.85f); // Caution orange when paused
+        m_brushWork->SetColor(accentColor);
         
         D2D1_RECT_F fillRect = D2D1::RectF(barLeft, barY - halfH, barLeft + fillW, barY + halfH);
-        pRT->FillRoundedRectangle(D2D1::RoundedRect(fillRect, cornerRadius, cornerRadius), fillBr.Get());
+        pRT->FillRoundedRectangle(D2D1::RoundedRect(fillRect, cornerRadius, cornerRadius), m_brushWork.Get());
         
         // Playhead dot
         float dotRadius = m_animProgressHover ? 4.0f * m_uiScale : 3.0f * m_uiScale;
         D2D1_ELLIPSE dot = D2D1::Ellipse(D2D1::Point2F(barLeft + fillW, barY), dotRadius, dotRadius);
-        ComPtr<ID2D1SolidColorBrush> dotBr;
-        pRT->CreateSolidColorBrush(D2D1::ColorF(m_animProgressHover ? 1.0f : 0.3f, 0.65f, 1.0f, 0.95f), &dotBr);
-        pRT->FillEllipse(dot, dotBr.Get());
+        D2D1_COLOR_F dotColor = m_animPlaying
+          ? (m_animProgressHover ? tp.accentText : D2D1::ColorF(tp.accentFill.r, tp.accentFill.g, tp.accentFill.b, 0.95f))
+          : D2D1::ColorF(1.0f, 0.72f, 0.18f, 0.95f);
+        dotColor.a = 0.95f;
+        m_brushWork->SetColor(dotColor);
+        pRT->FillEllipse(dot, m_brushWork.Get());
       }
       
       // Frame Index Text (Show on hover)
@@ -798,19 +796,16 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
                 D2D1_COLOR_F tipBgBase = isLight 
                     ? D2D1::ColorF(1.0f, 1.0f, 1.0f, g_config.GlassOsdOpacity / 100.0f)
                     : D2D1::ColorF(0.15f, 0.15f, 0.15f, g_config.GlassOsdOpacity / 100.0f);
-                ComPtr<ID2D1SolidColorBrush> tipBg;
-                pRT->CreateSolidColorBrush(tipBgBase, &tipBg);
-                pRT->FillRoundedRectangle(D2D1::RoundedRect(pillRect, 4.0f * m_uiScale, 4.0f * m_uiScale), tipBg.Get());
+                m_brushWork->SetColor(tipBgBase);
+                pRT->FillRoundedRectangle(D2D1::RoundedRect(pillRect, 4.0f * m_uiScale, 4.0f * m_uiScale), m_brushWork.Get());
                 
                 // Text color
                 D2D1_COLOR_F textColor = m_animPlaying
-                  ? D2D1::ColorF(0.25f, 0.56f, 1.0f, 0.9f) // Match active bar
-                  : D2D1::ColorF(1.0f, 0.72f, 0.18f, 0.9f); // Match paused bar
+                  ? D2D1::ColorF(tp.accentText.r, tp.accentText.g, tp.accentText.b, 0.95f) // Match active bar
+                  : D2D1::ColorF(1.0f, 0.72f, 0.18f, 0.95f); // Match paused bar
                   
-                ComPtr<ID2D1SolidColorBrush> textBr;
-                pRT->CreateSolidColorBrush(textColor, &textBr);
-                
-                pRT->DrawText(frameTxt, (UINT32)wcslen(frameTxt), m_textFormatUI.Get(), pillRect, textBr.Get());
+                m_brushWork->SetColor(textColor);
+                pRT->DrawText(frameTxt, (UINT32)wcslen(frameTxt), m_textFormatUI.Get(), pillRect, m_brushWork.Get());
             }
         }
       }

@@ -36,6 +36,7 @@ struct WidgetPalette {
     D2D1_COLOR_F hoverTint;
     D2D1_COLOR_F panelBg;
     D2D1_COLOR_F shadow;
+    D2D1_COLOR_F onAccentText = {};
 };
 
 namespace GeekWidgets {

@@ -9,6 +9,7 @@
 #include "CompositionEngine.h"
 #include "SettingsOverlay.h"
 #include "GeekWidgets.h"
+#include "ThemePalette.h"
 
 extern float g_uiScale;
 extern AppConfig g_config;
@@ -126,8 +127,10 @@ void DialogController::Render(ID2D1DeviceContext* context) {
     }
 
     // Border
+    const auto& tp = QuickView::UI::Theme::GetThemePalette();
     D2D1_COLOR_F accentColor = m_context.Dialog.AccentColor;
-    if (accentColor.a <= 0.01f) accentColor = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f);
+    if (accentColor.a <= 0.01f) accentColor = tp.accentFill;
+    const D2D1_COLOR_F onAccentColor = QuickView::UI::Theme::ComputeOnAccentText(accentColor);
     pBrush->SetColor(accentColor);
     context->DrawRoundedRectangle(D2D1::RoundedRect(layout.Box, 10.0f * g_uiScale, 10.0f * g_uiScale), pBrush.Get(), 2.0f * g_uiScale);
 
@@ -226,13 +229,13 @@ void DialogController::Render(ID2D1DeviceContext* context) {
     // ComboBox (Choice Mode)
     if (m_context.Dialog.HasChoice && !m_context.Dialog.ChoiceOptions.empty()) {
         QuickView::UI::WidgetPalette comboPal = {};
-        comboPal.accent = m_context.Dialog.AccentColor;
-        if (comboPal.accent.a <= 0.01f) comboPal.accent = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f);
+        comboPal.accent = accentColor;
         comboPal.controlBg = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.05f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f);
         comboPal.border = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.2f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.25f);
         comboPal.text = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f) : D2D1::ColorF(0.95f, 0.95f, 0.98f);
         comboPal.textDim = isLight ? D2D1::ColorF(0.35f, 0.35f, 0.4f, 1.0f) : D2D1::ColorF(0.75f, 0.75f, 0.8f, 1.0f);
         comboPal.white = D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
+        comboPal.onAccentText = onAccentColor;
 
         int selIdx = m_context.Dialog.SelectedChoiceIndex;
         std::wstring curText = (selIdx >= 0 && selIdx < static_cast<int>(m_context.Dialog.ChoiceOptions.size())) 
@@ -258,12 +261,12 @@ void DialogController::Render(ID2D1DeviceContext* context) {
     if (m_context.Dialog.HasCheckbox) {
         D2D1_RECT_F fullCheckRect = D2D1::RectF(layout.Checkbox.left, layout.Checkbox.top, layout.Box.right - 30, layout.Checkbox.bottom + 5);
         QuickView::UI::WidgetPalette checkPal = {};
-        checkPal.accent = m_context.Dialog.AccentColor;
-        if (checkPal.accent.a <= 0.01f) checkPal.accent = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f);
+        checkPal.accent = accentColor;
         checkPal.controlBg = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.06f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f);
         checkPal.border = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.35f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.45f);
         checkPal.text = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f) : D2D1::ColorF(0.95f, 0.95f, 0.98f);
         checkPal.white = D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
+        checkPal.onAccentText = onAccentColor;
 
         QuickView::UI::GeekWidgets::DrawCircleCheckbox(
             context, fullCheckRect, m_context.Dialog.CheckboxText,
@@ -275,12 +278,12 @@ void DialogController::Render(ID2D1DeviceContext* context) {
     if (m_context.Dialog.HasCheckbox2) {
         D2D1_RECT_F fullCheck2Rect = D2D1::RectF(layout.Checkbox2.left, layout.Checkbox2.top, layout.Box.right - 30, layout.Checkbox2.bottom + 5);
         QuickView::UI::WidgetPalette checkPal2 = {};
-        checkPal2.accent = m_context.Dialog.AccentColor;
-        if (checkPal2.accent.a <= 0.01f) checkPal2.accent = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f);
+        checkPal2.accent = accentColor;
         checkPal2.controlBg = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.06f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f);
         checkPal2.border = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.35f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.45f);
         checkPal2.text = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f) : D2D1::ColorF(0.95f, 0.95f, 0.98f);
         checkPal2.white = D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
+        checkPal2.onAccentText = onAccentColor;
 
         QuickView::UI::GeekWidgets::DrawCircleCheckbox(
             context, fullCheck2Rect, m_context.Dialog.Checkbox2Text,
@@ -290,15 +293,13 @@ void DialogController::Render(ID2D1DeviceContext* context) {
 
     // Buttons (GeekWidgets Pill Buttons)
     QuickView::UI::WidgetPalette pal = {};
-    pal.accent = m_context.Dialog.AccentColor;
-    if (pal.accent.a <= 0.01f) {
-        pal.accent = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f);
-    }
+    pal.accent = accentColor;
     pal.controlBg = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.08f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f);
     pal.border = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.15f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f);
     pal.text = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f) : D2D1::ColorF(0.95f, 0.95f, 0.98f);
     pal.textDim = pal.text;
     pal.white = D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
+    pal.onAccentText = onAccentColor;
 
     for (size_t i = 0; i < m_context.Dialog.Buttons.size(); ++i) {
         if (i >= layout.Buttons.size()) break;
@@ -315,11 +316,11 @@ void DialogController::Render(ID2D1DeviceContext* context) {
     // Choice Dropdown Floating Popup (Rendered on top of everything)
     if (m_context.Dialog.HasChoice && m_context.Dialog.IsChoiceDropdownOpen && !layout.ChoiceItemRects.empty()) {
         QuickView::UI::WidgetPalette dropPal = {};
-        dropPal.accent = m_context.Dialog.AccentColor;
-        if (dropPal.accent.a <= 0.01f) dropPal.accent = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f);
+        dropPal.accent = accentColor;
         dropPal.controlBg = isLight ? D2D1::ColorF(0.96f, 0.96f, 0.98f, 0.98f) : D2D1::ColorF(0.18f, 0.18f, 0.22f, 0.98f);
         dropPal.border = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.2f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.25f);
         dropPal.text = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f) : D2D1::ColorF(0.95f, 0.95f, 0.98f);
+        dropPal.onAccentText = onAccentColor;
 
         // Background
         pBrush->SetColor(dropPal.controlBg);
@@ -341,7 +342,7 @@ void DialogController::Render(ID2D1DeviceContext* context) {
                 context->FillRoundedRectangle(D2D1::RoundedRect(itemRect, 4.0f, 4.0f), pBrush.Get());
             }
 
-            D2D1_COLOR_F txtClr = (isItemSelected) ? D2D1::ColorF(1.0f, 1.0f, 1.0f) : dropPal.text;
+            D2D1_COLOR_F txtClr = (isItemSelected) ? dropPal.onAccentText : dropPal.text;
             pBrush->SetColor(txtClr);
             D2D1_RECT_F textRect = D2D1::RectF(itemRect.left + 8.0f, itemRect.top + 4.0f, itemRect.right - 8.0f, itemRect.bottom - 4.0f);
             if (i < m_context.Dialog.ChoiceOptions.size()) {
@@ -735,7 +736,7 @@ std::wstring DialogController::ShowInputDialog(HWND hwnd, const std::wstring& ti
     m_context.Dialog.Title = title;
     m_context.Dialog.Message = message;
     m_context.Dialog.QualityText.clear();
-    m_context.Dialog.AccentColor = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f); 
+    m_context.Dialog.AccentColor = QuickView::UI::Theme::GetThemePalette().accentFill;
     m_context.Dialog.Buttons = buttons;
     m_context.Dialog.SelectedButtonIndex = 0;
     m_context.Dialog.HasCheckbox = false;
