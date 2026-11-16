@@ -5125,6 +5125,7 @@ void FlushConfigSnapshotToDisk(
     sec.AddBool(L"SingleInstance", cfg.SingleInstance);
     sec.AddBool(L"CheckUpdates", cfg.CheckUpdates);
     sec.AddInt(L"UpdateChannel", cfg.UpdateChannel);
+    sec.AddString(L"LastUpdateChannelCheckVer", cfg.LastUpdateChannelCheckVer);
     sec.AddBool(L"NavLoop", cfg.NavLoop);
     sec.AddBool(L"NavTraverse", cfg.NavTraverse);
     sec.AddInt(L"SortOrder", cfg.SortOrder);
@@ -5508,7 +5509,12 @@ void LoadConfig() {
     g_config.Language = GetPrivateProfileIntW(L"General", L"Language", 0, iniPath.c_str());
     g_config.SingleInstance = GetPrivateProfileIntW(L"General", L"SingleInstance", 1, iniPath.c_str()) != 0;
     g_config.CheckUpdates = GetPrivateProfileIntW(L"General", L"CheckUpdates", 1, iniPath.c_str()) != 0;
-    g_config.UpdateChannel = GetPrivateProfileIntW(L"General", L"UpdateChannel", 0, iniPath.c_str());
+    g_config.UpdateChannel = std::clamp<int>(GetPrivateProfileIntW(L"General", L"UpdateChannel", 0, iniPath.c_str()), 0, 1);
+    {
+        wchar_t bufUpdVer[64]{};
+        GetPrivateProfileStringW(L"General", L"LastUpdateChannelCheckVer", L"", bufUpdVer, 64, iniPath.c_str());
+        g_config.LastUpdateChannelCheckVer = bufUpdVer;
+    }
     // Navigation: Decoupled Loop & Traverse (Legacy Migration)
     int navLoopValue = GetPrivateProfileIntW(L"General", L"NavLoopMode", -1, iniPath.c_str());
     if (navLoopValue != -1) {
@@ -11653,8 +11659,20 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
     case WM_UPDATE_FOUND: {
         bool found = (wParam != 0);
+        const bool autoSwitched = UpdateManager::Get().ConsumeAutoSwitchedToPreRelease();
+        const bool calibrated = UpdateManager::Get().ConsumeChannelCalibrationCompleted();
+        if (autoSwitched || calibrated) {
+            if (autoSwitched) {
+                g_config.UpdateChannel = 1;
+            }
+            g_config.LastUpdateChannelCheckVer = SettingsOverlay::GetAppVersion();
+            SaveConfig();
+        }
         if (found) {
             EnsureSettingsInitialized(hwnd);
+            if (autoSwitched) {
+                g_settingsOverlay.RequestRebuild();
+            }
             const auto& info = UpdateManager::Get().GetRemoteVersion();
             auto ToWide = [](const std::string& str) -> std::wstring {
                 if (str.empty()) return L"";
@@ -11668,7 +11686,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         } else {
             // Just refresh UI (e.g. stop spinner)
             if (g_settingsInitialized) {
-                g_settingsOverlay.BuildMenu();
+                if (g_settingsOverlay.IsVisible()) {
+                    g_settingsOverlay.RequestRebuild();
+                } else {
+                    g_settingsOverlay.BuildMenu();
+                }
             }
             RequestRepaint(PaintLayer::Static);
         }
@@ -11951,7 +11973,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             KillTimer(hwnd, TIMER_ID_UPDATE_CHECK);
             if (!SystemInfo::IsPackagedApp() && g_config.CheckUpdates) {
                 EnsureUpdateInitialized(hwnd);
-                UpdateManager::Get().StartBackgroundCheck();
+                UpdateManager::Get().StartBackgroundCheck(
+                    10, false, g_config.UpdateChannel,
+                    QuickView::WideToUtf8(g_config.LastUpdateChannelCheckVer));
             }
             return 0;
         }

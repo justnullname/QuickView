@@ -476,6 +476,7 @@ add_executable(QuickViewTests
     tests/AiActionManagerTests.cpp
     tests/FileAssociationTests.cpp
     tests/ThemeSystemTests.cpp
+    tests/UpdateManagerTests.cpp
     QuickView/AiActionManager.cpp
     QuickView/GeekWidgets.cpp
     QuickView/ThemePalette.cpp
@@ -498,6 +499,7 @@ add_executable(QuickViewTests
     QuickView/QuickViewETW.cpp
     QuickView/AppStrings.cpp
     QuickView/FileAssociationManager.cpp
+    QuickView/UpdateManager.cpp
     QuickView/Plugin/PluginHost.cpp
     QuickView/AsyncJob.cpp
     QuickView/StringUtils.cpp

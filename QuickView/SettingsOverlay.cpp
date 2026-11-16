@@ -2138,9 +2138,12 @@ void SettingsOverlay::BuildGeneralTab(SettingsTab& tabGeneral) {
         itemUpdateChannel.options = { AppStrings::Settings_Option_UpdateStable, AppStrings::Settings_Option_UpdatePreRelease };
         itemUpdateChannel.tooltipText = AppStrings::Settings_Tooltip_PreRelease;
         itemUpdateChannel.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+            g_config.LastUpdateChannelCheckVer = SettingsOverlay::GetAppVersion();
             SaveConfig();
             overlay->m_dismissedVersion.clear();
-            UpdateManager::Get().StartBackgroundCheck(0);
+            UpdateManager::Get().StartBackgroundCheck(
+                0, true, g_config.UpdateChannel,
+                QuickView::WideToUtf8(g_config.LastUpdateChannelCheckVer));
         };
         tabGeneral.items.push_back(itemUpdateChannel);
     }
@@ -4998,8 +5001,10 @@ void SettingsOverlay::BuildAdvancedTab(SettingsTab& tabAdvanced) {
          
          // 2. Reset In-Memory Config (Preserving UpdateChannel for desktop builds)
          int preservedUpdateChannel = g_config.UpdateChannel;
+         std::wstring preservedChannelCheckVer = g_config.LastUpdateChannelCheckVer;
          g_config = AppConfig(); 
          g_config.UpdateChannel = preservedUpdateChannel;
+         g_config.LastUpdateChannelCheckVer = preservedChannelCheckVer;
          if (isPackaged) {
              g_config.PortableMode = false;
              g_config.CheckUpdates = false;
@@ -5083,7 +5088,7 @@ void SettingsOverlay::BuildAboutTab(SettingsTab& tabAbout) {
         
         // Check Status
         UpdateStatus status = UpdateManager::Get().GetStatus();
-        if (status == UpdateStatus::NewVersionFound) {
+        if (status == UpdateStatus::NewVersionFound || status == UpdateStatus::ReadyToInstall) {
             std::string v = UpdateManager::Get().GetRemoteVersion().version;
             itemUpdate.buttonText = AppStrings::Settings_Action_ViewUpdate;
             itemUpdate.statusText = std::wstring(v.begin(), v.end());
@@ -5097,7 +5102,8 @@ void SettingsOverlay::BuildAboutTab(SettingsTab& tabAbout) {
         }
 
         itemUpdate.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-             if (UpdateManager::Get().GetStatus() == UpdateStatus::NewVersionFound) {
+             const UpdateStatus curStatus = UpdateManager::Get().GetStatus();
+             if (curStatus == UpdateStatus::NewVersionFound || curStatus == UpdateStatus::ReadyToInstall) {
                  std::string v = UpdateManager::Get().GetRemoteVersion().version;
                  std::string log = UpdateManager::Get().GetRemoteVersion().changelog;
                  overlay->m_updateVersion = QuickView::Utf8ToWide(v);
@@ -5106,7 +5112,9 @@ void SettingsOverlay::BuildAboutTab(SettingsTab& tabAbout) {
                  overlay->m_showUpdateToast = true;
                  overlay->SetVisible(false); // Close Settings to focus on Update (Fixes visibility/focus issues)
              } else {
-                 UpdateManager::Get().StartBackgroundCheck(0); 
+                 UpdateManager::Get().StartBackgroundCheck(
+                     0, false, g_config.UpdateChannel,
+                     QuickView::WideToUtf8(g_config.LastUpdateChannelCheckVer)); 
                  // Force slight visual feedback
                  overlay->SetItemStatus(AppStrings::Settings_Action_CheckUpdates, AppStrings::Settings_Status_Checking, D2D1::ColorF(0.5f, 0.5f, 0.5f));
              }

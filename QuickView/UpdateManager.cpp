@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <charconv>
 #include <ctime>
 #include "UpdateManager.h"
 #include "yyjson.h"
@@ -9,11 +10,8 @@
 #include <shellapi.h>
 #include <shlwapi.h>
 #include <wincrypt.h>
-#include "EditState.h"
 #include "AsyncJob.h"
 #include "SystemInfo.h"
-
-extern AppConfig g_config;
 
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "shlwapi.lib")
@@ -30,40 +28,108 @@ void UpdateManager::Init(const std::string& currentVersion) {
     m_currentVersion = currentVersion;
 }
 
-void UpdateManager::StartBackgroundCheck(int delaySeconds) {
+void UpdateManager::StartBackgroundCheck(int delaySeconds, bool allowDowngrade,
+                                          int channel, std::string_view lastCheckedVer) {
     // Store / MSIX packages must receive updates solely via Microsoft Store.
     if (SystemInfo::IsPackagedApp()) {
         return;
     }
 
-    // Allow restart if not currently working
-    if (m_status == UpdateStatus::Checking || m_status == UpdateStatus::Downloading) {
+    if (m_status == UpdateStatus::Downloading) {
         return; 
     }
-    
-    // Reset status to ensure UI updates
-    m_status = UpdateStatus::Idle;
 
-    QuickView::RunDetached([this, delaySeconds]() {
-        CheckThread(delaySeconds);
+    {
+        std::lock_guard<std::mutex> lock(m_pendingMutex);
+        if (m_workerActive) {
+            if (allowDowngrade || delaySeconds == 0) {
+                m_pendingCheck.valid = true;
+                m_pendingCheck.allowDowngrade = allowDowngrade;
+                m_pendingCheck.channel = channel;
+                m_pendingCheck.lastCheckedVer.assign(lastCheckedVer);
+                m_pendingCv.notify_one();
+            }
+            return;
+        }
+        m_workerActive = true;
+        m_pendingCheck = {};
+        m_status = UpdateStatus::Idle;
+    }
+
+    std::string lastCheckedCopy(lastCheckedVer);
+
+    QuickView::RunDetached([this, delaySeconds, allowDowngrade, channel, lastCheckedCopy = std::move(lastCheckedCopy)]() {
+        CheckThread(delaySeconds, allowDowngrade, channel, std::move(lastCheckedCopy));
     });
 }
 
-void UpdateManager::CheckThread(int delaySeconds) {
-    // Default to 1s if 0 passed, or user specific. 
-    // Logic changed to immediate if 0, else delay.
+void UpdateManager::CheckThread(int delaySeconds, bool allowDowngrade, int channel, std::string lastCheckedVer) {
     if (delaySeconds > 0) {
-        std::this_thread::sleep_for(std::chrono::seconds(delaySeconds));
+        std::unique_lock<std::mutex> lock(m_pendingMutex);
+        m_pendingCv.wait_for(lock, std::chrono::seconds(delaySeconds), [this]() {
+            return m_pendingCheck.valid;
+        });
+        if (m_pendingCheck.valid) {
+            allowDowngrade = m_pendingCheck.allowDowngrade;
+            channel = m_pendingCheck.channel;
+            lastCheckedVer = std::move(m_pendingCheck.lastCheckedVer);
+            m_pendingCheck = {};
+        }
     }
 
-    m_status = UpdateStatus::Checking;
-    
-    // Notify UI immediately that we are checking (since we reset to Idle)
-    if (m_callback) m_callback(false, VersionInfo(), m_callbackContext); 
+    for (;;) {
+        m_status = UpdateStatus::Checking;
+        
+        // Notify UI immediately that we are checking (since we reset to Idle)
+        if (m_callback) m_callback(false, VersionInfo(), m_callbackContext); 
 
-    // 1. Check Version
-    if (CheckVersion()) {
+        // 1. Check Version
+        const bool hasUpdate = CheckVersion(channel, lastCheckedVer, allowDowngrade);
+
+        // If an explicit re-check (e.g., channel switch) arrived while CheckVersion was in-flight,
+        // discard the stale result and re-run with the newest channel parameters.
+        {
+            std::lock_guard<std::mutex> lock(m_pendingMutex);
+            if (m_pendingCheck.valid) {
+                allowDowngrade = m_pendingCheck.allowDowngrade;
+                channel = m_pendingCheck.channel;
+                lastCheckedVer = std::move(m_pendingCheck.lastCheckedVer);
+                m_pendingCheck = {};
+                m_autoSwitchedToPreRelease.store(false, std::memory_order_relaxed);
+                m_channelCalibrationCompleted.store(false, std::memory_order_relaxed);
+                continue;
+            }
+            if (!hasUpdate) {
+                m_status = UpdateStatus::UpToDate;
+                m_workerActive = false;
+                break;
+            }
+        }
+
         m_status = UpdateStatus::NewVersionFound;
+        // Flush any auto-switched channel calibration to the UI thread before starting a slow download.
+        if (m_autoSwitchedToPreRelease.load(std::memory_order_acquire) ||
+            m_channelCalibrationCompleted.load(std::memory_order_acquire)) {
+            if (m_callback) m_callback(false, VersionInfo(), m_callbackContext);
+        }
+        break;
+    }
+
+    if (m_status != UpdateStatus::NewVersionFound) {
+        if (m_callback) m_callback(false, VersionInfo(), m_callbackContext);
+        return;
+    }
+
+    struct WorkerActiveGuard {
+        std::mutex& mtx;
+        bool& active;
+        ~WorkerActiveGuard() {
+            std::lock_guard<std::mutex> lock(mtx);
+            active = false;
+        }
+    } activeGuard{ m_pendingMutex, m_workerActive };
+
+    if (m_status == UpdateStatus::NewVersionFound) {
         
         // Prepare Temp Path with Version suffix to prevent redownload
         wchar_t tempPath[MAX_PATH];
@@ -179,28 +245,39 @@ void UpdateManager::CheckThread(int delaySeconds) {
                 if (m_callback) m_callback(true, m_remoteInfo, m_callbackContext);
             }
         }
-    } else {
-        m_status = UpdateStatus::UpToDate;
-        if (m_callback) m_callback(false, VersionInfo(), m_callbackContext);
     }
 }
 
-bool UpdateManager::CheckVersion() {
-    // Config: Host and Path
-    // Example: https://justnullname.github.io/QuickView/version.json
-    
-    // Timestamp for cache busting
-    std::time_t now = std::time(nullptr);
-    std::wstring jsonName = (g_config.UpdateChannel == 1) ? L"version-prerelease.json" : L"version.json";
-    std::wstring path = L"/QuickView/" + jsonName + L"?t=" + std::to_wstring(now);
-    
-    std::string response = HttpGet(L"justnullname.github.io", path);
-    if (response.empty()) return false;
+bool UpdateManager::CheckVersion(int initialChannel, std::string_view lastCheckedVer, bool allowDowngrade) {
+    auto fetchChannelInfo = [this](int channel) -> VersionInfo {
+        std::time_t now = std::time(nullptr);
+        std::wstring jsonName = (channel == 1) ? L"version-prerelease.json" : L"version.json";
+        std::wstring path = L"/QuickView/" + jsonName + L"?t=" + std::to_wstring(now);
+        std::string response = HttpGet(L"justnullname.github.io", path);
+        if (response.empty()) return {};
+        return ParseJson(response);
+    };
 
-    VersionInfo info = ParseJson(response);
+    int effectiveChannel = initialChannel;
+    VersionInfo info = fetchChannelInfo(effectiveChannel);
     if (info.version.empty()) return false;
 
-    if (CompareVersions(m_currentVersion, info.version)) {
+    if (!allowDowngrade && effectiveChannel == 0 && !m_currentVersion.empty()) {
+        m_channelCalibrationCompleted.store(true, std::memory_order_release);
+        if (ShouldAutoSwitchToPreRelease(effectiveChannel, m_currentVersion, lastCheckedVer, info.version, allowDowngrade)) {
+            m_autoSwitchedToPreRelease.store(true, std::memory_order_release);
+            effectiveChannel = 1;
+            VersionInfo preInfo = fetchChannelInfo(1);
+            if (!preInfo.version.empty()) {
+                info = std::move(preInfo);
+            } else {
+                // Pre-release feed unreachable; do not offer the older stable build as an update.
+                return false;
+            }
+        }
+    }
+
+    if (ShouldOfferUpdate(m_currentVersion, info.version, allowDowngrade)) {
         m_remoteInfo = info;
         return true;
     }
@@ -385,42 +462,59 @@ std::string UpdateManager::CalculateSHA256(const std::wstring& filePath) {
     return hashStr;
 }
 
-bool UpdateManager::CompareVersions(const std::string& current, const std::string& remote) {
-    // Channel switch can be a downgrade (pre-release -> stable). Treat any
-    // mismatch with the selected channel's remote version as an update.
-    // Remove "v" prefix if exists
-    std::string c = (current.size() > 0 && current[0] == 'v') ? current.substr(1) : current;
-    std::string r = (remote.size() > 0 && remote[0] == 'v') ? remote.substr(1) : remote;
-    
-    auto parse = [](const std::string& s) {
-        std::vector<int> v;
-        size_t start = 0;
-        size_t end = s.find('.');
-        while (start < s.size()) {
-          std::string seg = s.substr(start, end - start);
-          int val = 0;
-          if (!seg.empty()) {
-            // Simple atoi fallback
-            val = std::atoi(seg.c_str());
-          }
-          v.push_back(val);
-          if (end == std::string::npos)
-            break;
-          start = end + 1;
-          end = s.find('.', start);
+int UpdateManager::CompareVersionStrings(std::string_view a, std::string_view b) {
+    auto stripPrefix = [](std::string_view& s) {
+        if (!s.empty() && (s.front() == 'v' || s.front() == 'V')) {
+            s.remove_prefix(1);
         }
-        return v;
+    };
+    stripPrefix(a);
+    stripPrefix(b);
+
+    auto nextPart = [](std::string_view& s, int& outVal) -> bool {
+        if (s.empty()) {
+            outVal = 0;
+            return false;
+        }
+        size_t dot = s.find('.');
+        std::string_view seg = (dot == std::string_view::npos) ? s : s.substr(0, dot);
+        outVal = 0;
+        if (!seg.empty()) {
+            std::from_chars(seg.data(), seg.data() + seg.size(), outVal);
+        }
+        if (dot == std::string_view::npos) {
+            s = {};
+        } else {
+            s.remove_prefix(dot + 1);
+        }
+        return true;
     };
 
-    auto vc = parse(c);
-    auto vr = parse(r);
-
-    for (size_t i = 0; i < std::max(vc.size(), vr.size()); i++) {
-        int Ic = (i < vc.size()) ? vc[i] : 0;
-        int Ir = (i < vr.size()) ? vr[i] : 0;
-        if (Ir != Ic) return true; // Remote differs (upgrade or channel downgrade)
+    while (!a.empty() || !b.empty()) {
+        int ia = 0;
+        int ib = 0;
+        nextPart(a, ia);
+        nextPart(b, ib);
+        if (ia != ib) {
+            return (ia > ib) ? 1 : -1;
+        }
     }
-    return false; // Equal
+    return 0;
+}
+
+bool UpdateManager::ShouldOfferUpdate(std::string_view current, std::string_view remote, bool allowDowngrade) {
+    if (current.empty() || remote.empty()) return false;
+    const int cmp = CompareVersionStrings(remote, current);
+    return allowDowngrade ? (cmp != 0) : (cmp > 0);
+}
+
+bool UpdateManager::ShouldAutoSwitchToPreRelease(int currentChannel, std::string_view currentVer,
+                                                 std::string_view lastCheckedVer, std::string_view stableRemoteVer,
+                                                 bool allowDowngrade) {
+    if (allowDowngrade || currentChannel != 0) return false;
+    if (currentVer.empty() || stableRemoteVer.empty()) return false;
+    if (!lastCheckedVer.empty() && CompareVersionStrings(currentVer, lastCheckedVer) == 0) return false;
+    return CompareVersionStrings(currentVer, stableRemoteVer) > 0;
 }
 
 void UpdateManager::OnUserRestart() {
