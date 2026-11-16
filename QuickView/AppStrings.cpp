@@ -26,6 +26,7 @@ const wchar_t *OSD_SpanOn = nullptr;
 const wchar_t *OSD_SpanOff = nullptr;
 const wchar_t *OSD_CompareBefore = nullptr;
 const wchar_t *OSD_CompareAfter = nullptr;
+const wchar_t *OSD_CompareAnimNotSupported = nullptr;
 const wchar_t *OSD_UndoDeleteSuccess = nullptr;
 const wchar_t *OSD_UndoDeleteFailed = nullptr;
 const wchar_t *OSD_GamutDetected = nullptr;
@@ -823,6 +824,7 @@ struct LanguageTable {
     const wchar_t *OSD_SpanOff;
     const wchar_t *OSD_CompareBefore;
     const wchar_t *OSD_CompareAfter;
+    const wchar_t *OSD_CompareAnimNotSupported;
     const wchar_t *OSD_UndoDeleteSuccess;
     const wchar_t *OSD_UndoDeleteFailed;
     const wchar_t *OSD_UndoRenameSuccess;
@@ -1597,6 +1599,7 @@ static const LanguageTable Table_EN = {
     L"Video Wall: OFF", // OSD_SpanOff
     L"Before (Original)", // OSD_CompareBefore
     L"After (Proofed)", // OSD_CompareAfter
+    L"Compare mode is not available for animated images.", // OSD_CompareAnimNotSupported
     L"Undo delete succeeded", // OSD_UndoDeleteSuccess
     L"Undo delete failed", // OSD_UndoDeleteFailed
     L"Undo rename succeeded", // OSD_UndoRenameSuccess
@@ -2371,6 +2374,7 @@ static const LanguageTable Table_CN = {
     L"跨屏模式: 关闭", // OSD_SpanOff
     L"打样前 (Original)", // OSD_CompareBefore
     L"打样后 (Proofed)", // OSD_CompareAfter
+    L"动画不支持对比模式", // OSD_CompareAnimNotSupported
     L"已撤销删除", // OSD_UndoDeleteSuccess
     L"撤销删除失败", // OSD_UndoDeleteFailed
     L"已撤销重命名", // OSD_UndoRenameSuccess
@@ -3145,6 +3149,7 @@ static const LanguageTable Table_TW = {
     L"跨屏模式: 關閉", // OSD_SpanOff
     L"打樣前 (Original)", // OSD_CompareBefore
     L"打樣後 (Proofed)", // OSD_CompareAfter
+    L"動畫不支援對比模式", // OSD_CompareAnimNotSupported
     L"已撤銷刪除", // OSD_UndoDeleteSuccess
     L"撤銷刪除失敗", // OSD_UndoDeleteFailed
     L"已撤銷重命名", // OSD_UndoRenameSuccess
@@ -3919,6 +3924,7 @@ static const LanguageTable Table_JA = {
     L"ビデオウォール : オフ", // OSD_SpanOff
     L"変更前 (オリジナル)", // OSD_CompareBefore
     L"変更後 (校正済み)", // OSD_CompareAfter
+    L"アニメーション画像は比較モードに対応していません", // OSD_CompareAnimNotSupported
     L"削除の取り消しに成功しました", // OSD_UndoDeleteSuccess
     L"削除の取り消しに失敗しました", // OSD_UndoDeleteFailed
     L"名前の変更の取り消しに成功しました", // OSD_UndoRenameSuccess
@@ -4693,6 +4699,7 @@ static const LanguageTable Table_RU = {
     L"Видеостена: ВЫКЛ", // OSD_SpanOff
     L"До (Оригинал)", // OSD_CompareBefore
     L"После (Проба)", // OSD_CompareAfter
+    L"Режим сравнения недоступен для анимации", // OSD_CompareAnimNotSupported
     L"Удаление отменено", // OSD_UndoDeleteSuccess
     L"Ошибка отмены удаления", // OSD_UndoDeleteFailed
     L"Переименование отменено", // OSD_UndoRenameSuccess
@@ -5467,6 +5474,7 @@ static const LanguageTable Table_DE = {
     L"Video Wall: OFF", // OSD_SpanOff
     L"Vorher (Original)", // OSD_CompareBefore
     L"Nachher (Proof)", // OSD_CompareAfter
+    L"Vergleichsmodus wird für Animationen nicht unterstützt", // OSD_CompareAnimNotSupported
     L"Löschen rückgängig gemacht", // OSD_UndoDeleteSuccess
     L"Rückgängig machen fehlgeschlagen", // OSD_UndoDeleteFailed
     L"Umbenennen rückgängig gemacht", // OSD_UndoRenameSuccess
@@ -6241,6 +6249,7 @@ static const LanguageTable Table_ES = {
     L"Video Wall: OFF", // OSD_SpanOff
     L"Antes (Original)", // OSD_CompareBefore
     L"Después (Prueba)", // OSD_CompareAfter
+    L"El modo comparación no está disponible para animaciones", // OSD_CompareAnimNotSupported
     L"Eliminación deshecha", // OSD_UndoDeleteSuccess
     L"Error al deshacer eliminación", // OSD_UndoDeleteFailed
     L"Nombre cambiado deshecho", // OSD_UndoRenameSuccess
@@ -7015,6 +7024,7 @@ static const LanguageTable Table_FR = {
     L"Video Wall: OFF", // OSD_SpanOff
     L"Avant (Original)", // OSD_CompareBefore
     L"Après (Preuve)", // OSD_CompareAfter
+    L"Le mode comparaison n'est pas disponible pour les animations", // OSD_CompareAnimNotSupported
     L"Suppression annulée", // OSD_UndoDeleteSuccess
     L"Échec de l'annulation", // OSD_UndoDeleteFailed
     L"Renommer annulé", // OSD_UndoRenameSuccess
@@ -7789,6 +7799,7 @@ void Apply(const LanguageTable& t) {
   OSD_SpanOff = t.OSD_SpanOff;
   OSD_CompareBefore = t.OSD_CompareBefore;
   OSD_CompareAfter = t.OSD_CompareAfter;
+  OSD_CompareAnimNotSupported = t.OSD_CompareAnimNotSupported;
   OSD_UndoDeleteSuccess = t.OSD_UndoDeleteSuccess;
   OSD_UndoDeleteFailed = t.OSD_UndoDeleteFailed;
   OSD_UndoRenameSuccess = t.OSD_UndoRenameSuccess;

@@ -120,6 +120,10 @@ struct ImageResource {
     operator bool() const {
         return (isSvg && svgDoc) || isWebView || bitmap;
     }
+
+    bool IsAnimated() const {
+        return animator != nullptr && animator->IsAnimated();
+    }
 };
 
 inline DXGI_FORMAT GetImageResourceSurfaceFormat(const ImageResource& resource) {

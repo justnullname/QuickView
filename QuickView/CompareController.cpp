@@ -498,6 +498,10 @@ bool CompareController::RenderComposite(HWND hwnd) {
 void CompareController::EnterMode(HWND hwnd) {
     m_hwnd = hwnd;
     if (IsActive() || !GetPaneContext(PaneSlot::Primary).resource) return;
+    if (GetPaneContext(PaneSlot::Primary).resource.IsAnimated()) {
+        g_osd.Show(hwnd, AppStrings::OSD_CompareAnimNotSupported, true);
+        return;
+    }
     if (g_slideshowState.IsActive) {
         g_slideshowState.Reset();
         KillTimer(hwnd, IDT_SLIDESHOW);
@@ -661,6 +665,10 @@ void CompareController::EnterMode(HWND hwnd) {
 void CompareController::EnterSrCompareMode(HWND hwnd) {
     m_hwnd = hwnd;
     if (!GetPaneContext(PaneSlot::Primary).resource) return;
+    if (GetPaneContext(PaneSlot::Primary).resource.IsAnimated()) {
+        g_osd.Show(hwnd, AppStrings::OSD_CompareAnimNotSupported, true);
+        return;
+    }
 
     if (g_slideshowState.IsActive) {
         g_slideshowState.Reset();

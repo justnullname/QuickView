@@ -1373,6 +1373,8 @@ bool GetCurrentPixelArtState(HWND hwnd) {
 // True while the user is interactively resizing/moving the window (WM_ENTERSIZEMOVE/WM_EXITSIZEMOVE)
 bool g_isInSizeMove = false;
 static float s_resizeInitialAbsoluteScale = 1.0f;
+static float s_resizeInitialWinW = 0.0f;
+static float s_resizeInitialWinH = 0.0f;
 static bool s_maintainAbsoluteScale = false;
 static bool s_resizeStartedWithBorders = false;
 static bool s_resizeSnapLocked = false;        // Currently snapped to 100% during border resize
@@ -3806,6 +3808,19 @@ static float ComputeBaseFitScaleForVisual(const VisualState& vs, float winW, flo
         baseFit = 1.0f;
     }
 
+    return baseFit;
+}
+
+// Compute effective fit scale matching DComp layout (accounts for pinned gallery and slideshow spotlight).
+static float ComputeEffectiveBaseFitScale(const VisualState& vs, float winW, float winH) {
+    float galleryH = (g_gallery.IsPinned() && g_gallery.IsVisible()) ? g_gallery.GetVisualHeight(winH) : 0.0f;
+    float effWinH = winH - galleryH;
+    if (effWinH < 1.0f) effWinH = 1.0f;
+
+    float baseFit = ComputeBaseFitScaleForVisual(vs, winW, effWinH);
+    if (g_slideshowState.IsActive && g_config.SlideshowImmersiveMode == 1) {
+        baseFit *= 0.85f;
+    }
     return baseFit;
 }
 
@@ -7695,15 +7710,14 @@ void SyncDCompState([[maybe_unused]] HWND hwnd, float winW, float winH, [[maybe_
             float effWinH = winH - galleryH;
             if (effWinH < 1.0f) effWinH = 1.0f;
 
-            float baseFit = ComputeBaseFitScaleForVisual(vs, winW, effWinH);
-            if (g_slideshowState.IsActive && g_config.SlideshowImmersiveMode == 1) {
-                baseFit *= 0.85f; // Constrain to 85% of available space for Spotlight effect
-            }
-
+            float baseFit = ComputeEffectiveBaseFitScale(vs, winW, winH);
             float targetZoom = baseFit * GetPaneContext(PaneSlot::Primary).view.Zoom;
 
-            // [Fix] Maintain absolute scale during interactive resize
-            if (g_isInSizeMove && s_maintainAbsoluteScale && baseFit > 0.0001f) {
+            // [Fix] Maintain absolute scale during interactive resize only when client size actually changed
+            const bool sizeChangedInSession =
+                (fabsf(winW - s_resizeInitialWinW) > 0.5f) ||
+                (fabsf(winH - s_resizeInitialWinH) > 0.5f);
+            if (g_isInSizeMove && s_maintainAbsoluteScale && sizeChangedInSession && baseFit > 0.0001f) {
                 float newZoom = s_resizeInitialAbsoluteScale / baseFit;
 
                 // If the user was zoomed out (borders visible), ensure we don't zoom in
@@ -11010,7 +11024,8 @@ static void ShowContextMenuAtClientPt(HWND hwnd, POINT ptClient) {
         g_gallery.ForceFinishTransition();
     }
 
-    ShowContextMenu(hwnd, pt, hasImage, extensionFixNeeded, g_runtime.LockWindowSize, g_runtime.ShowInfoPanel, g_runtime.InfoPanelExpanded, g_config.AlwaysOnTop, renderRaw, isRaw, IsZoomed(hwnd) != 0, g_runtime.CrossMonitorMode, IsCompareModeActive(), isPixelArtMode, menuCmsMode, menuEnableSoftProofing, menuSoftProofPath);
+    bool isAnimated = GetPaneContext(PaneSlot::Primary).resource.IsAnimated();
+    ShowContextMenu(hwnd, pt, hasImage, extensionFixNeeded, g_runtime.LockWindowSize, g_runtime.ShowInfoPanel, g_runtime.InfoPanelExpanded, g_config.AlwaysOnTop, renderRaw, isRaw, IsZoomed(hwnd) != 0, g_runtime.CrossMonitorMode, IsCompareModeActive(), isAnimated, isPixelArtMode, menuCmsMode, menuEnableSoftProofing, menuSoftProofPath);
 }
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -11167,11 +11182,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 RECT rc; GetClientRect(hwnd, &rc);
                 float winW = (float)rc.right;
                 float winH = (float)rc.bottom;
-                float baseFit = std::min(winW / vs.VisualSize.width, winH / vs.VisualSize.height);
-                if (vs.VisualSize.width < 200.0f && vs.VisualSize.height < 200.0f) {
-                    if (baseFit > 1.0f) baseFit = 1.0f;
-                }
+                float baseFit = ComputeEffectiveBaseFitScale(vs, winW, winH);
 
+                s_resizeInitialWinW = winW;
+                s_resizeInitialWinH = winH;
                 s_resizeInitialAbsoluteScale = baseFit * GetPaneContext(PaneSlot::Primary).view.Zoom;
                 s_maintainAbsoluteScale = (abs(GetPaneContext(PaneSlot::Primary).view.Zoom - 1.0f) > 0.001f);
                 s_resizeStartedWithBorders = (GetPaneContext(PaneSlot::Primary).view.Zoom < 0.999f);
@@ -16031,6 +16045,20 @@ void ProcessEngineEvents(HWND hwnd) {
             // === LEFT PANE: Lean handler (upload bitmap, store metadata, done) ===
             if (targetSlot == PaneSlot::Left) {
                 if (!evt.rawFrame || !evt.rawFrame->IsValid() || evt.rawFrame->IsSvg()) break;
+                if (evt.rawFrame->animator && evt.rawFrame->animator->IsAnimated()) {
+                    g_isLeftPaneDecoding = false;
+                    if (g_leftPaneReadyCallback.pfn) {
+                        auto cb = std::move(g_leftPaneReadyCallback);
+                        cb.Invoke(false);
+                        cb.Reset();
+                    }
+                    if (IsCompareModeActive() && AppContext::GetInstance().CompareCtrl) {
+                        AppContext::GetInstance().CompareCtrl->ExitMode(hwnd);
+                    }
+                    g_osd.Show(hwnd, AppStrings::OSD_CompareAnimNotSupported, true);
+                    needsRepaint = true;
+                    break;
+                }
                 
                 ComPtr<ID2D1Bitmap> leftBitmap;
                 QuickView::DisplayColorState uploadState = {};
@@ -16551,7 +16579,10 @@ void ProcessEngineEvents(HWND hwnd) {
                 }
                 SetWindowTextW(hwnd, titleBuf);
                 
-                if (IsCompareModeActive() && (GetPaneContext(PaneSlot::Primary).metadata.Width > 8192 || GetPaneContext(PaneSlot::Primary).metadata.Height > 8192)) {
+                if (IsCompareModeActive() && GetPaneContext(PaneSlot::Primary).resource.IsAnimated()) {
+                    AppContext::GetInstance().CompareCtrl->ExitMode(hwnd);
+                    g_osd.Show(hwnd, AppStrings::OSD_CompareAnimNotSupported, true);
+                } else if (IsCompareModeActive() && (GetPaneContext(PaneSlot::Primary).metadata.Width > 8192 || GetPaneContext(PaneSlot::Primary).metadata.Height > 8192)) {
                     AppContext::GetInstance().CompareCtrl->ExitMode(hwnd);
                     g_osd.Show(hwnd, L"Compare mode exited: Titan image is not supported yet.", true);
                 }

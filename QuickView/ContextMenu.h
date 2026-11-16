@@ -115,6 +115,8 @@ enum ContextMenuCommand : UINT {
 /// <param name="alwaysOnTop">Whether window is always on top</param>
 /// <param name="renderRaw">Whether Render RAW mode is active</param>
 /// <param name="isRawFile">Whether current file is RAW format</param>
-void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix, bool isWindowLocked, bool showInfoPanel, bool infoPanelExpanded, bool alwaysOnTop, bool renderRaw, bool isRawFile, bool isFullscreen, bool isCrossMonitor, bool isCompareMode, bool isPixelArtMode, int cmsMode, bool enableSoftProofing, const std::wstring& softProofProfilePath);
+/// <param name="isCompareMode">Whether compare mode is active</param>
+/// <param name="isAnimated">Whether current image is animated</param>
+void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix, bool isWindowLocked, bool showInfoPanel, bool infoPanelExpanded, bool alwaysOnTop, bool renderRaw, bool isRawFile, bool isFullscreen, bool isCrossMonitor, bool isCompareMode, bool isAnimated, bool isPixelArtMode, int cmsMode, bool enableSoftProofing, const std::wstring& softProofProfilePath);
 
 void ShowGalleryContextMenu(HWND hwnd, POINT pt);

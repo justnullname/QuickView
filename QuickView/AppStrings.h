@@ -42,6 +42,7 @@ namespace AppStrings {
     extern const wchar_t* OSD_SpanOff;
     extern const wchar_t* OSD_CompareBefore;
     extern const wchar_t* OSD_CompareAfter;
+    extern const wchar_t* OSD_CompareAnimNotSupported;
     extern const wchar_t* OSD_UndoDeleteSuccess;
     extern const wchar_t* OSD_UndoDeleteFailed;
     extern const wchar_t* OSD_UndoRenameSuccess;
