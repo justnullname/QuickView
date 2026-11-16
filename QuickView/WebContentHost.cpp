@@ -14,6 +14,7 @@
 #include <cmath>
 #include <string>
 #include "StringUtils.h"
+#include "SystemInfo.h"
 
 using namespace Microsoft::WRL;
 
@@ -390,13 +391,7 @@ HRESULT WebContentHost::EnsureReady(HWND hwnd, IDCompositionDesktopDevice* dcomp
     }
 
     const std::wstring userDataFolder = GetUserDataFolder();
-    {
-        const size_t slash = userDataFolder.find_last_of(L'\\');
-        if (slash != std::wstring::npos) {
-            CreateDirectoryW(userDataFolder.substr(0, slash).c_str(), nullptr);
-        }
-        CreateDirectoryW(userDataFolder.c_str(), nullptr);
-    }
+    SystemInfo::EnsureDirectoryRecursive(userDataFolder);
 
     environment_.Reset();
     HRESULT hr = CreateCoreWebView2EnvironmentWithOptions(

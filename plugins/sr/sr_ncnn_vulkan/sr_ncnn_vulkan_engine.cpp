@@ -92,13 +92,65 @@ static std::wstring GetPluginDirectory() {
                            GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                            reinterpret_cast<LPCWSTR>(&GetOptimalVulkanGpuIndex), 
                            &hModule) && hModule) {
-        wchar_t path[MAX_PATH];
-        if (GetModuleFileNameW(hModule, path, MAX_PATH) > 0) {
+        wchar_t path[MAX_PATH * 2]{};
+        if (GetModuleFileNameW(hModule, path, static_cast<DWORD>(std::size(path))) > 0) {
             PathRemoveFileSpecW(path);
             return std::wstring(path);
         }
     }
     return L"";
+}
+
+static std::vector<std::wstring> CollectModelSearchDirs() {
+    std::vector<std::wstring> dirs;
+    dirs.reserve(5);
+
+    wchar_t localAppData[MAX_PATH * 2]{};
+    DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", localAppData, static_cast<DWORD>(std::size(localAppData)));
+    if (n > 0 && n < std::size(localAppData)) {
+        dirs.push_back(std::wstring(localAppData, n) + L"\\QuickView\\plugins\\sr\\sr_ncnn_vulkan\\models");
+    }
+
+    std::wstring pluginDir = GetPluginDirectory();
+    if (!pluginDir.empty()) {
+        dirs.push_back(pluginDir + L"\\models");
+    }
+
+    wchar_t exePath[MAX_PATH * 2]{};
+    DWORD exeLen = GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
+    if (exeLen > 0 && exeLen < std::size(exePath)) {
+        PathRemoveFileSpecW(exePath);
+        std::wstring exeDir(exePath);
+        dirs.push_back(exeDir + L"\\plugins\\sr\\sr_ncnn_vulkan\\models");
+        dirs.push_back(exeDir + L"\\plugins\\models");
+        dirs.push_back(exeDir + L"\\models");
+    }
+    return dirs;
+}
+
+static bool CheckModelFilesExist(const std::wstring& modelsDir, const char* modelId) {
+    if (!modelId || modelId[0] == '\0' || modelsDir.empty()) return false;
+    std::wstring wId(modelId, modelId + strlen(modelId));
+    std::wstring binPath = modelsDir + L"\\" + wId + L".bin";
+    std::wstring paramPath = modelsDir + L"\\" + wId + L".param";
+    DWORD binAttr = GetFileAttributesW(binPath.c_str());
+    DWORD paramAttr = GetFileAttributesW(paramPath.c_str());
+    return (binAttr != INVALID_FILE_ATTRIBUTES && !(binAttr & FILE_ATTRIBUTE_DIRECTORY) &&
+            paramAttr != INVALID_FILE_ATTRIBUTES && !(paramAttr & FILE_ATTRIBUTE_DIRECTORY));
+}
+
+static bool FindModelFilePair(const char* modelId, std::wstring& outParamPath, std::wstring& outBinPath) {
+    if (!modelId || modelId[0] == '\0') return false;
+    const auto dirs = CollectModelSearchDirs();
+    std::wstring wId(modelId, modelId + strlen(modelId));
+    for (const auto& dir : dirs) {
+        if (CheckModelFilesExist(dir, modelId)) {
+            outParamPath = dir + L"\\" + wId + L".param";
+            outBinPath = dir + L"\\" + wId + L".bin";
+            return true;
+        }
+    }
+    return false;
 }
 
 // ----------------------------------------------------------------------------
@@ -148,45 +200,24 @@ struct NcnnVulkanContextImpl {
             entry->net.set_vulkan_device(gpuIndex);
         }
 
-        std::wstring wsModelId(modelId.begin(), modelId.end());
-        std::wstring paramFile = wsModelId + L".param";
-        std::wstring binFile = wsModelId + L".bin";
-
-        // 1. Primary: Self-contained path relative to plugin DLL directory
-        std::wstring pluginDir = GetPluginDirectory();
-        std::wstring paramPath = pluginDir + L"\\models\\" + paramFile;
-        std::wstring binPath = pluginDir + L"\\models\\" + binFile;
-
-        // 2. Fallbacks: Standard relative directories from host executable
-        if (GetFileAttributesW(paramPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
-            wchar_t exePath[MAX_PATH];
-            GetModuleFileNameW(nullptr, exePath, MAX_PATH);
-            PathRemoveFileSpecW(exePath);
-
-            paramPath = std::wstring(exePath) + L"\\plugins\\sr\\sr_ncnn_vulkan\\models\\" + paramFile;
-            binPath = std::wstring(exePath) + L"\\plugins\\sr\\sr_ncnn_vulkan\\models\\" + binFile;
-
-            if (GetFileAttributesW(paramPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
-                paramPath = std::wstring(exePath) + L"\\plugins\\models\\" + paramFile;
-                binPath = std::wstring(exePath) + L"\\plugins\\models\\" + binFile;
-            }
-        }
-
-        if (GetFileAttributesW(paramPath.c_str()) == INVALID_FILE_ATTRIBUTES ||
-            GetFileAttributesW(binPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        std::wstring paramPath;
+        std::wstring binPath;
+        if (!FindModelFilePair(modelId.c_str(), paramPath, binPath)) {
             char buf[512];
             snprintf(buf, sizeof(buf), "[QVX-SR] NCNN LoadModel FAILED: Files not found for '%s'\n", modelId.c_str());
             OutputDebugStringA(buf);
             return nullptr;
         }
 
-        char paramPathA[MAX_PATH];
-        char binPathA[MAX_PATH];
-        WideCharToMultiByte(CP_UTF8, 0, paramPath.c_str(), -1, paramPathA, MAX_PATH, nullptr, nullptr);
-        WideCharToMultiByte(CP_UTF8, 0, binPath.c_str(), -1, binPathA, MAX_PATH, nullptr, nullptr);
+        FILE* fpParam = nullptr;
+        FILE* fpBin = nullptr;
+        _wfopen_s(&fpParam, paramPath.c_str(), L"rb");
+        _wfopen_s(&fpBin, binPath.c_str(), L"rb");
 
-        int ret1 = entry->net.load_param(paramPathA);
-        int ret2 = entry->net.load_model(binPathA);
+        int ret1 = fpParam ? entry->net.load_param(fpParam) : -1;
+        int ret2 = fpBin ? entry->net.load_model(fpBin) : -1;
+        if (fpParam) fclose(fpParam);
+        if (fpBin) fclose(fpBin);
 
         if (ret1 != 0 || ret2 != 0) {
             char buf[512];
@@ -448,14 +479,6 @@ static void UpdateLocalization(const char* lang) {
     }
 }
 
-static bool CheckModelFilesExist(const std::wstring& modelsDir, const char* modelId) {
-    if (!modelId) return false;
-    std::wstring binPath = modelsDir + L"\\" + std::wstring(modelId, modelId + strlen(modelId)) + L".bin";
-    std::wstring paramPath = modelsDir + L"\\" + std::wstring(modelId, modelId + strlen(modelId)) + L".param";
-    return (GetFileAttributesW(binPath.c_str()) != INVALID_FILE_ATTRIBUTES &&
-            GetFileAttributesW(paramPath.c_str()) != INVALID_FILE_ATTRIBUTES);
-}
-
 // ----------------------------------------------------------------------------
 // Model Enumeration
 // ----------------------------------------------------------------------------
@@ -466,24 +489,15 @@ static uint32_t NcnnVulkan_GetModelCount(void) {
 static const QVX_SR_ModelInfo* NcnnVulkan_GetModelInfo(uint32_t index) {
     if (index >= NcnnVulkan_GetModelCount()) return nullptr;
 
-    wchar_t exePath[MAX_PATH] = { 0 };
-    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
-    PathRemoveFileSpecW(exePath);
-
-    std::wstring pluginsDir = std::wstring(exePath) + L"\\plugins";
-    std::wstring modelsDir = pluginsDir + L"\\models";
-    if (GetFileAttributesW(modelsDir.c_str()) == INVALID_FILE_ATTRIBUTES) {
-        modelsDir = std::wstring(exePath) + L"\\models";
-    }
-
+    std::wstring dummyParam, dummyBin;
     const char* id = s_ncnnModels[index].model_id;
     if (strcmp(id, "realesr-animevideov3-auto") == 0) {
-        bool hasAll = CheckModelFilesExist(modelsDir, "realesr-animevideov3-x2") &&
-                      CheckModelFilesExist(modelsDir, "realesr-animevideov3-x3") &&
-                      CheckModelFilesExist(modelsDir, "realesr-animevideov3-x4");
+        bool hasAll = FindModelFilePair("realesr-animevideov3-x2", dummyParam, dummyBin) &&
+                      FindModelFilePair("realesr-animevideov3-x3", dummyParam, dummyBin) &&
+                      FindModelFilePair("realesr-animevideov3-x4", dummyParam, dummyBin);
         s_ncnnModels[index].is_installed = hasAll;
     } else {
-        s_ncnnModels[index].is_installed = CheckModelFilesExist(modelsDir, id);
+        s_ncnnModels[index].is_installed = FindModelFilePair(id, dummyParam, dummyBin);
     }
     return &s_ncnnModels[index];
 }

@@ -4,6 +4,7 @@
 #include <atomic>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 
 #ifdef _WIN32
@@ -227,6 +228,77 @@ struct SystemInfo {
 #else
         static const std::wstring s_empty;
         return s_empty;
+#endif
+    }
+
+    // Recursively creates a directory tree (handles missing parent directories cleanly).
+    static bool EnsureDirectoryRecursive(std::wstring_view dirPath) {
+#ifdef _WIN32
+        if (dirPath.empty()) return false;
+        std::wstring path(dirPath);
+        for (wchar_t& ch : path) {
+            if (ch == L'/') ch = L'\\';
+        }
+        while (path.size() > 3 && path.back() == L'\\') {
+            path.pop_back();
+        }
+        if (path.empty()) return false;
+
+        DWORD attrs = GetFileAttributesW(path.c_str());
+        if (attrs != INVALID_FILE_ATTRIBUTES) {
+            return (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        }
+
+        // Determine starting offset to skip drive root ("C:\") or UNC share ("\\server\share\")
+        size_t pos = 0;
+        if (path.size() >= 2 && path[1] == L':') {
+            pos = 3;
+        } else if (path.size() >= 2 && path[0] == L'\\' && path[1] == L'\\') {
+            size_t srvEnd = path.find(L'\\', 2);
+            if (srvEnd != std::wstring::npos) {
+                size_t shareEnd = path.find(L'\\', srvEnd + 1);
+                pos = (shareEnd != std::wstring::npos) ? (shareEnd + 1) : path.size();
+            }
+        }
+
+        while (pos <= path.size()) {
+            size_t nextSlash = path.find(L'\\', pos);
+            if (nextSlash == std::wstring::npos) {
+                nextSlash = path.size();
+            }
+            if (nextSlash > 0) {
+                std::wstring sub = path.substr(0, nextSlash);
+                if (!CreateDirectoryW(sub.c_str(), nullptr)) {
+                    DWORD err = GetLastError();
+                    if (err != ERROR_ALREADY_EXISTS) {
+                        DWORD subAttr = GetFileAttributesW(sub.c_str());
+                        if (subAttr == INVALID_FILE_ATTRIBUTES || !(subAttr & FILE_ATTRIBUTE_DIRECTORY)) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            if (nextSlash == path.size()) break;
+            pos = nextSlash + 1;
+        }
+        return true;
+#else
+        (void)dirPath;
+        return true;
+#endif
+    }
+
+    // Returns %LOCALAPPDATA% (redirected automatically to package LocalCache inside MSIX).
+    static std::wstring GetLocalAppDataDir() {
+#ifdef _WIN32
+        wchar_t buf[MAX_PATH * 2]{};
+        DWORD len = GetEnvironmentVariableW(L"LOCALAPPDATA", buf, static_cast<DWORD>(std::size(buf)));
+        if (len > 0 && len < std::size(buf)) {
+            return std::wstring(buf, len);
+        }
+        return {};
+#else
+        return {};
 #endif
     }
 

@@ -11,6 +11,7 @@
 #include <wincrypt.h>
 #include "EditState.h"
 #include "AsyncJob.h"
+#include "SystemInfo.h"
 
 extern AppConfig g_config;
 
@@ -30,6 +31,11 @@ void UpdateManager::Init(const std::string& currentVersion) {
 }
 
 void UpdateManager::StartBackgroundCheck(int delaySeconds) {
+    // Store / MSIX packages must receive updates solely via Microsoft Store.
+    if (SystemInfo::IsPackagedApp()) {
+        return;
+    }
+
     // Allow restart if not currently working
     if (m_status == UpdateStatus::Checking || m_status == UpdateStatus::Downloading) {
         return; 
@@ -435,6 +441,10 @@ void UpdateManager::OnUserLater() {
 }
 
 void UpdateManager::HandleExit() {
+    if (SystemInfo::IsPackagedApp()) {
+        return;
+    }
+
     if (IsUpdatePending() && !m_tempPath.empty() && m_status == UpdateStatus::ReadyToInstall) {
         // [Modern Self-Update Logic: "The Great Swap"]
         // 1. Get current executable path and PID

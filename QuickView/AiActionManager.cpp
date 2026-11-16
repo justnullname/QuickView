@@ -14,6 +14,7 @@
 
 #include "StringUtils.h"
 #include "AsyncJob.h"
+#include "SystemInfo.h"
 
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "crypt32.lib")
@@ -848,13 +849,19 @@ void AiActionManager::SetLastActionId(std::string_view id) {
 
 std::wstring AiActionManager::GetConfigFilePath() const {
     std::wstring iniPath = GetConfigPath();
-    wchar_t szPath[MAX_PATH] = { 0 };
-    wcscpy_s(szPath, iniPath.c_str());
-    PathRemoveFileSpecW(szPath);
+    wchar_t szDir[MAX_PATH * 2] = { 0 };
+    wcscpy_s(szDir, iniPath.c_str());
+    PathRemoveFileSpecW(szDir);
+    if (szDir[0] != L'\0') {
+        SystemInfo::EnsureDirectoryRecursive(szDir);
+    }
+
+    wchar_t szPath[MAX_PATH * 2] = { 0 };
+    wcscpy_s(szPath, szDir);
     PathAppendW(szPath, L"ai_actions.json");
 
     // Seamless migration: If target does not exist yet, check if legacy exeDir version exists
-    if (GetFileAttributesW(szPath) == INVALID_FILE_ATTRIBUTES) {
+    if (!SystemInfo::IsPackagedApp() && GetFileAttributesW(szPath) == INVALID_FILE_ATTRIBUTES) {
         wchar_t exePath[MAX_PATH] = { 0 };
         if (GetModuleFileNameW(nullptr, exePath, MAX_PATH) > 0) {
             PathRemoveFileSpecW(exePath);

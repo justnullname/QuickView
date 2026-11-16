@@ -53,6 +53,7 @@ endif()
 # ============================================================================
 option(ENABLE_ASAN "Enable Address Sanitizer" OFF)
 option(ENABLE_LTO  "Enable Link Time Optimization (ThinLTO)" OFF)
+option(ENABLE_SECURITY_COOKIE "Enable /GS buffer security check for Store/WACK compliance" ON)
 
 # ============================================================================
 # Source Files Definition
@@ -217,13 +218,18 @@ if(MSVC OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 
     if(ENABLE_LTO)
         message(STATUS "Build Matrix: Enabling Full LTO (Release-LTO Pure Maximum Speed)")
+        if(ENABLE_SECURITY_COOKIE)
+            set(QV_SECURITY_COOKIE_FLAG "/GS")
+        else()
+            set(QV_SECURITY_COOKIE_FLAG "/GS-")
+        endif()
         # Pure peak performance flags for Hot-Path (Pure /O2, no compromise)
         target_compile_options(QuickView PRIVATE 
-            /O2 /Gw /Gy /Zc:inline /GR- /fp:fast /GS- /EHs-c- /Z7
+            /O2 /Gw /Gy /Zc:inline /GR- /fp:fast ${QV_SECURITY_COOKIE_FLAG} /EHs-c- /Z7
             /clang:-flto=full /clang:-fno-exceptions
             /clang:-fwhole-program-vtables /clang:-fvirtual-function-elimination
             /clang:-fno-ident)
-        target_link_options(QuickView PRIVATE /DEBUG /OPT:REF /OPT:ICF /opt:lldlto=3 "/MAP:${CMAKE_BINARY_DIR}/QuickView.map")
+        target_link_options(QuickView PRIVATE /DEBUG /OPT:REF /OPT:ICF /DYNAMICBASE /NXCOMPAT /opt:lldlto=3 "/MAP:${CMAKE_BINARY_DIR}/QuickView.map")
     endif()
 endif()
 
@@ -410,6 +416,11 @@ if(EXISTS "${NCNN_DIR}/include/ncnn")
         RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/plugins/sr/sr_ncnn_vulkan"
         RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/plugins/sr/sr_ncnn_vulkan"
     )
+    target_compile_definitions(sr_ncnn_vulkan PRIVATE UNICODE _UNICODE)
+    if(MSVC OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        target_compile_options(sr_ncnn_vulkan PRIVATE /GS)
+        target_link_options(sr_ncnn_vulkan PRIVATE /DYNAMICBASE /NXCOMPAT)
+    endif()
     target_include_directories(sr_ncnn_vulkan PRIVATE 
         QuickView 
         "${NCNN_DIR}/include"

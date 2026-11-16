@@ -799,6 +799,8 @@ const wchar_t *Settings_Status_AssocSummaryFormat = nullptr;
 const wchar_t *Settings_Status_AssocBrokenHint = nullptr;
 const wchar_t *Settings_Status_AssocPendingHint = nullptr;
 const wchar_t *Settings_Status_AssocStoreManaged = nullptr;
+const wchar_t *Settings_Label_StoreUpdatesManaged = nullptr;
+const wchar_t *Settings_Action_OpenStore = nullptr;
 const wchar_t *Settings_Status_AssocLegend = nullptr;
 const wchar_t *Context_OpenWithQuickView = nullptr;
 const wchar_t *Settings_Action_ApplyPending = nullptr;
@@ -1580,6 +1582,8 @@ struct LanguageTable {
     const wchar_t *Settings_Action_ApplyPending;
     const wchar_t *Settings_Status_AssocPendingHint;
     const wchar_t *Settings_Status_AssocStoreManaged;
+    const wchar_t *Settings_Label_StoreUpdatesManaged;
+    const wchar_t *Settings_Action_OpenStore;
 };
 
 // ----------------------------------------------------------------
@@ -2354,7 +2358,9 @@ static const LanguageTable Table_EN = {
     L"Open with QuickView", // Context_OpenWithQuickView
     L"Apply Changes*", // Settings_Action_ApplyPending
     L"Pending changes — click \"Apply Changes\" to sync Open With & Context Menu to Windows.", // Settings_Status_AssocPendingHint
-    L"Microsoft Store (MSIX) Mode: Open With & Context Menu are natively managed by Windows. Click \"Set Default in Windows\" to assign default extensions." // Settings_Status_AssocStoreManaged
+    L"Microsoft Store (MSIX) Mode: Open With & Context Menu are natively managed by Windows. Click \"Set Default in Windows\" to assign default extensions.", // Settings_Status_AssocStoreManaged
+    L"Managed by Microsoft Store", // Settings_Label_StoreUpdatesManaged
+    L"Open Store" // Settings_Action_OpenStore
 };
 
 // ----------------------------------------------------------------
@@ -3129,7 +3135,9 @@ static const LanguageTable Table_CN = {
     L"使用 QuickView 打开", // Context_OpenWithQuickView
     L"应用更改*", // Settings_Action_ApplyPending
     L"有未同步的修改 — 请点击「应用更改」以同步右键菜单和系统打开方式。", // Settings_Status_AssocPendingHint
-    L"Microsoft Store (MSIX) 模式：右键菜单与「打开方式」已由系统原生托管，点击「在 Windows 中设为默认」即可设置默认程序。" // Settings_Status_AssocStoreManaged
+    L"Microsoft Store (MSIX) 模式：右键菜单与「打开方式」已由系统原生托管，点击「在 Windows 中设为默认」即可设置默认程序。", // Settings_Status_AssocStoreManaged
+    L"由 Microsoft Store 管理更新", // Settings_Label_StoreUpdatesManaged
+    L"打开商店" // Settings_Action_OpenStore
 };
 
 // ----------------------------------------------------------------
@@ -3904,7 +3912,9 @@ static const LanguageTable Table_TW = {
     L"使用 QuickView 開啟", // Context_OpenWithQuickView
     L"套用變更*", // Settings_Action_ApplyPending
     L"有未同步的變更 — 請點擊「套用變更」以同步右鍵選單與系統開啟方式。", // Settings_Status_AssocPendingHint
-    L"Microsoft Store (MSIX) 模式：右鍵選單與「開啟方式」已由系統原生託管，點擊「在 Windows 中設為預設」即可設定預設程式。" // Settings_Status_AssocStoreManaged
+    L"Microsoft Store (MSIX) 模式：右鍵選單與「開啟方式」已由系統原生託管，點擊「在 Windows 中設為預設」即可設定預設程式。", // Settings_Status_AssocStoreManaged
+    L"由 Microsoft Store 管理更新", // Settings_Label_StoreUpdatesManaged
+    L"開啟商店" // Settings_Action_OpenStore
 };
 
 // ----------------------------------------------------------------
@@ -4679,7 +4689,9 @@ static const LanguageTable Table_JA = {
     L"QuickView で開く", // Context_OpenWithQuickView
     L"変更を適用*", // Settings_Action_ApplyPending
     L"未適用の変更があります。「変更を適用」をクリックしてシステムと同期してください。", // Settings_Status_AssocPendingHint
-    L"Microsoft Store (MSIX) モード：コンテキストメニュー等は Windows が標準管理しています。「Windows で既定に設定」から関連付けを行ってください。" // Settings_Status_AssocStoreManaged
+    L"Microsoft Store (MSIX) モード：コンテキストメニュー等は Windows が標準管理しています。「Windows で既定に設定」から関連付けを行ってください。", // Settings_Status_AssocStoreManaged
+    L"Microsoft Store で管理", // Settings_Label_StoreUpdatesManaged
+    L"ストアを開く" // Settings_Action_OpenStore
 };
 
 // ----------------------------------------------------------------
@@ -5454,7 +5466,9 @@ static const LanguageTable Table_RU = {
     L"Открыть в QuickView", // Context_OpenWithQuickView
     L"Применить*", // Settings_Action_ApplyPending
     L"Есть несохранённые изменения — нажмите «Применить» для синхронизации с системой.", // Settings_Status_AssocPendingHint
-    L"Режим Microsoft Store (MSIX): контекстное меню и «Открыть с помощью» управляются системой Windows. Нажмите «По умолчанию в Windows» для выбора форматов." // Settings_Status_AssocStoreManaged
+    L"Режим Microsoft Store (MSIX): контекстное меню и «Открыть с помощью» управляются системой Windows. Нажмите «По умолчанию в Windows» для выбора форматов.", // Settings_Status_AssocStoreManaged
+    L"Обновляется через Microsoft Store", // Settings_Label_StoreUpdatesManaged
+    L"Открыть Store" // Settings_Action_OpenStore
 };
 
 // ----------------------------------------------------------------
@@ -6229,7 +6243,9 @@ static const LanguageTable Table_DE = {
     L"Mit QuickView öffnen", // Context_OpenWithQuickView
     L"Anwenden*", // Settings_Action_ApplyPending
     L"Ausstehende Änderungen — klicken Sie auf \"Anwenden\", um Windows zu synchronisieren.", // Settings_Status_AssocPendingHint
-    L"Microsoft Store (MSIX)-Modus: Kontextmenü & Öffnen mit werden nativ von Windows verwaltet. Klicken Sie auf „In Windows als Standard festlegen“." // Settings_Status_AssocStoreManaged
+    L"Microsoft Store (MSIX)-Modus: Kontextmenü & Öffnen mit werden nativ von Windows verwaltet. Klicken Sie auf „In Windows als Standard festlegen“.", // Settings_Status_AssocStoreManaged
+    L"Über Microsoft Store verwaltet", // Settings_Label_StoreUpdatesManaged
+    L"Store öffnen" // Settings_Action_OpenStore
 };
 
 // ----------------------------------------------------------------
@@ -7004,7 +7020,9 @@ static const LanguageTable Table_ES = {
     L"Abrir con QuickView", // Context_OpenWithQuickView
     L"Aplicar*", // Settings_Action_ApplyPending
     L"Cambios pendientes — haz clic en \"Aplicar\" para sincronizar con Windows.", // Settings_Status_AssocPendingHint
-    L"Modo Microsoft Store (MSIX): el menú contextual y Abrir con son gestionados por Windows. Haz clic en «Establecer como predeterminado en Windows»." // Settings_Status_AssocStoreManaged
+    L"Modo Microsoft Store (MSIX): el menú contextual y Abrir con son gestionados por Windows. Haz clic en «Establecer como predeterminado en Windows».", // Settings_Status_AssocStoreManaged
+    L"Gestionado por Microsoft Store", // Settings_Label_StoreUpdatesManaged
+    L"Abrir tienda" // Settings_Action_OpenStore
 };
 
 // ----------------------------------------------------------------
@@ -7779,7 +7797,9 @@ static const LanguageTable Table_FR = {
     L"Ouvrir avec QuickView", // Context_OpenWithQuickView
     L"Appliquer*", // Settings_Action_ApplyPending
     L"Modifications en attente — cliquez sur « Appliquer » pour synchroniser avec Windows.", // Settings_Status_AssocPendingHint
-    L"Mode Microsoft Store (MSIX) : le menu contextuel et Ouvrir avec sont gérés nativement par Windows. Cliquez sur « Définir par défaut dans Windows »." // Settings_Status_AssocStoreManaged
+    L"Mode Microsoft Store (MSIX) : le menu contextuel et Ouvrir avec sont gérés nativement par Windows. Cliquez sur « Définir par défaut dans Windows ».", // Settings_Status_AssocStoreManaged
+    L"Géré par Microsoft Store", // Settings_Label_StoreUpdatesManaged
+    L"Ouvrir le Store" // Settings_Action_OpenStore
 };
 
 // ----------------------------------------------------------------
@@ -8554,6 +8574,8 @@ void Apply(const LanguageTable& t) {
   Settings_Action_ApplyPending = t.Settings_Action_ApplyPending;
   Settings_Status_AssocPendingHint = t.Settings_Status_AssocPendingHint;
   Settings_Status_AssocStoreManaged = t.Settings_Status_AssocStoreManaged;
+  Settings_Label_StoreUpdatesManaged = t.Settings_Label_StoreUpdatesManaged;
+  Settings_Action_OpenStore = t.Settings_Action_OpenStore;
 }
 
 void Init() { SetLanguage(Language::Auto); }

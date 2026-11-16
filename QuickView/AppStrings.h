@@ -910,6 +910,8 @@ namespace AppStrings {
     extern const wchar_t* Settings_Status_AssocBrokenHint;
     extern const wchar_t* Settings_Status_AssocPendingHint;
     extern const wchar_t* Settings_Status_AssocStoreManaged;
+    extern const wchar_t* Settings_Label_StoreUpdatesManaged;
+    extern const wchar_t* Settings_Action_OpenStore;
     extern const wchar_t* Settings_Status_AssocLegend;
     extern const wchar_t* Context_OpenWithQuickView;
 

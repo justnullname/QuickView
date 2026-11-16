@@ -8,6 +8,7 @@
 #include "pch.h"
 #include "ProcessRouter.h"
 #include "FileAssociationManager.h"
+#include "SystemInfo.h"
 #include <vector>
 #include <mutex>
 #include <thread>
@@ -22,17 +23,26 @@ namespace QuickView::ProcessRouter {
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-static constexpr wchar_t kMutexName[]     = L"Local\\QuickView_Master_v1";
+static constexpr wchar_t kMutexNameUnpackaged[] = L"Local\\QuickView_Master_v1";
+static constexpr wchar_t kMutexNamePackaged[]   = L"Local\\QuickView_Master_MSIX_v1";
 static constexpr wchar_t kViewerChildArg[] = L"--viewer-child";
 static constexpr DWORD   kPipeBufferSize  = 8192;   // bytes
 static constexpr DWORD   kRouteTimeoutMs  = 2000;   // max wait for pipe connect
 static constexpr int     kRouteRetryCount = 3;
 static constexpr DWORD   kRouteRetryMs    = 150;
 
-// Pipe name includes session ID for Terminal Services isolation.
+static const wchar_t* GetMasterMutexName() {
+    return SystemInfo::IsPackagedApp() ? kMutexNamePackaged : kMutexNameUnpackaged;
+}
+
+// Pipe name includes session ID for Terminal Services isolation,
+// and an MSIX tag so Store and portable instances never hijack each other.
 static std::wstring BuildPipeName() {
     DWORD sessionId = 0;
     ProcessIdToSessionId(GetCurrentProcessId(), &sessionId);
+    if (SystemInfo::IsPackagedApp()) {
+        return L"\\\\.\\pipe\\QuickView_Route_MSIX_S" + std::to_wstring(sessionId);
+    }
     return L"\\\\.\\pipe\\QuickView_Route_S" + std::to_wstring(sessionId);
 }
 
@@ -188,7 +198,7 @@ RouteResult TryRoute(bool singleInstanceEnabled) {
     s_pipeName = BuildPipeName();
 
     // Attempt to claim the Master mutex.
-    s_mutex = CreateMutexW(nullptr, TRUE, kMutexName);
+    s_mutex = CreateMutexW(nullptr, TRUE, GetMasterMutexName());
     if (!s_mutex) {
         return RouteResult::Independent; // OS error, fallback
     }

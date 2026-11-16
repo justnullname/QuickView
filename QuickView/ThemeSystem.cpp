@@ -2,6 +2,7 @@
 #include "ThemeSystem.h"
 #include "ThemePalette.h"
 #include "AiActionManager.h"
+#include "SystemInfo.h"
 #include "yyjson.h"
 #include <commdlg.h>
 #include <cstring>
@@ -339,7 +340,12 @@ namespace QuickView::UI::ConfigIO {
         }
 
         LoadConfig();
-        g_config.PortableMode = portable;
+        if (SystemInfo::IsPackagedApp()) {
+            g_config.PortableMode = false;
+            g_config.CheckUpdates = false;
+        } else {
+            g_config.PortableMode = portable;
+        }
         g_config.EnforceGlassSafetyLimits();
         ::SaveConfig();
         return true;

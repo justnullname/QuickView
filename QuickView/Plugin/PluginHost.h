@@ -158,6 +158,7 @@ public:
         return DownloadModel(targetRelativePath, downloadUrl, "", onProgress, userData);
     }
     bool DownloadModel(const std::wstring& targetRelativePath, const std::string& downloadUrl, const std::string& expectedSha256, DownloadProgressCallback onProgress = nullptr, void* userData = nullptr);
+    std::wstring GetWritableModelsDirectory() const;
     void OpenModelsDirectory() const;
 
     // Fast Win32 Cryptographic SHA-256 calculation for download verification

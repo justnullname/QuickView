@@ -25,6 +25,9 @@ jobs:
           
           mkdir -p public/models
           mkdir -p public/plugins
+          if [ -f "docs/privacy.html" ]; then
+            cp docs/privacy.html public/privacy.html
+          fi
           if [ -f "plugins/plugins_manifest.json" ]; then
             cp plugins/plugins_manifest.json public/
             cp plugins/plugins_manifest.json public/plugins/

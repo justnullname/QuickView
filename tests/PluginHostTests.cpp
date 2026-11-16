@@ -2,6 +2,7 @@
 #include "Plugin/PluginHost.h"
 #include "Plugin/qvx.h"
 #include "Plugin/qvx_sr.h"
+#include "SystemInfo.h"
 #include <d3d11.h>
 #include <wrl/client.h>
 #include <fstream>
@@ -361,6 +362,30 @@ TEST_F(PluginHostTests, MissingPluginGracefulDegradation) {
     // Should gracefully fail context creation without crashing
     EXPECT_FALSE(host.EnsureSrContext(m_d3dDevice.Get()));
 }
+
+// 9. Test recursive directory creation and writable models directory resolution
+TEST_F(PluginHostTests, EnsureDirectoryRecursiveAndModelsDir) {
+    wchar_t tempPath[MAX_PATH]{};
+    ASSERT_GT(GetTempPathW(MAX_PATH, tempPath), 0u);
+    std::wstring base = std::wstring(tempPath) + L"QuickView_TestNestedDir_" + std::to_wstring(GetCurrentProcessId());
+    std::wstring nested = base + L"\\level1\\level2\\models";
+
+    EXPECT_TRUE(SystemInfo::EnsureDirectoryRecursive(nested));
+    DWORD attrs = GetFileAttributesW(nested.c_str());
+    EXPECT_NE(attrs, INVALID_FILE_ATTRIBUTES);
+    EXPECT_TRUE((attrs & FILE_ATTRIBUTE_DIRECTORY) != 0);
+
+    // Clean up nested dirs
+    RemoveDirectoryW(nested.c_str());
+    RemoveDirectoryW((base + L"\\level1\\level2").c_str());
+    RemoveDirectoryW((base + L"\\level1").c_str());
+    RemoveDirectoryW(base.c_str());
+
+    std::wstring modelsDir = QuickView::PluginHost::Instance().GetWritableModelsDirectory();
+    EXPECT_FALSE(modelsDir.empty());
+    EXPECT_NE(modelsDir.find(L"models"), std::wstring::npos);
+}
+
 
 
 

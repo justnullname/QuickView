@@ -4,6 +4,7 @@
 #include "ArchiveVFS.h"
 #include "yyjson.h"
 #include "StringUtils.h"
+#include "SystemInfo.h"
 #include <cwchar>
 #include <cstdlib>
 #include <charconv>
@@ -434,11 +435,26 @@ std::vector<SrModelEntry> PluginHost::GetCurrentSrModels() const {
     uint32_t count = m_srVTable->get_model_count();
     result.reserve(count);
 
-    wchar_t exePath[MAX_PATH];
-    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+    wchar_t exePath[MAX_PATH * 2]{};
+    GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
     PathRemoveFileSpecW(exePath);
+    std::wstring writableModelsDir = GetWritableModelsDirectory();
     std::wstring isolatedModelsDir = std::wstring(exePath) + L"\\plugins\\sr\\sr_ncnn_vulkan\\models";
     std::wstring legacyModelsDir = std::wstring(exePath) + L"\\plugins\\models";
+
+    auto hasModelPair = [&](const std::wstring& modelStem) -> bool {
+        const std::wstring* dirs[] = { &writableModelsDir, &isolatedModelsDir, &legacyModelsDir };
+        for (const auto* d : dirs) {
+            if (d->empty()) continue;
+            DWORD binAttr = GetFileAttributesW((*d + L"\\" + modelStem + L".bin").c_str());
+            DWORD paramAttr = GetFileAttributesW((*d + L"\\" + modelStem + L".param").c_str());
+            if (binAttr != INVALID_FILE_ATTRIBUTES && !(binAttr & FILE_ATTRIBUTE_DIRECTORY) &&
+                paramAttr != INVALID_FILE_ATTRIBUTES && !(paramAttr & FILE_ATTRIBUTE_DIRECTORY)) {
+                return true;
+            }
+        }
+        return false;
+    };
 
     for (uint32_t i = 0; i < count; ++i) {
         const QVX_SR_ModelInfo* info = m_srVTable->get_model_info(i);
@@ -460,19 +476,14 @@ std::vector<SrModelEntry> PluginHost::GetCurrentSrModels() const {
         // Fallback file existence check if plugin returned not installed
         if (!entry.isInstalled && !entry.downloadUrl.empty()) {
             if (entry.modelId == "realesr-animevideov3-auto") {
-                if ((GetFileAttributesW((isolatedModelsDir + L"\\realesr-animevideov3-x2.bin").c_str()) != INVALID_FILE_ATTRIBUTES &&
-                     GetFileAttributesW((isolatedModelsDir + L"\\realesr-animevideov3-x3.bin").c_str()) != INVALID_FILE_ATTRIBUTES &&
-                     GetFileAttributesW((isolatedModelsDir + L"\\realesr-animevideov3-x4.bin").c_str()) != INVALID_FILE_ATTRIBUTES) ||
-                    (GetFileAttributesW((legacyModelsDir + L"\\realesr-animevideov3-x2.bin").c_str()) != INVALID_FILE_ATTRIBUTES &&
-                     GetFileAttributesW((legacyModelsDir + L"\\realesr-animevideov3-x3.bin").c_str()) != INVALID_FILE_ATTRIBUTES &&
-                     GetFileAttributesW((legacyModelsDir + L"\\realesr-animevideov3-x4.bin").c_str()) != INVALID_FILE_ATTRIBUTES)) {
+                if (hasModelPair(L"realesr-animevideov3-x2") &&
+                    hasModelPair(L"realesr-animevideov3-x3") &&
+                    hasModelPair(L"realesr-animevideov3-x4")) {
                     entry.isInstalled = true;
                 }
             } else {
-                std::string filename = entry.modelId + ".bin";
-                std::wstring wideFilename(filename.begin(), filename.end());
-                if (GetFileAttributesW((isolatedModelsDir + L"\\" + wideFilename).c_str()) != INVALID_FILE_ATTRIBUTES ||
-                    GetFileAttributesW((legacyModelsDir + L"\\" + wideFilename).c_str()) != INVALID_FILE_ATTRIBUTES) {
+                std::wstring wideStem(entry.modelId.begin(), entry.modelId.end());
+                if (hasModelPair(wideStem)) {
                     entry.isInstalled = true;
                 }
             }
@@ -1264,13 +1275,44 @@ static bool WinHttpDownloadFile(
     return false;
 }
 
+std::wstring PluginHost::GetWritableModelsDirectory() const {
+    if (SystemInfo::IsPackagedApp()) {
+        std::wstring localAppData = SystemInfo::GetLocalAppDataDir();
+        if (localAppData.empty()) {
+            wchar_t tempPath[MAX_PATH * 2]{};
+            DWORD len = GetTempPathW(static_cast<DWORD>(std::size(tempPath)), tempPath);
+            if (len > 0 && len < std::size(tempPath)) {
+                localAppData.assign(tempPath, len);
+                while (!localAppData.empty() && (localAppData.back() == L'\\' || localAppData.back() == L'/')) {
+                    localAppData.pop_back();
+                }
+            }
+        }
+        return localAppData + L"\\QuickView\\plugins\\sr\\sr_ncnn_vulkan\\models";
+    }
+
+    wchar_t exePath[MAX_PATH * 2]{};
+    GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
+    PathRemoveFileSpecW(exePath);
+    return std::wstring(exePath) + L"\\plugins\\sr\\sr_ncnn_vulkan\\models";
+}
+
 bool PluginHost::DownloadPlugin(const std::wstring& pluginName, const std::string& downloadUrl, const std::string& expectedSha256, DownloadProgressCallback onProgress, void* userData) {
+    // Store / MSIX builds bundle official plugins inside the package and must not download executable binaries.
+    if (SystemInfo::IsPackagedApp()) {
+        LogDownloadDebug("[QVX-Download] Blocked DownloadPlugin in packaged MSIX mode.\n");
+        if (onProgress) {
+            onProgress(0.0f, true, false, userData);
+        }
+        return false;
+    }
+
     wchar_t exePath[MAX_PATH];
     GetModuleFileNameW(nullptr, exePath, MAX_PATH);
     PathRemoveFileSpecW(exePath);
 
     std::wstring destDir = std::wstring(exePath) + L"\\plugins";
-    CreateDirectoryW(destDir.c_str(), nullptr);
+    SystemInfo::EnsureDirectoryRecursive(destDir);
 
     std::string url = downloadUrl;
     if (url.empty()) {
@@ -1377,18 +1419,13 @@ bool PluginHost::DownloadModel(
     // Release any active SR context or loaded module to release file locks on models directory
     UnloadSrPlugin();
 
-    wchar_t exePath[MAX_PATH];
-    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
-    PathRemoveFileSpecW(exePath);
-
-    std::wstring pluginsDir = std::wstring(exePath) + L"\\plugins";
-    std::wstring srDir = pluginsDir + L"\\sr";
-    std::wstring ncnnDir = srDir + L"\\sr_ncnn_vulkan";
-    std::wstring fullModelsDir = ncnnDir + L"\\models";
-    CreateDirectoryW(pluginsDir.c_str(), nullptr);
-    CreateDirectoryW(srDir.c_str(), nullptr);
-    CreateDirectoryW(ncnnDir.c_str(), nullptr);
-    CreateDirectoryW(fullModelsDir.c_str(), nullptr);
+    std::wstring fullModelsDir = GetWritableModelsDirectory();
+    if (!SystemInfo::EnsureDirectoryRecursive(fullModelsDir)) {
+        if (onProgress) {
+            onProgress(0.0f, true, false, userData);
+        }
+        return false;
+    }
 
     bool isAutoComposite = (targetRelativePath.find(L"realesr-animevideov3-auto") != std::wstring::npos ||
                             downloadUrl.find("realesr-animevideov3-auto") != std::string::npos ||
@@ -1624,18 +1661,8 @@ void PluginHost::TriggerManifestFetch() {
 }
 
 void PluginHost::OpenModelsDirectory() const {
-    wchar_t exePath[MAX_PATH];
-    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
-    PathRemoveFileSpecW(exePath);
-
-    std::wstring pluginsDir = std::wstring(exePath) + L"\\plugins";
-    std::wstring srDir = pluginsDir + L"\\sr";
-    std::wstring ncnnDir = srDir + L"\\sr_ncnn_vulkan";
-    std::wstring fullModelsDir = ncnnDir + L"\\models";
-    CreateDirectoryW(pluginsDir.c_str(), nullptr);
-    CreateDirectoryW(srDir.c_str(), nullptr);
-    CreateDirectoryW(ncnnDir.c_str(), nullptr);
-    CreateDirectoryW(fullModelsDir.c_str(), nullptr);
+    std::wstring fullModelsDir = GetWritableModelsDirectory();
+    SystemInfo::EnsureDirectoryRecursive(fullModelsDir);
 
     ShellExecuteW(nullptr, L"open", fullModelsDir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }

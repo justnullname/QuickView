@@ -1535,33 +1535,52 @@ bool CheckWritePermission(const std::wstring& path) {
     return true;
 }
 
-std::wstring GetConfigPath(bool forcePortableCheck) {
-    wchar_t exePath[MAX_PATH];
-    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
-    std::wstring exeDir = exePath;
-    size_t lastSlash = exeDir.find_last_of(L"\\/");
-    if (lastSlash != std::wstring::npos) exeDir = exeDir.substr(0, lastSlash);
-    
-    std::wstring portablePath = exeDir + L"\\QuickView.ini";
-    
-    // If forcing check (for saving), return portable path
-    if (forcePortableCheck) return portablePath;
-
-    // Detection Logic:
-    // 1. If Portable INI exists, use it.
-    if (GetFileAttributesW(portablePath.c_str()) != INVALID_FILE_ATTRIBUTES) {
-        return portablePath;
-    }
-
-    // 2. Default to AppData
-    wchar_t appDataPath[MAX_PATH];
+static std::wstring ResolveAppDataIniPath(bool isPackaged) {
+    wchar_t appDataPath[MAX_PATH * 2]{};
     if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appDataPath))) {
         std::wstring configDir = std::wstring(appDataPath) + L"\\QuickView";
-        CreateDirectoryW(configDir.c_str(), nullptr);
+        SystemInfo::EnsureDirectoryRecursive(configDir);
         return configDir + L"\\QuickView.ini";
     }
+    if (isPackaged) {
+        std::wstring localAppData = SystemInfo::GetLocalAppDataDir();
+        if (!localAppData.empty()) {
+            std::wstring configDir = localAppData + L"\\QuickView";
+            SystemInfo::EnsureDirectoryRecursive(configDir);
+            return configDir + L"\\QuickView.ini";
+        }
+    }
+    return {};
+}
 
-    return portablePath; // Fallback
+std::wstring GetConfigPath(bool forcePortableCheck) {
+    const bool isPackaged = SystemInfo::IsPackagedApp();
+    std::wstring portablePath;
+    if (!isPackaged) {
+        wchar_t exePath[MAX_PATH * 2]{};
+        DWORD exeLen = GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
+        std::wstring exeDir = (exeLen > 0 && exeLen < std::size(exePath)) ? std::wstring(exePath, exeLen) : std::wstring{};
+        size_t lastSlash = exeDir.find_last_of(L"\\/");
+        if (lastSlash != std::wstring::npos) exeDir = exeDir.substr(0, lastSlash);
+
+        portablePath = exeDir + L"\\QuickView.ini";
+
+        // If forcing check (for saving), return portable path
+        if (forcePortableCheck) return portablePath;
+
+        // 1. If Portable INI exists, use it.
+        if (GetFileAttributesW(portablePath.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            return portablePath;
+        }
+    }
+
+    // 2. Default to AppData (always enforced for packaged MSIX / Store apps)
+    std::wstring appDataIni = ResolveAppDataIniPath(isPackaged);
+    if (!appDataIni.empty()) {
+        return appDataIni;
+    }
+
+    return portablePath.empty() ? L"QuickView.ini" : portablePath; // Fallback
 }
 
 
@@ -5079,21 +5098,17 @@ uint64_t s_configSaveCompletedGen = 0;
 bool s_configSaveWorkerRunning = false;
 
 std::wstring ResolveSaveIniPath(bool portableMode) {
-    if (portableMode) {
-        wchar_t exePath[MAX_PATH];
-        GetModuleFileNameW(nullptr, exePath, MAX_PATH);
-        std::wstring exeDir = exePath;
+    const bool isPackaged = SystemInfo::IsPackagedApp();
+    if (!isPackaged && portableMode) {
+        wchar_t exePath[MAX_PATH * 2]{};
+        DWORD exeLen = GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
+        std::wstring exeDir = (exeLen > 0 && exeLen < std::size(exePath)) ? std::wstring(exePath, exeLen) : std::wstring{};
         size_t lastSlash = exeDir.find_last_of(L"\\/");
         if (lastSlash != std::wstring::npos) exeDir = exeDir.substr(0, lastSlash);
         return exeDir + L"\\QuickView.ini";
     }
-    wchar_t appDataPath[MAX_PATH];
-    if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appDataPath))) {
-        std::wstring configDir = std::wstring(appDataPath) + L"\\QuickView";
-        CreateDirectoryW(configDir.c_str(), nullptr);
-        return configDir + L"\\QuickView.ini";
-    }
-    return L"QuickView.ini";
+    std::wstring appDataIni = ResolveAppDataIniPath(isPackaged);
+    return appDataIni.empty() ? L"QuickView.ini" : appDataIni;
 }
 
 void FlushConfigSnapshotToDisk(
@@ -5462,22 +5477,29 @@ void ApplySortPreferences(int sortOrder, bool sortDescending, HWND hwnd) {
 
 void LoadConfig() {
     std::wstring iniPath = GetConfigPath();
+    const bool isPackaged = SystemInfo::IsPackagedApp();
     
-    // Auto-detect Portable Mode state based on where we found the config
-    wchar_t exePath[MAX_PATH];
-    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
-    std::wstring exeDir = exePath;
-    size_t lastSlash = exeDir.find_last_of(L"\\/");
-    if (lastSlash != std::wstring::npos) exeDir = exeDir.substr(0, lastSlash);
-    
-    // Check if loaded path starts with exeDir
-    if (iniPath.find(exeDir) == 0) {
-        g_config.PortableMode = true;
-    } else {
+    // Auto-detect Portable Mode state based on where we found the config (disabled in MSIX/Store mode)
+    if (isPackaged) {
         g_config.PortableMode = false;
+    } else {
+        wchar_t exePath[MAX_PATH];
+        GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+        std::wstring exeDir = exePath;
+        size_t lastSlash = exeDir.find_last_of(L"\\/");
+        if (lastSlash != std::wstring::npos) exeDir = exeDir.substr(0, lastSlash);
+        
+        if (iniPath.find(exeDir) == 0) {
+            g_config.PortableMode = true;
+        } else {
+            g_config.PortableMode = false;
+        }
     }
     
     if (GetFileAttributesW(iniPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        if (isPackaged) {
+            g_config.CheckUpdates = false;
+        }
         QuickView::UI::Theme::RefreshThemePalette(g_config);
         return;
     }
@@ -5502,7 +5524,10 @@ void LoadConfig() {
     g_config.SortDescending = GetPrivateProfileIntW(L"General", L"SortDescending", 0, iniPath.c_str()) != 0;
     g_config.SortArchivesByNameAscending = GetPrivateProfileIntW(L"General", L"SortArchivesByNameAscending", 1, iniPath.c_str()) != 0;
     g_config.ConfirmDelete = GetPrivateProfileIntW(L"General", L"ConfirmDelete", 1, iniPath.c_str()) != 0;
-    g_config.PortableMode = GetPrivateProfileIntW(L"General", L"PortableMode", 0, iniPath.c_str()) != 0;
+    g_config.PortableMode = isPackaged ? false : (GetPrivateProfileIntW(L"General", L"PortableMode", 0, iniPath.c_str()) != 0);
+    if (isPackaged) {
+        g_config.CheckUpdates = false;
+    }
     int uiScalePreset = GetPrivateProfileIntW(L"General", L"UIScalePreset", -1, iniPath.c_str());
     if (uiScalePreset == -1) {
         // Migration from old config: 0=Auto, 1=Manual(100%)
@@ -8319,6 +8344,9 @@ static void ForceForegroundWindow(HWND hwnd) {
 
 // [Self-Update] Cleanup logic for renamed old executable
 static void TryCleanupOldVersion(int argc, LPWSTR* argv) {
+    if (SystemInfo::IsPackagedApp()) {
+        return;
+    }
     int oldPid = 0;
     if (TryReadPositiveIntArg(argc, argv, L"--cleanup-pid", &oldPid)) {
         // 1. Get current executable path to find the ".old" backup
@@ -8642,7 +8670,7 @@ static void EnsureBootHydrated(HWND hwnd) {
         RequestRepaint(PaintLayer::Static);
     }
 
-    if (g_config.CheckUpdates && IsWindow(hwnd)) {
+    if (!SystemInfo::IsPackagedApp() && g_config.CheckUpdates && IsWindow(hwnd)) {
         SetTimer(hwnd, TIMER_ID_UPDATE_CHECK, 5000, nullptr);
     }
 }
@@ -8826,15 +8854,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCm
 
     // Load last window size and position if RememberLastWindowSizeAndPosition is true
     if (g_config.RememberLastWindowSizeAndPosition) {
-        std::wstring iniPath = GetConfigPath();
-        if (g_config.PortableMode) {
-            wchar_t exePath[MAX_PATH];
-            GetModuleFileNameW(nullptr, exePath, MAX_PATH);
-            std::wstring exeDir = exePath;
-            size_t lastSlash = exeDir.find_last_of(L"\\/");
-            if (lastSlash != std::wstring::npos) exeDir = exeDir.substr(0, lastSlash);
-            iniPath = exeDir + L"\\QuickView.ini";
-        }
+        std::wstring iniPath = ResolveSaveIniPath(g_config.PortableMode);
 
         startFullscreen = GetPrivateProfileIntW(L"View", L"LastWindowWasFullscreen", 0, iniPath.c_str()) != 0;
         startMaximized = GetPrivateProfileIntW(L"View", L"LastWindowWasMaximized", 0, iniPath.c_str()) != 0;
@@ -11929,8 +11949,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
         if (wParam == TIMER_ID_UPDATE_CHECK) {
             KillTimer(hwnd, TIMER_ID_UPDATE_CHECK);
-            EnsureUpdateInitialized(hwnd);
-            if (g_config.CheckUpdates) {
+            if (!SystemInfo::IsPackagedApp() && g_config.CheckUpdates) {
+                EnsureUpdateInitialized(hwnd);
                 UpdateManager::Get().StartBackgroundCheck();
             }
             return 0;
@@ -12475,15 +12495,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
         // Save Last Window Size
         if (g_config.RememberLastWindowSizeAndPosition && !IsIconic(hwnd)) {
-            std::wstring iniPath = GetConfigPath();
-            if (g_config.PortableMode) {
-                wchar_t exePath[MAX_PATH];
-                GetModuleFileNameW(nullptr, exePath, MAX_PATH);
-                std::wstring exeDir = exePath;
-                size_t lastSlash = exeDir.find_last_of(L"\\/");
-                if (lastSlash != std::wstring::npos) exeDir = exeDir.substr(0, lastSlash);
-                iniPath = exeDir + L"\\QuickView.ini";
-            }
+            std::wstring iniPath = ResolveSaveIniPath(g_config.PortableMode);
 
             const bool maximized = g_isFullScreen
                 ? (g_savedWindowPlacement.showCmd == SW_SHOWMAXIMIZED)

@@ -113,11 +113,26 @@ jobs:
           $outputName = "QuickView_Installer_${tag}_${archUpper}"
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=$version /DAppArch=$arch /DOutputName=$outputName /DExePath="$absExePath" /O"Release\dist" installer\QuickView.iss
 
+      - name: Build Unsigned Store MSIX
+        shell: pwsh
+        run: |
+          $arch = "${{ matrix.platform }}".ToLower()
+          $tag = "${{ env.DETECTED_TAG }}"
+          $buildDir = "${{ github.workspace }}/out/build/${{ matrix.preset }}"
+          $msixOut = "${{ github.workspace }}/Release/msix/QuickView_${tag}_${arch}.msix"
+          & "${{ github.workspace }}/packaging/msix/build_msix.ps1" -Arch $arch -BuildDir $buildDir -OutputPath $msixOut -Version $tag
+
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: QuickView-Staging-${{ matrix.platform }}
           path: Release/dist/*
+
+      - name: Upload Unsigned Store MSIX Staging
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuickView-MSIX-Staging-${{ matrix.platform }}
+          path: Release/msix/*.msix
 
   publish-final:
     needs: build-and-release
@@ -147,6 +162,33 @@ jobs:
         with:
           name: QuickView-Standard-Distribution
           path: final-dist/*
+
+      - name: Download MSIX Arch Staging
+        uses: actions/download-artifact@v4
+        with:
+          pattern: QuickView-MSIX-Staging-*
+          path: msix-staging
+          merge-multiple: true
+
+      - name: Bundle Unsigned Store MSIXBundle
+        shell: pwsh
+        run: |
+          $msixFiles = Get-ChildItem -Path msix-staging -Filter "*.msix" | ForEach-Object { $_.FullName }
+          if ($msixFiles.Count -lt 1) {
+            Write-Error "No MSIX files found in msix-staging!"
+            exit 1
+          }
+          New-Item -ItemType Directory -Force -Path "store-dist" | Out-Null
+          $firstMsix = [System.IO.Path]::GetFileNameWithoutExtension($msixFiles[0])
+          $verPart = if ($firstMsix -match 'QuickView_v?(\d+\.\d+\.\d+)') { $Matches[1] } else { "0.0.0" }
+          $bundlePath = "store-dist/QuickView_v${verPart}.msixbundle"
+          & "${{ github.workspace }}/packaging/msix/build_msix.ps1" -CreateBundle -MsixInputs $msixFiles -BundleOutputPath $bundlePath -Version $verPart
+
+      - name: Upload Unsigned Store Bundle Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuickView-Store-MSIXBundle
+          path: store-dist/*.msixbundle
 
       - name: Upload to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')

@@ -2128,20 +2128,22 @@ void SettingsOverlay::BuildGeneralTab(SettingsTab& tabGeneral) {
     };
     tabGeneral.items.push_back(itemSI);
     
-    tabGeneral.items.push_back({ AppStrings::Settings_Label_CheckUpdates, OptionType::Toggle, &g_config.CheckUpdates });
-    
-    SettingsItem itemUpdateChannel;
-    itemUpdateChannel.label = AppStrings::Settings_Label_UpdateChannel;
-    itemUpdateChannel.type = OptionType::ComboBox;
-    itemUpdateChannel.pIntVal = &g_config.UpdateChannel;
-    itemUpdateChannel.options = { AppStrings::Settings_Option_UpdateStable, AppStrings::Settings_Option_UpdatePreRelease };
-    itemUpdateChannel.tooltipText = AppStrings::Settings_Tooltip_PreRelease;
-    itemUpdateChannel.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-        SaveConfig();
-        overlay->m_dismissedVersion.clear();
-        UpdateManager::Get().StartBackgroundCheck(0);
-    };
-    tabGeneral.items.push_back(itemUpdateChannel);
+    if (!SystemInfo::IsPackagedApp()) {
+        tabGeneral.items.push_back({ AppStrings::Settings_Label_CheckUpdates, OptionType::Toggle, &g_config.CheckUpdates });
+        
+        SettingsItem itemUpdateChannel;
+        itemUpdateChannel.label = AppStrings::Settings_Label_UpdateChannel;
+        itemUpdateChannel.type = OptionType::ComboBox;
+        itemUpdateChannel.pIntVal = &g_config.UpdateChannel;
+        itemUpdateChannel.options = { AppStrings::Settings_Option_UpdateStable, AppStrings::Settings_Option_UpdatePreRelease };
+        itemUpdateChannel.tooltipText = AppStrings::Settings_Tooltip_PreRelease;
+        itemUpdateChannel.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+            SaveConfig();
+            overlay->m_dismissedVersion.clear();
+            UpdateManager::Get().StartBackgroundCheck(0);
+        };
+        tabGeneral.items.push_back(itemUpdateChannel);
+    }
     
     // Pro Habits
     tabGeneral.items.push_back({ AppStrings::Settings_Group_Habits, OptionType::Header });
@@ -2196,8 +2198,9 @@ void SettingsOverlay::BuildGeneralTab(SettingsTab& tabGeneral) {
     
 
     
-    // Portable Mode with file move logic
-    SettingsItem itemPortable = { AppStrings::Settings_Label_Portable, OptionType::Toggle, &g_config.PortableMode };
+    // Portable Mode with file move logic (hidden in Microsoft Store / MSIX packages)
+    if (!SystemInfo::IsPackagedApp()) {
+        SettingsItem itemPortable = { AppStrings::Settings_Label_Portable, OptionType::Toggle, &g_config.PortableMode };
     itemPortable.tooltipText = AppStrings::Settings_Tooltip_Portable;
     itemPortable.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         wchar_t exePath[MAX_PATH]; GetModuleFileNameW(nullptr, exePath, MAX_PATH);
@@ -2280,6 +2283,7 @@ void SettingsOverlay::BuildGeneralTab(SettingsTab& tabGeneral) {
         }
     };
     tabGeneral.items.push_back(itemPortable);
+    }
 }
 
 void SettingsOverlay::BuildThemeTab(SettingsTab& tabTheme) {
@@ -3718,9 +3722,13 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
     auto installState = pluginHost.GetSrPluginInstallState();
     std::string curVer = pluginHost.GetInstalledPluginVersion();
 
+    const bool isPackaged = SystemInfo::IsPackagedApp();
     static int s_pluginViewMode = 0;
-    // Auto-switch to Marketplace if plugin is not installed
-    if (installState == QuickView::PluginInstallState::NotInstalled) {
+    if (isPackaged) {
+        // Store / MSIX builds pre-bundle official .qvx plugins and block runtime binary downloads.
+        s_pluginViewMode = 0;
+    } else if (installState == QuickView::PluginInstallState::NotInstalled) {
+        // Auto-switch to Marketplace if plugin is not installed
         s_pluginViewMode = 1;
     }
 
@@ -3738,14 +3746,16 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
         if (g_mainHwnd) InvalidateRect(g_mainHwnd, nullptr, FALSE);
     }, this);
 
-    // Top Segmented Switch: [ 已安装扩展 | 云端市场 ] (Horizontally Centered, with Header Divider)
-    SettingsItem itemSegment = { L"", OptionType::Segment, nullptr, nullptr, &s_pluginViewMode, nullptr, 0, 0, { std::wstring_view(AppStrings::Settings_Segment_InstalledPlugins), std::wstring_view(AppStrings::Settings_Segment_Marketplace) } };
-    itemSegment.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-        if (overlay) overlay->RequestRebuild();
-        extern HWND g_mainHwnd;
-        if (g_mainHwnd) InvalidateRect(g_mainHwnd, nullptr, FALSE);
-    };
-    tabPlugins.items.push_back(itemSegment);
+    // Top Segmented Switch: [ 已安装扩展 | 云端市场 ] (hidden in Store / MSIX builds)
+    if (!isPackaged) {
+        SettingsItem itemSegment = { L"", OptionType::Segment, nullptr, nullptr, &s_pluginViewMode, nullptr, 0, 0, { std::wstring_view(AppStrings::Settings_Segment_InstalledPlugins), std::wstring_view(AppStrings::Settings_Segment_Marketplace) } };
+        itemSegment.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+            if (overlay) overlay->RequestRebuild();
+            extern HWND g_mainHwnd;
+            if (g_mainHwnd) InvalidateRect(g_mainHwnd, nullptr, FALSE);
+        };
+        tabPlugins.items.push_back(itemSegment);
+    }
 
     if (s_pluginViewMode == 0) {
         // ====================================================================
@@ -4329,15 +4339,17 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
             };
             tabPlugins.items.push_back(itemQuickInstall);
 
-            SettingsItem itemGoMarket = { AppStrings::Settings_Label_OnlineExtensions, OptionType::ActionButton };
-            itemGoMarket.buttonText = AppStrings::Settings_Button_BrowseMarketplace;
-            itemGoMarket.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-                s_pluginViewMode = 1;
-                if (overlay) overlay->RequestRebuild();
-                extern HWND g_mainHwnd;
-                if (g_mainHwnd) InvalidateRect(g_mainHwnd, nullptr, FALSE);
-            };
-            tabPlugins.items.push_back(itemGoMarket);
+            if (!isPackaged) {
+                SettingsItem itemGoMarket = { AppStrings::Settings_Label_OnlineExtensions, OptionType::ActionButton };
+                itemGoMarket.buttonText = AppStrings::Settings_Button_BrowseMarketplace;
+                itemGoMarket.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+                    s_pluginViewMode = 1;
+                    if (overlay) overlay->RequestRebuild();
+                    extern HWND g_mainHwnd;
+                    if (g_mainHwnd) InvalidateRect(g_mainHwnd, nullptr, FALSE);
+                };
+                tabPlugins.items.push_back(itemGoMarket);
+            }
         }
 
     } else {
@@ -4966,25 +4978,32 @@ void SettingsOverlay::BuildAdvancedTab(SettingsTab& tabAdvanced) {
     itemReset.buttonActivatedText = AppStrings::Settings_Action_Done;
     itemReset.isDestructive = true;
     itemReset.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+         const bool isPackaged = SystemInfo::IsPackagedApp();
          // 1. Delete Config Files
-         wchar_t exePath[MAX_PATH]; GetModuleFileNameW(nullptr, exePath, MAX_PATH);
-         std::wstring exeDir = exePath;
-         size_t lastSlash = exeDir.find_last_of(L"\\/");
-         if (lastSlash != std::wstring::npos) exeDir = exeDir.substr(0, lastSlash);
+         if (!isPackaged) {
+             wchar_t exePath[MAX_PATH]; GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+             std::wstring exeDir = exePath;
+             size_t lastSlash = exeDir.find_last_of(L"\\/");
+             if (lastSlash != std::wstring::npos) exeDir = exeDir.substr(0, lastSlash);
+             DeleteFileW((exeDir + L"\\QuickView.ini").c_str());
+             DeleteFileW((exeDir + L"\\ai_actions.json").c_str());
+         }
          
          wchar_t appDataPath[MAX_PATH];
-         SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appDataPath);
-         std::wstring appDataDir = std::wstring(appDataPath) + L"\\QuickView";
+         if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appDataPath))) {
+             std::wstring appDataDir = std::wstring(appDataPath) + L"\\QuickView";
+             DeleteFileW((appDataDir + L"\\QuickView.ini").c_str());
+             DeleteFileW((appDataDir + L"\\ai_actions.json").c_str());
+         }
          
-         DeleteFileW((exeDir + L"\\QuickView.ini").c_str());
-         DeleteFileW((appDataDir + L"\\QuickView.ini").c_str());
-         DeleteFileW((exeDir + L"\\ai_actions.json").c_str());
-         DeleteFileW((appDataDir + L"\\ai_actions.json").c_str());
-         
-         // 2. Reset In-Memory Config (Preserving UpdateChannel)
+         // 2. Reset In-Memory Config (Preserving UpdateChannel for desktop builds)
          int preservedUpdateChannel = g_config.UpdateChannel;
          g_config = AppConfig(); 
          g_config.UpdateChannel = preservedUpdateChannel;
+         if (isPackaged) {
+             g_config.PortableMode = false;
+             g_config.CheckUpdates = false;
+         }
          s_gesturePresetIdx = 0;
          for (auto& binding : g_hotkeys) {
              binding.combo = binding.defaultCombo;
@@ -5051,40 +5070,49 @@ void SettingsOverlay::BuildAboutTab(SettingsTab& tabAbout) {
     itemHeader.disabledText = std::wstring(AppStrings::Settings_Label_Version) + L" " + GetAppVersion() + L" (" + AppStrings::Settings_Label_Build + L" " + GetBuildDate() + L")";
     tabAbout.items.push_back(itemHeader);
 
-    // 2. Action Button (Check for Updates)
-    SettingsItem itemUpdate = { AppStrings::Settings_Action_CheckUpdates, OptionType::AboutVersionCard }; 
-    
-    // Check Status
-    UpdateStatus status = UpdateManager::Get().GetStatus();
-    if (status == UpdateStatus::NewVersionFound) {
-        std::string v = UpdateManager::Get().GetRemoteVersion().version;
-        itemUpdate.buttonText = AppStrings::Settings_Action_ViewUpdate;
-        itemUpdate.statusText = std::wstring(v.begin(), v.end());
-    } else if (status == UpdateStatus::Checking) {
-        itemUpdate.buttonText = AppStrings::Settings_Status_Checking;
-    } else if (status == UpdateStatus::UpToDate) {
-        itemUpdate.buttonText = AppStrings::Settings_Action_CheckUpdates;
-        itemUpdate.statusText = AppStrings::Settings_Status_UpToDate;
+    // 2. Action Button (Check for Updates / Store Link)
+    if (SystemInfo::IsPackagedApp()) {
+        SettingsItem itemStore = { AppStrings::Settings_Label_StoreUpdatesManaged, OptionType::AboutVersionCard };
+        itemStore.buttonText = AppStrings::Settings_Action_OpenStore;
+        itemStore.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+            ShellExecuteW(nullptr, L"open", L"ms-windows-store://pdp/?productid=9N1D85F032CC", nullptr, nullptr, SW_SHOWNORMAL);
+        };
+        tabAbout.items.push_back(itemStore);
     } else {
-        itemUpdate.buttonText = AppStrings::Settings_Action_CheckUpdates;
-    }
+        SettingsItem itemUpdate = { AppStrings::Settings_Action_CheckUpdates, OptionType::AboutVersionCard }; 
+        
+        // Check Status
+        UpdateStatus status = UpdateManager::Get().GetStatus();
+        if (status == UpdateStatus::NewVersionFound) {
+            std::string v = UpdateManager::Get().GetRemoteVersion().version;
+            itemUpdate.buttonText = AppStrings::Settings_Action_ViewUpdate;
+            itemUpdate.statusText = std::wstring(v.begin(), v.end());
+        } else if (status == UpdateStatus::Checking) {
+            itemUpdate.buttonText = AppStrings::Settings_Status_Checking;
+        } else if (status == UpdateStatus::UpToDate) {
+            itemUpdate.buttonText = AppStrings::Settings_Action_CheckUpdates;
+            itemUpdate.statusText = AppStrings::Settings_Status_UpToDate;
+        } else {
+            itemUpdate.buttonText = AppStrings::Settings_Action_CheckUpdates;
+        }
 
-    itemUpdate.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-         if (UpdateManager::Get().GetStatus() == UpdateStatus::NewVersionFound) {
-             std::string v = UpdateManager::Get().GetRemoteVersion().version;
-             std::string log = UpdateManager::Get().GetRemoteVersion().changelog;
-             overlay->m_updateVersion = QuickView::Utf8ToWide(v);
-             overlay->m_updateLog = QuickView::Utf8ToWide(log);
-             overlay->m_toastScrollY = 0.0f;
-             overlay->m_showUpdateToast = true;
-             overlay->SetVisible(false); // Close Settings to focus on Update (Fixes visibility/focus issues)
-         } else {
-             UpdateManager::Get().StartBackgroundCheck(0); 
-             // Force slight visual feedback
-             overlay->SetItemStatus(AppStrings::Settings_Action_CheckUpdates, AppStrings::Settings_Status_Checking, D2D1::ColorF(0.5f, 0.5f, 0.5f));
-         }
-    };
-    tabAbout.items.push_back(itemUpdate);
+        itemUpdate.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+             if (UpdateManager::Get().GetStatus() == UpdateStatus::NewVersionFound) {
+                 std::string v = UpdateManager::Get().GetRemoteVersion().version;
+                 std::string log = UpdateManager::Get().GetRemoteVersion().changelog;
+                 overlay->m_updateVersion = QuickView::Utf8ToWide(v);
+                 overlay->m_updateLog = QuickView::Utf8ToWide(log);
+                 overlay->m_toastScrollY = 0.0f;
+                 overlay->m_showUpdateToast = true;
+                 overlay->SetVisible(false); // Close Settings to focus on Update (Fixes visibility/focus issues)
+             } else {
+                 UpdateManager::Get().StartBackgroundCheck(0); 
+                 // Force slight visual feedback
+                 overlay->SetItemStatus(AppStrings::Settings_Action_CheckUpdates, AppStrings::Settings_Status_Checking, D2D1::ColorF(0.5f, 0.5f, 0.5f));
+             }
+        };
+        tabAbout.items.push_back(itemUpdate);
+    }
 
     // 2.1 Release Logs REMOVED (Unified with Toast)
     

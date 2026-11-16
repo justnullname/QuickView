@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include "StringUtils.h"
+#include "SystemInfo.h"
 
 using namespace Microsoft::WRL;
 
@@ -193,13 +194,7 @@ HRESULT WebViewThumbService::EnsureController() {
 
     if (!environment_) {
         const std::wstring folder = UserDataFolder();
-        {
-            const size_t slash = folder.find_last_of(L'\\');
-            if (slash != std::wstring::npos) {
-                CreateDirectoryW(folder.substr(0, slash).c_str(), nullptr);
-            }
-            CreateDirectoryW(folder.c_str(), nullptr);
-        }
+        SystemInfo::EnsureDirectoryRecursive(folder);
 
         std::atomic<bool> envDone{false};
         HRESULT envHr = E_FAIL;
