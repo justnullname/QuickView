@@ -108,8 +108,19 @@ public:
   // Animation tick (fade in/out, inertia, hover logic)
   void Update(float deltaTime, HWND hwnd);
 
+  struct ViewportInsets {
+    float top = 0.0f;
+    float bottom = 0.0f;
+  };
+
   // Get current visual height of the gallery
   float GetVisualHeight(float winH) const;
+
+  // Vertical viewport insets reserved when the filmstrip is pinned (supports future top/bottom dock).
+  ViewportInsets GetPinnedViewportInsets(float winH) const {
+    if (!m_isPinned || !IsVisible()) return {};
+    return { GetVisualHeight(winH), 0.0f };
+  }
 
   // Check if mouse is within the gallery active area
   bool HitTestArea(int x, int y, float winW, float winH) const;

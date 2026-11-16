@@ -40,7 +40,6 @@ namespace {
 
 // External globals (retained - these are global state needed by overlays)
 extern Toolbar g_toolbar;
-extern D2D1_SIZE_F GetEffectiveImageSize();
 extern GalleryOverlay g_gallery;
 extern SettingsOverlay g_settingsOverlay;
 extern HelpOverlay g_helpOverlay;
@@ -2077,57 +2076,37 @@ void UIRenderer::DrawBorderIndicators(ID2D1DeviceContext* dc, HWND hwnd) {
     if (glowAlpha <= 0.001f) return;
     if (!dc || m_width <= 0 || m_height <= 0) return;
 
-    D2D1_SIZE_F imgSize = GetEffectiveImageSize();
-    if (imgSize.width <= 0.0f || imgSize.height <= 0.0f) return;
-
     const float winW = (float)m_width;
     const float winH = (float)m_height;
 
-    // Match SyncDCompState: pin-mode filmstrip reduces effective vertical viewport.
-    const float galleryH = (g_gallery.IsPinned() && g_gallery.IsVisible())
-        ? g_gallery.GetVisualHeight(winH) : 0.0f;
-    float effWinH = winH - galleryH;
-    if (effWinH < 1.0f) effWinH = 1.0f;
-
-    float baseFit = std::min(winW / imgSize.width, effWinH / imgSize.height);
-
-    // [SVG Lossless] Adjust bounds calculation baseFit just like main.cpp
-    if (g_runtime.LockWindowSize) {
-        if (!g_config.UpscaleSmallImagesWhenLocked && baseFit > 1.0f) {
-            baseFit = 1.0f;
-        }
-    } else {
-        if (imgSize.width < 200.0f && imgSize.height < 200.0f) {
-            if (baseFit > 1.0f) baseFit = 1.0f;
-        }
+    NavigatorPaneMetrics metrics{};
+    if (!ComputeNavigatorPaneMetrics(PaneSlot::Primary, winW, winH, 1, true, metrics) ||
+        !metrics.valid) {
+        return;
     }
 
-    // Prefer live smooth-zoom display values when animating (WebView/DComp path).
-    float panX = g_viewState.PanX;
-    float panY = g_viewState.PanY;
-    float targetZoom = baseFit * g_viewState.Zoom;
-    if (AppContext::GetInstance().SmoothZoom.Active) {
-        targetZoom = AppContext::GetInstance().SmoothZoom.CurrentZoom;
-        panX = AppContext::GetInstance().SmoothZoom.CurrentPanX;
-        panY = AppContext::GetInstance().SmoothZoom.CurrentPanY;
-    }
-    const float scaledW = imgSize.width * targetZoom;
-    const float scaledH = imgSize.height * targetZoom;
+    // Effective image viewport inside window after subtracting pinned filmstrip insets (top/bottom).
+    const auto insets = g_gallery.GetPinnedViewportInsets(winH);
+    const float vpLeft = 0.0f;
+    const float vpRight = winW;
+    const float vpTop = insets.top;
+    const float vpBottom = winH - insets.bottom;
+    if (vpBottom <= vpTop + 1.0f) return;
 
-    // Image center is shifted down by galleryH/2 when filmstrip is pinned (SyncDCompState).
-    const float centerY = (winH * 0.5f) + galleryH * 0.5f;
-    const float imgLeft = (winW * 0.5f) - (scaledW * 0.5f) + panX;
-    const float imgRight = (winW * 0.5f) + (scaledW * 0.5f) + panX;
-    const float imgTop = centerY - (scaledH * 0.5f) + panY;
-    const float imgBottom = centerY + (scaledH * 0.5f) + panY;
+    const float centerX = (vpLeft + vpRight) * 0.5f;
+    const float centerY = (vpTop + vpBottom) * 0.5f;
+    const float imgLeft = centerX - (metrics.scaledW * 0.5f) + metrics.panX;
+    const float imgRight = centerX + (metrics.scaledW * 0.5f) + metrics.panX;
+    const float imgTop = centerY - (metrics.scaledH * 0.5f) + metrics.panY;
+    const float imgBottom = centerY + (metrics.scaledH * 0.5f) + metrics.panY;
 
     // Buffer to avoid flickering at exact edge bounds
     constexpr float edgeBuffer = 1.0f;
 
-    const bool drawLeft = (imgLeft < -edgeBuffer);
-    const bool drawRight = (imgRight > winW + edgeBuffer);
-    const bool drawTop = (imgTop < -edgeBuffer);
-    const bool drawBottom = (imgBottom > effWinH + edgeBuffer);
+    const bool drawLeft = (imgLeft < vpLeft - edgeBuffer);
+    const bool drawRight = (imgRight > vpRight + edgeBuffer);
+    const bool drawTop = (imgTop < vpTop - edgeBuffer);
+    const bool drawBottom = (imgBottom > vpBottom + edgeBuffer);
 
     if (!drawLeft && !drawRight && !drawTop && !drawBottom) return;
 
@@ -2144,9 +2123,9 @@ void UIRenderer::DrawBorderIndicators(ID2D1DeviceContext* dc, HWND hwnd) {
     GetMaximizedWindowPaddings(hwnd, m_isFullscreen, padX, padY);
 
     const float L = padX;
-    const float T = padY;
+    const float T = (std::max)(padY, vpTop);
     const float R = winW - padX;
-    const float B = (std::min)(winH - padY, effWinH);
+    const float B = (std::min)(winH - padY, vpBottom);
     const float drawW = R - L;
     const float drawH = B - T;
     if (drawW < 16.0f || drawH < 16.0f) return;
