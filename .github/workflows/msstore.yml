@@ -1,0 +1,149 @@
+name: Microsoft Store Submission
+
+permissions:
+  actions: read
+  contents: read
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag to submit (leave blank for latest stable release)'
+        required: false
+        default: ''
+      run_id:
+        description: 'Optional Build & Release workflow run ID containing QuickView-Store-MSIXBundle'
+        required: false
+        default: ''
+      no_commit:
+        description: 'Upload MSIXBundle and save as draft without committing for review'
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  submit-store:
+    if: github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false
+    name: Publish MSIXBundle to Microsoft Store
+    runs-on: windows-latest
+    steps:
+      - name: Check Partner Center API Credentials
+        id: check-secrets
+        shell: pwsh
+        env:
+          MSSTORE_TENANT_ID: ${{ secrets.MSSTORE_TENANT_ID }}
+          MSSTORE_SELLER_ID: ${{ secrets.MSSTORE_SELLER_ID }}
+          MSSTORE_CLIENT_ID: ${{ secrets.MSSTORE_CLIENT_ID }}
+          MSSTORE_CLIENT_SECRET: ${{ secrets.MSSTORE_CLIENT_SECRET }}
+        run: |
+          $missing = @()
+          if ([string]::IsNullOrWhiteSpace($env:MSSTORE_TENANT_ID)) { $missing += "MSSTORE_TENANT_ID" }
+          if ([string]::IsNullOrWhiteSpace($env:MSSTORE_SELLER_ID)) { $missing += "MSSTORE_SELLER_ID" }
+          if ([string]::IsNullOrWhiteSpace($env:MSSTORE_CLIENT_ID)) { $missing += "MSSTORE_CLIENT_ID" }
+          if ([string]::IsNullOrWhiteSpace($env:MSSTORE_CLIENT_SECRET)) { $missing += "MSSTORE_CLIENT_SECRET" }
+
+          if ($missing.Count -gt 0) {
+            $msg = "Skipping Microsoft Store auto-submission. Missing repository secrets: $($missing -join ', ')"
+            Write-Host "::notice::$msg"
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "## Microsoft Store Submission Skipped`n`n$msg"
+            "configured=false" >> $env:GITHUB_OUTPUT
+          } else {
+            "configured=true" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Determine Release Tag & Artifact Run ID
+        id: resolve
+        if: steps.check-secrets.outputs.configured == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $customTag = "${{ inputs.release_tag }}".Trim()
+          $eventTag = "${{ github.event.release.tag_name }}".Trim()
+
+          if (-not [string]::IsNullOrEmpty($customTag)) {
+            $tag = $customTag
+          } elseif (-not [string]::IsNullOrEmpty($eventTag)) {
+            $tag = $eventTag
+          } else {
+            $releaseJson = gh api "repos/${{ github.repository }}/releases/latest" | ConvertFrom-Json
+            if ($releaseJson.prerelease -eq $true) {
+              Write-Error "Latest release $($releaseJson.tag_name) is a pre-release! Store submission only accepts stable releases."
+              exit 1
+            }
+            $tag = $releaseJson.tag_name
+          }
+
+          $runId = "${{ inputs.run_id }}".Trim()
+          if ([string]::IsNullOrEmpty($runId)) {
+            $runsJson = gh api "repos/${{ github.repository }}/actions/workflows/build-release.yml/runs?status=success&per_page=50" | ConvertFrom-Json
+            $matchedRun = $runsJson.workflow_runs | Where-Object { $_.head_branch -eq $tag } | Select-Object -First 1
+            if ($null -ne $matchedRun) {
+              $runId = "$($matchedRun.id)"
+            }
+          }
+
+          if ([string]::IsNullOrEmpty($runId)) {
+            Write-Error "Could not locate a successful Build & Release run with QuickView-Store-MSIXBundle for tag '$tag'. Re-run Build & Release or provide run_id manually."
+            exit 1
+          }
+
+          Write-Host "Resolved Stable Tag: $tag"
+          Write-Host "Resolved Build Run ID: $runId"
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "run_id=$runId" >> $env:GITHUB_OUTPUT
+
+      - name: Download Store MSIXBundle Artifact
+        if: steps.check-secrets.outputs.configured == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          New-Item -ItemType Directory -Force -Path "store-dist" | Out-Null
+          gh run download "${{ steps.resolve.outputs.run_id }}" `
+            --repo "${{ github.repository }}" `
+            --name "QuickView-Store-MSIXBundle" `
+            --dir "store-dist"
+          Get-ChildItem -Path "store-dist" | Format-Table Name, Length
+
+      - name: Setup Microsoft Store Developer CLI
+        if: steps.check-secrets.outputs.configured == 'true'
+        uses: microsoft/microsoft-store-apppublisher@v1.4
+
+      - name: Configure MSStore CLI Credentials
+        if: steps.check-secrets.outputs.configured == 'true'
+        shell: pwsh
+        env:
+          MSSTORE_TENANT_ID: ${{ secrets.MSSTORE_TENANT_ID }}
+          MSSTORE_SELLER_ID: ${{ secrets.MSSTORE_SELLER_ID }}
+          MSSTORE_CLIENT_ID: ${{ secrets.MSSTORE_CLIENT_ID }}
+          MSSTORE_CLIENT_SECRET: ${{ secrets.MSSTORE_CLIENT_SECRET }}
+        run: |
+          msstore reconfigure `
+            --tenantId "$env:MSSTORE_TENANT_ID" `
+            --sellerId "$env:MSSTORE_SELLER_ID" `
+            --clientId "$env:MSSTORE_CLIENT_ID" `
+            --clientSecret "$env:MSSTORE_CLIENT_SECRET"
+
+      - name: Publish MSIXBundle to Microsoft Store
+        if: steps.check-secrets.outputs.configured == 'true'
+        shell: pwsh
+        env:
+          MSSTORE_PRODUCT_ID: ${{ secrets.MSSTORE_PRODUCT_ID || '9N1D85F032CC' }}
+          NO_COMMIT: ${{ inputs.no_commit == true }}
+        run: |
+          $bundles = Get-ChildItem -Path "store-dist" -Filter "*.msixbundle"
+          if ($bundles.Count -ne 1) {
+            Write-Error "Expected exactly 1 .msixbundle file in store-dist, found $($bundles.Count)."
+            exit 1
+          }
+          $bundlePath = $bundles[0].FullName
+          Write-Host "Submitting $bundlePath to Store App ID $env:MSSTORE_PRODUCT_ID (noCommit=$env:NO_COMMIT)..."
+
+          $args = @('publish', $bundlePath, '--appId', $env:MSSTORE_PRODUCT_ID, '--uploadTimeout', '600')
+          if ($env:NO_COMMIT -eq 'true') {
+            $args += '--noCommit'
+          }
+          msstore @args

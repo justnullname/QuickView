@@ -1,6 +1,8 @@
 #pragma once
+#include <cstring>
 #include <memory>
 #include <cstdint>
+#include <utility>
 #include "ImageTypes.h"
 #include "MappedFile.h"
 
@@ -39,5 +41,52 @@ std::unique_ptr<IAnimationDecoder> CreateWuffsAnimator();
 std::unique_ptr<IAnimationDecoder> CreateWebPAnimator();
 std::unique_ptr<IAnimationDecoder> CreateAvifAnimator();
 std::unique_ptr<IAnimationDecoder> CreateJxlAnimator();
+
+/// Extract frame 0 from an initialized animated decoder, copying into `allocator`
+/// when provided or taking ownership of frame 0's aligned pixel buffer otherwise.
+/// Always transfers `animator` ownership to `outAnimator` on success.
+inline bool ExtractFirstAnimatedFrame(
+    std::unique_ptr<IAnimationDecoder> animator,
+    const AllocatorCallback* allocator,
+    uint8_t*& outPixels,
+    int& outWidth,
+    int& outHeight,
+    int& outStride,
+    PixelFormat& outFormat,
+    AnimationFrameMeta& outFrameMeta,
+    std::shared_ptr<IAnimationDecoder>& outAnimator) {
+    if (!animator || !animator->IsAnimated()) {
+        return false;
+    }
+
+    auto firstFrame = animator->GetNextFrame();
+    if (!firstFrame || !firstFrame->pixels) {
+        return false;
+    }
+
+    if (allocator && allocator->pfn) {
+        const size_t totalBytes =
+            static_cast<size_t>(firstFrame->stride) * static_cast<size_t>(firstFrame->height);
+        uint8_t* allocated = (*allocator)(totalBytes);
+        if (!allocated) {
+            return false;
+        }
+        std::memcpy(allocated, firstFrame->pixels, totalBytes);
+        outPixels = allocated;
+    } else {
+        outPixels = firstFrame->pixels;
+        firstFrame->pixels = nullptr;
+        firstFrame->memoryDeleter.DestroyCtx();
+        firstFrame->memoryDeleter.Clear();
+    }
+
+    outWidth = firstFrame->width;
+    outHeight = firstFrame->height;
+    outStride = firstFrame->stride;
+    outFormat = firstFrame->format;
+    outFrameMeta = firstFrame->frameMeta;
+    outAnimator = std::move(animator);
+    return true;
+}
 
 }

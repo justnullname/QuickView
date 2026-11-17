@@ -662,3 +662,86 @@ TEST(AnimationDecoderTests, JxlUnalignedStrideSwizzleSeekAndLoop) {
     auto staticDec = QuickView::CreateJxlAnimator();
     EXPECT_FALSE(staticDec->Initialize(MakeMappedBytes(staticJxl), QuickView::PixelFormat::BGRA8888));
 }
+
+TEST(AnimationDecoderTests, ExtractFirstFramePreservesAnimatorWithAndWithoutAllocator) {
+    struct AllocTracker {
+        std::vector<uint8_t> buf;
+    };
+
+    auto runCase = [](std::unique_ptr<QuickView::IAnimationDecoder> dec,
+                      const std::shared_ptr<QuickView::MappedFile>& file,
+                      bool useAllocator,
+                      uint32_t expectedDelay,
+                      std::array<uint8_t, 4> expectedF0,
+                      int checkX,
+                      int checkY,
+                      std::array<uint8_t, 4> expectedF1) {
+        ASSERT_TRUE(dec->Initialize(file, QuickView::PixelFormat::BGRA8888));
+        ASSERT_TRUE(dec->IsAnimated());
+
+        AllocTracker tracker;
+        QuickView::AllocatorCallback allocCb;
+        if (useAllocator) {
+            allocCb.ctx = &tracker;
+            allocCb.pfn = [](void* c, size_t size) -> uint8_t* {
+                auto* t = static_cast<AllocTracker*>(c);
+                t->buf.resize(size);
+                return t->buf.data();
+            };
+        }
+
+        uint8_t* pixels = nullptr;
+        int w = 0, h = 0, stride = 0;
+        QuickView::PixelFormat fmt = QuickView::PixelFormat::BGRA8888;
+        QuickView::AnimationFrameMeta meta{};
+        std::shared_ptr<QuickView::IAnimationDecoder> outAnimator;
+
+        ASSERT_TRUE(QuickView::ExtractFirstAnimatedFrame(
+            std::move(dec),
+            useAllocator ? &allocCb : nullptr,
+            pixels, w, h, stride, fmt, meta, outAnimator));
+
+        ASSERT_NE(pixels, nullptr);
+        ASSERT_NE(outAnimator, nullptr);
+        EXPECT_TRUE(outAnimator->IsAnimated());
+        EXPECT_GT(w, 0);
+        EXPECT_GT(h, 0);
+        EXPECT_EQ(meta.delayMs, expectedDelay);
+        EXPECT_EQ(pixels[0], expectedF0[0]);
+        EXPECT_EQ(pixels[1], expectedF0[1]);
+        EXPECT_EQ(pixels[2], expectedF0[2]);
+        EXPECT_EQ(pixels[3], expectedF0[3]);
+        if (useAllocator) {
+            EXPECT_EQ(pixels, tracker.buf.data());
+        } else {
+            _aligned_free(pixels);
+        }
+
+        // Frame 1 must still be decodable through the returned animator
+        auto f1 = outAnimator->GetNextFrame();
+        ASSERT_NE(f1, nullptr);
+        VerifyPixelBGRA(*f1, checkX, checkY,
+                        expectedF1[0], expectedF1[1], expectedF1[2], expectedF1[3], 20);
+    };
+
+    // Animated GIF (both zero-copy and caller-allocator paths used by LoadToFrame)
+    auto gifFile = MakeMappedBytes(MakeMinimalGif(true));
+    runCase(QuickView::CreateWuffsAnimator(), gifFile, false, 50,
+            { 0, 0, 255, 255 }, 1, 1, { 255, 0, 0, 255 });
+    runCase(QuickView::CreateWuffsAnimator(), gifFile, true, 50,
+            { 0, 0, 255, 255 }, 1, 1, { 255, 0, 0, 255 });
+
+    // APNG
+    auto apngFile = MakeMappedBytes(MakePngOrApng(8, 8, true, 0));
+    runCase(QuickView::CreateWuffsAnimator(), apngFile, false, 50,
+            { 0, 0, 255, 255 }, 0, 0, { 0, 255, 0, 255 });
+    runCase(QuickView::CreateWuffsAnimator(), apngFile, true, 50,
+            { 0, 0, 255, 255 }, 0, 0, { 0, 255, 0, 255 });
+
+    // Animated WebP
+    auto webpFile = MakeMappedBytes(MakeAnimatedWebPPartialDisposal(3));
+    runCase(QuickView::CreateWebPAnimator(), webpFile, false, 40,
+            { 200, 10, 10, 255 }, 10, 10, { 0, 0, 255, 255 });
+    runCase(QuickView::CreateWebPAnimator(), webpFile, true, 40,
+            { 200, 10, 10, 255 }, 10, 10, { 0, 0, 255, 255 });
+}

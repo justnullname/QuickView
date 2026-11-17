@@ -1077,40 +1077,19 @@ bool TryProbeAnimatedBuffer(std::shared_ptr<QuickView::MappedFile> fileMap,
     return false;
   }
 
-  auto firstFrame = animator->GetNextFrame();
-  if (!firstFrame || !firstFrame->pixels) {
+  const QuickView::AllocatorCallback *allocator = ctx ? &ctx->allocator : nullptr;
+  if (!QuickView::ExtractFirstAnimatedFrame(
+          std::move(animator), allocator, result.pixels, result.width,
+          result.height, result.stride, result.format, result.frameMeta,
+          result.animator)) {
     QV_LOG("Anim_Loader",
            TraceLoggingString("GetNextFrame Null", "Action"));
     return false;
   }
 
-  result.width = firstFrame->width;
-  result.height = firstFrame->height;
-  result.stride = firstFrame->stride;
-  result.format = firstFrame->format;
-
-  if (ctx && ctx->allocator) {
-    const size_t totalBytes = static_cast<size_t>(firstFrame->stride) * static_cast<size_t>(firstFrame->height);
-    uint8_t *allocated = ctx->allocator(totalBytes);
-    if (!allocated) {
-      return false;
-    }
-    memcpy(allocated, firstFrame->pixels, totalBytes);
-    result.pixels = allocated;
-    // firstFrame retains ownership and cleans up its aligned buffer on scope exit.
-  } else {
-    // Transfer ownership of the aligned pixel buffer to DecodeResult.
-    result.pixels = firstFrame->pixels;
-    firstFrame->pixels = nullptr;
-    firstFrame->memoryDeleter.DestroyCtx();
-    firstFrame->memoryDeleter.Clear();
-    result.animator = std::move(animator);
-  }
-
   result.success = true;
-  result.frameMeta = firstFrame->frameMeta;
-  result.metadata.Width = firstFrame->width;
-  result.metadata.Height = firstFrame->height;
+  result.metadata.Width = static_cast<UINT>(result.width);
+  result.metadata.Height = static_cast<UINT>(result.height);
   result.metadata.Format = fmt;
   result.metadata.LoaderName =
       (fmt == L"WebP" || fmt == L"WEBP")
@@ -1123,7 +1102,7 @@ bool TryProbeAnimatedBuffer(std::shared_ptr<QuickView::MappedFile> fileMap,
   return true;
 }
 
-void MoveDecodeResultToFrame(const QuickView::Codec::DecodeResult &result,
+void MoveDecodeResultToFrame(QuickView::Codec::DecodeResult &result,
                              QuickView::RawImageFrame *outFrame,
                              QuantumArena *arena) {
   outFrame->pixels = result.pixels;
@@ -1131,6 +1110,11 @@ void MoveDecodeResultToFrame(const QuickView::Codec::DecodeResult &result,
   outFrame->height = result.height;
   outFrame->stride = result.stride;
   outFrame->format = result.format;
+
+  if (result.animator) {
+    outFrame->animator = std::move(result.animator);
+    outFrame->frameMeta = result.frameMeta;
+  }
 
   outFrame->formatDetails = result.metadata.FormatDetails;
   outFrame->exifOrientation = result.metadata.ExifOrientation;
@@ -1614,10 +1598,6 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t *data, size_t size,
 
     if (SUCCEEDED(hrUnified) && result.pixels) {
       MoveDecodeResultToFrame(result, outFrame, arena);
-      if (result.animator) {
-        outFrame->animator = std::move(result.animator);
-        outFrame->frameMeta = result.frameMeta;
-      }
       QV_LOG("LoadToFrame_Memory",
              TraceLoggingString("Unified_Success", "Action"),
              TraceLoggingWideString(fmt.c_str(), "Format"));
