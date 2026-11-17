@@ -15,7 +15,7 @@ on:
 
 jobs:
   winget:
-    if: github.event.release.prerelease == false
+    if: github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false
     name: Submit to WinGet
     runs-on: ubuntu-latest
     steps:
@@ -67,10 +67,125 @@ jobs:
             echo "Successfully force-synced fork master with upstream."
           fi
 
+      - name: Resolve Installer URLs
+        id: resolve-urls
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.get-tag.outputs.tag }}"
+          PKG_VERSION="${TAG#v}"
+          echo "version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
+          URLS_STR=$(gh api "repos/${{ github.repository }}/releases/tags/${TAG}" \
+            --jq '[.assets[] | select(.name | test(".*_Installer_.*\\.exe$")) | .browser_download_url] | join(" ")')
+          if [ -z "$URLS_STR" ]; then
+            echo "::error::No installer .exe assets found for release ${TAG}"
+            exit 1
+          fi
+          echo "urls=$URLS_STR" >> "$GITHUB_OUTPUT"
+          echo "Resolved version=${PKG_VERSION}, urls=${URLS_STR}"
+
+      - name: Setup cargo-binstall
+        uses: cargo-bins/cargo-binstall@main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install komac
+        run: cargo-binstall komac -y
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate and Normalize WinGet Manifests
+        env:
+          GITHUB_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          GH_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          KOMAC_FORK_OWNER: ${{ github.repository_owner }}
+          KOMAC_CREATED_WITH: GitHub Actions (QuickView)
+          KOMAC_CREATED_WITH_URL: ${{ github.server_url }}/${{ github.repository }}
+          FORCE_HYPERLINK: 0
+        run: |
+          PKG_VERSION="${{ steps.resolve-urls.outputs.version }}"
+          read -r -a URLS <<< "${{ steps.resolve-urls.outputs.urls }}"
+          mkdir -p ./winget-manifests
+          komac update justnullname.QuickView \
+            --version "$PKG_VERSION" \
+            --urls "${URLS[@]}" \
+            --output ./winget-manifests \
+            --exit \
+            --skip-pr-check
+
+          python3 -c "import yaml" 2>/dev/null || python3 -m pip install --break-system-packages --quiet pyyaml
+
+          python3 - << 'PYEOF'
+          import pathlib
+          import sys
+          import yaml
+
+          root = pathlib.Path("./winget-manifests")
+          installer_files = list(root.rglob("*.installer.yaml"))
+          if len(installer_files) != 1:
+              print(f"::error::Expected 1 installer.yaml, found {len(installer_files)}: {installer_files}")
+              sys.exit(1)
+
+          path = installer_files[0]
+          raw_lines = path.read_text(encoding="utf-8").splitlines()
+          header_comments = []
+          for line in raw_lines:
+              if line.startswith("#") or line.strip() == "":
+                  header_comments.append(line)
+              else:
+                  break
+
+          data = yaml.safe_load("\n".join(raw_lines))
+          installers = data.get("Installers") or []
+          user_installers = [inst for inst in installers if inst.get("Scope", "user") == "user"]
+          if not user_installers:
+              print("::error::No user-scope installers remained after filtering!")
+              sys.exit(1)
+
+          cleaned_installers = []
+          for inst in user_installers:
+              item = dict(inst)
+              item.pop("Scope", None)
+              item.pop("InstallerSwitches", None)
+              cleaned_installers.append(item)
+
+          # Reorder root keys cleanly so root Scope & InstallerSwitches match published 6.40.1.1 baseline
+          ordered = {}
+          for k, v in data.items():
+              if k in ("Scope", "InstallerSwitches", "Installers"):
+                  continue
+              ordered[k] = v
+              if k == "InstallerType":
+                  ordered["Scope"] = "user"
+              elif k == "InstallModes":
+                  ordered["InstallerSwitches"] = {"Custom": "/CURRENTUSER"}
+
+          if "Scope" not in ordered:
+              ordered["Scope"] = "user"
+          if "InstallerSwitches" not in ordered:
+              ordered["InstallerSwitches"] = {"Custom": "/CURRENTUSER"}
+
+          manifest_type = ordered.pop("ManifestType", "installer")
+          manifest_version = ordered.pop("ManifestVersion", "1.12.0")
+          ordered["Installers"] = cleaned_installers
+          ordered["ManifestType"] = manifest_type
+          ordered["ManifestVersion"] = manifest_version
+
+          dumped = yaml.safe_dump(ordered, sort_keys=False, allow_unicode=True)
+          header_text = "\n".join(header_comments).rstrip()
+          final_text = (header_text + "\n\n" + dumped) if header_text else dumped
+          path.write_text(final_text, encoding="utf-8")
+
+          print("=== Normalized Installer Manifest ===")
+          print(final_text)
+          PYEOF
+
       - name: Submit to WinGet
-        uses: vedantmgoyal9/winget-releaser@v2
-        with:
-          identifier: justnullname.QuickView
-          token: ${{ secrets.WINGET_TOKEN }}
-          installers-regex: '.*_Installer_.*\.exe$'
-          release-tag: ${{ steps.get-tag.outputs.tag }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          GH_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          KOMAC_FORK_OWNER: ${{ github.repository_owner }}
+          FORCE_HYPERLINK: 0
+        run: |
+          komac submit ./winget-manifests --yes
+          komac cleanup --only-merged || true
