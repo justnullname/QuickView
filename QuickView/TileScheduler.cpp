@@ -2,7 +2,6 @@
 #include "TileScheduler.h"
 #include "HeavyLanePool.h"
 #include <algorithm>
-#include <map>
 
 namespace QuickView {
 

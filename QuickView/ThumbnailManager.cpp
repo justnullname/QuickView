@@ -72,7 +72,15 @@ void ThumbnailManager::ClearCache() {
 
 void ThumbnailManager::Evict(size_t imageId) {
     std::lock_guard<std::mutex> lock(m_cacheMutex);
-    m_l1Cache.erase(imageId);
+    auto itL1 = m_l1Cache.find(imageId);
+    if (itL1 != m_l1Cache.end()) {
+        if (m_currentCacheSize >= itL1->second.pixels.size()) {
+            m_currentCacheSize -= itL1->second.pixels.size();
+        } else {
+            m_currentCacheSize = 0;
+        }
+        m_l1Cache.erase(itL1);
+    }
     m_l2Cache.erase(imageId);
     auto itLru = m_lruMap.find(imageId);
     if (itLru != m_lruMap.end()) {

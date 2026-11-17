@@ -579,9 +579,15 @@ void HeavyLanePool::Submit(const std::wstring& path, ImageID imageId, std::share
 void HeavyLanePool::SubmitFullDecode(const std::wstring& path, ImageID imageId, std::shared_ptr<QuickView::MappedFile> mmf, PaneSlot targetSlot, uint64_t generationId) {
     std::lock_guard lock(m_poolMutex);
 
-    for (const auto& existing : m_pendingJobs) {
+    for (auto& existing : m_pendingJobs) {
         if (existing.type == JobType::Standard && existing.isFullDecode &&
             existing.imageId == imageId && existing.targetSlot == targetSlot) {
+            if (existing.generationId != generationId) {
+                existing.generationId = generationId;
+                existing.targetHdrHeadroomStops = m_targetHdrHeadroomStops.load(std::memory_order_relaxed);
+                existing.targetPrimaries = m_targetPrimaries.load(std::memory_order_relaxed);
+                existing.genID = m_generationID.load();
+            }
             return;
         }
     }
@@ -1309,7 +1315,13 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                           rawFrame.height = firstFrame->height;
                           rawFrame.stride = firstFrame->stride;
                           rawFrame.format = firstFrame->format;
-                          rawFrame.quality = firstFrame->quality;
+                          rawFrame.quality = QuickView::DecodeQuality::Full;
+                          rawFrame.exifOrientation = firstFrame->exifOrientation;
+                          rawFrame.iccProfile = std::move(firstFrame->iccProfile);
+                          rawFrame.colorInfo = firstFrame->colorInfo;
+                          rawFrame.hdrMetadata = firstFrame->hdrMetadata;
+                          rawFrame.dpiX = firstFrame->dpiX;
+                          rawFrame.dpiY = firstFrame->dpiY;
                           rawFrame.frameMeta = firstFrame->frameMeta;
                           rawFrame.memoryDeleter = std::move(firstFrame->memoryDeleter);
                           firstFrame->pixels = nullptr;
@@ -1318,6 +1330,13 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                           rawFrame.animator = std::move(animDecoder);
                           meta.Width = rawFrame.width;
                           meta.Height = rawFrame.height;
+                          meta.ExifOrientation = rawFrame.exifOrientation;
+                          meta.colorInfo = rawFrame.colorInfo;
+                          meta.hdrMetadata = rawFrame.hdrMetadata;
+                          if (!rawFrame.iccProfile.empty()) {
+                              meta.HasEmbeddedColorProfile = true;
+                              meta.iccProfileData.assign(rawFrame.iccProfile.begin(), rawFrame.iccProfile.end());
+                          }
 
                           hr = S_OK;
                           loaderName = L"Animator (MMF)";
@@ -1821,7 +1840,7 @@ tile_decode_done: ; // [P14] Jump target for fast path (skip legacy TJ decode)
                 }
                 
                 evt.type = EventType::FullReady;
-                evt.isScaled = !job.isFullDecode;
+                evt.isScaled = !job.isFullDecode && !rawFrame.animator;
 
                 // Preserve true source dimensions on cached frames so Titan revisits retain full metadata.
                 if (meta.Width > 0 && rawFrame.srcWidth <= 0) {
@@ -2132,15 +2151,22 @@ void HeavyLanePool::EnsureMasterWarmup(const std::wstring& path, ImageID imageId
     const uint32_t warmupGen = m_generationID.load(std::memory_order_acquire);
 
     m_masterWarmupThread = std::jthread([this, path, imageId, mmf, warmupGen, targetSlot, generationId](std::stop_token st) {
-        // [Fix] Ensure the UI marquee stops even if we exit early (failure/stop)
+        // Only publish completion/stop for the active warmup imageId under lock so stale
+        // superseded threads in TrashBag cannot corrupt a newer image's state or miss wakeups.
         struct Finalizer {
-            std::atomic<bool>* ready;
-            std::atomic<bool>* running;
+            HeavyLanePool* pool;
+            ImageID targetId;
             ~Finalizer() {
-                ready->store(true, std::memory_order_release);
-                running->store(false, std::memory_order_release);
+                {
+                    std::lock_guard lock(pool->m_lodCacheMutex);
+                    if (pool->m_masterWarmupImageId.load(std::memory_order_acquire) == targetId) {
+                        pool->m_masterWarmupReady.store(true, std::memory_order_release);
+                        pool->m_masterWarmupRunning.store(false, std::memory_order_release);
+                    }
+                }
+                pool->m_lodCacheCond.notify_all();
             }
-        } finalizer{ &m_masterWarmupReady, &m_masterWarmupRunning };
+        } finalizer{ this, imageId };
 
         // [Refix Bug #85] IO Throttling
         // Warmup tasks (especially massive JXL decodes) MUST respect concurrency limits.
@@ -3421,7 +3447,11 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                 
                 std::shared_ptr<uint8_t[]> frameSharedPtr;
                 if (deleter) {
-                    frameSharedPtr = std::shared_ptr<uint8_t[]>(rawPixels, [deleter](uint8_t* p) { deleter(p); });
+                    frameSharedPtr = std::shared_ptr<uint8_t[]>(rawPixels, [deleter](uint8_t* p) mutable {
+                        deleter(p);
+                        deleter.DestroyCtx();
+                        deleter.Clear();
+                    });
                 } else {
                     frameSharedPtr = std::shared_ptr<uint8_t[]>(rawPixels, [](uint8_t* p) { _aligned_free(p); });
                 }
@@ -3568,7 +3598,11 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
         uint8_t* rawPixels = fullFrame.Detach();
         
         if (deleter) {
-            m_lodCache.pixels = std::shared_ptr<uint8_t[]>(rawPixels, [deleter](uint8_t* p) { deleter(p); });
+            m_lodCache.pixels = std::shared_ptr<uint8_t[]>(rawPixels, [deleter](uint8_t* p) mutable {
+                deleter(p);
+                deleter.DestroyCtx();
+                deleter.Clear();
+            });
         } else {
             m_lodCache.pixels = std::shared_ptr<uint8_t[]>(rawPixels, [](uint8_t* p) { _aligned_free(p); });
         }

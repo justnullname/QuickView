@@ -58,60 +58,59 @@ public:
         return true;
     }
 
-    std::shared_ptr<RawImageFrame> GetNextFrame() override {
-        if (!m_iterInitialized || m_currentIndex >= m_totalFrames) return nullptr;
-        
-        // 1. Process previous frame disposal if needed
+    bool SkipNextFrame(uint32_t* outDurationMs = nullptr) {
+        if (!m_iterInitialized || m_currentIndex >= m_totalFrames) return false;
+
         if (m_currentIndex > 0 && m_lastDisposal == WEBP_MUX_DISPOSE_BACKGROUND) {
             ClearRectTransparent(m_canvas, m_width, m_height, m_lastRect);
         }
-        
-        // 2. Decode current frame fragment
+
         int w = 0, h = 0;
         uint8_t* rgba = WebPDecodeBGRA(m_iter.fragment.bytes, m_iter.fragment.size, &w, &h);
-        if (!rgba) return nullptr;
-        
-        // 3. Blend onto canvas with bounds clamping
-        int x_offset = m_iter.x_offset;
-        int y_offset = m_iter.y_offset;
-        CompositeFragmentBGRA(m_canvas, m_width, m_height, rgba, w, h, x_offset, y_offset, m_iter.blend_method);
-        
+        if (!rgba) return false;
+
+        CompositeFragmentBGRA(m_canvas, m_width, m_height, rgba, w, h,
+                              m_iter.x_offset, m_iter.y_offset, m_iter.blend_method);
         WebPFree(rgba);
-        
-        // 4. Update Snapshot Checkpoints is now handled by the background indexer
-        // 5. Output
+
+        if (outDurationMs) *outDurationMs = m_iter.duration ? static_cast<uint32_t>(m_iter.duration) : 100u;
+        m_lastDisposal = m_iter.dispose_method;
+        m_lastRect = { m_iter.x_offset, m_iter.y_offset, w, h };
+        m_currentIndex++;
+        WebPDemuxNextFrame(&m_iter);
+        return true;
+    }
+
+    std::shared_ptr<RawImageFrame> GetNextFrame() override {
+        uint32_t delayMs = 100;
+        if (!SkipNextFrame(&delayMs)) return nullptr;
+
         auto frame = std::make_shared<RawImageFrame>();
         size_t bufSize = m_canvas.size();
         frame->pixels = (uint8_t*)_aligned_malloc(bufSize, 64);
         if (!frame->pixels) return nullptr;
         frame->memoryDeleter = QuickView::MemoryDeleter::FromAlignedFree();
         memcpy(frame->pixels, m_canvas.data(), bufSize);
-        
+
         frame->width = m_width;
         frame->height = m_height;
-        frame->stride = m_width * 4; // Canvas stride is always width * 4
+        frame->stride = m_width * 4;
         frame->format = PixelFormat::BGRA8888;
         frame->quality = DecodeQuality::Full;
-        
+
         auto& meta = frame->frameMeta;
-        meta.index = m_currentIndex;
-        meta.delayMs = m_iter.duration;
-        if (meta.delayMs == 0) meta.delayMs = 100;
+        meta.index = m_currentIndex - 1;
+        meta.delayMs = delayMs;
         meta.totalFrames = m_totalFrames;
-        if (m_iter.dispose_method == WEBP_MUX_DISPOSE_BACKGROUND) meta.disposal = FrameDisposalMode::RestoreBackground;
-        else meta.disposal = FrameDisposalMode::Keep;
+        meta.disposal = (m_lastDisposal == WEBP_MUX_DISPOSE_BACKGROUND)
+                            ? FrameDisposalMode::RestoreBackground
+                            : FrameDisposalMode::Keep;
         meta.isDelta = true;
-        meta.rcLeft = x_offset;
-        meta.rcTop = y_offset;
-        meta.rcRight = x_offset + w;
-        meta.rcBottom = y_offset + h;
-        
-        m_lastDisposal = m_iter.dispose_method;
-        m_lastRect = { x_offset, y_offset, w, h };
-        
-        m_currentIndex++;
-        WebPDemuxNextFrame(&m_iter);
-        
+        meta.rcLeft = m_lastRect.x;
+        meta.rcTop = m_lastRect.y;
+        meta.rcRight = m_lastRect.x + m_lastRect.width;
+        meta.rcBottom = m_lastRect.y + m_lastRect.height;
+
         return frame;
     }
 
@@ -155,10 +154,8 @@ public:
         }
         lock.unlock();
         
-        std::shared_ptr<RawImageFrame> lastFrame = nullptr;
         while (m_currentIndex < targetIndex) {
-            lastFrame = GetNextFrame();
-            if (!lastFrame) break;
+            if (!SkipNextFrame()) break;
         }
         
         return GetNextFrame();

@@ -8,6 +8,7 @@
 #include "ImageTypes.h"
 #include "ImageResource.h"
 #include "SupportedExtensions.h"
+#include "StringUtils.h"
 
 
 extern bool g_isLeftPaneDecoding;
@@ -262,8 +263,7 @@ FireAndForget CompareController::LoadImageIntoLeftSlot([[maybe_unused]] HWND hwn
     if (FileNavigator::ParseVirtualPath(localPath, archivePath, entryIndex)) {
         // Virtual archive entry
     } else {
-        std::error_code ec;
-        fileSize = std::filesystem::file_size(localPath, ec);
+        fileSize = QuickView::QueryFileSize(localPath.c_str());
     }
 
     // Increment generation ID on Left slot to invalidate stale loads
@@ -499,7 +499,7 @@ void CompareController::EnterMode(HWND hwnd) {
     m_hwnd = hwnd;
     if (IsActive() || !GetPaneContext(PaneSlot::Primary).resource) return;
     if (GetPaneContext(PaneSlot::Primary).resource.IsAnimated()) {
-        g_osd.Show(hwnd, AppStrings::OSD_CompareAnimNotSupported, true);
+        g_osd.Show(hwnd, AppStrings::g.OSD_CompareAnimNotSupported, true);
         return;
     }
     if (g_slideshowState.IsActive) {
@@ -597,12 +597,8 @@ void CompareController::EnterMode(HWND hwnd) {
         GetPaneContext(PaneSlot::Left).EnableSoftProofing = false; // Left pane is the "Before Proofing" version
         g_runtime.LockWindowSize = false;         // [Fix] Allow window to adapt for side-by-side view
         
-        g_osd.ShowCompare(hwnd, AppStrings::OSD_CompareBefore, AppStrings::OSD_CompareAfter, D2D1::ColorF(D2D1::ColorF::White), 2500);
+        g_osd.ShowCompare(hwnd, AppStrings::g.OSD_CompareBefore, AppStrings::g.OSD_CompareAfter, D2D1::ColorF(D2D1::ColorF::White), 2500);
     }
-
-    GetPaneContext(PaneSlot::Primary).view.ExifOrientation = g_config.AutoRotate 
-        ? (GetPaneContext(PaneSlot::Primary).metadata.ExifOrientation > 0 ? GetPaneContext(PaneSlot::Primary).metadata.ExifOrientation : 1)
-        : 1;
 
     m_context.Compare.syncZoom = true;
     m_context.Compare.syncPan = true;
@@ -666,7 +662,7 @@ void CompareController::EnterSrCompareMode(HWND hwnd) {
     m_hwnd = hwnd;
     if (!GetPaneContext(PaneSlot::Primary).resource) return;
     if (GetPaneContext(PaneSlot::Primary).resource.IsAnimated()) {
-        g_osd.Show(hwnd, AppStrings::OSD_CompareAnimNotSupported, true);
+        g_osd.Show(hwnd, AppStrings::g.OSD_CompareAnimNotSupported, true);
         return;
     }
 
@@ -710,7 +706,7 @@ void CompareController::EnterSrCompareMode(HWND hwnd) {
     RefreshCompareRawUI(hwnd);
 
     // Show OSD banner
-    g_osd.ShowCompare(hwnd, AppStrings::OSD_CompareBefore, AppStrings::OSD_CompareAfter, D2D1::ColorF(D2D1::ColorF::White), 2500);
+    g_osd.ShowCompare(hwnd, AppStrings::g.OSD_CompareBefore, AppStrings::g.OSD_CompareAfter, D2D1::ColorF(D2D1::ColorF::White), 2500);
 }
 
 void CompareController::ExitMode(HWND hwnd) {

@@ -91,7 +91,9 @@ struct ActionDesc {
 // Execution Context & Result
 struct ExecutionResult {
     bool success = false;
+    uint64_t taskId = 0;
     uint32_t httpStatusCode = 0;
+    std::wstring sourceImagePath;
     std::wstring errorMessage;              // Human-readable error description with hints
     std::wstring mainTitle;                 // Short main instruction for TaskDialog
     std::wstring detailMessage;             // Extracted high-priority semantic error detail
@@ -103,13 +105,45 @@ struct ExecutionResult {
     uint32_t imageHeight = 0;
 };
 
+struct VisualFrameSnapshot {
+    std::wstring imagePath;
+    int netRotation = 0;
+    bool netFlipH = false;
+    bool flipV = false;
+    bool hasCrop = false;
+    float cropLeft = 0.0f;
+    float cropTop = 0.0f;
+    float cropRight = 0.0f;
+    float cropBottom = 0.0f;
+    bool rawForceFullDecode = false;
+    int effectiveExif = 1;
+    std::vector<uint8_t> memoryBgra;
+    uint32_t memoryWidth = 0;
+    uint32_t memoryHeight = 0;
+    uint32_t memoryStride = 0;
+};
+
+using VisualFrameSnapshotFn = bool (*)(VisualFrameSnapshot& outSnapshot);
+using VisualBgraProviderFn = bool (*)(
+    const VisualFrameSnapshot& snapshot,
+    std::vector<uint8_t>& outBgra,
+    uint32_t& outWidth,
+    uint32_t& outHeight,
+    uint32_t& outStride);
+
 constexpr UINT WM_AI_ACTION_COMPLETED = WM_APP + 62;
+constexpr UINT WM_AI_ACTION_PROGRESS  = WM_APP + 63;
+
+struct AsyncAiProgressInfo {
+    uint64_t taskId = 0;
+    std::wstring message;
+    float progress = 0.0f;
+};
 
 struct AsyncAiImageResult {
-    std::vector<uint8_t> imageData;
+    uint64_t taskId = 0;
     std::wstring actionName;
-    uint32_t width = 0;
-    uint32_t height = 0;
+    ExecutionResult execResult;
 };
 
 } // namespace QuickView::AI

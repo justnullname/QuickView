@@ -95,17 +95,22 @@ std::vector<std::wstring> SplitAndTrimCSV(const std::wstring& str, wchar_t delim
     return tokens;
 }
 
-std::wstring NormalizeCSV(const std::wstring& csv,
-                         const std::vector<std::wstring>& allowedKeys,
-                         int maxItems) {
+template <typename AllowedRange>
+static std::wstring NormalizeCSVImpl(const std::wstring& csv,
+                                     const AllowedRange& allowedKeys,
+                                     int maxItems) {
     auto tokens = SplitAndTrimCSV(csv);
     std::vector<std::wstring> result;
     for (const auto& t : tokens) {
         if (static_cast<int>(result.size()) >= maxItems) break;
-        // Check allowed
-        bool allowed = std::find(allowedKeys.begin(), allowedKeys.end(), t) != allowedKeys.end();
+        bool allowed = false;
+        for (const auto& k : allowedKeys) {
+            if (k == t) {
+                allowed = true;
+                break;
+            }
+        }
         if (!allowed) continue;
-        // Check duplicate
         bool dup = std::find(result.begin(), result.end(), t) != result.end();
         if (dup) continue;
         result.push_back(t);
@@ -116,6 +121,54 @@ std::wstring NormalizeCSV(const std::wstring& csv,
         out += result[i];
     }
     return out;
+}
+
+std::wstring NormalizeCSV(const std::wstring& csv,
+                         std::span<const std::wstring_view> allowedKeys,
+                         int maxItems) {
+    return NormalizeCSVImpl(csv, allowedKeys, maxItems);
+}
+
+std::wstring NormalizeCSV(const std::wstring& csv,
+                         const std::vector<std::wstring>& allowedKeys,
+                         int maxItems) {
+    return NormalizeCSVImpl(csv, allowedKeys, maxItems);
+}
+
+bool PathExists(const wchar_t* path) noexcept {
+    if (!path || !*path) return false;
+    return GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES;
+}
+
+bool IsExistingDirectory(const wchar_t* path) noexcept {
+    if (!path || !*path) return false;
+    const DWORD attrs = GetFileAttributesW(path);
+    return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
+}
+
+bool IsExistingRegularFile(const wchar_t* path) noexcept {
+    if (!path || !*path) return false;
+    const DWORD attrs = GetFileAttributesW(path);
+    return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0;
+}
+
+uint64_t QueryFileSize(const wchar_t* path, bool* outOk) noexcept {
+    if (outOk) *outOk = false;
+    if (!path || !*path) return 0;
+    WIN32_FILE_ATTRIBUTE_DATA fad{};
+    if (!GetFileAttributesExW(path, GetFileExInfoStandard, &fad)) return 0;
+    if (fad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) return 0;
+    if (outOk) *outOk = true;
+    return (static_cast<uint64_t>(fad.nFileSizeHigh) << 32) | static_cast<uint64_t>(fad.nFileSizeLow);
+}
+
+uint64_t QueryFileLastWriteTicks(const wchar_t* path, bool* outOk) noexcept {
+    if (outOk) *outOk = false;
+    if (!path || !*path) return 0;
+    WIN32_FILE_ATTRIBUTE_DATA fad{};
+    if (!GetFileAttributesExW(path, GetFileExInfoStandard, &fad)) return 0;
+    if (outOk) *outOk = true;
+    return FileTimePartsToTicks(fad.ftLastWriteTime.dwLowDateTime, fad.ftLastWriteTime.dwHighDateTime);
 }
 
 } // namespace QuickView

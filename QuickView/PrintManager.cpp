@@ -691,7 +691,7 @@ std::expected<void, HRESULT> PrintManager::ExecutePrintJob(const PrintJobSetting
         // Render page by page
         for (int p = 0; p < totalPages; ++p) {
             if (settings.printMultiPage) {
-                if (settings.disabledPages.count(p) > 0) continue;
+                if (settings.IsPageDisabled(p)) continue;
             }
 
             D2D1::Matrix3x2F pageTransform = m;

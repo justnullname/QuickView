@@ -149,7 +149,8 @@ void DrawPillComboBox(
     bool isDisabled,
     IDWriteTextFormat* textFormat,
     float uiScale,
-    const WidgetPalette& palette);
+    const WidgetPalette& palette,
+    IDWriteFactory* dwriteFactory = nullptr);
 
 // 5.1 Universal Marquee Clipped Text with Smooth Hover Auto-Scroll
 void DrawMarqueeText(
@@ -162,6 +163,10 @@ void DrawMarqueeText(
     ID2D1Brush* brush,
     float uiScale,
     IDWriteFactory* dwriteFactory = nullptr);
+
+// 5.2 Track whether any DrawMarqueeText call in the current render pass has overflowing hovered text
+void BeginMarqueePass();
+bool EndMarqueePass();
 
 // 6. Standalone Reset Button (Placed on the left outside)
 void DrawResetButton(

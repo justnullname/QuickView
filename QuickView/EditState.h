@@ -23,9 +23,14 @@
 extern HCURSOR g_currentCursor;
 
 // Dihedral Group D4 2D Rigid Transformation for precise EXIF & Edit composition
+// Convention: Horizontal Flip (FlipH) FIRST, then Clockwise Rotation (Rotation).
+// Under this convention:
+//   EXIF 5 (Transpose: (x,y)->(y,x))      = FlipH then Rot270CW
+//   EXIF 7 (Transverse: (x,y)->(H-y,W-x)) = FlipH then Rot90CW
+// This matches GetVisualState(), GetEffectiveExifOrientation(), and LosslessTransform::TransformJPEG().
 struct Transform2D {
-    int Rotation = 0;   // 0, 90, 180, 270
-    bool FlipH = false; // Horizontal Flip
+    int Rotation = 0;   // 0, 90, 180, 270 CW
+    bool FlipH = false; // Horizontal Flip applied BEFORE Rotation
 
     static constexpr Transform2D FromExif(int exifOrientation) {
         switch (exifOrientation) {
@@ -33,9 +38,9 @@ struct Transform2D {
             case 2: return { 0,   true  };
             case 3: return { 180, false };
             case 4: return { 180, true  };
-            case 5: return { 90,  true  };
+            case 5: return { 270, true  };
             case 6: return { 90,  false };
-            case 7: return { 270, true  };
+            case 7: return { 90,  true  };
             case 8: return { 270, false };
             default: return { 0,  false };
         }
@@ -52,7 +57,87 @@ struct Transform2D {
         }
         return result;
     }
+
+    // Converts FlipH-first (R_rot * F_H) plus optional post-rotation Visual FlipV
+    // into WIC IWICBitmapFlipRotator order (Rotate first, then Flip).
+    constexpr void ToRotateFirstParams(bool visualFlipV, int& outRotCW, bool& outFlipH, bool& outFlipV) const {
+        const int r = ((Rotation % 360) + 360) % 360;
+        if (FlipH && visualFlipV) {
+            // F_V * R_r * F_H = R_{180 - r} (no flip)
+            outRotCW = ((180 - r) % 360 + 360) % 360;
+            outFlipH = false;
+            outFlipV = false;
+        } else if (FlipH) {
+            // R_r * F_H = F_H * R_{-r}
+            outRotCW = ((360 - r) % 360 + 360) % 360;
+            outFlipH = true;
+            outFlipV = false;
+        } else {
+            // R_r (followed by optional F_V)
+            outRotCW = r;
+            outFlipH = false;
+            outFlipV = visualFlipV;
+        }
+    }
 };
+
+struct ImageDisplayMetrics {
+    float imgDrawX = 0.0f;
+    float imgDrawY = 0.0f;
+    float totalScale = 1.0f;
+    float visualW = 0.0f;
+    float visualH = 0.0f;
+    float winW = 0.0f;
+    float winH = 0.0f;
+    float effWinH = 0.0f;
+    float galleryH = 0.0f;
+    bool valid = false;
+};
+
+// Inverse-maps a rectangle in 1x visual (post-Flip*Rotate) space [0..visualW, 0..visualH]
+// back to 1x physical (pre-Flip*Rotate) space [0..physSize.width, 0..physSize.height].
+inline D2D1_RECT_F MapVisualRectToPhysicalRect(
+    const D2D1_RECT_F& visualRect,
+    const D2D1_SIZE_F& uncroppedPhysicalSize,
+    int totalRotationCW,
+    bool physicalFlipX,
+    bool physicalFlipY) {
+    const float physW = uncroppedPhysicalSize.width;
+    const float physH = uncroppedPhysicalSize.height;
+    if (physW <= 0.0f || physH <= 0.0f) {
+        return D2D1::RectF(0.0f, 0.0f, 0.0f, 0.0f);
+    }
+
+    int rot = ((totalRotationCW % 360) + 360) % 360;
+    const bool swapped = (rot == 90 || rot == 270);
+    const float visW = swapped ? physH : physW;
+    const float visH = swapped ? physW : physH;
+
+    const float fx = physicalFlipX ? -1.0f : 1.0f;
+    const float fy = physicalFlipY ? -1.0f : 1.0f;
+
+    auto mapPt = [&](float vx, float vy) -> D2D1_POINT_2F {
+        const float dx = vx - visW * 0.5f;
+        const float dy = vy - visH * 0.5f;
+        float rx = dx;
+        float ry = dy;
+        switch (rot) {
+            case 90:  rx = dy;  ry = -dx; break;
+            case 180: rx = -dx; ry = -dy; break;
+            case 270: rx = -dy; ry = dx;  break;
+            default:  break;
+        }
+        return D2D1::Point2F(fx * rx + physW * 0.5f, fy * ry + physH * 0.5f);
+    };
+
+    const D2D1_POINT_2F p0 = mapPt(visualRect.left, visualRect.top);
+    const D2D1_POINT_2F p1 = mapPt(visualRect.right, visualRect.bottom);
+    const float l = std::clamp((std::min)(p0.x, p1.x), 0.0f, physW);
+    const float t = std::clamp((std::min)(p0.y, p1.y), 0.0f, physH);
+    const float r = std::clamp((std::max)(p0.x, p1.x), l, physW);
+    const float b = std::clamp((std::max)(p0.y, p1.y), t, physH);
+    return D2D1::RectF(l, t, r, b);
+}
 
 
 struct EditState {
@@ -1310,6 +1395,13 @@ struct CropState {
     bool ReachedEdgeX = false;
     bool ReachedEdgeY = false;
 
+    // Preserved previous committed crop when re-entering Crop Mode for adjustment
+    bool RestoresPriorEditCrop = false;
+    float PriorEditCropLeft = 0.0f;
+    float PriorEditCropTop = 0.0f;
+    float PriorEditCropRight = 0.0f;
+    float PriorEditCropBottom = 0.0f;
+
     void Reset() {
         Mode = RegionInteractionMode::Crop;
         IsActive = false;
@@ -1318,6 +1410,8 @@ struct CropState {
         IsInputInvalid = false;
         ReachedEdgeX = false;
         ReachedEdgeY = false;
+        RestoresPriorEditCrop = false;
+        PriorEditCropLeft = PriorEditCropTop = PriorEditCropRight = PriorEditCropBottom = 0.0f;
         CropLeft = CropTop = CropRight = CropBottom = 0;
         DragStartCropLeft = DragStartCropTop = DragStartCropRight = DragStartCropBottom = 0;
         DragStartMousePos = { 0, 0 };

@@ -19,6 +19,8 @@
 #include <vector>
 #include <memory>
 #include <mutex>
+#include <condition_variable>
+#include <atomic>
 #include <span>
 
 namespace QuickView {
@@ -138,7 +140,8 @@ public:
     void SetParamValue(const std::string& paramId, float val);
 
     float GetSrDenoise() const noexcept { return GetParamValue("denoise", m_srDenoise); }
-    void SetSrDenoise(float val) noexcept { m_srDenoise = val; SetParamValue("denoise", val); }
+    void SetSrDenoise(float val) noexcept { SetParamValue("denoise", val); }
+    void InvalidateModelCache();
 
     // --- Dynamic Model Catalog API ---
     // Returns all supported models declared by the active SR plugin
@@ -220,9 +223,22 @@ private:
     bool EnsureSrModuleLoaded();
     std::wstring ResolveEffectiveSrPluginPath(std::wstring* pOutRelativeForIni = nullptr) const;
     void SyncDynamicParamsToContext();
+    void WaitForInFlightUpscales();
 
     // Active Super-Resolution Plugin State
     mutable std::recursive_mutex m_srMutex;
+    std::mutex m_inFlightMutex;
+    std::condition_variable m_inFlightCv;
+    uint32_t m_inFlightUpscaleCount = 0;
+    std::atomic<bool> m_shuttingDown{false};
+
+    mutable bool m_installCacheValid = false;
+    mutable PluginInstallState m_cachedInstallState = PluginInstallState::NotInstalled;
+    mutable std::string m_cachedInstalledVersion;
+    mutable std::wstring m_cachedResolvedPath;
+    mutable bool m_modelsCacheValid = false;
+    mutable std::vector<SrModelEntry> m_cachedSrModels;
+
     HMODULE m_hSrModule = nullptr;
     const QVX_PluginHeader* m_srHeader = nullptr;
     const QVX_SR_VTable* m_srVTable = nullptr;
@@ -231,7 +247,7 @@ private:
 
     // Config settings (Lock-Free Thread-Safe Atomic Storage)
     std::atomic<bool> m_enableSrPlugin{false};
-    std::wstring m_srPluginPath = L"plugins\\sr\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx";
+    mutable std::wstring m_srPluginPath = L"plugins\\sr\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx";
     std::string m_srModelId = "realesr-animevideov3-auto";
     std::atomic<bool> m_srAutoTrigger{false};
     std::atomic<bool> m_srOpenInCompareMode{true};

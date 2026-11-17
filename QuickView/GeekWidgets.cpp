@@ -429,12 +429,14 @@ void DrawPillSlider(
     }
 }
 
-static IDWriteFactory* GetSharedDWriteFactory() {
-    static ComPtr<IDWriteFactory> s_factory;
-    if (!s_factory) {
-        DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), &s_factory);
-    }
-    return s_factory.Get();
+static thread_local bool t_marqueeOverflowActive = false;
+
+void BeginMarqueePass() {
+    t_marqueeOverflowActive = false;
+}
+
+bool EndMarqueePass() {
+    return t_marqueeOverflowActive;
 }
 
 void DrawMarqueeText(
@@ -466,27 +468,26 @@ void DrawMarqueeText(
         return;
     }
 
-    IDWriteFactory* factory = dwriteFactory ? dwriteFactory : GetSharedDWriteFactory();
     float scrollOffset = 0.0f;
-
     ComPtr<IDWriteTextLayout> layout;
-    if (factory) {
-        if (SUCCEEDED(factory->CreateTextLayout(
+    if (dwriteFactory) {
+        if (SUCCEEDED(dwriteFactory->CreateTextLayout(
             text.data(), static_cast<UINT32>(text.length()), textFormat, 4000.0f, visibleH, &layout))) {
             DWRITE_TEXT_METRICS m = {};
             if (SUCCEEDED(layout->GetMetrics(&m)) && m.width > visibleW) {
-                float overflow = m.width - visibleW;
-                float rawPhase = fmodf((float)GetTickCount() * 0.0010f, 2.4f);
+                t_marqueeOverflowActive = true;
+                const float overflow = m.width - visibleW;
+                const float rawPhase = static_cast<float>(GetTickCount64() % 2400ULL) * 0.001f;
                 float t = 0.0f;
                 if (rawPhase < 0.4f) {
                     t = 0.0f;
                 } else if (rawPhase < 1.2f) {
-                    float prog = (rawPhase - 0.4f) / 0.8f;
+                    const float prog = (rawPhase - 0.4f) / 0.8f;
                     t = 0.5f - 0.5f * cosf(prog * 3.14159265f);
                 } else if (rawPhase < 1.6f) {
                     t = 1.0f;
                 } else {
-                    float prog = (rawPhase - 1.6f) / 0.8f;
+                    const float prog = (rawPhase - 1.6f) / 0.8f;
                     t = 0.5f + 0.5f * cosf(prog * 3.14159265f);
                 }
                 scrollOffset = t * (overflow + 14.0f * s);
@@ -513,7 +514,8 @@ void DrawPillComboBox(
     bool isDisabled,
     IDWriteTextFormat* textFormat,
     float uiScale,
-    const WidgetPalette& palette) {
+    const WidgetPalette& palette,
+    IDWriteFactory* dwriteFactory) {
     if (!dc) return;
     const float s = uiScale > 0.0f ? uiScale : 1.0f;
     const float h = rect.bottom - rect.top;
@@ -530,7 +532,7 @@ void DrawPillComboBox(
     if (textFormat) {
         D2D1_RECT_F textRect = D2D1::RectF(rect.left + 14.0f * s, rect.top, rect.right - 30.0f * s, rect.bottom);
         brush->SetColor(isDisabled ? palette.textDim : palette.text);
-        DrawMarqueeText(dc, textRect, text, isHovered, isDisabled, textFormat, brush.Get(), s);
+        DrawMarqueeText(dc, textRect, text, isHovered, isDisabled, textFormat, brush.Get(), s, dwriteFactory);
     }
 
     D2D1_RECT_F arrowRect = D2D1::RectF(rect.right - 28.0f * s, rect.top, rect.right - 4.0f * s, rect.bottom);

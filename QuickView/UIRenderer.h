@@ -3,7 +3,6 @@
 #include <string>
 #include <cwchar>
 #include <vector>
-#include <map>
 #include <unordered_map>
 #include <functional>
 #include <type_traits>
@@ -44,16 +43,16 @@ enum class TruncateMode {
 struct InfoRow {
     const wchar_t* icon = nullptr; // Emoji icon (e.g., L"📄")
     const wchar_t* label = nullptr; // Label (e.g., L"File")
-    std::wstring valueMain = L"";  // Main value (e.g., "f/1.6")
-    std::wstring valueSub = L"";   // Secondary value in gray (e.g., "(1,138,997 B)")
-    std::wstring fullText = L"";   // Full text for tooltip
+    std::wstring valueMain{};      // Main value (e.g., "f/1.6")
+    std::wstring valueSub{};       // Secondary value in gray (e.g., "(1,138,997 B)")
+    std::wstring fullText{};       // Full text for tooltip
 
     TruncateMode mode = TruncateMode::EndEllipsis;
     bool isClickable = false;
 
     // Runtime (calculated during layout)
     D2D1_RECT_F hitRect = {};
-    std::wstring displayText = L""; // Truncated display text
+    std::wstring displayText{};    // Truncated display text
     bool isTruncated = false;
 };
 // ============================================================================
@@ -115,6 +114,8 @@ public:
         m_bgCommandList.Reset();
         m_borderGlowBrush.Reset();
         m_borderGlowCachedDc = nullptr;
+        for (auto& g : m_borderGlowGeos) g.Reset();
+        m_borderGlowCachedMask = 0;
         m_roundStrokeStyle.Reset();
     }
     
@@ -392,7 +393,17 @@ private:
     ComPtr<ID2D1LinearGradientBrush> m_borderGlowBrush;
     ID2D1DeviceContext* m_borderGlowCachedDc = nullptr;
     D2D1_COLOR_F m_borderGlowCachedColor = { -1.0f, -1.0f, -1.0f, -1.0f };
+    ComPtr<ID2D1PathGeometry> m_borderGlowGeos[4];
+    float m_borderGlowCachedL = 0.0f;
+    float m_borderGlowCachedT = 0.0f;
+    float m_borderGlowCachedR = 0.0f;
+    float m_borderGlowCachedB = 0.0f;
+    float m_borderGlowCachedDepth = 0.0f;
+    uint8_t m_borderGlowCachedMask = 0;
     ComPtr<ID2D1StrokeStyle> m_roundStrokeStyle;
+    bool m_marqueeStaticActive = false;
+    bool m_marqueeDynamicActive = false;
+    bool m_marqueeTimerActive = false;
     void DrawDecodingStatus(ID2D1DeviceContext* dc, HWND hwnd);
     void DrawWelcomeScreen(ID2D1DeviceContext* dc);
     void DrawWelcomeButton(ID2D1DeviceContext* dc, const D2D1_RECT_F& r, const wchar_t* text, const GeekIcons::VectorIcon& icon, int hoverState);

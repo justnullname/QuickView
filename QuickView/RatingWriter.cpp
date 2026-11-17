@@ -28,6 +28,7 @@
 #include <zlib.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <span>
 #include <vector>
@@ -38,43 +39,34 @@ namespace QuickView::Rating {
 
 namespace {
 
-// A JPEG nests Exif under APP1; a TIFF carries the IFD directly. Both take
-// xmp:Rating, which is the property Lightroom and Bridge read. PNG supports
-// iTXt XMP or eXIf chunk.
+// A JPEG nests Exif under APP1; a TIFF carries the IFD directly.
 struct RatingQueries {
     const wchar_t* exif;
     const wchar_t* xmp;
-    const wchar_t* xmpFallback;
 };
 
 RatingQueries QueriesFor(const std::wstring& path) {
     const std::wstring_view ext = QuickView::ExtensionOf(path);
     const bool isTiff = QuickView::ExtEqualsIgnoreCase(ext, L".tif") ||
                         QuickView::ExtEqualsIgnoreCase(ext, L".tiff");
-    const bool isPng = QuickView::ExtEqualsIgnoreCase(ext, L".png") ||
-                       QuickView::ExtEqualsIgnoreCase(ext, L".apng");
     if (isTiff) {
-        return RatingQueries{ L"/ifd/{ushort=18246}", L"/ifd/xmp/xmp:Rating", nullptr };
+        return RatingQueries{ L"/ifd/{ushort=18246}", L"/ifd/xmp/xmp:Rating" };
     }
-    if (isPng) {
-        // WIC PNG encoder surfaces XMP at the root /xmp namespace.
-        // /xmp/xmp:Rating embeds a standard iTXt chunk carrying <xmp:Rating>,
-        // natively recognized by Windows Explorer (System.Rating) and Lightroom.
-        return RatingQueries{ nullptr, L"/xmp/xmp:Rating", nullptr };
-    }
-    return RatingQueries{ L"/app1/ifd/{ushort=18246}", L"/xmp/xmp:Rating", nullptr };
+    return RatingQueries{ L"/app1/ifd/{ushort=18246}", L"/xmp/xmp:Rating" };
 }
 
 // Writing SimpleRating (0..5) is enough for both ecosystems: Explorer and
 // Photos derive System.Rating (0..99) from it, and Adobe reads xmp:Rating.
 HRESULT ApplyRating(IWICMetadataQueryWriter* writer, const RatingQueries& q, int stars) {
-    if (stars <= 0) {
+    if (!writer) return E_POINTER;
+    const int clampedStars = std::clamp(stars, 0, 5);
+
+    if (clampedStars <= 0) {
         // Clearing means removing the property, not storing a zero, so the
         // file goes back to carrying no rating at all. A property that was
         // not there is not an error.
         if (q.exif) writer->RemoveMetadataByName(q.exif);
         if (q.xmp) writer->RemoveMetadataByName(q.xmp);
-        if (q.xmpFallback) writer->RemoveMetadataByName(q.xmpFallback);
         return S_OK;
     }
 
@@ -83,34 +75,24 @@ HRESULT ApplyRating(IWICMetadataQueryWriter* writer, const RatingQueries& q, int
         PROPVARIANT var;
         PropVariantInit(&var);
         var.vt = VT_UI2;
-        var.uiVal = (USHORT)stars;
+        var.uiVal = static_cast<USHORT>(clampedStars);
         hrExif = writer->SetMetadataByName(q.exif, &var);
         PropVariantClear(&var);
     }
 
     HRESULT hrXmp = E_FAIL;
-    const std::wstring text = std::to_wstring(stars);
+    const std::wstring text = std::to_wstring(clampedStars);
     if (q.xmp) {
         PROPVARIANT var;
         PropVariantInit(&var);
         var.vt = VT_LPWSTR;
-        var.pwszVal = (WCHAR*)CoTaskMemAlloc((text.size() + 1) * sizeof(WCHAR));
+        var.pwszVal = static_cast<WCHAR*>(CoTaskMemAlloc((text.size() + 1) * sizeof(WCHAR)));
         if (var.pwszVal) {
             wcscpy_s(var.pwszVal, text.size() + 1, text.c_str());
             hrXmp = writer->SetMetadataByName(q.xmp, &var);
             PropVariantClear(&var);
-        }
-    }
-
-    if (FAILED(hrXmp) && q.xmpFallback) {
-        PROPVARIANT var;
-        PropVariantInit(&var);
-        var.vt = VT_LPWSTR;
-        var.pwszVal = (WCHAR*)CoTaskMemAlloc((text.size() + 1) * sizeof(WCHAR));
-        if (var.pwszVal) {
-            wcscpy_s(var.pwszVal, text.size() + 1, text.c_str());
-            hrXmp = writer->SetMetadataByName(q.xmpFallback, &var);
-            PropVariantClear(&var);
+        } else {
+            hrXmp = E_OUTOFMEMORY;
         }
     }
 
@@ -119,6 +101,222 @@ HRESULT ApplyRating(IWICMetadataQueryWriter* writer, const RatingQueries& q, int
         return S_OK;
     }
     return FAILED(hrExif) ? hrExif : hrXmp;
+}
+
+std::wstring CreateUniqueTempPath(const std::wstring& targetPath, const wchar_t* tag) {
+    static std::atomic<uint64_t> s_seq{ 0 };
+    return targetPath + L"." + std::to_wstring(GetCurrentProcessId()) + L"." +
+           std::to_wstring(s_seq.fetch_add(1, std::memory_order_relaxed)) + tag;
+}
+
+bool IsFileLockError(DWORD err) {
+    return err == ERROR_SHARING_VIOLATION ||
+           err == ERROR_LOCK_VIOLATION ||
+           err == ERROR_UNABLE_TO_REMOVE_REPLACED ||
+           err == ERROR_UNABLE_TO_MOVE_REPLACEMENT;
+}
+
+HANDLE OpenFileForReadRetry(const std::wstring& path, DWORD* outLastErr = nullptr) {
+    DWORD lastErr = 0;
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        HANDLE file = CreateFileW(path.c_str(), GENERIC_READ,
+                                  FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                  nullptr, OPEN_EXISTING,
+                                  FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+        if (file != INVALID_HANDLE_VALUE) return file;
+        lastErr = GetLastError();
+        if (!IsFileLockError(lastErr) && lastErr != ERROR_ACCESS_DENIED) break;
+        if (attempt + 1 < 8) Sleep(15);
+    }
+    if (outLastErr) *outLastErr = lastErr;
+    return INVALID_HANDLE_VALUE;
+}
+
+bool ReadWholeFile(const std::wstring& path, uint64_t minBytes, uint64_t maxBytes,
+                   std::vector<uint8_t>& out, DWORD* outErr = nullptr) {
+    out.clear();
+    DWORD openErr = 0;
+    HANDLE file = OpenFileForReadRetry(path, &openErr);
+    if (file == INVALID_HANDLE_VALUE) {
+        if (outErr) *outErr = openErr;
+        return false;
+    }
+
+    LARGE_INTEGER size{};
+    if (!GetFileSizeEx(file, &size) || size.QuadPart < static_cast<LONGLONG>(minBytes) ||
+        static_cast<uint64_t>(size.QuadPart) > maxBytes) {
+        if (outErr) *outErr = GetLastError();
+        CloseHandle(file);
+        return false;
+    }
+
+    const size_t total = static_cast<size_t>(size.QuadPart);
+    out.resize(total);
+    size_t off = 0;
+    while (off < total) {
+        const DWORD toRead = static_cast<DWORD>((std::min)(total - off, static_cast<size_t>(0x40000000u)));
+        DWORD read = 0;
+        if (!ReadFile(file, out.data() + off, toRead, &read, nullptr) || read == 0) {
+            if (outErr) *outErr = GetLastError();
+            CloseHandle(file);
+            out.clear();
+            return false;
+        }
+        off += read;
+    }
+    CloseHandle(file);
+    return true;
+}
+
+bool AtomicReplaceFile(const std::wstring& targetPath, const std::wstring& tempPath,
+                       DWORD* outLastErr = nullptr) {
+    DWORD lastErr = 0;
+    for (int retry = 0; retry < 8; ++retry) {
+        if (ReplaceFileW(targetPath.c_str(), tempPath.c_str(), nullptr,
+                         REPLACEFILE_IGNORE_MERGE_ERRORS, nullptr, nullptr)) {
+            return true;
+        }
+        lastErr = GetLastError();
+        if (!IsFileLockError(lastErr) && lastErr != ERROR_ACCESS_DENIED) break;
+        if (retry + 1 < 8) Sleep(20);
+    }
+    DeleteFileW(tempPath.c_str());
+    if (outLastErr) *outLastErr = lastErr;
+    return false;
+}
+
+bool WriteBufferAndReplace(const std::wstring& targetPath, const wchar_t* tag,
+                           std::span<const uint8_t> data, WriteStatus& outStatus) {
+    const std::wstring tempPath = CreateUniqueTempPath(targetPath, tag);
+    DWORD createErr = 0;
+    HANDLE hTemp = CreateFileW(tempPath.c_str(), GENERIC_WRITE, 0, nullptr,
+                               CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hTemp == INVALID_HANDLE_VALUE) {
+        createErr = GetLastError();
+        outStatus = IsFileLockError(createErr) ? WriteStatus::NeedsTranscode : WriteStatus::Failed;
+        return false;
+    }
+
+    size_t off = 0;
+    bool writeOk = true;
+    while (off < data.size()) {
+        const DWORD step = static_cast<DWORD>((std::min)(data.size() - off, static_cast<size_t>(0x40000000u)));
+        DWORD written = 0;
+        if (!WriteFile(hTemp, data.data() + off, step, &written, nullptr) || written != step) {
+            writeOk = false;
+            break;
+        }
+        off += written;
+    }
+    if (writeOk) FlushFileBuffers(hTemp);
+    CloseHandle(hTemp);
+
+    if (!writeOk) {
+        DeleteFileW(tempPath.c_str());
+        outStatus = WriteStatus::Failed;
+        return false;
+    }
+
+    DWORD replaceErr = 0;
+    if (!AtomicReplaceFile(targetPath, tempPath, &replaceErr)) {
+        outStatus = (IsFileLockError(replaceErr) || replaceErr == ERROR_ACCESS_DENIED)
+            ? WriteStatus::NeedsTranscode
+            : WriteStatus::Failed;
+        return false;
+    }
+    outStatus = WriteStatus::WrittenTranscode;
+    return true;
+}
+
+uint16_t RatingPercentForStars(int starVal) {
+    switch (starVal) {
+        case 1: return 1;
+        case 2: return 25;
+        case 3: return 50;
+        case 4: return 75;
+        case 5: return 99;
+        default: return 0;
+    }
+}
+
+std::string BuildStandardXmpPayload(int starVal) {
+    const int clamped = std::clamp(starVal, 0, 5);
+    std::string s =
+        "<?xpacket begin=\"\xEF\xBB\xBF\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n"
+        "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">\n"
+        " <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n"
+        "  <rdf:Description rdf:about=\"\"\n"
+        "    xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"\n";
+    if (clamped > 0) {
+        s += "    xmp:Rating=\"" + std::to_string(clamped) + "\"/>\n";
+    } else {
+        s += "   />\n";
+    }
+    s += " </rdf:RDF>\n"
+         "</x:xmpmeta>\n";
+    s.append(2048, ' ');
+    s += "\n<?xpacket end=\"w\"?>";
+    return s;
+}
+
+// Update an existing XMP packet preserving all non-rating fields and ensuring
+// enough whitespace padding for future O(1) in-place edits.
+std::optional<std::string> BuildPaddedUpdatedXmp(std::string_view oldXmp, int stars) {
+    const int clamped = std::clamp(stars, 0, 5);
+    auto updated = UpdateXmpRating(oldXmp, clamped);
+    if (!updated) return std::nullopt;
+
+    constexpr std::string_view PACKET_END = "<?xpacket end=";
+    const size_t endPos = updated->rfind(PACKET_END);
+    if (endPos != std::string_view::npos) {
+        size_t wsStart = endPos;
+        while (wsStart > 0 && ((*updated)[wsStart - 1] == ' ' || (*updated)[wsStart - 1] == '\t' ||
+                               (*updated)[wsStart - 1] == '\r' || (*updated)[wsStart - 1] == '\n')) {
+            --wsStart;
+        }
+        const size_t curWs = endPos - wsStart;
+        if (curWs < 512) {
+            updated->insert(wsStart, "\n" + std::string(2048 - curWs, ' ') + "\n");
+        }
+    } else {
+        updated->append("\n");
+        updated->append(2048, ' ');
+        updated->append("\n<?xpacket end=\"w\"?>");
+    }
+    return updated;
+}
+
+// Standard 42-byte ISOBMFF/JXL Exif payload: 4-byte TIFF offset (0) + LE TIFF header + IFD0 (0x4746 + 0x4749).
+std::vector<uint8_t> BuildIsobmffExifPayload(int starVal) {
+    const int clamped = std::clamp(starVal, 0, 5);
+    const uint16_t pct = RatingPercentForStars(clamped);
+    std::vector<uint8_t> p;
+    p.reserve(42);
+    // 4-byte ISOBMFF Exif offset to TIFF header (0, Big Endian)
+    p.push_back(0); p.push_back(0); p.push_back(0); p.push_back(0);
+    // TIFF header: "II", 42, IFD0 offset 8
+    p.push_back('I'); p.push_back('I');
+    p.push_back(0x2A); p.push_back(0x00);
+    p.push_back(0x08); p.push_back(0x00); p.push_back(0x00); p.push_back(0x00);
+    // IFD0 entries count: 2 (LE)
+    p.push_back(0x02); p.push_back(0x00);
+    // tag 0x4746: SHORT(3), count 1, val = clamped
+    p.push_back(0x46); p.push_back(0x47);
+    p.push_back(0x03); p.push_back(0x00);
+    p.push_back(0x01); p.push_back(0x00); p.push_back(0x00); p.push_back(0x00);
+    p.push_back(static_cast<uint8_t>(clamped & 0xFF));
+    p.push_back(static_cast<uint8_t>((clamped >> 8) & 0xFF));
+    p.push_back(0x00); p.push_back(0x00);
+    // tag 0x4749: SHORT(3), count 1, val = pct
+    p.push_back(0x49); p.push_back(0x47);
+    p.push_back(0x03); p.push_back(0x00);
+    p.push_back(0x01); p.push_back(0x00); p.push_back(0x00); p.push_back(0x00);
+    p.push_back(static_cast<uint8_t>(pct & 0xFF));
+    p.push_back(static_cast<uint8_t>((pct >> 8) & 0xFF));
+    p.push_back(0x00); p.push_back(0x00);
+    // Next IFD: 0
+    p.push_back(0x00); p.push_back(0x00); p.push_back(0x00); p.push_back(0x00);
+    return p;
 }
 
 // Patch the value into the padding the file already has: no re-encode, no
@@ -147,194 +345,106 @@ HRESULT TryInPlace(IWICImagingFactory* factory, const std::wstring& path, int st
 // Rebuild the file when there was no room to patch. WriteSource with a null
 // rectangle copies the compressed frame as it is, so the pixels come through
 // bit for bit; only the metadata block is new.
-HRESULT Transcode(IWICImagingFactory* factory, const std::wstring& path, int stars) {
-    // Decode from a copy held in memory rather than from the file. A decoder
-    // opened on the path keeps it open even after every interface has been
-    // released, and the swap at the end then fails with a sharing violation.
+WriteStatus Transcode(IWICImagingFactory* factory, const std::wstring& path, int stars) {
     std::vector<BYTE> sourceBytes;
+    DWORD readErr = 0;
+    if (!ReadWholeFile(path, 1, MAXDWORD, sourceBytes, &readErr)) {
+        return IsFileLockError(readErr) ? WriteStatus::NeedsTranscode : WriteStatus::Failed;
+    }
+
+    const std::wstring tempPath = CreateUniqueTempPath(path, L".qvrating.tmp");
+    bool encodedOk = false;
+
+    // Scope all COM objects before DeleteFileW or AtomicReplaceFile so Windows
+    // releases the temp file write lock deterministically on any error path.
     {
-        HANDLE file = INVALID_HANDLE_VALUE;
-        for (int retry = 0; retry < 5; ++retry) {
-            file = CreateFileW(path.c_str(), GENERIC_READ,
-                               FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
-                               FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
-            if (file != INVALID_HANDLE_VALUE) break;
-            Sleep(15);
+        ComPtr<IWICStream> sourceStream;
+        ComPtr<IWICBitmapDecoder> decoder;
+        ComPtr<IWICStream> stream;
+        ComPtr<IWICBitmapEncoder> encoder;
+        GUID containerFormat{};
+        UINT frameCount = 0;
+
+        HRESULT hr = factory->CreateStream(&sourceStream);
+        if (SUCCEEDED(hr)) {
+            hr = sourceStream->InitializeFromMemory(sourceBytes.data(), static_cast<DWORD>(sourceBytes.size()));
         }
-        if (file == INVALID_HANDLE_VALUE) return HRESULT_FROM_WIN32(GetLastError());
-        LARGE_INTEGER size{};
-        if (!GetFileSizeEx(file, &size) || size.QuadPart <= 0 || size.QuadPart > MAXDWORD) {
-            CloseHandle(file);
-            return E_FAIL;
+        if (SUCCEEDED(hr)) {
+            hr = factory->CreateDecoderFromStream(sourceStream.Get(), nullptr,
+                                                  WICDecodeMetadataCacheOnDemand, &decoder);
         }
-        sourceBytes.resize((size_t)size.QuadPart);
-        DWORD read = 0;
-        const BOOL ok = ReadFile(file, sourceBytes.data(), (DWORD)sourceBytes.size(), &read, nullptr);
-        CloseHandle(file);
-        if (!ok || read != sourceBytes.size()) return E_FAIL;
-    }
+        if (SUCCEEDED(hr)) {
+            hr = decoder->GetContainerFormat(&containerFormat);
+        }
+        if (SUCCEEDED(hr)) {
+            hr = decoder->GetFrameCount(&frameCount);
+            if (SUCCEEDED(hr) && frameCount == 0) hr = E_FAIL;
+        }
+        if (SUCCEEDED(hr)) {
+            hr = factory->CreateStream(&stream);
+        }
+        if (SUCCEEDED(hr)) {
+            hr = stream->InitializeFromFilename(tempPath.c_str(), GENERIC_WRITE);
+        }
+        if (SUCCEEDED(hr)) {
+            hr = factory->CreateEncoder(containerFormat, nullptr, &encoder);
+        }
+        if (SUCCEEDED(hr)) {
+            hr = encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache);
+        }
 
-    ComPtr<IWICStream> sourceStream;
-    HRESULT hr = factory->CreateStream(&sourceStream);
-    if (FAILED(hr)) return hr;
-    hr = sourceStream->InitializeFromMemory(sourceBytes.data(), (DWORD)sourceBytes.size());
-    if (FAILED(hr)) return hr;
+        for (UINT i = 0; SUCCEEDED(hr) && i < frameCount; ++i) {
+            ComPtr<IWICBitmapFrameDecode> frameDecode;
+            hr = decoder->GetFrame(i, &frameDecode);
+            if (FAILED(hr)) break;
 
-    ComPtr<IWICBitmapDecoder> decoder;
-    hr = factory->CreateDecoderFromStream(sourceStream.Get(), nullptr,
-                                          WICDecodeMetadataCacheOnDemand, &decoder);
-    if (FAILED(hr)) return hr;
+            ComPtr<IWICBitmapFrameEncode> frameEncode;
+            hr = encoder->CreateNewFrame(&frameEncode, nullptr);
+            if (FAILED(hr)) break;
+            hr = frameEncode->Initialize(nullptr);
+            if (FAILED(hr)) break;
 
-    GUID containerFormat{};
-    hr = decoder->GetContainerFormat(&containerFormat);
-    if (FAILED(hr)) return hr;
-
-    UINT frameCount = 0;
-    hr = decoder->GetFrameCount(&frameCount);
-    if (FAILED(hr) || frameCount == 0) return FAILED(hr) ? hr : E_FAIL;
-
-    const std::wstring tempPath = path + L".qvrating.tmp";
-    ComPtr<IWICStream> stream;
-    hr = factory->CreateStream(&stream);
-    if (FAILED(hr)) return hr;
-    hr = stream->InitializeFromFilename(tempPath.c_str(), GENERIC_WRITE);
-    if (FAILED(hr)) return hr;
-
-    auto dropTemp = [&tempPath] { DeleteFileW(tempPath.c_str()); };
-
-    ComPtr<IWICBitmapEncoder> encoder;
-    hr = factory->CreateEncoder(containerFormat, nullptr, &encoder);
-    if (FAILED(hr)) { dropTemp(); return hr; }
-    hr = encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache);
-    if (FAILED(hr)) { dropTemp(); return hr; }
-
-    for (UINT i = 0; i < frameCount; ++i) {
-        ComPtr<IWICBitmapFrameDecode> frameDecode;
-        hr = decoder->GetFrame(i, &frameDecode);
-        if (FAILED(hr)) { dropTemp(); return hr; }
-
-        ComPtr<IWICBitmapFrameEncode> frameEncode;
-        hr = encoder->CreateNewFrame(&frameEncode, nullptr);
-        if (FAILED(hr)) { dropTemp(); return hr; }
-        hr = frameEncode->Initialize(nullptr);
-        if (FAILED(hr)) { dropTemp(); return hr; }
-
-        // Carry the existing metadata over before adding the rating to it.
-        ComPtr<IWICMetadataBlockReader> blockReader;
-        if (SUCCEEDED(frameDecode.As(&blockReader))) {
-            ComPtr<IWICMetadataBlockWriter> blockWriter;
-            if (SUCCEEDED(frameEncode.As(&blockWriter))) {
-                blockWriter->InitializeFromBlockReader(blockReader.Get());
+            // Carry the existing metadata over before adding the rating to it.
+            ComPtr<IWICMetadataBlockReader> blockReader;
+            if (SUCCEEDED(frameDecode.As(&blockReader))) {
+                ComPtr<IWICMetadataBlockWriter> blockWriter;
+                if (SUCCEEDED(frameEncode.As(&blockWriter))) {
+                    blockWriter->InitializeFromBlockReader(blockReader.Get());
+                }
             }
-        }
 
-        if (i == 0) {
-            ComPtr<IWICMetadataQueryWriter> writer;
-            if (SUCCEEDED(frameEncode->GetMetadataQueryWriter(&writer))) {
-                ApplyRating(writer.Get(), QueriesFor(path), stars);
+            if (i == 0) {
+                ComPtr<IWICMetadataQueryWriter> writer;
+                hr = frameEncode->GetMetadataQueryWriter(&writer);
+                if (SUCCEEDED(hr)) {
+                    hr = ApplyRating(writer.Get(), QueriesFor(path), stars);
+                }
+                if (FAILED(hr)) break;
             }
+
+            hr = frameEncode->WriteSource(frameDecode.Get(), nullptr);
+            if (FAILED(hr)) break;
+            hr = frameEncode->Commit();
         }
 
-        hr = frameEncode->WriteSource(frameDecode.Get(), nullptr);
-        if (FAILED(hr)) { dropTemp(); return hr; }
-        hr = frameEncode->Commit();
-        if (FAILED(hr)) { dropTemp(); return hr; }
-    }
-
-    hr = encoder->Commit();
-    if (FAILED(hr)) { dropTemp(); return hr; }
-
-    // Release everything that keeps the temp file's stream alive before the
-    // swap -- the query writer counts, since it holds the frame encoder, which
-    // holds the stream, and ReplaceFileW needs the replacement to itself.
-    // (The source file needs no such care: it was decoded from memory, so the
-    // original was only ever open for the moment it took to read it.)
-    stream.Reset();
-    encoder.Reset();
-    decoder.Reset();
-    sourceStream.Reset();
-
-    BOOL replaceOk = FALSE;
-    DWORD lastErr = 0;
-    for (int retry = 0; retry < 5; ++retry) {
-        if (ReplaceFileW(path.c_str(), tempPath.c_str(), nullptr, REPLACEFILE_IGNORE_MERGE_ERRORS,
-                         nullptr, nullptr)) {
-            replaceOk = TRUE;
-            break;
+        if (SUCCEEDED(hr)) {
+            hr = encoder->Commit();
         }
-        lastErr = GetLastError();
-        Sleep(20);
+        encodedOk = SUCCEEDED(hr);
     }
 
-    if (!replaceOk) {
-        dropTemp();
-        return HRESULT_FROM_WIN32(lastErr);
+    if (!encodedOk) {
+        DeleteFileW(tempPath.c_str());
+        return WriteStatus::Failed;
     }
-    return S_OK;
-}
 
-uint16_t RatingPercentForStars(int starVal) {
-    switch (starVal) {
-        case 1: return 1;
-        case 2: return 25;
-        case 3: return 50;
-        case 4: return 75;
-        case 5: return 99;
-        default: return 0;
+    DWORD replaceErr = 0;
+    if (!AtomicReplaceFile(path, tempPath, &replaceErr)) {
+        return (IsFileLockError(replaceErr) || replaceErr == ERROR_ACCESS_DENIED)
+            ? WriteStatus::NeedsTranscode
+            : WriteStatus::Failed;
     }
-}
-
-std::string BuildStandardXmpPayload(int starVal) {
-    std::string s =
-        "<?xpacket begin=\"\xEF\xBB\xBF\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n"
-        "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">\n"
-        " <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n"
-        "  <rdf:Description rdf:about=\"\"\n"
-        "    xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"\n";
-    if (starVal > 0) {
-        s += "    xmp:Rating=\"" + std::to_string(starVal) + "\"/>\n";
-    } else {
-        s += "   />\n";
-    }
-    s += " </rdf:RDF>\n"
-         "</x:xmpmeta>\n";
-    s.append(2048, ' ');
-    s += "\n<?xpacket end=\"w\"?>";
-    return s;
-}
-
-bool IsFileLockError(DWORD err) {
-    return err == ERROR_SHARING_VIOLATION || err == ERROR_LOCK_VIOLATION;
-}
-
-HANDLE OpenFileForReadRetry(const std::wstring& path, DWORD* outLastErr = nullptr) {
-    DWORD lastErr = 0;
-    for (int attempt = 0; attempt < 5; ++attempt) {
-        HANDLE file = CreateFileW(path.c_str(), GENERIC_READ,
-                                  FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                                  nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (file != INVALID_HANDLE_VALUE) return file;
-        lastErr = GetLastError();
-        if (attempt + 1 < 5) Sleep(15);
-    }
-    if (outLastErr) *outLastErr = lastErr;
-    return INVALID_HANDLE_VALUE;
-}
-
-bool AtomicReplaceFile(const std::wstring& targetPath, const std::wstring& tempPath,
-                       DWORD* outLastErr = nullptr) {
-    DWORD lastErr = 0;
-    for (int retry = 0; retry < 5; ++retry) {
-        if (ReplaceFileW(targetPath.c_str(), tempPath.c_str(), nullptr,
-                         REPLACEFILE_IGNORE_MERGE_ERRORS, nullptr, nullptr)) {
-            return true;
-        }
-        lastErr = GetLastError();
-        if (retry + 1 < 5) Sleep(20);
-    }
-    DeleteFileW(tempPath.c_str());
-    if (outLastErr) *outLastErr = lastErr;
-    return false;
+    return WriteStatus::WrittenTranscode;
 }
 
 uint32_t ReadBe32(const uint8_t* p) {
@@ -437,29 +547,11 @@ bool PatchTiffBufferRating(std::span<uint8_t> tiff, int stars) {
 // Lossless native RIFF container surgery for WebP: preserves all compressed
 // frames bit-for-bit without requiring a WIC WebP encoder component.
 WriteStatus WriteRatingToWebp(const std::wstring& path, int stars) {
+    const int clampedStars = std::clamp(stars, 0, 5);
     std::vector<uint8_t> src;
-    {
-        HANDLE file = INVALID_HANDLE_VALUE;
-        for (int retry = 0; retry < 5; ++retry) {
-            file = CreateFileW(path.c_str(), GENERIC_READ,
-                               FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                               nullptr, OPEN_EXISTING,
-                               FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
-            if (file != INVALID_HANDLE_VALUE) break;
-            Sleep(15);
-        }
-        if (file == INVALID_HANDLE_VALUE) return WriteStatus::Failed;
-
-        LARGE_INTEGER size{};
-        if (!GetFileSizeEx(file, &size) || size.QuadPart < 12 || size.QuadPart > MAXDWORD) {
-            CloseHandle(file);
-            return WriteStatus::Failed;
-        }
-        src.resize((size_t)size.QuadPart);
-        DWORD read = 0;
-        const BOOL ok = ReadFile(file, src.data(), (DWORD)src.size(), &read, nullptr);
-        CloseHandle(file);
-        if (!ok || read != src.size()) return WriteStatus::Failed;
+    DWORD readErr = 0;
+    if (!ReadWholeFile(path, 12, MAXDWORD, src, &readErr)) {
+        return IsFileLockError(readErr) ? WriteStatus::NeedsTranscode : WriteStatus::Failed;
     }
 
     if (src.size() < 12 ||
@@ -477,8 +569,9 @@ WriteStatus WriteRatingToWebp(const std::wstring& path, int stars) {
 
     std::vector<ChunkSpan> chunks;
     size_t pos = 12;
-    int xmpIndex = -1;
+    int firstXmpIndex = -1;
     int vp8xIndex = -1;
+    bool hasExifChunk = false;
 
     while (pos + 8 <= src.size()) {
         char fcc[4];
@@ -488,47 +581,75 @@ WriteStatus WriteRatingToWebp(const std::wstring& path, int stars) {
                              (static_cast<uint32_t>(src[pos + 6]) << 16) |
                              (static_cast<uint32_t>(src[pos + 7]) << 24);
         const size_t dataOffset = pos + 8;
-        if (dataOffset + len > src.size()) break; // truncated
+        if (len > src.size() - dataOffset) break; // truncated
 
         const size_t pad = len & 1;
-        const size_t totalSpan = 8 + len + pad;
+        const size_t totalSpan = 8 + static_cast<size_t>(len) + pad;
 
         if (std::memcmp(fcc, "VP8X", 4) == 0) {
             vp8xIndex = static_cast<int>(chunks.size());
         } else if (std::memcmp(fcc, "XMP ", 4) == 0) {
-            xmpIndex = static_cast<int>(chunks.size());
+            if (firstXmpIndex < 0) {
+                firstXmpIndex = static_cast<int>(chunks.size());
+            }
+        } else if (std::memcmp(fcc, "EXIF", 4) == 0) {
+            hasExifChunk = true;
         }
 
         chunks.push_back(ChunkSpan{ {fcc[0], fcc[1], fcc[2], fcc[3]}, dataOffset, len, totalSpan });
         pos += totalSpan;
     }
 
+    // Sync any EXIF chunks carrying tag 0x4746/0x4749 so clearing or changing
+    // rating is never overshadowed by a stale EXIF chunk.
+    bool modifiedExif = false;
+    if (hasExifChunk) {
+        for (const auto& c : chunks) {
+            if (std::memcmp(c.fourcc, "EXIF", 4) != 0 || c.dataSize <= 8) continue;
+            size_t tiffOff = 0;
+            if (c.dataSize >= 6 && std::memcmp(src.data() + c.dataOffset, "Exif\0\0", 6) == 0) {
+                tiffOff = 6;
+            }
+            if (c.dataSize > tiffOff + 8) {
+                if (PatchTiffBufferRating(
+                        std::span<uint8_t>(src.data() + c.dataOffset + tiffOff, c.dataSize - tiffOff),
+                        clampedStars)) {
+                    modifiedExif = true;
+                }
+            }
+        }
+    }
+
     std::string newXmpPayload;
     bool hasNewXmp = false;
 
-    if (xmpIndex >= 0) {
-        const auto& c = chunks[xmpIndex];
+    if (firstXmpIndex >= 0) {
+        const auto& c = chunks[firstXmpIndex];
         const std::string_view oldXmp(reinterpret_cast<const char*>(src.data() + c.dataOffset), c.dataSize);
-        if (stars > 0) {
-            if (auto updated = QuickView::Rating::UpdateXmpRating(oldXmp, stars)) {
+        if (clampedStars > 0) {
+            if (auto updated = QuickView::Rating::UpdateXmpRating(oldXmp, clampedStars)) {
                 newXmpPayload = *updated;
-                hasNewXmp = true;
             } else {
-                newXmpPayload = QuickView::Rating::BuildMinimalXmp(stars);
-                hasNewXmp = true;
+                newXmpPayload = QuickView::Rating::BuildMinimalXmp(clampedStars);
             }
+            hasNewXmp = true;
         } else {
-            // stars == 0: remove rating
             if (auto updated = QuickView::Rating::UpdateXmpRating(oldXmp, 0)) {
-                newXmpPayload = *updated;
-                hasNewXmp = true;
+                // Only keep XMP when it carried metadata other than rating; otherwise strip chunk.
+                if (updated->find("crs:") != std::string::npos ||
+                    updated->find("dc:") != std::string::npos ||
+                    updated->find("photoshop:") != std::string::npos ||
+                    updated->find("exif:") != std::string::npos) {
+                    newXmpPayload = *updated;
+                    hasNewXmp = true;
+                }
             }
         }
-    } else if (stars > 0) {
-        newXmpPayload = QuickView::Rating::BuildMinimalXmp(stars);
+    } else if (clampedStars > 0) {
+        newXmpPayload = QuickView::Rating::BuildMinimalXmp(clampedStars);
         hasNewXmp = true;
-    } else {
-        // stars == 0 and no prior XMP: nothing to remove or write
+    } else if (!modifiedExif) {
+        // stars == 0 and neither XMP nor EXIF tag was present: nothing to change
         return WriteStatus::WrittenInPlace;
     }
 
@@ -560,6 +681,7 @@ WriteStatus WriteRatingToWebp(const std::wstring& path, int stars) {
         uint32_t canvasWidth = 0;
         uint32_t canvasHeight = 0;
         uint8_t flags = 0x04; // XMP bit
+        if (hasExifChunk) flags |= 0x08;
 
         for (const auto& c : chunks) {
             const uint8_t* p = src.data() + c.dataOffset;
@@ -593,13 +715,13 @@ WriteStatus WriteRatingToWebp(const std::wstring& path, int stars) {
     }
 
     // Update existing VP8X XMP flag if present
-    if (vp8xIndex >= 0 && vp8xIndex < (int)chunks.size()) {
-        auto& v = chunks[vp8xIndex];
+    if (vp8xIndex >= 0 && vp8xIndex < static_cast<int>(chunks.size())) {
+        const auto& v = chunks[vp8xIndex];
         if (v.dataSize >= 10 && v.dataOffset < src.size()) {
             if (hasNewXmp) {
-                src[v.dataOffset] |= 0x04; // Set XMP flag bit
-            } else if (stars <= 0 && xmpIndex >= 0) {
-                src[v.dataOffset] &= ~0x04; // Clear XMP flag bit
+                src[v.dataOffset] |= 0x04;
+            } else if (clampedStars <= 0) {
+                src[v.dataOffset] &= ~0x04;
             }
         }
     }
@@ -611,14 +733,14 @@ WriteStatus WriteRatingToWebp(const std::wstring& path, int stars) {
 
     bool xmpWritten = false;
     for (size_t i = 0; i < chunks.size(); ++i) {
-        if ((int)i == xmpIndex) {
-            if (hasNewXmp) {
+        const auto& c = chunks[i];
+        if (std::memcmp(c.fourcc, "XMP ", 4) == 0) {
+            if (hasNewXmp && !xmpWritten) {
                 appendChunk("XMP ", newXmpPayload.data(), newXmpPayload.size());
                 xmpWritten = true;
             }
-            continue; // replaced old XMP
+            continue; // drop old/duplicate XMP chunks
         }
-        const auto& c = chunks[i];
         appendChunk(c.fourcc, src.data() + c.dataOffset, c.dataSize);
     }
 
@@ -633,43 +755,9 @@ WriteStatus WriteRatingToWebp(const std::wstring& path, int stars) {
     out[6] = static_cast<uint8_t>((totalRiffSize >> 16) & 0xFF);
     out[7] = static_cast<uint8_t>((totalRiffSize >> 24) & 0xFF);
 
-    // Atomic write via temporary file
-    const std::wstring tempPath = path + L".qvrating.tmp";
-    HANDLE hTemp = CreateFileW(tempPath.c_str(), GENERIC_WRITE, 0, nullptr,
-                               CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (hTemp == INVALID_HANDLE_VALUE) return WriteStatus::Failed;
-
-    DWORD written = 0;
-    const BOOL writeOk = WriteFile(hTemp, out.data(), (DWORD)out.size(), &written, nullptr);
-    CloseHandle(hTemp);
-
-    if (!writeOk || written != out.size()) {
-        DeleteFileW(tempPath.c_str());
-        return WriteStatus::Failed;
-    }
-
-    BOOL replaceOk = FALSE;
-    DWORD lastError = 0;
-    for (int retry = 0; retry < 5; ++retry) {
-        if (ReplaceFileW(path.c_str(), tempPath.c_str(), nullptr,
-                         REPLACEFILE_IGNORE_MERGE_ERRORS, nullptr, nullptr)) {
-            replaceOk = TRUE;
-            break;
-        }
-        lastError = GetLastError();
-        Sleep(20);
-    }
-
-    if (!replaceOk) {
-        DeleteFileW(tempPath.c_str());
-        if (lastError == ERROR_SHARING_VIOLATION || lastError == ERROR_LOCK_VIOLATION ||
-            lastError == ERROR_ACCESS_DENIED) {
-            return WriteStatus::NeedsTranscode;
-        }
-        return WriteStatus::Failed;
-    }
-
-    return WriteStatus::WrittenTranscode;
+    WriteStatus result = WriteStatus::Failed;
+    WriteBufferAndReplace(path, L".qvrating.tmp", out, result);
+    return result;
 }
 
 static bool PatchIsobmffExifInPlace(const std::wstring& path,
@@ -677,19 +765,20 @@ static bool PatchIsobmffExifInPlace(const std::wstring& path,
                                     size_t exifPayloadOff,
                                     size_t exifPayloadLen,
                                     int stars) {
-    if (exifPayloadLen < 16 || exifPayloadOff + exifPayloadLen > src.size()) return false;
+    if (exifPayloadLen < 16 || exifPayloadOff > src.size() || exifPayloadLen > src.size() - exifPayloadOff) {
+        return false;
+    }
+    const size_t payloadEnd = exifPayloadOff + exifPayloadLen;
+    const int clampedStars = std::clamp(stars, 0, 5);
 
     // ISOBMFF Exif item starts with 4-byte offset to TIFF header
-    const uint32_t tiffOffset = (static_cast<uint32_t>(src[exifPayloadOff]) << 24) |
-                                (static_cast<uint32_t>(src[exifPayloadOff + 1]) << 16) |
-                                (static_cast<uint32_t>(src[exifPayloadOff + 2]) << 8) |
-                                static_cast<uint32_t>(src[exifPayloadOff + 3]);
+    const uint32_t tiffOffset = ReadBe32(src.data() + exifPayloadOff);
 
-    size_t tiffPos = exifPayloadOff + 4 + tiffOffset;
-    if (tiffPos + 8 > exifPayloadOff + exifPayloadLen || tiffPos >= src.size()) {
-        tiffPos = exifPayloadOff + 4;
+    size_t tiffPos = exifPayloadOff + 4;
+    if (tiffOffset <= payloadEnd - tiffPos && (payloadEnd - (tiffPos + tiffOffset)) >= 8) {
+        tiffPos += tiffOffset;
     }
-    if (tiffPos + 8 > src.size()) return false;
+    if (tiffPos + 8 > payloadEnd) return false;
 
     const bool littleEndian = (src[tiffPos] == 'I' && src[tiffPos + 1] == 'I');
     const bool bigEndian = (src[tiffPos] == 'M' && src[tiffPos + 1] == 'M');
@@ -708,7 +797,7 @@ static bool PatchIsobmffExifInPlace(const std::wstring& path,
 
     if (readU16(src.data() + tiffPos + 2) != 42) return false;
     const uint32_t ifdOffset = readU32(src.data() + tiffPos + 4);
-    if (ifdOffset == 0 || tiffPos + ifdOffset + 2 > src.size()) return false;
+    if (ifdOffset < 8 || ifdOffset > payloadEnd - tiffPos - 2) return false;
 
     const size_t ifdPos = tiffPos + ifdOffset;
     const uint16_t numEntries = readU16(src.data() + ifdPos);
@@ -717,10 +806,11 @@ static bool PatchIsobmffExifInPlace(const std::wstring& path,
     size_t tag4746ValOff = 0;
     size_t tag4749ValOff = 0;
 
-    for (uint16_t i = 0; i < numEntries && cur + 12 <= src.size(); ++i, cur += 12) {
+    for (uint16_t i = 0; i < numEntries && cur + 12 <= payloadEnd; ++i, cur += 12) {
         const uint16_t tag = readU16(src.data() + cur);
         const uint16_t type = readU16(src.data() + cur + 2);
-        if (type == 3) { // SHORT
+        const uint32_t count = readU32(src.data() + cur + 4);
+        if (type == 3 && count == 1) { // SHORT scalar
             if (tag == 0x4746) {
                 tag4746ValOff = cur + 8;
             } else if (tag == 0x4749) {
@@ -736,10 +826,10 @@ static bool PatchIsobmffExifInPlace(const std::wstring& path,
                                nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (hFile == INVALID_HANDLE_VALUE) return false;
 
-    auto writeShort = [&](size_t fileOffset, uint16_t val) {
+    auto writeShort = [&](size_t fileOffset, uint16_t val) -> bool {
         LARGE_INTEGER li;
         li.QuadPart = static_cast<LONGLONG>(fileOffset);
-        SetFilePointerEx(hFile, li, nullptr, FILE_BEGIN);
+        if (!SetFilePointerEx(hFile, li, nullptr, FILE_BEGIN)) return false;
         uint8_t buf[2];
         if (littleEndian) {
             buf[0] = static_cast<uint8_t>(val & 0xFF);
@@ -749,53 +839,28 @@ static bool PatchIsobmffExifInPlace(const std::wstring& path,
             buf[1] = static_cast<uint8_t>(val & 0xFF);
         }
         DWORD written = 0;
-        WriteFile(hFile, buf, 2, &written, nullptr);
+        return WriteFile(hFile, buf, 2, &written, nullptr) != FALSE && written == 2;
     };
 
+    bool writeOk = true;
     if (tag4746ValOff > 0) {
-        writeShort(tag4746ValOff, static_cast<uint16_t>(stars > 0 ? stars : 0));
+        writeOk = writeShort(tag4746ValOff, static_cast<uint16_t>(clampedStars));
     }
-    if (tag4749ValOff > 0) {
-        uint16_t pct = 0;
-        switch (stars) {
-            case 1: pct = 1; break;
-            case 2: pct = 25; break;
-            case 3: pct = 50; break;
-            case 4: pct = 75; break;
-            case 5: pct = 99; break;
-            default: pct = 0; break;
-        }
-        writeShort(tag4749ValOff, pct);
+    if (writeOk && tag4749ValOff > 0) {
+        writeOk = writeShort(tag4749ValOff, RatingPercentForStars(clampedStars));
     }
 
-    FlushFileBuffers(hFile);
+    if (writeOk) FlushFileBuffers(hFile);
     CloseHandle(hFile);
-    return true;
+    return writeOk;
 }
 
-WriteStatus WriteRatingToIsobmff(const std::wstring& path, int stars) {
+WriteStatus WriteRatingToIsobmff(const std::wstring& path, int stars, bool allowTranscode) {
+    const int clampedStars = std::clamp(stars, 0, 5);
     std::vector<uint8_t> src;
-    {
-        HANDLE file = INVALID_HANDLE_VALUE;
-        for (int attempt = 0; attempt < 5; ++attempt) {
-            file = CreateFileW(path.c_str(), GENERIC_READ,
-                               FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                               nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-            if (file != INVALID_HANDLE_VALUE) break;
-            Sleep(15);
-        }
-        if (file == INVALID_HANDLE_VALUE) return WriteStatus::Failed;
-
-        LARGE_INTEGER size{};
-        if (!GetFileSizeEx(file, &size) || size.QuadPart < 12 || size.QuadPart > 256 * 1024 * 1024) {
-            CloseHandle(file);
-            return WriteStatus::Failed;
-        }
-        src.resize((size_t)size.QuadPart);
-        DWORD read = 0;
-        const BOOL ok = ReadFile(file, src.data(), (DWORD)src.size(), &read, nullptr);
-        CloseHandle(file);
-        if (!ok || read != src.size()) return WriteStatus::Failed;
+    DWORD readErr = 0;
+    if (!ReadWholeFile(path, 12, 256ull * 1024ull * 1024ull, src, &readErr)) {
+        return IsFileLockError(readErr) ? WriteStatus::NeedsTranscode : WriteStatus::Failed;
     }
 
     if (src.size() < 12 || std::memcmp(src.data() + 4, "ftyp", 4) != 0) {
@@ -827,6 +892,11 @@ WriteStatus WriteRatingToIsobmff(const std::wstring& path, int stars) {
         buf.push_back(static_cast<uint8_t>((val >> 8) & 0xFF));
         buf.push_back(static_cast<uint8_t>(val & 0xFF));
     };
+    auto writeU64 = [](std::vector<uint8_t>& buf, uint64_t val) {
+        for (int i = 7; i >= 0; --i) {
+            buf.push_back(static_cast<uint8_t>((val >> (i * 8)) & 0xFF));
+        }
+    };
     auto writeVarInt = [](std::vector<uint8_t>& buf, uint64_t val, size_t numBytes) {
         for (size_t i = 0; i < numBytes; ++i) {
             const size_t shift = (numBytes - 1 - i) * 8;
@@ -834,44 +904,43 @@ WriteStatus WriteRatingToIsobmff(const std::wstring& path, int stars) {
         }
     };
 
-    // Locate top-level boxes: 'meta', 'mdat'
+    // Locate top-level 'meta' box and optional trailing 'mdat' after 'meta'
     size_t pos = 0;
     size_t metaPos = 0, metaSize = 0, metaHeaderSize = 0, metaPayloadPos = 0, metaEnd = 0;
-    size_t mdatPos = 0, mdatSize = 0;
+    size_t lastMdatPos = 0, lastMdatSize = 0, lastMdatHeaderSize = 0;
 
     while (pos + 8 <= src.size()) {
         const uint32_t rawSize = readU32(src.data() + pos);
         const uint8_t* type = src.data() + pos + 4;
-        size_t boxSize = rawSize;
+        uint64_t boxSize64 = rawSize;
         size_t headerSize = 8;
 
         if (rawSize == 1) {
             if (pos + 16 > src.size()) break;
-            const uint64_t extSize = readU64(src.data() + pos + 8);
-            if (extSize < 16) break;
-            boxSize = static_cast<size_t>(extSize);
+            boxSize64 = readU64(src.data() + pos + 8);
             headerSize = 16;
         } else if (rawSize == 0) {
-            boxSize = src.size() - pos;
+            boxSize64 = src.size() - pos;
         }
 
-        if (boxSize < headerSize) break;
+        if (boxSize64 < headerSize || boxSize64 > src.size() - pos) break;
+        const size_t boxSize = static_cast<size_t>(boxSize64);
         const size_t nextPos = pos + boxSize;
 
-        if (std::memcmp(type, "meta", 4) == 0) {
-            if (pos + headerSize + 4 <= src.size()) {
+        if (std::memcmp(type, "meta", 4) == 0 && metaPayloadPos == 0) {
+            if (pos + headerSize + 4 <= nextPos) {
                 metaPos = pos;
                 metaSize = boxSize;
                 metaHeaderSize = headerSize;
                 metaPayloadPos = pos + headerSize + 4;
-                metaEnd = (std::min)(nextPos, src.size());
+                metaEnd = nextPos;
             }
         } else if (std::memcmp(type, "mdat", 4) == 0) {
-            mdatPos = pos;
-            mdatSize = boxSize;
+            lastMdatPos = pos;
+            lastMdatSize = boxSize;
+            lastMdatHeaderSize = headerSize;
         }
 
-        if (nextPos <= pos || nextPos > src.size()) break;
         pos = nextPos;
     }
 
@@ -886,7 +955,7 @@ WriteStatus WriteRatingToIsobmff(const std::wstring& path, int stars) {
     size_t subPos = metaPayloadPos;
     while (subPos + 8 <= metaEnd) {
         const uint32_t subSize = readU32(src.data() + subPos);
-        if (subSize < 8 || subPos + subSize > metaEnd) break;
+        if (subSize < 8 || subSize > metaEnd - subPos) break;
         const uint8_t* subType = src.data() + subPos + 4;
 
         if (std::memcmp(subType, "iinf", 4) == 0) {
@@ -905,7 +974,7 @@ WriteStatus WriteRatingToIsobmff(const std::wstring& path, int stars) {
         subPos += subSize;
     }
 
-    if (iinfOffset == 0 || ilocOffset == 0) return WriteStatus::Failed;
+    if (iinfOffset == 0 || ilocOffset == 0 || iinfSize < 14 || ilocSize < 16) return WriteStatus::Failed;
 
     uint32_t primaryItemId = 1;
     if (pitmOffset > 0 && pitmSize >= 14) {
@@ -918,28 +987,29 @@ WriteStatus WriteRatingToIsobmff(const std::wstring& path, int stars) {
     }
 
     std::vector<uint32_t> primaryCdscItems;
+    uint8_t existingIrefVer = 0;
     if (irefOffset > 0 && irefSize >= 12) {
-        const uint8_t irefVer = src[irefOffset + 8];
+        existingIrefVer = src[irefOffset + 8];
         size_t irefCur = irefOffset + 12;
         while (irefCur + 8 <= irefOffset + irefSize) {
             const uint32_t boxSz = readU32(src.data() + irefCur);
-            if (boxSz < 8 || irefCur + boxSz > irefOffset + irefSize) break;
+            if (boxSz < 8 || boxSz > (irefOffset + irefSize) - irefCur) break;
             const uint8_t* btype = src.data() + irefCur + 4;
             if (std::memcmp(btype, "cdsc", 4) == 0) {
-                if (irefVer == 0 && boxSz >= 14) {
+                if (existingIrefVer == 0 && boxSz >= 14) {
                     const uint16_t fromId = readU16(src.data() + irefCur + 8);
                     const uint16_t refCnt = readU16(src.data() + irefCur + 10);
-                    for (uint16_t r = 0; r < refCnt && irefCur + 12 + (r + 1) * 2 <= irefCur + boxSz; ++r) {
+                    for (uint16_t r = 0; r < refCnt && (size_t)(r + 1) * 2 <= boxSz - 12; ++r) {
                         const uint16_t toId = readU16(src.data() + irefCur + 12 + r * 2);
                         if (toId == primaryItemId) {
                             primaryCdscItems.push_back(fromId);
                             break;
                         }
                     }
-                } else if (irefVer == 1 && boxSz >= 18) {
+                } else if (existingIrefVer == 1 && boxSz >= 18) {
                     const uint32_t fromId = readU32(src.data() + irefCur + 8);
                     const uint16_t refCnt = readU16(src.data() + irefCur + 12);
-                    for (uint16_t r = 0; r < refCnt && irefCur + 14 + (r + 1) * 4 <= irefCur + boxSz; ++r) {
+                    for (uint16_t r = 0; r < refCnt && (size_t)(r + 1) * 4 <= boxSz - 14; ++r) {
                         const uint32_t toId = readU32(src.data() + irefCur + 14 + r * 4);
                         if (toId == primaryItemId) {
                             primaryCdscItems.push_back(fromId);
@@ -956,11 +1026,12 @@ WriteStatus WriteRatingToIsobmff(const std::wstring& path, int stars) {
         return std::find(primaryCdscItems.begin(), primaryCdscItems.end(), id) != primaryCdscItems.end();
     };
 
-    // Find exifItemId and xmpItemId from 'iinf'
+    // Find exifItemId, xmpItemId, and maxItemId across 'iinf'
     uint32_t exifItemId = 0;
     uint32_t xmpItemId = 0;
     bool exifLocked = false;
     bool xmpLocked = false;
+    uint32_t maxItemId = 0;
 
     const uint8_t iinfVer = src[iinfOffset + 8];
     size_t iinfCur = iinfOffset + 12;
@@ -979,7 +1050,7 @@ WriteStatus WriteRatingToIsobmff(const std::wstring& path, int stars) {
 
     for (uint32_t i = 0; i < entryCount && iinfCur + 8 <= iinfOffset + iinfSize; ++i) {
         const uint32_t infeSize = readU32(src.data() + iinfCur);
-        if (infeSize < 8 || iinfCur + infeSize > iinfOffset + iinfSize) break;
+        if (infeSize < 8 || infeSize > (iinfOffset + iinfSize) - iinfCur) break;
 
         if (std::memcmp(src.data() + iinfCur + 4, "infe", 4) == 0 && infeSize >= 12) {
             const uint8_t infeVer = src[iinfCur + 8];
@@ -993,6 +1064,7 @@ WriteStatus WriteRatingToIsobmff(const std::wstring& path, int stars) {
                     itemId = readU32(src.data() + iinfCur + 12);
                     typeOffset = iinfCur + 18;
                 }
+                if (itemId > maxItemId) maxItemId = itemId;
                 if (typeOffset > 0 && typeOffset + 4 <= iinfCur + infeSize) {
                     const uint8_t* itype = src.data() + typeOffset;
                     if (std::memcmp(itype, "Exif", 4) == 0) {
@@ -1007,7 +1079,7 @@ WriteStatus WriteRatingToIsobmff(const std::wstring& path, int stars) {
                     } else if (std::memcmp(itype, "mime", 4) == 0) {
                         std::string_view rest(
                             reinterpret_cast<const char*>(src.data() + typeOffset + 4),
-                            infeSize - (typeOffset + 4 - iinfCur));
+                            (iinfCur + infeSize) - (typeOffset + 4));
                         if (rest.find("application/rdf+xml") != std::string_view::npos ||
                             rest.find("application/x-xmp") != std::string_view::npos ||
                             rest.find("xmp") != std::string_view::npos) {
@@ -1041,7 +1113,6 @@ WriteStatus WriteRatingToIsobmff(const std::wstring& path, int stars) {
     };
 
     std::vector<ExistingItem> existingItems;
-    uint32_t maxItemId = 0;
     size_t exifPayloadOff = 0, exifPayloadLen = 0;
     size_t xmpPayloadOff = 0, xmpPayloadLen = 0;
 
@@ -1050,31 +1121,32 @@ WriteStatus WriteRatingToIsobmff(const std::wstring& path, int stars) {
     const uint8_t lenSize = src[ilocOffset + 12] & 0x0F;
     const uint8_t baseOffSize = (src[ilocOffset + 13] >> 4) & 0x0F;
     const uint8_t indexSize = (ilocVer == 1 || ilocVer == 2) ? (src[ilocOffset + 13] & 0x0F) : 0;
+    if (offSize > 8 || lenSize > 8 || baseOffSize > 8 || indexSize > 8) return WriteStatus::Failed;
 
+    const size_t ilocEnd = ilocOffset + ilocSize;
     size_t ilocCur = ilocOffset + 14;
     uint32_t itemCount = 0;
     if (ilocVer < 2) {
-        if (ilocCur + 2 <= ilocOffset + ilocSize) {
-            itemCount = readU16(src.data() + ilocCur);
-            ilocCur += 2;
-        }
+        if (ilocCur + 2 > ilocEnd) return WriteStatus::Failed;
+        itemCount = readU16(src.data() + ilocCur);
+        ilocCur += 2;
     } else {
-        if (ilocCur + 4 <= ilocOffset + ilocSize) {
-            itemCount = readU32(src.data() + ilocCur);
-            ilocCur += 4;
-        }
+        if (ilocCur + 4 > ilocEnd) return WriteStatus::Failed;
+        itemCount = readU32(src.data() + ilocCur);
+        ilocCur += 4;
     }
 
-    existingItems.reserve(itemCount);
+    const size_t extentStride = static_cast<size_t>(indexSize) + offSize + lenSize;
+    existingItems.reserve((std::min)(itemCount, 4096u));
 
-    for (uint32_t i = 0; i < itemCount && ilocCur < ilocOffset + ilocSize; ++i) {
+    for (uint32_t i = 0; i < itemCount && ilocCur < ilocEnd; ++i) {
         uint32_t itemId = 0;
         if (ilocVer < 2) {
-            if (ilocCur + 2 > ilocOffset + ilocSize) break;
+            if (2 > ilocEnd - ilocCur) return WriteStatus::Failed;
             itemId = readU16(src.data() + ilocCur);
             ilocCur += 2;
         } else {
-            if (ilocCur + 4 > ilocOffset + ilocSize) break;
+            if (4 > ilocEnd - ilocCur) return WriteStatus::Failed;
             itemId = readU32(src.data() + ilocCur);
             ilocCur += 4;
         }
@@ -1082,23 +1154,25 @@ WriteStatus WriteRatingToIsobmff(const std::wstring& path, int stars) {
 
         uint16_t cm = 0;
         if (ilocVer == 1 || ilocVer == 2) {
-            if (ilocCur + 2 > ilocOffset + ilocSize) break;
+            if (2 > ilocEnd - ilocCur) return WriteStatus::Failed;
             cm = readU16(src.data() + ilocCur) & 0x0F;
             ilocCur += 2;
         }
 
-        uint16_t dref = 0;
-        if (ilocCur + 2 <= ilocOffset + ilocSize) {
-            dref = readU16(src.data() + ilocCur);
-        }
+        if (2 + static_cast<size_t>(baseOffSize) + 2 > ilocEnd - ilocCur) return WriteStatus::Failed;
+        const uint16_t dref = readU16(src.data() + ilocCur);
         ilocCur += 2;
 
         const uint64_t baseOffset = readVarInt(src.data() + ilocCur, baseOffSize);
         ilocCur += baseOffSize;
 
-        if (ilocCur + 2 > ilocOffset + ilocSize) break;
         const uint16_t extentCount = readU16(src.data() + ilocCur);
         ilocCur += 2;
+
+        if (extentCount > 0 && extentStride > 0 &&
+            static_cast<size_t>(extentCount) > (ilocEnd - ilocCur) / extentStride) {
+            return WriteStatus::Failed;
+        }
 
         ExistingItem item;
         item.id = itemId;
@@ -1120,13 +1194,17 @@ WriteStatus WriteRatingToIsobmff(const std::wstring& path, int stars) {
 
             item.extents.push_back(Extent{ extentOffset, extentLength, idx });
 
-            if (e == 0) {
-                if (itemId == exifItemId && exifItemId > 0) {
-                    exifPayloadOff = static_cast<size_t>(baseOffset + extentOffset);
-                    exifPayloadLen = static_cast<size_t>(extentLength);
-                } else if (itemId == xmpItemId && xmpItemId > 0) {
-                    xmpPayloadOff = static_cast<size_t>(baseOffset + extentOffset);
-                    xmpPayloadLen = static_cast<size_t>(extentLength);
+            if (e == 0 && extentCount == 1 && cm == 0 && dref == 0 &&
+                extentOffset <= src.size() && baseOffset <= src.size() - extentOffset) {
+                const uint64_t absOff = baseOffset + extentOffset;
+                if (extentLength <= src.size() - absOff) {
+                    if (itemId == exifItemId && exifItemId > 0) {
+                        exifPayloadOff = static_cast<size_t>(absOff);
+                        exifPayloadLen = static_cast<size_t>(extentLength);
+                    } else if (itemId == xmpItemId && xmpItemId > 0) {
+                        xmpPayloadOff = static_cast<size_t>(absOff);
+                        xmpPayloadLen = static_cast<size_t>(extentLength);
+                    }
                 }
             }
         }
@@ -1137,29 +1215,33 @@ WriteStatus WriteRatingToIsobmff(const std::wstring& path, int stars) {
 
     // --- 1. In-Place Exif Rating Patch ---
     if (exifPayloadOff > 0 && exifPayloadLen > 12) {
-        if (PatchIsobmffExifInPlace(path, src, exifPayloadOff, exifPayloadLen, stars)) {
+        if (PatchIsobmffExifInPlace(path, src, exifPayloadOff, exifPayloadLen, clampedStars)) {
             inPlaceSuccess = true;
         }
     }
 
     // --- 2. In-Place Strict XMP Padding Patch ---
-    if (!inPlaceSuccess && xmpPayloadOff > 0 && xmpPayloadLen > 0 && xmpPayloadOff + xmpPayloadLen <= src.size()) {
+    if (!inPlaceSuccess && xmpPayloadOff > 0 && xmpPayloadLen > 0 && xmpPayloadLen <= src.size() - xmpPayloadOff) {
         const std::string_view oldXmp(reinterpret_cast<const char*>(src.data() + xmpPayloadOff), xmpPayloadLen);
-        const auto patched = QuickView::Rating::PatchXmpRatingInPlaceStrict(oldXmp, stars);
+        const auto patched = QuickView::Rating::PatchXmpRatingInPlaceStrict(oldXmp, clampedStars);
         if (patched && patched->size() == xmpPayloadLen) {
-            HANDLE hFile = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE,
-                                       FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                                       nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-            if (hFile != INVALID_HANDLE_VALUE) {
-                LARGE_INTEGER seekPos;
-                seekPos.QuadPart = static_cast<LONGLONG>(xmpPayloadOff);
-                SetFilePointerEx(hFile, seekPos, nullptr, FILE_BEGIN);
-                DWORD written = 0;
-                const BOOL ok = WriteFile(hFile, patched->data(), static_cast<DWORD>(xmpPayloadLen), &written, nullptr);
-                FlushFileBuffers(hFile);
-                CloseHandle(hFile);
-                if (ok && written == xmpPayloadLen) {
-                    inPlaceSuccess = true;
+            if (*patched == oldXmp) {
+                inPlaceSuccess = true;
+            } else {
+                HANDLE hFile = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE,
+                                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                           nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+                if (hFile != INVALID_HANDLE_VALUE) {
+                    LARGE_INTEGER seekPos;
+                    seekPos.QuadPart = static_cast<LONGLONG>(xmpPayloadOff);
+                    DWORD written = 0;
+                    const BOOL seekOk = SetFilePointerEx(hFile, seekPos, nullptr, FILE_BEGIN);
+                    const BOOL ok = seekOk && WriteFile(hFile, patched->data(), static_cast<DWORD>(xmpPayloadLen), &written, nullptr);
+                    if (ok && written == xmpPayloadLen) {
+                        FlushFileBuffers(hFile);
+                        inPlaceSuccess = true;
+                    }
+                    CloseHandle(hFile);
                 }
             }
         }
@@ -1169,12 +1251,22 @@ WriteStatus WriteRatingToIsobmff(const std::wstring& path, int stars) {
         return WriteStatus::WrittenInPlace;
     }
 
-    if (stars <= 0) {
-        return WriteStatus::WrittenInPlace;
+    if (clampedStars <= 0) {
+        const bool hasExifRating = (exifPayloadLen > 4) &&
+            ParseIsoExifPayload(std::span<const uint8_t>(src.data() + exifPayloadOff, exifPayloadLen)).has_value();
+        const bool hasXmpRating = (xmpPayloadLen > 0) &&
+            ParseXmpRating(std::string_view(reinterpret_cast<const char*>(src.data() + xmpPayloadOff), xmpPayloadLen)).has_value();
+        if (!hasExifRating && !hasXmpRating) {
+            return WriteStatus::WrittenInPlace;
+        }
     }
 
-    // --- 3. Lossless ISOBMFF Reconstruction & Safe Injection ---
-    if (maxItemId >= 0xFFFF || existingItems.size() >= 0xFFFF) {
+    if (!allowTranscode) {
+        return WriteStatus::NeedsTranscode;
+    }
+
+    // --- 3. Lossless ISOBMFF Reconstruction & Non-Shadowing Injection ---
+    if (maxItemId >= 0xFFFFFFFEu || existingItems.size() >= 0xFFFF) {
         return WriteStatus::Failed;
     }
 
@@ -1182,168 +1274,280 @@ WriteStatus WriteRatingToIsobmff(const std::wstring& path, int stars) {
     const bool isAvif = QuickView::ExtEqualsIgnoreCase(ext, L".avif") ||
                         QuickView::ExtEqualsIgnoreCase(ext, L".avifs");
 
-    const uint32_t newItemId = (maxItemId > 0 ? maxItemId : static_cast<uint32_t>(existingItems.size())) + 1;
+    // Reuse an existing XMP item (updating its extent in-place in iloc) when an unpadded XMP item
+    // exists or an existing Exif item lacks 0x4746 so we never append a shadowed second item.
+    uint32_t replaceExistingItemId = 0;
+    bool payloadIsExif = false;
+    if (xmpItemId != 0) {
+        replaceExistingItemId = xmpItemId;
+        payloadIsExif = false;
+    } else if (exifItemId == 0) {
+        payloadIsExif = isAvif;
+    } else {
+        // Existing Exif lacks 0x4746 and no XMP item exists yet: add padded XMP item so Exif
+        // falls through to XMP without replacing camera Exif or creating a shadowed duplicate Exif.
+        payloadIsExif = false;
+    }
 
-    // Determine payload: AVIF needs Exif (with cdsc) for Windows Explorer PhotoMetadataHandler;
-    // HEIC/HEIF without XMP injects XMP with cdsc (or Exif if no Exif).
-    const bool injectExif = isAvif || (exifItemId == 0 && xmpItemId != 0);
+    const bool addingNewItem = (replaceExistingItemId == 0);
+    const uint32_t newItemId = addingNewItem ? (maxItemId + 1) : replaceExistingItemId;
+    if (addingNewItem && ilocVer < 2 && newItemId > 0xFFFF) {
+        return WriteStatus::Failed;
+    }
 
     std::vector<uint8_t> payload;
     std::vector<uint8_t> infeBox;
 
-    if (injectExif) {
-        uint16_t pct = 0;
-        switch (stars) {
-            case 1: pct = 1; break;
-            case 2: pct = 25; break;
-            case 3: pct = 50; break;
-            case 4: pct = 75; break;
-            case 5: pct = 99; break;
-            default: pct = 0; break;
+    if (payloadIsExif) {
+        payload = BuildIsobmffExifPayload(clampedStars);
+    } else {
+        std::string xmpStr;
+        if (xmpPayloadOff > 0 && xmpPayloadLen > 0 && xmpPayloadLen <= src.size() - xmpPayloadOff) {
+            const std::string_view oldXmp(reinterpret_cast<const char*>(src.data() + xmpPayloadOff), xmpPayloadLen);
+            if (auto updated = BuildPaddedUpdatedXmp(oldXmp, clampedStars)) {
+                xmpStr = std::move(*updated);
+            }
+        }
+        if (xmpStr.empty()) {
+            xmpStr = BuildStandardXmpPayload(clampedStars);
+        }
+        payload.assign(xmpStr.begin(), xmpStr.end());
+    }
+
+    if (addingNewItem) {
+        if (payloadIsExif) {
+            const bool v3 = (newItemId > 0xFFFF);
+            const uint32_t infeSize = 8 + 4 + (v3 ? 4 : 2) + 2 + 4 + 1;
+            infeBox.reserve(infeSize);
+            writeU32(infeBox, infeSize);
+            infeBox.push_back('i'); infeBox.push_back('n'); infeBox.push_back('f'); infeBox.push_back('e');
+            writeU32(infeBox, static_cast<uint32_t>(v3 ? 3u : 2u) << 24);
+            if (v3) writeU32(infeBox, newItemId);
+            else writeU16(infeBox, static_cast<uint16_t>(newItemId));
+            writeU16(infeBox, 0);
+            infeBox.push_back('E'); infeBox.push_back('x'); infeBox.push_back('i'); infeBox.push_back('f');
+            infeBox.push_back('\0');
+        } else {
+            const std::string_view mimeType = "application/rdf+xml";
+            const bool v3 = (newItemId > 0xFFFF);
+            const uint32_t infeSize = 8 + 4 + (v3 ? 4 : 2) + 2 + 4 + 1 + static_cast<uint32_t>(mimeType.size() + 1);
+            infeBox.reserve(infeSize);
+            writeU32(infeBox, infeSize);
+            infeBox.push_back('i'); infeBox.push_back('n'); infeBox.push_back('f'); infeBox.push_back('e');
+            writeU32(infeBox, static_cast<uint32_t>(v3 ? 3u : 2u) << 24);
+            if (v3) writeU32(infeBox, newItemId);
+            else writeU16(infeBox, static_cast<uint16_t>(newItemId));
+            writeU16(infeBox, 0);
+            infeBox.push_back('m'); infeBox.push_back('i'); infeBox.push_back('m'); infeBox.push_back('e');
+            infeBox.push_back('\0');
+            for (char c : mimeType) infeBox.push_back(static_cast<uint8_t>(c));
+            infeBox.push_back('\0');
+        }
+    }
+
+    // Build new iref box only when adding a brand new item
+    std::vector<uint8_t> newIrefBox;
+    if (addingNewItem) {
+        const bool needV1 = (existingIrefVer == 1 || newItemId > 0xFFFF || primaryItemId > 0xFFFF);
+        std::vector<uint8_t> cdscBox;
+        if (needV1) {
+            cdscBox.reserve(18);
+            writeU32(cdscBox, 18);
+            cdscBox.push_back('c'); cdscBox.push_back('d'); cdscBox.push_back('s'); cdscBox.push_back('c');
+            writeU32(cdscBox, newItemId);
+            writeU16(cdscBox, 1);
+            writeU32(cdscBox, primaryItemId);
+        } else {
+            cdscBox.reserve(14);
+            writeU32(cdscBox, 14);
+            cdscBox.push_back('c'); cdscBox.push_back('d'); cdscBox.push_back('s'); cdscBox.push_back('c');
+            writeU16(cdscBox, static_cast<uint16_t>(newItemId));
+            writeU16(cdscBox, 1);
+            writeU16(cdscBox, static_cast<uint16_t>(primaryItemId));
         }
 
-        // 4 bytes ISOBMFF Exif offset to TIFF header (0) (Big Endian per ISOBMFF spec)
-        writeU32(payload, 0);
-        // TIFF header: "II" (little endian), 42 (0x002A), IFD0 offset 8
-        payload.push_back('I'); payload.push_back('I');
-        payload.push_back(0x2A); payload.push_back(0x00);
-        payload.push_back(0x08); payload.push_back(0x00); payload.push_back(0x00); payload.push_back(0x00);
-        // IFD0 entries count: 2 (LE)
-        payload.push_back(0x02); payload.push_back(0x00);
-        // tag 0x4746: type 3 (SHORT), count 1, val = stars (All LE)
-        payload.push_back(0x46); payload.push_back(0x47);
-        payload.push_back(0x03); payload.push_back(0x00);
-        payload.push_back(0x01); payload.push_back(0x00); payload.push_back(0x00); payload.push_back(0x00);
-        payload.push_back(static_cast<uint8_t>(stars & 0xFF));
-        payload.push_back(static_cast<uint8_t>((stars >> 8) & 0xFF));
-        payload.push_back(0x00); payload.push_back(0x00);
-        // tag 0x4749: type 3 (SHORT), count 1, val = pct (All LE)
-        payload.push_back(0x49); payload.push_back(0x47);
-        payload.push_back(0x03); payload.push_back(0x00);
-        payload.push_back(0x01); payload.push_back(0x00); payload.push_back(0x00); payload.push_back(0x00);
-        payload.push_back(static_cast<uint8_t>(pct & 0xFF));
-        payload.push_back(static_cast<uint8_t>((pct >> 8) & 0xFF));
-        payload.push_back(0x00); payload.push_back(0x00);
-        // Next IFD: 0 (LE)
-        payload.push_back(0x00); payload.push_back(0x00); payload.push_back(0x00); payload.push_back(0x00);
-
-        // infe for Exif: ver=2, flags=0, itemId(2), protection=0(2), 'Exif'(4), name='\0'(1)
-        const uint32_t infeSize = 8 + 4 + 2 + 2 + 4 + 1;
-        infeBox.reserve(infeSize);
-        writeU32(infeBox, infeSize);
-        infeBox.push_back('i'); infeBox.push_back('n'); infeBox.push_back('f'); infeBox.push_back('e');
-        writeU32(infeBox, 2u << 24);
-        writeU16(infeBox, static_cast<uint16_t>(newItemId));
-        writeU16(infeBox, 0);
-        infeBox.push_back('E'); infeBox.push_back('x'); infeBox.push_back('i'); infeBox.push_back('f');
-        infeBox.push_back('\0');
-    } else {
-        const std::string xmpStr =
-            "<?xpacket begin=\"\xEF\xBB\xBF\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n"
-            "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">\n"
-            " <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n"
-            "  <rdf:Description rdf:about=\"\"\n"
-            "    xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"\n"
-            "    xmp:Rating=\"" + std::to_string(stars) + "\"/>\n"
-            " </rdf:RDF>\n"
-            "</x:xmpmeta>\n"
-            "<?xpacket end=\"w\"?>\n";
-        payload.assign(xmpStr.begin(), xmpStr.end());
-
-        // infe for XMP: ver=2, flags=0, itemId(2), protection=0(2), 'mime'(4), name='\0'(1), mimeType(20)
-        const std::string_view mimeType = "application/rdf+xml";
-        const uint32_t infeSize = 8 + 4 + 2 + 2 + 4 + 1 + static_cast<uint32_t>(mimeType.size() + 1);
-        infeBox.reserve(infeSize);
-        writeU32(infeBox, infeSize);
-        infeBox.push_back('i'); infeBox.push_back('n'); infeBox.push_back('f'); infeBox.push_back('e');
-        writeU32(infeBox, 2u << 24);
-        writeU16(infeBox, static_cast<uint16_t>(newItemId));
-        writeU16(infeBox, 0);
-        infeBox.push_back('m'); infeBox.push_back('i'); infeBox.push_back('m'); infeBox.push_back('e');
-        infeBox.push_back('\0');
-        for (char c : mimeType) infeBox.push_back(static_cast<uint8_t>(c));
-        infeBox.push_back('\0');
+        if (irefOffset > 0 && irefSize >= 12 && (!needV1 || existingIrefVer == 1)) {
+            const uint32_t newSize = static_cast<uint32_t>(irefSize + cdscBox.size());
+            newIrefBox.reserve(newSize);
+            writeU32(newIrefBox, newSize);
+            newIrefBox.insert(newIrefBox.end(), src.data() + irefOffset + 4, src.data() + irefOffset + irefSize);
+            newIrefBox.insert(newIrefBox.end(), cdscBox.begin(), cdscBox.end());
+        } else if (irefOffset > 0 && irefSize >= 12 && needV1 && existingIrefVer == 0) {
+            // Upgrade v0 iref entries to v1 (32-bit IDs) cleanly before appending cdsc
+            newIrefBox.insert(newIrefBox.end(), { 0, 0, 0, 0, 'i', 'r', 'e', 'f' });
+            writeU32(newIrefBox, 1u << 24);
+            size_t rCur = irefOffset + 12;
+            while (rCur + 8 <= irefOffset + irefSize) {
+                const uint32_t rSz = readU32(src.data() + rCur);
+                if (rSz < 12 || rSz > (irefOffset + irefSize) - rCur) break;
+                const uint16_t fromId = readU16(src.data() + rCur + 8);
+                const uint16_t refCnt = readU16(src.data() + rCur + 10);
+                std::vector<uint32_t> targets;
+                for (uint16_t r = 0; r < refCnt && (size_t)(r + 1) * 2 <= rSz - 12; ++r) {
+                    targets.push_back(readU16(src.data() + rCur + 12 + r * 2));
+                }
+                const uint32_t upgradedSz = static_cast<uint32_t>(14 + targets.size() * 4);
+                writeU32(newIrefBox, upgradedSz);
+                newIrefBox.insert(newIrefBox.end(), src.data() + rCur + 4, src.data() + rCur + 8);
+                writeU32(newIrefBox, fromId);
+                writeU16(newIrefBox, static_cast<uint16_t>(targets.size()));
+                for (uint32_t tid : targets) writeU32(newIrefBox, tid);
+                rCur += rSz;
+            }
+            newIrefBox.insert(newIrefBox.end(), cdscBox.begin(), cdscBox.end());
+            const uint32_t totalIref = static_cast<uint32_t>(newIrefBox.size());
+            newIrefBox[0] = static_cast<uint8_t>((totalIref >> 24) & 0xFF);
+            newIrefBox[1] = static_cast<uint8_t>((totalIref >> 16) & 0xFF);
+            newIrefBox[2] = static_cast<uint8_t>((totalIref >> 8) & 0xFF);
+            newIrefBox[3] = static_cast<uint8_t>(totalIref & 0xFF);
+        } else {
+            const uint32_t newSize = static_cast<uint32_t>(12 + cdscBox.size());
+            newIrefBox.reserve(newSize);
+            writeU32(newIrefBox, newSize);
+            newIrefBox.push_back('i'); newIrefBox.push_back('r'); newIrefBox.push_back('e'); newIrefBox.push_back('f');
+            writeU32(newIrefBox, needV1 ? (1u << 24) : 0u);
+            newIrefBox.insert(newIrefBox.end(), cdscBox.begin(), cdscBox.end());
+        }
     }
 
-    const size_t infeDelta = infeBox.size();
-
-    // Prepare cdsc reference box: from newItemId to primaryItemId (14 bytes)
-    // Box size: 14, type 'cdsc', from_id(2), ref_count(2)=1, to_id(2)
-    std::vector<uint8_t> cdscBox;
-    cdscBox.reserve(14);
-    writeU32(cdscBox, 14);
-    cdscBox.push_back('c'); cdscBox.push_back('d'); cdscBox.push_back('s'); cdscBox.push_back('c');
-    writeU16(cdscBox, static_cast<uint16_t>(newItemId));
-    writeU16(cdscBox, 1);
-    writeU16(cdscBox, static_cast<uint16_t>(primaryItemId));
-
-    // Build new iref box
-    std::vector<uint8_t> newIrefBox;
-    size_t irefDelta = 0;
-    if (irefOffset > 0 && irefSize >= 12) {
-        irefDelta = cdscBox.size();
-        newIrefBox.reserve(irefSize + irefDelta);
-        writeU32(newIrefBox, static_cast<uint32_t>(irefSize + irefDelta));
-        newIrefBox.insert(newIrefBox.end(), src.data() + irefOffset + 4, src.data() + irefOffset + irefSize);
-        newIrefBox.insert(newIrefBox.end(), cdscBox.begin(), cdscBox.end());
+    // Build new iinf box
+    std::vector<uint8_t> newIinfBox;
+    if (addingNewItem) {
+        const size_t newIinfBoxSize = iinfSize + infeBox.size();
+        newIinfBox.reserve(newIinfBoxSize);
+        writeU32(newIinfBox, static_cast<uint32_t>(newIinfBoxSize));
+        newIinfBox.push_back('i'); newIinfBox.push_back('i'); newIinfBox.push_back('n'); newIinfBox.push_back('f');
+        newIinfBox.insert(newIinfBox.end(), src.data() + iinfOffset + 8, src.data() + iinfOffset + 12);
+        if (iinfVer == 0) {
+            writeU16(newIinfBox, static_cast<uint16_t>(entryCount + 1));
+            newIinfBox.insert(newIinfBox.end(), src.data() + iinfOffset + 14, src.data() + iinfOffset + iinfSize);
+        } else {
+            writeU32(newIinfBox, entryCount + 1);
+            newIinfBox.insert(newIinfBox.end(), src.data() + iinfOffset + 16, src.data() + iinfOffset + iinfSize);
+        }
+        newIinfBox.insert(newIinfBox.end(), infeBox.begin(), infeBox.end());
     } else {
-        const uint32_t newIrefSize = static_cast<uint32_t>(12 + cdscBox.size());
-        irefDelta = newIrefSize;
-        newIrefBox.reserve(newIrefSize);
-        writeU32(newIrefBox, newIrefSize);
-        newIrefBox.push_back('i'); newIrefBox.push_back('r'); newIrefBox.push_back('e'); newIrefBox.push_back('f');
-        writeU32(newIrefBox, 0); // FullBox ver=0, flags=0
-        newIrefBox.insert(newIrefBox.end(), cdscBox.begin(), cdscBox.end());
+        newIinfBox.assign(src.data() + iinfOffset, src.data() + iinfOffset + iinfSize);
     }
 
-    // iloc growth calculation (retaining EXACT ilocVer, offSize, lenSize, baseOffSize, indexSize):
-    const size_t newItemIlocSize = (ilocVer < 2 ? 2 : 4) +
-                                   (ilocVer == 1 || ilocVer == 2 ? 2 : 0) +
-                                   2 + baseOffSize + 2 +
-                                   indexSize + offSize + lenSize;
-    const size_t newIlocBoxSize = ilocSize + newItemIlocSize;
-    const size_t ilocDelta = newItemIlocSize;
+    // Compute upgraded iloc field widths so rebuilt offsets never truncate.
+    auto maxForBytes = [](uint8_t b) -> uint64_t {
+        if (b == 0) return 0;
+        if (b >= 8) return UINT64_MAX;
+        return (1ULL << (b * 8)) - 1;
+    };
+    const uint64_t upperEstOffset = static_cast<uint64_t>(src.size()) + 16384;
+    const uint8_t newOffSize = (offSize == 0 || maxForBytes(offSize) >= upperEstOffset)
+        ? (offSize == 0 ? 4 : offSize)
+        : (upperEstOffset <= 0xFFFFFFFFull ? 4 : 8);
+    const uint8_t newLenSize = (maxForBytes(lenSize) >= (std::max)(payload.size(), size_t{ 65536 }))
+        ? lenSize
+        : 4;
+    const uint8_t newBaseOffSize = (baseOffSize > 0 && maxForBytes(baseOffSize) < upperEstOffset)
+        ? (upperEstOffset <= 0xFFFFFFFFull ? 4 : 8)
+        : baseOffSize;
 
-    const size_t metaGrowth = infeDelta + irefDelta + ilocDelta;
-
-    // Determine payload offset in file
-    uint64_t payloadAbsOffset = 0;
-    const bool appendToMdat = (mdatPos > 0 && mdatSize >= 8);
-    if (appendToMdat) {
-        const size_t newMdatPos = mdatPos + metaGrowth;
-        payloadAbsOffset = static_cast<uint64_t>(newMdatPos + mdatSize);
-    } else {
-        payloadAbsOffset = static_cast<uint64_t>(src.size() + metaGrowth + 8);
+    size_t newIlocPayloadBytes = 14 + (ilocVer < 2 ? 2 : 4);
+    bool replacedHasExistingIloc = false;
+    for (const auto& it : existingItems) {
+        const size_t extCnt = (replaceExistingItemId != 0 && it.id == replaceExistingItemId) ? 1 : it.extents.size();
+        if (replaceExistingItemId != 0 && it.id == replaceExistingItemId) replacedHasExistingIloc = true;
+        newIlocPayloadBytes += (ilocVer < 2 ? 2 : 4) +
+                               (ilocVer == 1 || ilocVer == 2 ? 2 : 0) +
+                               2 + newBaseOffSize + 2 +
+                               extCnt * (static_cast<size_t>(indexSize) + newOffSize + newLenSize);
+    }
+    if (addingNewItem || !replacedHasExistingIloc) {
+        newIlocPayloadBytes += (ilocVer < 2 ? 2 : 4) +
+                               (ilocVer == 1 || ilocVer == 2 ? 2 : 0) +
+                               2 + newBaseOffSize + 2 +
+                               (static_cast<size_t>(indexSize) + newOffSize + newLenSize);
     }
 
-    // Rebuild iloc box strictly preserving version and construction_method
+    // Compute exact new 'meta' size before finalizing file offsets.
+    // Rebuild 'meta' body: preserve all non-(iloc/iinf/iref) subboxes intact.
+    std::vector<uint8_t> newMetaSubboxes;
+    bool hasIrefInMeta = false;
+    size_t scanSub = metaPayloadPos;
+    while (scanSub + 8 <= metaEnd) {
+        const uint32_t curSize = readU32(src.data() + scanSub);
+        if (curSize < 8 || curSize > metaEnd - scanSub) break;
+        const uint8_t* curType = src.data() + scanSub + 4;
+        if (std::memcmp(curType, "iinf", 4) == 0) {
+            newMetaSubboxes.insert(newMetaSubboxes.end(), newIinfBox.begin(), newIinfBox.end());
+        } else if (std::memcmp(curType, "iref", 4) == 0) {
+            if (addingNewItem) {
+                newMetaSubboxes.insert(newMetaSubboxes.end(), newIrefBox.begin(), newIrefBox.end());
+            } else {
+                newMetaSubboxes.insert(newMetaSubboxes.end(), src.data() + scanSub, src.data() + scanSub + curSize);
+            }
+            hasIrefInMeta = true;
+        } else if (std::memcmp(curType, "iloc", 4) != 0) {
+            newMetaSubboxes.insert(newMetaSubboxes.end(), src.data() + scanSub, src.data() + scanSub + curSize);
+        }
+        scanSub += curSize;
+    }
+    if (addingNewItem && !hasIrefInMeta) {
+        newMetaSubboxes.insert(newMetaSubboxes.end(), newIrefBox.begin(), newIrefBox.end());
+    }
+
+    const size_t newMetaBoxSize = 8 + 4 + newIlocPayloadBytes + newMetaSubboxes.size();
+    const int64_t metaGrowth = static_cast<int64_t>(newMetaBoxSize) - static_cast<int64_t>(metaSize);
+
+    // Extend trailing mdat at EOF only when mdat follows meta and reaches EOF;
+    // otherwise append a new trailing mdat box at EOF (supports mdat before meta cleanly!).
+    const bool extendTrailingMdat = (lastMdatPos >= metaEnd &&
+                                     lastMdatSize >= lastMdatHeaderSize &&
+                                     lastMdatPos + lastMdatSize == src.size());
+    const uint64_t payloadAbsOffset = extendTrailingMdat
+        ? static_cast<uint64_t>(static_cast<int64_t>(lastMdatPos + lastMdatSize) + metaGrowth)
+        : static_cast<uint64_t>(static_cast<int64_t>(src.size()) + metaGrowth + 8);
+
+    // Build finalized iloc box
     std::vector<uint8_t> newIlocBox;
-    newIlocBox.reserve(newIlocBoxSize);
-    writeU32(newIlocBox, static_cast<uint32_t>(newIlocBoxSize));
-    newIlocBox.insert(newIlocBox.end(), src.data() + ilocOffset + 4, src.data() + ilocOffset + 14);
+    newIlocBox.reserve(newIlocPayloadBytes);
+    writeU32(newIlocBox, static_cast<uint32_t>(newIlocPayloadBytes));
+    newIlocBox.insert(newIlocBox.end(), src.data() + ilocOffset + 4, src.data() + ilocOffset + 12);
+    newIlocBox.push_back(static_cast<uint8_t>((newOffSize << 4) | (newLenSize & 0x0F)));
+    newIlocBox.push_back(static_cast<uint8_t>((newBaseOffSize << 4) | (indexSize & 0x0F)));
 
+    const uint32_t finalIlocItemCount = (addingNewItem || !replacedHasExistingIloc)
+        ? static_cast<uint32_t>(existingItems.size() + 1)
+        : static_cast<uint32_t>(existingItems.size());
     if (ilocVer < 2) {
-        writeU16(newIlocBox, static_cast<uint16_t>(existingItems.size() + 1));
+        writeU16(newIlocBox, static_cast<uint16_t>(finalIlocItemCount));
     } else {
-        writeU32(newIlocBox, static_cast<uint32_t>(existingItems.size() + 1));
+        writeU32(newIlocBox, finalIlocItemCount);
     }
+
+    auto appendPayloadItemLocation = [&](uint32_t id) {
+        if (ilocVer < 2) writeU16(newIlocBox, static_cast<uint16_t>(id));
+        else writeU32(newIlocBox, id);
+        if (ilocVer == 1 || ilocVer == 2) writeU16(newIlocBox, 0); // cm = 0
+        writeU16(newIlocBox, 0); // dref = 0
+        if (newBaseOffSize > 0) writeVarInt(newIlocBox, 0, newBaseOffSize);
+        writeU16(newIlocBox, 1);
+        if (indexSize > 0) writeVarInt(newIlocBox, 0, indexSize);
+        writeVarInt(newIlocBox, payloadAbsOffset, newOffSize);
+        writeVarInt(newIlocBox, payload.size(), newLenSize);
+    };
 
     for (const auto& it : existingItems) {
-        if (ilocVer < 2) {
-            writeU16(newIlocBox, static_cast<uint16_t>(it.id));
-        } else {
-            writeU32(newIlocBox, it.id);
+        if (replaceExistingItemId != 0 && it.id == replaceExistingItemId) {
+            appendPayloadItemLocation(it.id);
+            continue;
         }
-        if (ilocVer == 1 || ilocVer == 2) {
-            writeU16(newIlocBox, it.constructionMethod);
-        }
+        if (ilocVer < 2) writeU16(newIlocBox, static_cast<uint16_t>(it.id));
+        else writeU32(newIlocBox, it.id);
+        if (ilocVer == 1 || ilocVer == 2) writeU16(newIlocBox, it.constructionMethod);
         writeU16(newIlocBox, it.dref);
+
         uint64_t curBase = it.baseOffset;
         if (offSize == 0 && it.constructionMethod == 0 && curBase >= metaEnd) {
-            curBase += metaGrowth;
+            curBase = static_cast<uint64_t>(static_cast<int64_t>(curBase) + metaGrowth);
         }
-        if (baseOffSize > 0) {
-            writeVarInt(newIlocBox, curBase, baseOffSize);
+        if (newBaseOffSize > 0) {
+            writeVarInt(newIlocBox, curBase, newBaseOffSize);
         }
         writeU16(newIlocBox, static_cast<uint16_t>(it.extents.size()));
         for (const auto& ext : it.extents) {
@@ -1351,247 +1555,106 @@ WriteStatus WriteRatingToIsobmff(const std::wstring& path, int stars) {
                 writeVarInt(newIlocBox, ext.index, indexSize);
             }
             uint64_t off = ext.offset;
-            // CRITICAL: Only extents with constructionMethod == 0 (file absolute offset)
-            // located after metaEnd should be shifted! Extents with cm != 0 (such as grid
-            // items with cm=1 relative to idat) MUST NEVER be shifted!
             if (offSize > 0 && it.constructionMethod == 0 && (it.baseOffset + off) >= metaEnd) {
-                off += metaGrowth;
+                off = static_cast<uint64_t>(static_cast<int64_t>(off) + metaGrowth);
             }
-            writeVarInt(newIlocBox, off, offSize);
-            writeVarInt(newIlocBox, ext.length, lenSize);
+            writeVarInt(newIlocBox, off, newOffSize);
+            writeVarInt(newIlocBox, ext.length, newLenSize);
         }
     }
+    if (addingNewItem || !replacedHasExistingIloc) {
+        appendPayloadItemLocation(newItemId);
+    }
 
-    // Add new item (payload)
-    if (ilocVer < 2) {
-        writeU16(newIlocBox, static_cast<uint16_t>(newItemId));
-    } else {
-        writeU32(newIlocBox, newItemId);
-    }
-    if (ilocVer == 1 || ilocVer == 2) {
-        writeU16(newIlocBox, 0); // cm = 0 (file offset)
-    }
-    writeU16(newIlocBox, 0); // dref = 0
-    uint64_t newBaseOff = 0;
-    uint64_t newExtentOff = payloadAbsOffset;
-    if (offSize == 0) {
-        newBaseOff = payloadAbsOffset;
-        newExtentOff = 0;
-    }
-    if (baseOffSize > 0) {
-        writeVarInt(newIlocBox, newBaseOff, baseOffSize);
-    }
-    writeU16(newIlocBox, 1); // 1 extent
-    if (indexSize > 0) {
-        writeVarInt(newIlocBox, 0, indexSize);
-    }
-    writeVarInt(newIlocBox, newExtentOff, offSize);
-    writeVarInt(newIlocBox, payload.size(), lenSize);
-
-    // Build new iinf box
-    std::vector<uint8_t> newIinfBox;
-    const size_t newIinfBoxSize = iinfSize + infeDelta;
-    newIinfBox.reserve(newIinfBoxSize);
-    writeU32(newIinfBox, static_cast<uint32_t>(newIinfBoxSize));
-    newIinfBox.push_back('i'); newIinfBox.push_back('i'); newIinfBox.push_back('n'); newIinfBox.push_back('f');
-    newIinfBox.insert(newIinfBox.end(), src.data() + iinfOffset + 8, src.data() + iinfOffset + 12);
-    if (iinfVer == 0) {
-        writeU16(newIinfBox, static_cast<uint16_t>(entryCount + 1));
-        newIinfBox.insert(newIinfBox.end(), src.data() + iinfOffset + 14, src.data() + iinfOffset + iinfSize);
-    } else {
-        writeU32(newIinfBox, entryCount + 1);
-        newIinfBox.insert(newIinfBox.end(), src.data() + iinfOffset + 16, src.data() + iinfOffset + iinfSize);
-    }
-    newIinfBox.insert(newIinfBox.end(), infeBox.begin(), infeBox.end());
-
-    // Build new meta box
+    // Assemble finalized meta box (always 8-byte standard header since meta fits well under 4GB)
     std::vector<uint8_t> newMetaBox;
-    const size_t newMetaBoxSize = metaSize + metaGrowth;
     newMetaBox.reserve(newMetaBoxSize);
     writeU32(newMetaBox, static_cast<uint32_t>(newMetaBoxSize));
     newMetaBox.push_back('m'); newMetaBox.push_back('e'); newMetaBox.push_back('t'); newMetaBox.push_back('a');
     newMetaBox.insert(newMetaBox.end(), src.data() + metaPos + metaHeaderSize, src.data() + metaPos + metaHeaderSize + 4);
+    newMetaBox.insert(newMetaBox.end(), newIlocBox.begin(), newIlocBox.end());
+    newMetaBox.insert(newMetaBox.end(), newMetaSubboxes.begin(), newMetaSubboxes.end());
 
-    // Iterate through meta subboxes in order
-    size_t scanSub = metaPayloadPos;
-    bool hasIref = false;
-    while (scanSub + 8 <= metaEnd) {
-        const uint32_t curSize = readU32(src.data() + scanSub);
-        if (curSize < 8 || scanSub + curSize > metaEnd) break;
-        const uint8_t* curType = src.data() + scanSub + 4;
-
-        if (std::memcmp(curType, "iloc", 4) == 0) {
-            newMetaBox.insert(newMetaBox.end(), newIlocBox.begin(), newIlocBox.end());
-        } else if (std::memcmp(curType, "iinf", 4) == 0) {
-            newMetaBox.insert(newMetaBox.end(), newIinfBox.begin(), newIinfBox.end());
-        } else if (std::memcmp(curType, "iref", 4) == 0) {
-            newMetaBox.insert(newMetaBox.end(), newIrefBox.begin(), newIrefBox.end());
-            hasIref = true;
-        } else {
-            newMetaBox.insert(newMetaBox.end(), src.data() + scanSub, src.data() + scanSub + curSize);
-        }
-        scanSub += curSize;
-    }
-
-    if (!hasIref) {
-        newMetaBox.insert(newMetaBox.end(), newIrefBox.begin(), newIrefBox.end());
-    }
-
+    // Assemble final output file
     std::vector<uint8_t> finalData;
-    if (appendToMdat) {
-        finalData.reserve(src.size() + metaGrowth + payload.size());
-        finalData.insert(finalData.end(), src.data(), src.data() + metaPos);
-        finalData.insert(finalData.end(), newMetaBox.begin(), newMetaBox.end());
-        finalData.insert(finalData.end(), src.data() + metaEnd, src.data() + mdatPos);
+    finalData.reserve(static_cast<size_t>(static_cast<int64_t>(src.size()) + metaGrowth + payload.size() + 16));
+    finalData.insert(finalData.end(), src.data(), src.data() + metaPos);
+    finalData.insert(finalData.end(), newMetaBox.begin(), newMetaBox.end());
 
-        // New mdat box: header with updated size + content + payload
-        const uint32_t newMdatSize = static_cast<uint32_t>(mdatSize + payload.size());
-        std::vector<uint8_t> mdatHdr;
-        writeU32(mdatHdr, newMdatSize);
-        mdatHdr.push_back('m'); mdatHdr.push_back('d'); mdatHdr.push_back('a'); mdatHdr.push_back('t');
-        finalData.insert(finalData.end(), mdatHdr.begin(), mdatHdr.end());
-        finalData.insert(finalData.end(), src.data() + mdatPos + 8, src.data() + mdatPos + mdatSize);
+    if (extendTrailingMdat) {
+        finalData.insert(finalData.end(), src.data() + metaEnd, src.data() + lastMdatPos);
+        const uint64_t newMdatSize64 = static_cast<uint64_t>(lastMdatSize) + payload.size();
+        if (lastMdatHeaderSize == 16 || newMdatSize64 > 0xFFFFFFFFull) {
+            writeU32(finalData, 1);
+            finalData.push_back('m'); finalData.push_back('d'); finalData.push_back('a'); finalData.push_back('t');
+            writeU64(finalData, newMdatSize64 + (lastMdatHeaderSize == 8 ? 8 : 0));
+            // If upgrading 32->64 bit mdat header mid-flight shouldn't happen since file <=256MB
+        } else {
+            writeU32(finalData, static_cast<uint32_t>(newMdatSize64));
+            finalData.push_back('m'); finalData.push_back('d'); finalData.push_back('a'); finalData.push_back('t');
+        }
+        finalData.insert(finalData.end(), src.data() + lastMdatPos + lastMdatHeaderSize, src.data() + lastMdatPos + lastMdatSize);
         finalData.insert(finalData.end(), payload.begin(), payload.end());
-        finalData.insert(finalData.end(), src.data() + mdatPos + mdatSize, src.data() + src.size());
     } else {
-        std::vector<uint8_t> freeBox;
-        const uint32_t freeBoxSize = static_cast<uint32_t>(8 + payload.size());
-        freeBox.reserve(freeBoxSize);
-        writeU32(freeBox, freeBoxSize);
-        freeBox.push_back('f'); freeBox.push_back('r'); freeBox.push_back('e'); freeBox.push_back('e');
-        freeBox.insert(freeBox.end(), payload.begin(), payload.end());
-
-        finalData.reserve(src.size() + metaGrowth + freeBox.size());
-        finalData.insert(finalData.end(), src.data(), src.data() + metaPos);
-        finalData.insert(finalData.end(), newMetaBox.begin(), newMetaBox.end());
         finalData.insert(finalData.end(), src.data() + metaEnd, src.data() + src.size());
-        finalData.insert(finalData.end(), freeBox.begin(), freeBox.end());
+        writeU32(finalData, static_cast<uint32_t>(8 + payload.size()));
+        finalData.push_back('m'); finalData.push_back('d'); finalData.push_back('a'); finalData.push_back('t');
+        finalData.insert(finalData.end(), payload.begin(), payload.end());
     }
 
-    const std::wstring tempPath = path + L".qvrating.tmp";
-    HANDLE hTmp = CreateFileW(tempPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (hTmp == INVALID_HANDLE_VALUE) return WriteStatus::Failed;
-
-    DWORD written = 0;
-    const BOOL ok = WriteFile(hTmp, finalData.data(), static_cast<DWORD>(finalData.size()), &written, nullptr);
-    FlushFileBuffers(hTmp);
-    CloseHandle(hTmp);
-
-    if (!ok || written != finalData.size()) {
-        DeleteFileW(tempPath.c_str());
-        return WriteStatus::Failed;
-    }
-
-    BOOL replaceOk = FALSE;
-    DWORD lastError = 0;
-    for (int retry = 0; retry < 5; ++retry) {
-        if (ReplaceFileW(path.c_str(), tempPath.c_str(), nullptr,
-                         REPLACEFILE_IGNORE_MERGE_ERRORS, nullptr, nullptr)) {
-            replaceOk = TRUE;
-            break;
-        }
-        lastError = GetLastError();
-        Sleep(20);
-    }
-
-    if (!replaceOk) {
-        DeleteFileW(tempPath.c_str());
-        if (lastError == ERROR_SHARING_VIOLATION || lastError == ERROR_LOCK_VIOLATION ||
-            lastError == ERROR_ACCESS_DENIED) {
-            return WriteStatus::NeedsTranscode;
-        }
-        return WriteStatus::Failed;
-    }
-
-    return WriteStatus::WrittenInPlace;
+    WriteStatus result = WriteStatus::Failed;
+    WriteBufferAndReplace(path, L".qvrating.tmp", finalData, result);
+    return result;
 }
 
 WriteStatus WriteRatingToJxl(const std::wstring& path, int stars, bool allowTranscode) {
+    const int clampedStars = std::clamp(stars, 0, 5);
     std::vector<uint8_t> src;
-    {
-        HANDLE file = INVALID_HANDLE_VALUE;
-        for (int attempt = 0; attempt < 5; ++attempt) {
-            file = CreateFileW(path.c_str(), GENERIC_READ,
-                               FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                               nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-            if (file != INVALID_HANDLE_VALUE) break;
-            Sleep(15);
-        }
-        if (file == INVALID_HANDLE_VALUE) return WriteStatus::Failed;
-
-        LARGE_INTEGER size{};
-        if (!GetFileSizeEx(file, &size) || size.QuadPart < 2 || size.QuadPart > 256 * 1024 * 1024) {
-            CloseHandle(file);
-            return WriteStatus::Failed;
-        }
-        src.resize(static_cast<size_t>(size.QuadPart));
-        DWORD read = 0;
-        const BOOL ok = ReadFile(file, src.data(), static_cast<DWORD>(src.size()), &read, nullptr);
-        CloseHandle(file);
-        if (!ok || read != src.size()) return WriteStatus::Failed;
+    DWORD readErr = 0;
+    if (!ReadWholeFile(path, 2, 256ull * 1024ull * 1024ull, src, &readErr)) {
+        return IsFileLockError(readErr) ? WriteStatus::NeedsTranscode : WriteStatus::Failed;
     }
 
     auto readU32 = [](const uint8_t* b) -> uint32_t {
-        return (static_cast<uint32_t>(b[0]) << 24) | (static_cast<uint32_t>(b[1]) << 16) |
-               (static_cast<uint32_t>(b[2]) << 8) | b[3];
+        return ReadBe32(b);
     };
     auto readU64 = [&readU32](const uint8_t* b) -> uint64_t {
         return (static_cast<uint64_t>(readU32(b)) << 32) | readU32(b + 4);
     };
     auto writeU32 = [](std::vector<uint8_t>& buf, uint32_t val) {
-        buf.push_back(static_cast<uint8_t>((val >> 24) & 0xFF));
-        buf.push_back(static_cast<uint8_t>((val >> 16) & 0xFF));
-        buf.push_back(static_cast<uint8_t>((val >> 8) & 0xFF));
-        buf.push_back(static_cast<uint8_t>(val & 0xFF));
+        AppendBe32(buf, val);
     };
     auto writeU64 = [](std::vector<uint8_t>& buf, uint64_t val) {
         for (int i = 7; i >= 0; --i) {
             buf.push_back(static_cast<uint8_t>((val >> (i * 8)) & 0xFF));
         }
     };
-
-    auto buildStandardExifPayload = [](int starVal) -> std::vector<uint8_t> {
-        uint16_t pct = 0;
-        switch (starVal) {
-            case 1: pct = 1; break;
-            case 2: pct = 25; break;
-            case 3: pct = 50; break;
-            case 4: pct = 75; break;
-            case 5: pct = 99; break;
-            default: pct = 0; break;
+    auto appendJxlBox = [&](std::vector<uint8_t>& dst, const char type[4], std::span<const uint8_t> boxPayload) {
+        if (boxPayload.size() + 8 <= 0xFFFFFFFFull) {
+            writeU32(dst, static_cast<uint32_t>(boxPayload.size() + 8));
+            dst.insert(dst.end(), type, type + 4);
+        } else {
+            writeU32(dst, 1);
+            dst.insert(dst.end(), type, type + 4);
+            writeU64(dst, static_cast<uint64_t>(boxPayload.size() + 16));
         }
-        std::vector<uint8_t> p;
-        p.reserve(42);
-        // 4 bytes tiff offset = 0
-        p.push_back(0); p.push_back(0); p.push_back(0); p.push_back(0);
-        // TIFF header: "II", 42, IFD0 offset 8
-        p.push_back('I'); p.push_back('I');
-        p.push_back(0x2A); p.push_back(0x00);
-        p.push_back(0x08); p.push_back(0x00); p.push_back(0x00); p.push_back(0x00);
-        // IFD0 entries count: 2
-        p.push_back(0x02); p.push_back(0x00);
-        // tag 0x4746: SHORT, count 1, val = starVal
-        p.push_back(0x46); p.push_back(0x47);
-        p.push_back(0x03); p.push_back(0x00);
-        p.push_back(0x01); p.push_back(0x00); p.push_back(0x00); p.push_back(0x00);
-        p.push_back(static_cast<uint8_t>(starVal & 0xFF));
-        p.push_back(static_cast<uint8_t>((starVal >> 8) & 0xFF));
-        p.push_back(0x00); p.push_back(0x00);
-        // tag 0x4749: SHORT, count 1, val = pct
-        p.push_back(0x49); p.push_back(0x47);
-        p.push_back(0x03); p.push_back(0x00);
-        p.push_back(0x01); p.push_back(0x00); p.push_back(0x00); p.push_back(0x00);
-        p.push_back(static_cast<uint8_t>(pct & 0xFF));
-        p.push_back(static_cast<uint8_t>((pct >> 8) & 0xFF));
-        p.push_back(0x00); p.push_back(0x00);
-        // Next IFD: 0
-        p.push_back(0x00); p.push_back(0x00); p.push_back(0x00); p.push_back(0x00);
-        return p;
+        dst.insert(dst.end(), boxPayload.begin(), boxPayload.end());
+    };
+    auto appendStandardMetadataBoxes = [&](std::vector<uint8_t>& dst,
+                                           std::span<const uint8_t> exifPayload,
+                                           std::string_view xmpText) {
+        if (!exifPayload.empty()) {
+            appendJxlBox(dst, "Exif", exifPayload);
+        }
+        if (!xmpText.empty()) {
+            appendJxlBox(dst, "xml ", std::span<const uint8_t>(
+                reinterpret_cast<const uint8_t*>(xmpText.data()), xmpText.size()));
+        }
     };
 
     // 1. Bare Codestream check (0xFF 0x0A)
     if (src[0] == 0xFF && src[1] == 0x0A) {
-        if (stars <= 0) {
+        if (clampedStars <= 0) {
             return WriteStatus::WrittenInPlace; // already unrated
         }
         if (!allowTranscode) {
@@ -1601,58 +1664,25 @@ WriteStatus WriteRatingToJxl(const std::wstring& path, int stars, bool allowTran
         std::vector<uint8_t> container;
         container.reserve(src.size() + 4096);
 
-        // Signature box (12 bytes)
         static constexpr uint8_t JXL_SIG[12] = {
             0x00, 0x00, 0x00, 0x0C, 'J', 'X', 'L', ' ', 0x0D, 0x0A, 0x87, 0x0A
         };
-        container.insert(container.end(), JXL_SIG, JXL_SIG + 12);
-
-        // ftyp box (20 bytes)
         static constexpr uint8_t JXL_FTYP[20] = {
             0x00, 0x00, 0x00, 0x14, 'f', 't', 'y', 'p',
             'j', 'x', 'l', ' ', 0x00, 0x00, 0x00, 0x00,
             'j', 'x', 'l', ' '
         };
+        container.insert(container.end(), JXL_SIG, JXL_SIG + 12);
         container.insert(container.end(), JXL_FTYP, JXL_FTYP + 20);
 
-        // Exif box (50 bytes)
-        const auto exifPayload = buildStandardExifPayload(stars);
-        writeU32(container, static_cast<uint32_t>(8 + exifPayload.size()));
-        container.push_back('E'); container.push_back('x'); container.push_back('i'); container.push_back('f');
-        container.insert(container.end(), exifPayload.begin(), exifPayload.end());
+        const auto exifPayload = BuildIsobmffExifPayload(clampedStars);
+        const std::string xmpPayload = BuildStandardXmpPayload(clampedStars);
+        appendStandardMetadataBoxes(container, exifPayload, xmpPayload);
+        appendJxlBox(container, "jxlc", src);
 
-        // xml box (XMP)
-        const auto xmpPayload = BuildStandardXmpPayload(stars);
-        writeU32(container, static_cast<uint32_t>(8 + xmpPayload.size()));
-        container.push_back('x'); container.push_back('m'); container.push_back('l'); container.push_back(' ');
-        container.insert(container.end(), xmpPayload.begin(), xmpPayload.end());
-
-        // jxlc box
-        if (src.size() + 8 <= 0xFFFFFFFF) {
-            writeU32(container, static_cast<uint32_t>(src.size() + 8));
-            container.push_back('j'); container.push_back('x'); container.push_back('l'); container.push_back('c');
-        } else {
-            writeU32(container, 1);
-            container.push_back('j'); container.push_back('x'); container.push_back('l'); container.push_back('c');
-            writeU64(container, static_cast<uint64_t>(src.size() + 16));
-        }
-        container.insert(container.end(), src.begin(), src.end());
-
-        const std::wstring tempPath = path + L".tmp_jxl_rating";
-        HANDLE hTemp = CreateFileW(tempPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (hTemp == INVALID_HANDLE_VALUE) return WriteStatus::Failed;
-        DWORD written = 0;
-        BOOL writeOk = WriteFile(hTemp, container.data(), static_cast<DWORD>(container.size()), &written, nullptr);
-        CloseHandle(hTemp);
-        if (!writeOk || written != container.size()) {
-            DeleteFileW(tempPath.c_str());
-            return WriteStatus::Failed;
-        }
-
-        if (!AtomicReplaceFile(path, tempPath)) {
-            return WriteStatus::Failed;
-        }
-        return WriteStatus::WrittenTranscode;
+        WriteStatus result = WriteStatus::Failed;
+        WriteBufferAndReplace(path, L".tmp_jxl_rating", container, result);
+        return result;
     }
 
     // 2. Container check
@@ -1687,7 +1717,7 @@ WriteStatus WriteRatingToJxl(const std::wstring& path, int stars, bool allowTran
             bSize = src.size() - pos;
         }
 
-        if (bSize < hdrSize || pos + bSize > src.size()) break;
+        if (bSize < hdrSize || bSize > src.size() - pos) break;
 
         JxlBox box{};
         box.type = bType;
@@ -1701,125 +1731,166 @@ WriteStatus WriteRatingToJxl(const std::wstring& path, int stars, bool allowTran
         pos += static_cast<size_t>(bSize);
     }
 
-    // Try in-place modification
-    bool inPlaceSuccess = false;
+    // Inspect any brob metadata boxes so we don't mistakenly return WrittenInPlace when
+    // compressed Exif/XMP carries a stale rating that overrides or survives clearing.
+    bool hasBrobMetadata = false;
+    std::vector<uint8_t> existingExifPayload;
+    std::string existingXmpText;
+    bool brobExifHasRating = false;
+    bool brobXmpHasRating = false;
+    bool uncompExifHasRating = false;
+    bool uncompXmpNeedsRebuild = false;
 
-    // Check for uncompressed Exif box ('Exif' = 0x45786966)
     for (const auto& box : boxes) {
-        if (box.type == 0x45786966 && box.payloadLen > 4) {
-            if (PatchIsobmffExifInPlace(path, src, box.payloadPos, box.payloadLen, stars)) {
-                inPlaceSuccess = true;
-                break;
-            }
-        }
-    }
-
-    // Check for uncompressed xml box ('xml ' = 0x786D6C20)
-    for (const auto& box : boxes) {
-        if (box.type == 0x786D6C20 && box.payloadLen > 0) {
-            std::string_view xmpStr(reinterpret_cast<const char*>(src.data() + box.payloadPos), box.payloadLen);
-            if (auto patched = PatchXmpRatingInPlaceStrict(xmpStr, stars)) {
-                HANDLE hFile = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE,
-                                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                                           nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-                if (hFile != INVALID_HANDLE_VALUE) {
-                    LARGE_INTEGER li;
-                    li.QuadPart = static_cast<LONGLONG>(box.payloadPos);
-                    SetFilePointerEx(hFile, li, nullptr, FILE_BEGIN);
-                    DWORD written = 0;
-                    WriteFile(hFile, patched->data(), static_cast<DWORD>(patched->size()), &written, nullptr);
-                    FlushFileBuffers(hFile);
-                    CloseHandle(hFile);
-                    inPlaceSuccess = true;
-                    break;
+        if (box.type == 0x45786966 && existingExifPayload.empty() && box.payloadLen > 4) { // 'Exif'
+            const std::span<const uint8_t> pay(src.data() + box.payloadPos, box.payloadLen);
+            existingExifPayload.assign(pay.begin(), pay.end());
+            if (ParseIsoExifPayload(pay).has_value()) uncompExifHasRating = true;
+        } else if (box.type == 0x786D6C20 && existingXmpText.empty() && box.payloadLen > 0) { // 'xml '
+            existingXmpText.assign(reinterpret_cast<const char*>(src.data() + box.payloadPos), box.payloadLen);
+        } else if (box.type == 0x62726F62 && box.payloadLen > 4) { // 'brob'
+            const uint32_t origType = readU32(src.data() + box.payloadPos);
+            if (origType == 0x45786966 || origType == 0x786D6C20) {
+                hasBrobMetadata = true;
+                const auto decomp = DecompressBrotliBounded(
+                    std::span<const uint8_t>(src.data() + box.payloadPos + 4, box.payloadLen - 4));
+                if (origType == 0x45786966 && !decomp.empty()) {
+                    if (existingExifPayload.empty()) existingExifPayload = decomp;
+                    if (ParseIsoExifPayload(decomp).has_value()) brobExifHasRating = true;
+                } else if (origType == 0x786D6C20 && !decomp.empty()) {
+                    const std::string_view xmlView(reinterpret_cast<const char*>(decomp.data()), decomp.size());
+                    if (existingXmpText.empty()) existingXmpText.assign(xmlView);
+                    if (ParseXmpRating(xmlView).has_value()) brobXmpHasRating = true;
                 }
             }
         }
     }
 
-    if (inPlaceSuccess) {
+    // In-place path is safe only when no brob Exif/XMP shadows or blocks clearing/updating.
+    bool inPlaceExifDone = !uncompExifHasRating && !brobExifHasRating;
+    bool inPlaceXmpDone = !brobXmpHasRating;
+    bool inPlaceTouched = false;
+
+    for (const auto& box : boxes) {
+        if (box.type == 0x45786966 && box.payloadLen > 4 && !brobExifHasRating) {
+            if (PatchIsobmffExifInPlace(path, src, box.payloadPos, box.payloadLen, clampedStars)) {
+                inPlaceExifDone = true;
+                inPlaceTouched = true;
+            } else if (ParseIsoExifPayload(std::span<const uint8_t>(src.data() + box.payloadPos, box.payloadLen)).has_value()) {
+                inPlaceExifDone = false;
+            }
+        }
+    }
+
+    for (const auto& box : boxes) {
+        if (box.type == 0x786D6C20 && box.payloadLen > 0 && !brobXmpHasRating && !brobExifHasRating) {
+            const std::string_view xmpStr(reinterpret_cast<const char*>(src.data() + box.payloadPos), box.payloadLen);
+            if (auto patched = PatchXmpRatingInPlaceStrict(xmpStr, clampedStars)) {
+                if (*patched == xmpStr) {
+                    inPlaceXmpDone = true;
+                } else {
+                    HANDLE hFile = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE,
+                                               FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                               nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+                    if (hFile != INVALID_HANDLE_VALUE) {
+                        LARGE_INTEGER li;
+                        li.QuadPart = static_cast<LONGLONG>(box.payloadPos);
+                        DWORD written = 0;
+                        const BOOL seekOk = SetFilePointerEx(hFile, li, nullptr, FILE_BEGIN);
+                        const BOOL wOk = seekOk && WriteFile(hFile, patched->data(), static_cast<DWORD>(patched->size()), &written, nullptr);
+                        if (wOk && written == patched->size()) {
+                            FlushFileBuffers(hFile);
+                            inPlaceXmpDone = true;
+                            inPlaceTouched = true;
+                        }
+                        CloseHandle(hFile);
+                    }
+                }
+                if (inPlaceXmpDone) break;
+            } else if (clampedStars > 0 || ParseXmpRating(xmpStr).has_value()) {
+                uncompXmpNeedsRebuild = true;
+                inPlaceXmpDone = false;
+            }
+        }
+    }
+
+    const bool hasAnyUncompXmp = !uncompXmpNeedsRebuild &&
+        std::any_of(boxes.begin(), boxes.end(), [](const JxlBox& b) { return b.type == 0x786D6C20 && b.payloadLen > 0; });
+
+    if (clampedStars <= 0 && !brobExifHasRating && !brobXmpHasRating && !uncompXmpNeedsRebuild && !uncompExifHasRating) {
+        return WriteStatus::WrittenInPlace;
+    }
+    if (!hasBrobMetadata && inPlaceTouched && inPlaceExifDone && (inPlaceXmpDone || hasAnyUncompXmp || !uncompXmpNeedsRebuild)) {
         return WriteStatus::WrittenInPlace;
     }
 
-    // If clearing (0 stars) and no in-place succeeded, nothing left to do
-    if (stars <= 0) {
-        return WriteStatus::WrittenInPlace;
-    }
-
-    // In-place failed: rebuild container by injecting new Exif and XMP boxes
     if (!allowTranscode) {
         return WriteStatus::NeedsTranscode;
     }
 
-    std::vector<uint8_t> newContainer;
-    newContainer.reserve(src.size() + 4096);
+    // Prepare rebuilt metadata boxes preserving existing non-rating Exif and XMP fields
+    std::vector<uint8_t> finalExifPayload;
+    if (!existingExifPayload.empty()) {
+        // Attempt to patch existing decompressed Exif (0x4746/0x4749); if it had no 0x4746 tag,
+        // keep camera Exif intact unless stars > 0 in which case padded XMP below carries the rating.
+        if (existingExifPayload.size() > 4) {
+            const uint32_t tiffOff = ReadBe32(existingExifPayload.data());
+            size_t tiffStart = 4;
+            if (tiffOff <= existingExifPayload.size() - 4 && existingExifPayload.size() - 4 - tiffOff >= 8) {
+                tiffStart = 4 + tiffOff;
+            }
+            if (tiffStart + 8 <= existingExifPayload.size()) {
+                PatchTiffBufferRating(
+                    std::span<uint8_t>(existingExifPayload.data() + tiffStart, existingExifPayload.size() - tiffStart),
+                    clampedStars);
+            }
+        }
+        finalExifPayload = std::move(existingExifPayload);
+    } else if (clampedStars > 0) {
+        finalExifPayload = BuildIsobmffExifPayload(clampedStars);
+    }
 
-    // Write signature box
+    std::string finalXmpPayload;
+    if (!existingXmpText.empty()) {
+        if (auto padded = BuildPaddedUpdatedXmp(existingXmpText, clampedStars)) {
+            finalXmpPayload = std::move(*padded);
+        }
+    }
+    if (finalXmpPayload.empty() && clampedStars > 0) {
+        finalXmpPayload = BuildStandardXmpPayload(clampedStars);
+    }
+
+    std::vector<uint8_t> newContainer;
+    newContainer.reserve(src.size() + finalExifPayload.size() + finalXmpPayload.size() + 256);
     newContainer.insert(newContainer.end(), JXL_SIG, JXL_SIG + 12);
 
     bool insertedMetadata = false;
-
     for (const auto& box : boxes) {
-        // Skip old Exif, xml, or brob boxes carrying metadata
         if (box.type == 0x45786966 || box.type == 0x786D6C20) {
             continue;
         }
-        if (box.type == 0x62726F62 && box.payloadLen >= 4) { // 'brob'
+        if (box.type == 0x62726F62 && box.payloadLen >= 4) {
             const uint32_t origType = readU32(src.data() + box.payloadPos);
             if (origType == 0x45786966 || origType == 0x786D6C20) {
-                continue; // Skip compressed Exif/xml brob
+                continue;
             }
         }
 
-        // Copy this box
         newContainer.insert(newContainer.end(), src.data() + box.boxPos, src.data() + box.boxPos + static_cast<size_t>(box.boxSize));
 
-        // Inject new Exif & xml right after ftyp ('ftyp' = 0x66747970)
-        if (!insertedMetadata && box.type == 0x66747970) {
-            // 1. Exif box
-            const auto exifPayload = buildStandardExifPayload(stars);
-            writeU32(newContainer, static_cast<uint32_t>(8 + exifPayload.size()));
-            newContainer.push_back('E'); newContainer.push_back('x'); newContainer.push_back('i'); newContainer.push_back('f');
-            newContainer.insert(newContainer.end(), exifPayload.begin(), exifPayload.end());
-
-            // 2. xml box
-            const auto xmpPayload = BuildStandardXmpPayload(stars);
-            writeU32(newContainer, static_cast<uint32_t>(8 + xmpPayload.size()));
-            newContainer.push_back('x'); newContainer.push_back('m'); newContainer.push_back('l'); newContainer.push_back(' ');
-            newContainer.insert(newContainer.end(), xmpPayload.begin(), xmpPayload.end());
-
+        if (!insertedMetadata && box.type == 0x66747970) { // after 'ftyp'
+            appendStandardMetadataBoxes(newContainer, finalExifPayload, finalXmpPayload);
             insertedMetadata = true;
         }
     }
 
-    // Fallback: if no ftyp was present (rare), inject metadata now
     if (!insertedMetadata) {
-        const auto exifPayload = buildStandardExifPayload(stars);
-        writeU32(newContainer, static_cast<uint32_t>(8 + exifPayload.size()));
-        newContainer.push_back('E'); newContainer.push_back('x'); newContainer.push_back('i'); newContainer.push_back('f');
-        newContainer.insert(newContainer.end(), exifPayload.begin(), exifPayload.end());
-
-        const auto xmpPayload = BuildStandardXmpPayload(stars);
-        writeU32(newContainer, static_cast<uint32_t>(8 + xmpPayload.size()));
-        newContainer.push_back('x'); newContainer.push_back('m'); newContainer.push_back('l'); newContainer.push_back(' ');
-        newContainer.insert(newContainer.end(), xmpPayload.begin(), xmpPayload.end());
+        appendStandardMetadataBoxes(newContainer, finalExifPayload, finalXmpPayload);
     }
 
-    const std::wstring tempPath = path + L".tmp_jxl_rebuild";
-    HANDLE hTemp = CreateFileW(tempPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (hTemp == INVALID_HANDLE_VALUE) return WriteStatus::Failed;
-    DWORD written = 0;
-    BOOL writeOk = WriteFile(hTemp, newContainer.data(), static_cast<DWORD>(newContainer.size()), &written, nullptr);
-    CloseHandle(hTemp);
-    if (!writeOk || written != newContainer.size()) {
-        DeleteFileW(tempPath.c_str());
-        return WriteStatus::Failed;
-    }
-
-    if (!AtomicReplaceFile(path, tempPath)) {
-        return WriteStatus::Failed;
-    }
-    return WriteStatus::WrittenTranscode;
+    WriteStatus result = WriteStatus::Failed;
+    WriteBufferAndReplace(path, L".tmp_jxl_rebuild", newContainer, result);
+    return result;
 }
 
 // ============================================================================
@@ -1900,8 +1971,7 @@ std::vector<uint8_t> BuildPngChunkBytes(const uint8_t type[4], std::span<const u
     return out;
 }
 
-std::vector<uint8_t> BuildPngITXtXmpChunk(int stars) {
-    const std::string xmp = BuildStandardXmpPayload(stars);
+std::vector<uint8_t> BuildPngITXtXmpChunkFromBody(std::string_view xmp) {
     std::vector<uint8_t> payload;
     payload.reserve(PNG_XMP_KEYWORD.size() + 5 + xmp.size());
     payload.insert(payload.end(), PNG_XMP_KEYWORD.begin(), PNG_XMP_KEYWORD.end());
@@ -1915,32 +1985,85 @@ std::vector<uint8_t> BuildPngITXtXmpChunk(int stars) {
     return BuildPngChunkBytes(ITXT_TYPE, payload);
 }
 
-enum class PngITXtKind { NotXmp, UncompressedXmp, CompressedOrMalformedXmp };
+std::string DecompressZlibBounded(std::span<const uint8_t> comp, size_t maxOut = 4u * 1024u * 1024u) {
+    if (comp.empty()) return {};
+    z_stream zs{};
+    if (inflateInit(&zs) != Z_OK) return {};
+    zs.next_in = const_cast<Bytef*>(comp.data());
+    zs.avail_in = static_cast<uInt>(comp.size());
 
-PngITXtKind InspectPngITXt(std::span<const uint8_t> data, size_t& outXmpOffset) {
+    std::string out;
+    out.resize((std::min)(maxOut, size_t{ 4096 }));
+    size_t totalOut = 0;
+    while (true) {
+        if (totalOut >= out.size()) {
+            if (out.size() >= maxOut) {
+                inflateEnd(&zs);
+                return {};
+            }
+            out.resize((std::min)(maxOut, out.size() * 2));
+        }
+        zs.next_out = reinterpret_cast<Bytef*>(out.data() + totalOut);
+        zs.avail_out = static_cast<uInt>(out.size() - totalOut);
+        const int rc = inflate(&zs, Z_NO_FLUSH);
+        totalOut = zs.total_out;
+        if (rc == Z_STREAM_END) {
+            inflateEnd(&zs);
+            out.resize(totalOut);
+            return out;
+        }
+        if (rc != Z_OK && rc != Z_BUF_ERROR) {
+            inflateEnd(&zs);
+            return {};
+        }
+        if (zs.avail_in == 0 && zs.avail_out > 0) {
+            inflateEnd(&zs);
+            out.resize(totalOut);
+            return out;
+        }
+    }
+}
+
+enum class PngITXtKind { NotXmp, UncompressedXmp, CompressedXmp, MalformedXmp };
+
+PngITXtKind InspectPngITXt(std::span<const uint8_t> data, size_t& outXmpOffset, std::string* outDecodedXmp) {
     if (data.size() <= PNG_XMP_KEYWORD.size() ||
         std::memcmp(data.data(), PNG_XMP_KEYWORD.data(), PNG_XMP_KEYWORD.size()) != 0 ||
         data[PNG_XMP_KEYWORD.size()] != 0) {
         return PngITXtKind::NotXmp;
     }
     const size_t flagPos = PNG_XMP_KEYWORD.size() + 1;
-    if (flagPos + 4 > data.size() || data[flagPos] != 0) {
-        return PngITXtKind::CompressedOrMalformedXmp;
-    }
+    if (flagPos + 4 > data.size()) return PngITXtKind::MalformedXmp;
+    const uint8_t compFlag = data[flagPos];
     size_t pos = flagPos + 2;
     for (int i = 0; i < 2; ++i) {
         const auto* nul = static_cast<const uint8_t*>(std::memchr(data.data() + pos, 0, data.size() - pos));
-        if (!nul) return PngITXtKind::CompressedOrMalformedXmp;
+        if (!nul) return PngITXtKind::MalformedXmp;
         pos = static_cast<size_t>(nul - data.data()) + 1;
     }
     outXmpOffset = pos;
-    return PngITXtKind::UncompressedXmp;
+    if (compFlag == 0) {
+        if (outDecodedXmp) {
+            outDecodedXmp->assign(reinterpret_cast<const char*>(data.data() + pos), data.size() - pos);
+        }
+        return PngITXtKind::UncompressedXmp;
+    }
+    if (compFlag == 1 && outDecodedXmp) {
+        *outDecodedXmp = DecompressZlibBounded(data.subspan(pos));
+    }
+    return PngITXtKind::CompressedXmp;
 }
 
-bool IsPngZTxtXmp(std::span<const uint8_t> data) {
-    return data.size() > PNG_XMP_KEYWORD.size() &&
-           std::memcmp(data.data(), PNG_XMP_KEYWORD.data(), PNG_XMP_KEYWORD.size()) == 0 &&
-           data[PNG_XMP_KEYWORD.size()] == 0;
+bool IsPngZTxtXmp(std::span<const uint8_t> data, std::string* outDecodedXmp) {
+    if (data.size() <= PNG_XMP_KEYWORD.size() + 2 ||
+        std::memcmp(data.data(), PNG_XMP_KEYWORD.data(), PNG_XMP_KEYWORD.size()) != 0 ||
+        data[PNG_XMP_KEYWORD.size()] != 0) {
+        return false;
+    }
+    if (outDecodedXmp) {
+        *outDecodedXmp = DecompressZlibBounded(data.subspan(PNG_XMP_KEYWORD.size() + 2));
+    }
+    return true;
 }
 
 struct PngXmpChunkRecord {
@@ -1949,6 +2072,7 @@ struct PngXmpChunkRecord {
     bool uncompressedITXt = false;
     size_t xmpOffsetInData = 0;
     std::vector<uint8_t> data;
+    std::string decodedXmp;
 };
 
 struct PngExifChunkRecord {
@@ -2020,7 +2144,8 @@ bool ScanPngPreIdat(HANDLE hFile, int targetStars, PngPreIdatScan& out) {
 
             if (isITXt) {
                 size_t xmpOff = 0;
-                const PngITXtKind kind = InspectPngITXt(data, xmpOff);
+                std::string decoded;
+                const PngITXtKind kind = InspectPngITXt(data, xmpOff, &decoded);
                 if (kind != PngITXtKind::NotXmp) {
                     PngXmpChunkRecord rec;
                     rec.chunkOffset = pos;
@@ -2028,14 +2153,17 @@ bool ScanPngPreIdat(HANDLE hFile, int targetStars, PngPreIdatScan& out) {
                     rec.uncompressedITXt = (kind == PngITXtKind::UncompressedXmp);
                     rec.xmpOffsetInData = xmpOff;
                     rec.data = std::move(data);
+                    rec.decodedXmp = std::move(decoded);
                     out.xmpChunks.push_back(std::move(rec));
                 }
             } else if (isZTxt) {
-                if (IsPngZTxtXmp(data)) {
+                std::string decoded;
+                if (IsPngZTxtXmp(data, &decoded)) {
                     PngXmpChunkRecord rec;
                     rec.chunkOffset = pos;
                     rec.totalSize = totalSize;
                     rec.uncompressedITXt = false;
+                    rec.decodedXmp = std::move(decoded);
                     out.xmpChunks.push_back(std::move(rec));
                 }
             } else if (isExif) {
@@ -2091,15 +2219,17 @@ bool TryPngInPlaceUpdate(const std::wstring& path, PngPreIdatScan& scan, int tar
         if (!patched || patched->size() != oldXmp.size()) {
             return false;
         }
-        std::memcpy(xmpChunk.data.data() + xmpChunk.xmpOffsetInData, patched->data(), patched->size());
-        static constexpr uint8_t ITXT_TYPE[4] = { 'i', 'T', 'X', 't' };
-        PngInPlaceWriteOp op;
-        op.dataFileOffset = xmpChunk.chunkOffset + 8 + xmpChunk.xmpOffsetInData;
-        op.dataBytes = xmpChunk.data.data() + xmpChunk.xmpOffsetInData;
-        op.dataSize = patched->size();
-        op.crcFileOffset = xmpChunk.chunkOffset + 8 + xmpChunk.data.size();
-        op.newCrc = ComputePngChunkCrc(ITXT_TYPE, xmpChunk.data);
-        ops.push_back(op);
+        if (*patched != oldXmp) {
+            std::memcpy(xmpChunk.data.data() + xmpChunk.xmpOffsetInData, patched->data(), patched->size());
+            static constexpr uint8_t ITXT_TYPE[4] = { 'i', 'T', 'X', 't' };
+            PngInPlaceWriteOp op;
+            op.dataFileOffset = xmpChunk.chunkOffset + 8 + xmpChunk.xmpOffsetInData;
+            op.dataBytes = xmpChunk.data.data() + xmpChunk.xmpOffsetInData;
+            op.dataSize = patched->size();
+            op.crcFileOffset = xmpChunk.chunkOffset + 8 + xmpChunk.data.size();
+            op.newCrc = ComputePngChunkCrc(ITXT_TYPE, xmpChunk.data);
+            ops.push_back(op);
+        }
     }
 
     for (const auto& exif : scan.exifChunks) {
@@ -2203,10 +2333,28 @@ WriteStatus WriteRatingToPng(const std::wstring& path, int stars, bool allowTran
                   return a.offset < b.offset;
               });
 
-    const std::vector<uint8_t> newITXtChunk =
-        (targetStars > 0) ? BuildPngITXtXmpChunk(targetStars) : std::vector<uint8_t>{};
+    std::string rebuiltXmp;
+    for (const auto& xmp : scan.xmpChunks) {
+        if (xmp.decodedXmp.empty()) continue;
+        if (auto padded = BuildPaddedUpdatedXmp(xmp.decodedXmp, targetStars)) {
+            if (targetStars > 0 ||
+                padded->find("crs:") != std::string::npos ||
+                padded->find("dc:") != std::string::npos ||
+                padded->find("photoshop:") != std::string::npos ||
+                padded->find("exif:") != std::string::npos) {
+                rebuiltXmp = std::move(*padded);
+            }
+            break;
+        }
+    }
+    if (rebuiltXmp.empty() && targetStars > 0) {
+        rebuiltXmp = BuildStandardXmpPayload(targetStars);
+    }
 
-    const std::wstring tempPath = path + L".tmp_png_rating";
+    const std::vector<uint8_t> newITXtChunk =
+        !rebuiltXmp.empty() ? BuildPngITXtXmpChunkFromBody(rebuiltXmp) : std::vector<uint8_t>{};
+
+    const std::wstring tempPath = CreateUniqueTempPath(path, L".tmp_png_rating");
     HANDLE hDst = CreateFileW(tempPath.c_str(), GENERIC_WRITE, 0, nullptr,
                               CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (hDst == INVALID_HANDLE_VALUE) {
@@ -2272,23 +2420,24 @@ WriteStatus WriteRatingToPng(const std::wstring& path, int stars, bool allowTran
 
 WriteStatus WriteRatingToImage(const std::wstring& path, int stars, bool allowTranscode) {
     if (path.empty()) return WriteStatus::Failed;
+    const int clampedStars = std::clamp(stars, 0, 5);
 
     const std::wstring_view ext = QuickView::ExtensionOf(path);
     const bool isJxl = QuickView::ExtEqualsIgnoreCase(ext, L".jxl");
     if (isJxl) {
-        return WriteRatingToJxl(path, stars, allowTranscode);
+        return WriteRatingToJxl(path, clampedStars, allowTranscode);
     }
 
     const bool isPng = QuickView::ExtEqualsIgnoreCase(ext, L".png") ||
                        QuickView::ExtEqualsIgnoreCase(ext, L".apng");
     if (isPng) {
-        return WriteRatingToPng(path, stars, allowTranscode);
+        return WriteRatingToPng(path, clampedStars, allowTranscode);
     }
 
     const bool isWebp = QuickView::ExtEqualsIgnoreCase(ext, L".webp");
     if (isWebp) {
         if (!allowTranscode) return WriteStatus::NeedsTranscode;
-        return WriteRatingToWebp(path, stars);
+        return WriteRatingToWebp(path, clampedStars);
     }
 
     const bool isIsobmff = QuickView::ExtEqualsIgnoreCase(ext, L".avif") ||
@@ -2296,8 +2445,7 @@ WriteStatus WriteRatingToImage(const std::wstring& path, int stars, bool allowTr
                            QuickView::ExtEqualsIgnoreCase(ext, L".heic") ||
                            QuickView::ExtEqualsIgnoreCase(ext, L".heif");
     if (isIsobmff) {
-        if (!allowTranscode) return WriteStatus::NeedsTranscode;
-        return WriteRatingToIsobmff(path, stars);
+        return WriteRatingToIsobmff(path, clampedStars, allowTranscode);
     }
 
     const bool isTiff = QuickView::ExtEqualsIgnoreCase(ext, L".tif") ||
@@ -2312,7 +2460,7 @@ WriteStatus WriteRatingToImage(const std::wstring& path, int stars, bool allowTr
     // WIC TIFF decoder does NOT support FastMetadataEncoder (returns WINCODEC_ERR_UNSUPPORTEDOPERATION).
     // Bypassing TryInPlace avoids open handle collisions during subsequent Transcode.
     if (!isTiff) {
-        const HRESULT hrInPlace = TryInPlace(factory.Get(), path, stars);
+        const HRESULT hrInPlace = TryInPlace(factory.Get(), path, clampedStars);
         if (SUCCEEDED(hrInPlace)) {
             return WriteStatus::WrittenInPlace;
         }
@@ -2320,8 +2468,7 @@ WriteStatus WriteRatingToImage(const std::wstring& path, int stars, bool allowTr
 
     if (!allowTranscode) return WriteStatus::NeedsTranscode;
 
-    const HRESULT hrTrans = Transcode(factory.Get(), path, stars);
-    return SUCCEEDED(hrTrans) ? WriteStatus::WrittenTranscode : WriteStatus::Failed;
+    return Transcode(factory.Get(), path, clampedStars);
 }
 
 } // namespace QuickView::Rating

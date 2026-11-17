@@ -164,7 +164,7 @@ PanelLayout ExportPanel::ComputeLayout(float canvasWidth, float canvasHeight) co
     // 4.2 Embed ICC Checkbox (8px gap after EXIF)
     float gap1 = 8.0f * s;
     float iccLeft = l.preserveMetadataCheckboxRect.right + gap1;
-    const wchar_t* embedIccStr = (AppStrings::Dialog_EmbedICC && *AppStrings::Dialog_EmbedICC) ? AppStrings::Dialog_EmbedICC : L"Embed ICC";
+    const wchar_t* embedIccStr = (AppStrings::g.Dialog_EmbedICC && *AppStrings::g.Dialog_EmbedICC) ? AppStrings::g.Dialog_EmbedICC : L"Embed ICC";
     float iccTextW = MeasureStringWidth(embedIccStr, 13.0f * s);
     float iccTotalW = boxSize + textMargin + iccTextW;
     l.checkboxRect = D2D1::RectF(iccLeft, curY, iccLeft + iccTotalW, curY + 24.0f * s);
@@ -565,7 +565,7 @@ void ExportPanel::CalculateNetTransform(int& outRotation, bool& outFlipH, bool& 
 void ExportPanel::TriggerAsyncEstimate() {
     if (!m_isVisible) return; // Only estimate when ExportPanel is visible!
 
-    m_estimatedSizeStr = AppStrings::Dialog_SizeEstimating;
+    m_estimatedSizeStr = AppStrings::g.Dialog_SizeEstimating;
     uint64_t currentGen = ++m_estimateGeneration;
     
     ExportOptions opts;
@@ -579,7 +579,9 @@ void ExportPanel::TriggerAsyncEstimate() {
         opts.SourceFrame = targetPane.currentFrame;
     }
 
-    float srScale = (m_exportSr && m_hasSrBitmap) ? m_srScale : 1.0f;
+    // TriggerAsyncEstimate decodes the 1x source (disk file or 1x modified frame),
+    // never the GPU SR texture; crop coordinates must stay in 1x visual pixel space.
+    constexpr float srScale = 1.0f;
 
     if (g_cropState.IsActive) {
         opts.CropX = (int)std::round(g_cropState.CropLeft * srScale);
@@ -1264,7 +1266,7 @@ void ExportPanel::CommitSave(bool overwrite) {
     }
 
     m_estimatedSizeStr =
-        AppStrings::Dialog_SizeEstimating; // Reuse as "Saving..." indicator
+        AppStrings::g.Dialog_SizeEstimating; // Reuse as "Saving..." indicator
     RequestRepaint(PaintLayer::All);
 
     // Dispatch export to background worker thread
@@ -1376,8 +1378,9 @@ void ExportPanel::ForceAbortExport() {
   m_isExporting.store(false);
 }
 
-void ExportPanel::Render(ID2D1DeviceContext* dc, float width, float height, IDWriteTextFormat* textFormat) {
+void ExportPanel::Render(ID2D1DeviceContext* dc, float width, float height, IDWriteTextFormat* textFormat, IDWriteFactory* dwriteFactory) {
     if (!m_isVisible || !dc) return;
+    m_dwriteFactory = dwriteFactory;
 
     m_uiScale = g_uiScale;
     float s = m_uiScale;
@@ -1443,11 +1446,11 @@ void ExportPanel::Render(ID2D1DeviceContext* dc, float width, float height, IDWr
     float curY = m_panelRect.top + 20.0f * s;
     std::wstring titleText;
     if (m_exportMode == ExportMode::UnsavedLeave) {
-        titleText = AppStrings::Dialog_CropUnsavedTitle;
+        titleText = AppStrings::g.Dialog_CropUnsavedTitle;
     } else if (!m_isModified) {
-        titleText = AppStrings::Dialog_SaveAsTitle;
+        titleText = AppStrings::g.Dialog_SaveAsTitle;
     } else {
-        titleText = AppStrings::Dialog_ExportTitle;
+        titleText = AppStrings::g.Dialog_ExportTitle;
     }
 
     if (textFormat) {
@@ -1508,12 +1511,12 @@ void ExportPanel::Render(ID2D1DeviceContext* dc, float width, float height, IDWr
 
     // 6.8 Super-Resolution Checkbox (Conditional)
     if (layout.showSrCheckbox) {
-        DrawCheckbox(dc, layout.srCheckboxRect, AppStrings::Export_Checkbox_SuperResolution, m_exportSr, HoverState::SrCheckbox, textFormat);
+        DrawCheckbox(dc, layout.srCheckboxRect, AppStrings::g.Export_Checkbox_SuperResolution, m_exportSr, HoverState::SrCheckbox, textFormat);
     }
 
     // 7. Preserve EXIF Checkbox & Embed ICC Checkbox & ICC Dropdown & Size
     DrawCheckbox(dc, layout.preserveMetadataCheckboxRect, L"EXIF", m_preserveMetadata, HoverState::PreserveMetadataCheckbox, textFormat);
-    DrawCheckbox(dc, layout.checkboxRect, AppStrings::Dialog_EmbedICC,
+    DrawCheckbox(dc, layout.checkboxRect, AppStrings::g.Dialog_EmbedICC,
                  m_embedIcc, HoverState::EmbedIccCheckbox, textFormat);
 
     ComPtr<ID2D1SolidColorBrush> dimTextBrush;
@@ -1531,16 +1534,16 @@ void ExportPanel::Render(ID2D1DeviceContext* dc, float width, float height, IDWr
     D2D1_COLOR_F secondaryBtnColor = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.08f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f);
 
     if (layout.overwriteRect.right > layout.overwriteRect.left) {
-        DrawButton(dc, layout.overwriteRect, AppStrings::Dialog_ButtonOverwrite, HoverState::OverwriteBtn, overwriteBtnColor, textFormat);
+        DrawButton(dc, layout.overwriteRect, AppStrings::g.Dialog_ButtonOverwrite, HoverState::OverwriteBtn, overwriteBtnColor, textFormat);
     }
     if (layout.saveAsRect.right > layout.saveAsRect.left) {
-        DrawButton(dc, layout.saveAsRect, AppStrings::Dialog_ButtonSaveAs, HoverState::SaveAsBtn, primaryBtnColor, textFormat);
+        DrawButton(dc, layout.saveAsRect, AppStrings::g.Dialog_ButtonSaveAs, HoverState::SaveAsBtn, primaryBtnColor, textFormat);
     }
     if (layout.cancelRect.right > layout.cancelRect.left) {
-        DrawButton(dc, layout.cancelRect, AppStrings::Dialog_Cancel, HoverState::CancelBtn, secondaryBtnColor, textFormat);
+        DrawButton(dc, layout.cancelRect, AppStrings::g.Dialog_Cancel, HoverState::CancelBtn, secondaryBtnColor, textFormat);
     }
     if (layout.discardRect.right > layout.discardRect.left) {
-        DrawButton(dc, layout.discardRect, AppStrings::Dialog_ButtonDiscard, HoverState::DiscardBtn, discardBtnColor, textFormat);
+        DrawButton(dc, layout.discardRect, AppStrings::g.Dialog_ButtonDiscard, HoverState::DiscardBtn, discardBtnColor, textFormat);
     }
 
     // 9. Floating Dropdown Popups (Render active popup LAST for topmost Z-order)
@@ -1678,7 +1681,7 @@ void ExportPanel::DrawFormatDropdown(ID2D1DeviceContext* dc, const D2D1_RECT_F& 
 
     QuickView::UI::GeekWidgets::DrawPillComboBox(
         dc, rect, label, m_formatDropdownOpen, (m_hoverState == HoverState::FormatDropdownBtn), false,
-        textFormat, s, pal);
+        textFormat, s, pal, m_dwriteFactory);
 
     // 2. Draw Floating Popup if Opened
     if (m_formatDropdownOpen && !m_availableFormats.empty()) {
@@ -1715,7 +1718,7 @@ void ExportPanel::DrawIccDropdown(ID2D1DeviceContext* dc, const D2D1_RECT_F& rec
 
     QuickView::UI::GeekWidgets::DrawPillComboBox(
         dc, rect, label, m_iccDropdownOpen, (m_hoverState == HoverState::IccDropdownBtn), false,
-        textFormat, s, pal);
+        textFormat, s, pal, m_dwriteFactory);
 
     // 2. Draw Floating Popup if Opened
     if (m_iccDropdownOpen && !m_iccProfiles.empty()) {

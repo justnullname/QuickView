@@ -13,6 +13,7 @@
 
 extern AppConfig g_config;
 extern void SaveConfig(); // Defined in main.cpp
+extern void SaveConfigSync(); // Defined in main.cpp
 
 namespace {
 
@@ -287,7 +288,7 @@ namespace QuickView::UI::ThemeSystem {
 namespace QuickView::UI::ConfigIO {
 
     bool ExportConfig(HWND hwnd) {
-        ::SaveConfig();
+        ::SaveConfigSync();
         QuickView::AI::AiActionManager::Instance().SaveConfig();
 
         std::wstring dest = ShowFileDialog(hwnd, true,

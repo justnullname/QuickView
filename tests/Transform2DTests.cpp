@@ -21,7 +21,7 @@ TEST(Transform2DTest, FromExifMapping) {
     EXPECT_TRUE(t4.FlipH);
 
     auto t5 = Transform2D::FromExif(5);
-    EXPECT_EQ(t5.Rotation, 90);
+    EXPECT_EQ(t5.Rotation, 270);
     EXPECT_TRUE(t5.FlipH);
 
     auto t6 = Transform2D::FromExif(6);
@@ -29,7 +29,7 @@ TEST(Transform2DTest, FromExifMapping) {
     EXPECT_FALSE(t6.FlipH);
 
     auto t7 = Transform2D::FromExif(7);
-    EXPECT_EQ(t7.Rotation, 270);
+    EXPECT_EQ(t7.Rotation, 90);
     EXPECT_TRUE(t7.FlipH);
 
     auto t8 = Transform2D::FromExif(8);
@@ -177,4 +177,85 @@ TEST(Transform2DTest, LoupeViewportAnchorZoomPrecision) {
 
     EXPECT_NEAR(reprojectedScreenX, cursorX, 1e-4f);
     EXPECT_NEAR(reprojectedScreenY, cursorY, 1e-4f);
+}
+
+TEST(Transform2DTest, ToRotateFirstParamsEquivalenceAllOrientations) {
+    // Verify FlipH-first Transform2D + post-rotation visual FlipV matches WIC Rotate-then-Flip order
+    constexpr int W = 12;
+    constexpr int H = 8;
+
+    auto applyFlipH = [](int& x, int& y, int w, int h) { (void)h; x = (w - 1) - x; };
+    auto applyFlipV = [](int& x, int& y, int w, int h) { (void)w; y = (h - 1) - y; };
+    auto applyRotCW = [](int& x, int& y, int& w, int& h, int rot) {
+        for (int s = 0; s < (rot / 90) % 4; ++s) {
+            int nx = (h - 1) - y;
+            int ny = x;
+            x = nx;
+            y = ny;
+            std::swap(w, h);
+        }
+    };
+
+    const int rots[] = { 0, 90, 180, 270 };
+    for (int r : rots) {
+        for (bool fH : { false, true }) {
+            for (bool fV : { false, true }) {
+                Transform2D t{ r, fH };
+                int wicRot = 0;
+                bool wicFlipH = false, wicFlipV = false;
+                t.ToRotateFirstParams(fV, wicRot, wicFlipH, wicFlipV);
+
+                // Point under FlipH -> Rot(r) -> FlipV
+                int x1 = 2, y1 = 1, w1 = W, h1 = H;
+                if (fH) applyFlipH(x1, y1, w1, h1);
+                applyRotCW(x1, y1, w1, h1, r);
+                if (fV) applyFlipV(x1, y1, w1, h1);
+
+                // Point under Rot(wicRot) -> FlipH(wicFlipH) -> FlipV(wicFlipV)
+                int x2 = 2, y2 = 1, w2 = W, h2 = H;
+                applyRotCW(x2, y2, w2, h2, wicRot);
+                if (wicFlipH) applyFlipH(x2, y2, w2, h2);
+                if (wicFlipV) applyFlipV(x2, y2, w2, h2);
+
+                EXPECT_EQ(w1, w2);
+                EXPECT_EQ(h1, h2);
+                EXPECT_EQ(x1, x2);
+                EXPECT_EQ(y1, y2);
+            }
+        }
+    }
+}
+
+TEST(Transform2DTest, MapVisualRectToPhysicalRectRoundTrip) {
+    const D2D1_SIZE_F physSize = D2D1::SizeF(400.0f, 300.0f);
+    // Asymmetric crop box in visual space: [20, 40, 120, 160]
+    const D2D1_RECT_F visRect = D2D1::RectF(20.0f, 40.0f, 120.0f, 160.0f);
+
+    const int rots[] = { 0, 90, 180, 270 };
+    for (int rot : rots) {
+        for (bool flipX : { false, true }) {
+            for (bool flipY : { false, true }) {
+                D2D1_RECT_F physRect = MapVisualRectToPhysicalRect(visRect, physSize, rot, flipX, flipY);
+                EXPECT_GE(physRect.left, 0.0f);
+                EXPECT_GE(physRect.top, 0.0f);
+                EXPECT_LE(physRect.right, physSize.width);
+                EXPECT_LE(physRect.bottom, physSize.height);
+
+                const float physCropW = physRect.right - physRect.left;
+                const float physCropH = physRect.bottom - physRect.top;
+                const bool swapped = (rot == 90 || rot == 270);
+                EXPECT_NEAR(physCropW, swapped ? 120.0f : 100.0f, 1e-3f);
+                EXPECT_NEAR(physCropH, swapped ? 100.0f : 120.0f, 1e-3f);
+            }
+        }
+    }
+
+    // Specific check for EXIF 6 (90 CW, no flip):
+    // Physical (400x300) -> Visual (300x400).
+    // Visual top-left (20, 40) came from Physical x=40, y=300-120=180..
+    D2D1_RECT_F r90 = MapVisualRectToPhysicalRect(visRect, physSize, 90, false, false);
+    EXPECT_NEAR(r90.left, 40.0f, 1e-3f);
+    EXPECT_NEAR(r90.top, 180.0f, 1e-3f);
+    EXPECT_NEAR(r90.right, 160.0f, 1e-3f);
+    EXPECT_NEAR(r90.bottom, 280.0f, 1e-3f);
 }

@@ -19,6 +19,7 @@
 #include "RatingMetadata.h"
 
 #include <brotli/decode.h>
+#include <algorithm>
 #include <charconv>
 #include <cstring>
 #include <vector>
@@ -60,6 +61,32 @@ bool StartsWith(std::span<const uint8_t> b, size_t off, const char* literal, siz
     return std::memcmp(b.data() + off, literal, len) == 0;
 }
 
+bool IsXmlWhitespace(char ch) {
+    return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n';
+}
+
+// Find closing '>' of an element opening tag starting right after property name.
+// Returns index of '>', or std::string_view::npos if self-closing or malformed.
+size_t FindElementOpenTagEnd(std::string_view xmp, size_t afterName) {
+    char quote = '\0';
+    for (size_t i = afterName; i < xmp.size(); ++i) {
+        const char ch = xmp[i];
+        if (quote != '\0') {
+            if (ch == quote) quote = '\0';
+            continue;
+        }
+        if (ch == '"' || ch == '\'') {
+            quote = ch;
+        } else if (ch == '<') {
+            return std::string_view::npos;
+        } else if (ch == '>') {
+            if (i > afterName && xmp[i - 1] == '/') return std::string_view::npos;
+            return i;
+        }
+    }
+    return std::string_view::npos;
+}
+
 // TIFF/Exif IFD0 scan for tag 0x4746 (SimpleRating). `tiff` starts at the TIFF
 // header ("II"/"MM"), which is how Exif nests inside APP1.
 std::optional<int> ParseExifRating(std::span<const uint8_t> tiff) {
@@ -89,44 +116,114 @@ std::optional<int> ParseExifRating(std::span<const uint8_t> tiff) {
 
         const uint16_t type = ReadU16(tiff, entry + 2, bigEndian);
         const uint32_t count = ReadU32(tiff, entry + 4, bigEndian);
-        if (count != 1) return std::nullopt;
-
-        // SHORT is what the policy specifies; BYTE and LONG are accepted
-        // defensively. All three fit inline in the value field.
-        int value;
-        switch (type) {
-            case 1: value = tiff[entry + 8]; break;                          // BYTE
-            case 3: value = ReadU16(tiff, entry + 8, bigEndian); break;      // SHORT
-            case 4: value = (int)ReadU32(tiff, entry + 8, bigEndian); break; // LONG
-            default: return std::nullopt;
-        }
-        return IsValidRating(value) ? std::optional<int>(value) : std::nullopt;
+        return DecodeTiffRatingEntry(type, count, tiff.subspan(entry + 8, 4), bigEndian);
     }
     return std::nullopt;
 }
 
 } // namespace
 
+std::optional<int> DecodeTiffRatingEntry(uint16_t type, uint32_t count,
+                                         std::span<const uint8_t> valueField,
+                                         bool bigEndian) {
+    if (count != 1 || valueField.size() < 4) return std::nullopt;
+
+    // SHORT is what the policy specifies; BYTE and LONG are accepted
+    // defensively. All three fit inline in the 4-byte value field.
+    int value;
+    switch (type) {
+        case 1: value = valueField[0]; break;                              // BYTE
+        case 3: value = ReadU16(valueField, 0, bigEndian); break;          // SHORT
+        case 4: value = (int)ReadU32(valueField, 0, bigEndian); break;     // LONG
+        default: return std::nullopt;
+    }
+    return IsValidRating(value) ? std::optional<int>(value) : std::nullopt;
+}
+
+std::optional<int> ParseIsoExifPayload(std::span<const uint8_t> payload) {
+    if (payload.size() <= 4) return std::nullopt;
+    const uint32_t tiffOffset = ReadU32(payload, 0, /*bigEndian=*/true);
+    size_t actualTiffPos = 4;
+    if (tiffOffset <= payload.size() - 4 && payload.size() - 4 - tiffOffset >= 8) {
+        actualTiffPos = 4 + static_cast<size_t>(tiffOffset);
+    }
+    if (actualTiffPos + 8 <= payload.size()) {
+        return ParseExifRating(payload.subspan(actualTiffPos));
+    }
+    return std::nullopt;
+}
+
+std::vector<uint8_t> DecompressBrotliBounded(std::span<const uint8_t> compressed,
+                                             size_t maxOutputBytes) {
+    if (compressed.empty() || maxOutputBytes == 0) return {};
+
+    struct DecoderScope {
+        BrotliDecoderState* state = BrotliDecoderCreateInstance(nullptr, nullptr, nullptr);
+        ~DecoderScope() {
+            if (state) BrotliDecoderDestroyInstance(state);
+        }
+    } scope;
+    if (!scope.state) return {};
+
+    std::vector<uint8_t> out;
+    out.resize((std::min)(maxOutputBytes, static_cast<size_t>(4096)));
+
+    size_t availIn = compressed.size();
+    const uint8_t* nextIn = compressed.data();
+    size_t totalOut = 0;
+
+    while (true) {
+        if (totalOut >= out.size()) {
+            if (out.size() >= maxOutputBytes) return {};
+            const size_t nextCap = (std::min)(maxOutputBytes, out.size() * 2);
+            out.resize(nextCap);
+        }
+
+        size_t availOut = out.size() - totalOut;
+        uint8_t* nextOut = out.data() + totalOut;
+        const BrotliDecoderResult res = BrotliDecoderDecompressStream(
+            scope.state, &availIn, &nextIn, &availOut, &nextOut, nullptr);
+        totalOut = out.size() - availOut;
+
+        if (res == BROTLI_DECODER_RESULT_SUCCESS) {
+            out.resize(totalOut);
+            return out;
+        }
+        if (res == BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT) {
+            continue;
+        }
+        return {};
+    }
+}
+
 std::optional<int> ParseXmpRating(std::string_view xmp) {
     constexpr std::string_view PROPERTY = "xmp:Rating";
 
     for (size_t pos = xmp.find(PROPERTY); pos != std::string_view::npos;
          pos = xmp.find(PROPERTY, pos + PROPERTY.size())) {
+        const bool precededByLt = (pos > 0 && xmp[pos - 1] == '<');
+        const bool precededByWs = (pos == 0 || IsXmlWhitespace(xmp[pos - 1]));
+        if (!precededByLt && !precededByWs) continue;
+
         size_t cursor = pos + PROPERTY.size();
 
         // Attribute form: xmp:Rating="3" (spaces tolerated around the =)
-        // Element form:   <xmp:Rating>3</xmp:Rating>
+        // Element form:   <xmp:Rating>3</xmp:Rating> (also <xmp:Rating ...>3</xmp:Rating>)
         while (cursor < xmp.size() && (xmp[cursor] == ' ' || xmp[cursor] == '\t')) ++cursor;
         if (cursor >= xmp.size()) break;
 
-        if (xmp[cursor] == '=') {
+        if (precededByWs && xmp[cursor] == '=') {
             ++cursor;
             while (cursor < xmp.size() && (xmp[cursor] == ' ' || xmp[cursor] == '\t')) ++cursor;
             const char quote = (cursor < xmp.size()) ? xmp[cursor] : '\0';
             if (quote != '"' && quote != '\'') continue;
             ++cursor;
-        } else if (xmp[cursor] == '>') {
-            ++cursor;
+        } else if (precededByLt && (xmp[cursor] == '>' || IsXmlWhitespace(xmp[pos + PROPERTY.size()]))) {
+            const size_t tagEnd = (xmp[cursor] == '>')
+                ? cursor
+                : FindElementOpenTagEnd(xmp, pos + PROPERTY.size());
+            if (tagEnd == std::string_view::npos) continue;
+            cursor = tagEnd + 1;
         } else {
             continue; // a longer property name that merely starts with xmp:Rating
         }
@@ -330,50 +427,18 @@ std::optional<int> ParseWebpRating(std::span<const uint8_t> bytes) {
     return fromXmp;
 }
 
-std::optional<int> ParseIsobmffRating(std::span<const uint8_t> bytes) {
-    if (bytes.size() < 12) return std::nullopt;
-    if (std::memcmp(bytes.data() + 4, "ftyp", 4) != 0) return std::nullopt;
+bool ParseIsobmffMetaLocations(std::span<const uint8_t> metaBox, IsobmffMetaLocations& out) {
+    out = {};
+    if (metaBox.size() < 12 || std::memcmp(metaBox.data() + 4, "meta", 4) != 0) return false;
 
-    // Scan top-level boxes to locate 'meta'
-    size_t pos = 0;
-    size_t metaPayloadPos = 0;
-    size_t metaEnd = 0;
+    const uint32_t metaRawSize = ReadU32(metaBox, 0, true);
+    const size_t metaHeaderSize = (metaRawSize == 1) ? 16 : 8;
+    if (metaBox.size() < metaHeaderSize + 4) return false;
 
-    while (pos + 8 <= bytes.size()) {
-        const uint32_t rawSize = ReadU32(bytes, pos, /*bigEndian*/ true);
-        const uint8_t* type = bytes.data() + pos + 4;
-        size_t boxSize = rawSize;
-        size_t headerSize = 8;
+    const size_t metaPayloadPos = metaHeaderSize + 4;
+    const size_t metaEnd = metaBox.size();
 
-        if (rawSize == 1) { // 64-bit extended size
-            if (pos + 16 > bytes.size()) break;
-            const uint64_t extSize = ReadU64(bytes, pos + 8, /*bigEndian*/ true);
-            if (extSize < 16) break;
-            boxSize = static_cast<size_t>(extSize);
-            headerSize = 16;
-        } else if (rawSize == 0) { // spans to end of file
-            boxSize = bytes.size() - pos;
-        }
-
-        if (boxSize < headerSize) break;
-        const size_t nextPos = pos + boxSize;
-
-        if (std::memcmp(type, "meta", 4) == 0) {
-            // 'meta' in ISOBMFF is a FullBox: 4 bytes version + flags after box header
-            if (pos + headerSize + 4 <= bytes.size()) {
-                metaPayloadPos = pos + headerSize + 4;
-                metaEnd = (std::min)(nextPos, bytes.size());
-                break;
-            }
-        }
-
-        if (nextPos <= pos || nextPos > bytes.size()) break;
-        pos = nextPos;
-    }
-
-    if (metaPayloadPos == 0 || metaPayloadPos >= metaEnd) return std::nullopt;
-
-    // Locate 'iinf' and 'iloc' inside the 'meta' box
+    // Locate 'iinf', 'iloc', 'pitm', 'iref', 'idat' inside the 'meta' box
     std::span<const uint8_t> iinfSpan;
     std::span<const uint8_t> ilocSpan;
     std::span<const uint8_t> pitmSpan;
@@ -381,24 +446,36 @@ std::optional<int> ParseIsobmffRating(std::span<const uint8_t> bytes) {
 
     size_t subPos = metaPayloadPos;
     while (subPos + 8 <= metaEnd) {
-        const uint32_t subSize = ReadU32(bytes, subPos, /*bigEndian*/ true);
-        if (subSize < 8 || subPos + subSize > metaEnd) break;
-        const uint8_t* subType = bytes.data() + subPos + 4;
+        uint64_t subSize64 = ReadU32(metaBox, subPos, true);
+        size_t subHdr = 8;
+        if (subSize64 == 1) {
+            if (subPos + 16 > metaEnd) break;
+            subSize64 = ReadU64(metaBox, subPos + 8, true);
+            subHdr = 16;
+        } else if (subSize64 == 0) {
+            subSize64 = metaEnd - subPos;
+        }
+        if (subSize64 < subHdr || subSize64 > metaEnd - subPos) break;
+        const size_t subSize = static_cast<size_t>(subSize64);
+        const uint8_t* subType = metaBox.data() + subPos + 4;
 
         if (std::memcmp(subType, "iinf", 4) == 0) {
-            iinfSpan = bytes.subspan(subPos, subSize);
+            iinfSpan = metaBox.subspan(subPos, subSize);
         } else if (std::memcmp(subType, "iloc", 4) == 0) {
-            ilocSpan = bytes.subspan(subPos, subSize);
+            ilocSpan = metaBox.subspan(subPos, subSize);
         } else if (std::memcmp(subType, "pitm", 4) == 0) {
-            pitmSpan = bytes.subspan(subPos, subSize);
+            pitmSpan = metaBox.subspan(subPos, subSize);
         } else if (std::memcmp(subType, "iref", 4) == 0) {
-            irefSpan = bytes.subspan(subPos, subSize);
+            irefSpan = metaBox.subspan(subPos, subSize);
+        } else if (std::memcmp(subType, "idat", 4) == 0) {
+            out.idatOffsetInMeta = subPos + subHdr;
+            out.idatLength = subSize - subHdr;
         }
 
         subPos += subSize;
     }
 
-    if (iinfSpan.size() < 12 || ilocSpan.size() < 16) return std::nullopt;
+    if (iinfSpan.size() < 12 || ilocSpan.size() < 16) return false;
 
     uint32_t primaryItemId = 1;
     if (pitmSpan.size() >= 14) {
@@ -416,13 +493,13 @@ std::optional<int> ParseIsobmffRating(std::span<const uint8_t> bytes) {
         size_t irefCur = 12;
         while (irefCur + 8 <= irefSpan.size()) {
             const uint32_t boxSz = ReadU32(irefSpan, irefCur, true);
-            if (boxSz < 8 || irefCur + boxSz > irefSpan.size()) break;
+            if (boxSz < 8 || boxSz > irefSpan.size() - irefCur) break;
             const uint8_t* btype = irefSpan.data() + irefCur + 4;
             if (std::memcmp(btype, "cdsc", 4) == 0) {
                 if (irefVer == 0 && boxSz >= 14) {
                     const uint16_t fromId = ReadU16(irefSpan, irefCur + 8, true);
                     const uint16_t refCnt = ReadU16(irefSpan, irefCur + 10, true);
-                    for (uint16_t r = 0; r < refCnt && irefCur + 12 + (r + 1) * 2 <= irefCur + boxSz; ++r) {
+                    for (uint16_t r = 0; r < refCnt && (size_t)(r + 1) * 2 <= boxSz - 12; ++r) {
                         const uint16_t toId = ReadU16(irefSpan, irefCur + 12 + r * 2, true);
                         if (toId == primaryItemId) {
                             primaryCdscItems.push_back(fromId);
@@ -432,7 +509,7 @@ std::optional<int> ParseIsobmffRating(std::span<const uint8_t> bytes) {
                 } else if (irefVer == 1 && boxSz >= 18) {
                     const uint32_t fromId = ReadU32(irefSpan, irefCur + 8, true);
                     const uint16_t refCnt = ReadU16(irefSpan, irefCur + 12, true);
-                    for (uint16_t r = 0; r < refCnt && irefCur + 14 + (r + 1) * 4 <= irefCur + boxSz; ++r) {
+                    for (uint16_t r = 0; r < refCnt && (size_t)(r + 1) * 4 <= boxSz - 14; ++r) {
                         const uint32_t toId = ReadU32(irefSpan, irefCur + 14 + r * 4, true);
                         if (toId == primaryItemId) {
                             primaryCdscItems.push_back(fromId);
@@ -459,18 +536,18 @@ std::optional<int> ParseIsobmffRating(std::span<const uint8_t> bytes) {
     size_t iinfCur = 12;
     uint32_t entryCount = 0;
     if (iinfVer == 0) {
-        if (iinfCur + 2 > iinfSpan.size()) return std::nullopt;
+        if (iinfCur + 2 > iinfSpan.size()) return false;
         entryCount = ReadU16(iinfSpan, iinfCur, true);
         iinfCur += 2;
     } else {
-        if (iinfCur + 4 > iinfSpan.size()) return std::nullopt;
+        if (iinfCur + 4 > iinfSpan.size()) return false;
         entryCount = ReadU32(iinfSpan, iinfCur, true);
         iinfCur += 4;
     }
 
     for (uint32_t i = 0; i < entryCount && iinfCur + 8 <= iinfSpan.size(); ++i) {
         const uint32_t infeSize = ReadU32(iinfSpan, iinfCur, true);
-        if (infeSize < 8 || iinfCur + infeSize > iinfSpan.size()) break;
+        if (infeSize < 8 || infeSize > iinfSpan.size() - iinfCur) break;
 
         if (std::memcmp(iinfSpan.data() + iinfCur + 4, "infe", 4) == 0 && infeSize >= 12) {
             const uint8_t infeVer = iinfSpan[iinfCur + 8];
@@ -503,7 +580,7 @@ std::optional<int> ParseIsobmffRating(std::span<const uint8_t> bytes) {
                     } else if (std::memcmp(itype, "mime", 4) == 0) {
                         std::string_view rest(
                             reinterpret_cast<const char*>(iinfSpan.data() + typeOffset + 4),
-                            infeSize - (typeOffset + 4 - iinfCur));
+                            (iinfCur + infeSize) - (typeOffset + 4));
                         if (rest.find("application/rdf+xml") != std::string_view::npos ||
                             rest.find("application/x-xmp") != std::string_view::npos ||
                             rest.find("xmp") != std::string_view::npos) {
@@ -523,94 +600,155 @@ std::optional<int> ParseIsobmffRating(std::span<const uint8_t> bytes) {
         iinfCur += infeSize;
     }
 
-    if (exifItemId == 0 && xmpItemId == 0) return std::nullopt;
+    if (exifItemId == 0 && xmpItemId == 0) return false;
 
-    // Parse 'iloc' to find absolute byte spans of the identified items
+    // Parse 'iloc' to find byte spans of the identified items
     const uint8_t ilocVer = ilocSpan[8];
     const uint8_t offSize = (ilocSpan[12] >> 4) & 0x0F;
     const uint8_t lenSize = ilocSpan[12] & 0x0F;
     const uint8_t baseOffSize = (ilocSpan[13] >> 4) & 0x0F;
     const uint8_t indexSize = (ilocVer == 1 || ilocVer == 2) ? (ilocSpan[13] & 0x0F) : 0;
+    if (offSize > 8 || lenSize > 8 || baseOffSize > 8 || indexSize > 8) return false;
 
     size_t ilocCur = 14;
     uint32_t itemCount = 0;
     if (ilocVer < 2) {
-        if (ilocCur + 2 > ilocSpan.size()) return std::nullopt;
+        if (ilocCur + 2 > ilocSpan.size()) return false;
         itemCount = ReadU16(ilocSpan, ilocCur, true);
         ilocCur += 2;
     } else {
-        if (ilocCur + 4 > ilocSpan.size()) return std::nullopt;
+        if (ilocCur + 4 > ilocSpan.size()) return false;
         itemCount = ReadU32(ilocSpan, ilocCur, true);
         ilocCur += 4;
     }
 
-    size_t exifPayloadOff = 0, exifPayloadLen = 0;
-    size_t xmpPayloadOff = 0, xmpPayloadLen = 0;
+    const size_t extentStride = static_cast<size_t>(indexSize) + offSize + lenSize;
 
     for (uint32_t i = 0; i < itemCount && ilocCur < ilocSpan.size(); ++i) {
         uint32_t itemId = 0;
         if (ilocVer < 2) {
-            if (ilocCur + 2 > ilocSpan.size()) break;
+            if (2 > ilocSpan.size() - ilocCur) break;
             itemId = ReadU16(ilocSpan, ilocCur, true);
             ilocCur += 2;
         } else {
-            if (ilocCur + 4 > ilocSpan.size()) break;
+            if (4 > ilocSpan.size() - ilocCur) break;
             itemId = ReadU32(ilocSpan, ilocCur, true);
             ilocCur += 4;
         }
 
+        uint16_t cm = 0;
         if (ilocVer == 1 || ilocVer == 2) {
-            ilocCur += 2; // skip construction_method
+            if (2 > ilocSpan.size() - ilocCur) break;
+            cm = ReadU16(ilocSpan, ilocCur, true) & 0x0F;
+            ilocCur += 2;
         }
+        if (2 + static_cast<size_t>(baseOffSize) + 2 > ilocSpan.size() - ilocCur) break;
         ilocCur += 2; // skip data_reference_index
 
         const uint64_t baseOffset = ReadVarInt(ilocSpan, ilocCur, baseOffSize);
         ilocCur += baseOffSize;
 
-        if (ilocCur + 2 > ilocSpan.size()) break;
         const uint16_t extentCount = ReadU16(ilocSpan, ilocCur, true);
         ilocCur += 2;
 
         for (uint16_t e = 0; e < extentCount; ++e) {
+            if (extentStride > ilocSpan.size() - ilocCur) {
+                ilocCur = ilocSpan.size();
+                break;
+            }
             ilocCur += indexSize;
             const uint64_t extentOffset = ReadVarInt(ilocSpan, ilocCur, offSize);
             ilocCur += offSize;
             const uint64_t extentLength = ReadVarInt(ilocSpan, ilocCur, lenSize);
             ilocCur += lenSize;
 
-            if (e == 0) { // Primary extent
-                const uint64_t absOffset = baseOffset + extentOffset;
-                if (itemId == exifItemId && exifPayloadLen == 0) {
-                    exifPayloadOff = static_cast<size_t>(absOffset);
-                    exifPayloadLen = static_cast<size_t>(extentLength);
-                } else if (itemId == xmpItemId && xmpPayloadLen == 0) {
-                    xmpPayloadOff = static_cast<size_t>(absOffset);
-                    xmpPayloadLen = static_cast<size_t>(extentLength);
+            if (e == 0 && (cm == 0 || cm == 1)) {
+                if (extentOffset <= UINT64_MAX - baseOffset) {
+                    const uint64_t absOffset = baseOffset + extentOffset;
+                    if (itemId == exifItemId && !out.hasExif) {
+                        out.hasExif = true;
+                        out.exifOffset = absOffset;
+                        out.exifLength = extentLength;
+                        out.exifInIdat = (cm == 1);
+                    } else if (itemId == xmpItemId && !out.hasXmp) {
+                        out.hasXmp = true;
+                        out.xmpOffset = absOffset;
+                        out.xmpLength = extentLength;
+                        out.xmpInIdat = (cm == 1);
+                    }
                 }
             }
         }
     }
 
-    // 1. Try Exif
-    if (exifPayloadLen > 4 && exifPayloadOff + exifPayloadLen <= bytes.size()) {
-        const uint32_t tiffOffset = ReadU32(bytes, exifPayloadOff, true);
-        size_t actualTiffPos = exifPayloadOff + 4 + tiffOffset;
-        if (actualTiffPos + 8 > exifPayloadOff + exifPayloadLen || actualTiffPos >= bytes.size()) {
-            actualTiffPos = exifPayloadOff + 4; // fallback to offset 4
+    return out.hasExif || out.hasXmp;
+}
+
+std::optional<int> ParseIsobmffRating(std::span<const uint8_t> bytes) {
+    if (bytes.size() < 12) return std::nullopt;
+    if (std::memcmp(bytes.data() + 4, "ftyp", 4) != 0) return std::nullopt;
+
+    // Scan top-level boxes to locate 'meta'
+    size_t pos = 0;
+    std::span<const uint8_t> metaSpan;
+
+    while (pos + 8 <= bytes.size()) {
+        const uint32_t rawSize = ReadU32(bytes, pos, /*bigEndian*/ true);
+        const uint8_t* type = bytes.data() + pos + 4;
+        uint64_t boxSize64 = rawSize;
+        size_t headerSize = 8;
+
+        if (rawSize == 1) { // 64-bit extended size
+            if (pos + 16 > bytes.size()) break;
+            boxSize64 = ReadU64(bytes, pos + 8, /*bigEndian*/ true);
+            headerSize = 16;
+        } else if (rawSize == 0) { // spans to end of file
+            boxSize64 = bytes.size() - pos;
         }
-        if (actualTiffPos + 8 <= bytes.size()) {
-            const size_t avail = (std::min)(bytes.size() - actualTiffPos, exifPayloadLen - (actualTiffPos - exifPayloadOff));
-            if (auto rating = ParseExifRating(bytes.subspan(actualTiffPos, avail))) {
-                return rating;
-            }
+
+        if (boxSize64 < headerSize || boxSize64 > bytes.size() - pos) break;
+        const size_t boxSize = static_cast<size_t>(boxSize64);
+
+        if (std::memcmp(type, "meta", 4) == 0) {
+            metaSpan = bytes.subspan(pos, boxSize);
+            break;
+        }
+
+        pos += boxSize;
+    }
+
+    if (metaSpan.empty()) return std::nullopt;
+
+    IsobmffMetaLocations loc{};
+    if (!ParseIsobmffMetaLocations(metaSpan, loc)) return std::nullopt;
+
+    auto resolveSlice = [&](uint64_t offset, uint64_t length, bool inIdat) -> std::span<const uint8_t> {
+        if (length == 0) return {};
+        if (inIdat) {
+            if (offset > loc.idatLength || length > loc.idatLength - offset) return {};
+            const size_t absInMeta = static_cast<size_t>(loc.idatOffsetInMeta + offset);
+            return metaSpan.subspan(absInMeta, static_cast<size_t>(length));
+        }
+        if (offset > bytes.size() || length > bytes.size() - offset) return {};
+        return bytes.subspan(static_cast<size_t>(offset), static_cast<size_t>(length));
+    };
+
+    // 1. Try Exif
+    if (loc.hasExif) {
+        const auto exifSpan = resolveSlice(loc.exifOffset, loc.exifLength, loc.exifInIdat);
+        if (auto rating = ParseIsoExifPayload(exifSpan)) {
+            return rating;
         }
     }
 
     // 2. Try XMP
-    if (xmpPayloadLen > 0 && xmpPayloadOff + xmpPayloadLen <= bytes.size()) {
-        const char* text = reinterpret_cast<const char*>(bytes.data() + xmpPayloadOff);
-        if (auto rating = ParseXmpRating(std::string_view(text, xmpPayloadLen))) {
-            return rating;
+    if (loc.hasXmp) {
+        const auto xmpSpan = resolveSlice(loc.xmpOffset, loc.xmpLength, loc.xmpInIdat);
+        if (!xmpSpan.empty()) {
+            const char* text = reinterpret_cast<const char*>(xmpSpan.data());
+            if (auto rating = ParseXmpRating(std::string_view(text, xmpSpan.size()))) {
+                return rating;
+            }
         }
     }
 
@@ -651,68 +789,42 @@ std::optional<int> ParseJxlRating(std::span<const uint8_t> bytes) {
             boxSize = bytes.size() - pos;
         }
 
-        if (boxSize < hdrSize || pos + boxSize > bytes.size()) {
+        if (boxSize < hdrSize || boxSize > bytes.size() - pos) {
             break; // Corrupted or truncated box
         }
 
         const size_t payloadOff = pos + hdrSize;
         const size_t payloadLen = static_cast<size_t>(boxSize - hdrSize);
+        const std::span<const uint8_t> payload = bytes.subspan(payloadOff, payloadLen);
 
         // 1. Uncompressed Exif box: [4-byte offset][TIFF data]
         if (std::memcmp(type, "Exif", 4) == 0) {
-            if (payloadLen > 4) {
-                const uint32_t tiffOffset = ReadU32(bytes, payloadOff, /*bigEndian=*/true);
-                size_t actualTiffPos = payloadOff + 4 + tiffOffset;
-                if (actualTiffPos + 8 > payloadOff + payloadLen || actualTiffPos >= bytes.size()) {
-                    actualTiffPos = payloadOff + 4; // fallback to offset 4
-                }
-                if (actualTiffPos + 8 <= bytes.size()) {
-                    const size_t avail = (std::min)(bytes.size() - actualTiffPos, payloadLen - (actualTiffPos - payloadOff));
-                    if (auto r = ParseTiffRating(std::span<const uint8_t>(bytes.data() + actualTiffPos, avail))) {
-                        return r;
-                    }
-                }
+            if (auto r = ParseIsoExifPayload(payload)) {
+                return r;
             }
         }
         // 2. Uncompressed xml box: raw UTF-8 XMP string
         else if (std::memcmp(type, "xml ", 4) == 0) {
-            if (!fromXmp && payloadLen > 0) {
-                std::string_view xmpStr(reinterpret_cast<const char*>(bytes.data() + payloadOff), payloadLen);
+            if (!fromXmp && !payload.empty()) {
+                std::string_view xmpStr(reinterpret_cast<const char*>(payload.data()), payload.size());
                 fromXmp = ParseXmpRating(xmpStr);
             }
         }
         // 3. Brotli-compressed box: [4-byte original_box_type][brotli stream]
-        else if (std::memcmp(type, "brob", 4) == 0) {
-            if (payloadLen > 4) {
-                const uint8_t* origType = bytes.data() + payloadOff;
-                const uint8_t* compData = bytes.data() + payloadOff + 4;
-                const size_t compLen = payloadLen - 4;
+        else if (std::memcmp(type, "brob", 4) == 0 && payload.size() > 4) {
+            const uint8_t* origType = payload.data();
+            const std::span<const uint8_t> compData = payload.subspan(4);
 
-                if (std::memcmp(origType, "Exif", 4) == 0) {
-                    std::vector<uint8_t> decomp(65536);
-                    size_t decompLen = decomp.size();
-                    if (BrotliDecoderDecompress(compLen, compData, &decompLen, decomp.data()) == BROTLI_DECODER_RESULT_SUCCESS) {
-                        if (decompLen > 4) {
-                            const uint32_t tiffOffset = (static_cast<uint32_t>(decomp[0]) << 24) |
-                                                        (static_cast<uint32_t>(decomp[1]) << 16) |
-                                                        (static_cast<uint32_t>(decomp[2]) << 8)  |
-                                                         static_cast<uint32_t>(decomp[3]);
-                            size_t actualTiffPos = 4 + tiffOffset;
-                            if (actualTiffPos + 8 > decompLen) actualTiffPos = 4;
-                            if (actualTiffPos + 8 <= decompLen) {
-                                if (auto r = ParseTiffRating(std::span<const uint8_t>(decomp.data() + actualTiffPos, decompLen - actualTiffPos))) {
-                                    return r;
-                                }
-                            }
-                        }
-                    }
-                } else if (std::memcmp(origType, "xml ", 4) == 0 && !fromXmp) {
-                    std::vector<uint8_t> decomp(131072);
-                    size_t decompLen = decomp.size();
-                    if (BrotliDecoderDecompress(compLen, compData, &decompLen, decomp.data()) == BROTLI_DECODER_RESULT_SUCCESS) {
-                        std::string_view xmpStr(reinterpret_cast<const char*>(decomp.data()), decompLen);
-                        fromXmp = ParseXmpRating(xmpStr);
-                    }
+            if (std::memcmp(origType, "Exif", 4) == 0) {
+                const auto decomp = DecompressBrotliBounded(compData);
+                if (auto r = ParseIsoExifPayload(decomp)) {
+                    return r;
+                }
+            } else if (std::memcmp(origType, "xml ", 4) == 0 && !fromXmp) {
+                const auto decomp = DecompressBrotliBounded(compData);
+                if (!decomp.empty()) {
+                    std::string_view xmpStr(reinterpret_cast<const char*>(decomp.data()), decomp.size());
+                    fromXmp = ParseXmpRating(xmpStr);
                 }
             }
         }
@@ -739,11 +851,15 @@ std::optional<PropertySpan> FindRatingProperty(std::string_view xmp) {
 
     for (size_t pos = xmp.find(NAME); pos != std::string_view::npos;
          pos = xmp.find(NAME, pos + NAME.size())) {
+        const bool precededByLt = (pos > 0 && xmp[pos - 1] == '<');
+        const bool precededByWs = (pos == 0 || IsXmlWhitespace(xmp[pos - 1]));
+        if (!precededByLt && !precededByWs) continue;
+
         size_t cursor = pos + NAME.size();
         while (cursor < xmp.size() && (xmp[cursor] == ' ' || xmp[cursor] == '\t')) ++cursor;
         if (cursor >= xmp.size()) break;
 
-        if (xmp[cursor] == '=') {
+        if (precededByWs && xmp[cursor] == '=') {
             // xmp:Rating="3"
             ++cursor;
             while (cursor < xmp.size() && (xmp[cursor] == ' ' || xmp[cursor] == '\t')) ++cursor;
@@ -754,14 +870,16 @@ std::optional<PropertySpan> FindRatingProperty(std::string_view xmp) {
             if (close == std::string_view::npos) continue;
             return PropertySpan{ pos, close + 1, true };
         }
-        if (xmp[cursor] == '>') {
-            // <xmp:Rating>3</xmp:Rating>: the span starts at the opening '<'
+        if (precededByLt && (xmp[cursor] == '>' || IsXmlWhitespace(xmp[pos + NAME.size()]))) {
+            // <xmp:Rating>3</xmp:Rating> (with or without open-tag attributes): starts at '<'
+            const size_t tagEnd = (xmp[cursor] == '>')
+                ? cursor
+                : FindElementOpenTagEnd(xmp, pos + NAME.size());
+            if (tagEnd == std::string_view::npos) continue;
             constexpr std::string_view CLOSE_TAG = "</xmp:Rating>";
-            const size_t close = xmp.find(CLOSE_TAG, cursor);
+            const size_t close = xmp.find(CLOSE_TAG, tagEnd + 1);
             if (close == std::string_view::npos) continue;
-            const size_t openTag = xmp.rfind('<', pos);
-            if (openTag == std::string_view::npos) continue;
-            return PropertySpan{ openTag, close + CLOSE_TAG.size(), false };
+            return PropertySpan{ pos - 1, close + CLOSE_TAG.size(), false };
         }
     }
     return std::nullopt;
@@ -798,9 +916,13 @@ std::optional<std::string> UpdateXmpRating(std::string_view xmp, int stars) {
     if (desc == std::string_view::npos) return std::nullopt; // unfamiliar shape
 
     const size_t insert = desc + DESCRIPTION.size();
+    const bool needsXmlns = (xmp.find("xmlns:xmp=") == std::string_view::npos);
     std::string out;
-    out.reserve(xmp.size() + 32);
+    out.reserve(xmp.size() + (needsXmlns ? 80 : 32));
     out.append(xmp.substr(0, insert));
+    if (needsXmlns) {
+        out.append("\n    xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"");
+    }
     out.append("\n    xmp:Rating=\"" + value + "\"");
     out.append(xmp.substr(insert));
     return out;
@@ -834,7 +956,10 @@ std::optional<std::string> PatchXmpRatingInPlaceStrict(std::string_view xmp, int
     const size_t availWs = wsEnd - wsStart;
 
     const auto span = FindRatingProperty(xmp);
-    if (span && span->end <= wsStart) {
+    if (span) {
+        if (span->end > wsStart) {
+            return std::nullopt;
+        }
         std::string out;
         out.reserve(xmp.size());
         const size_t oldLen = span->end - span->start;
@@ -876,7 +1001,12 @@ std::optional<std::string> PatchXmpRatingInPlaceStrict(std::string_view xmp, int
     const size_t insertPos = desc + DESCRIPTION.size();
     if (insertPos > wsStart) return std::nullopt;
 
-    const std::string snippet = "\n    xmp:Rating=\"" + std::to_string(stars) + "\"";
+    std::string snippet;
+    if (xmp.find("xmlns:xmp=") == std::string_view::npos) {
+        snippet = "\n    xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"\n    xmp:Rating=\"" + std::to_string(stars) + "\"";
+    } else {
+        snippet = "\n    xmp:Rating=\"" + std::to_string(stars) + "\"";
+    }
     const size_t delta = snippet.size();
     if (delta > availWs) return std::nullopt;
 

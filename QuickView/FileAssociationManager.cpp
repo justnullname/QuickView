@@ -31,7 +31,7 @@ namespace QuickView {
 namespace {
 
 constexpr wchar_t kLegacyImageProgId[]      = L"QuickView.Image";
-constexpr wchar_t kProgIdPrefix[]           = L"QuickView";
+constexpr wchar_t kProgIdPrefix[]           = L"QuickView.";
 constexpr wchar_t kApplicationsKey[]        = L"Software\\Classes\\Applications\\QuickView.exe";
 constexpr wchar_t kCapabilitiesKey[]        = L"Software\\QuickView\\Capabilities";
 constexpr wchar_t kCapabilitiesAssocKey[]   = L"Software\\QuickView\\Capabilities\\FileAssociations";
@@ -40,6 +40,7 @@ constexpr wchar_t kContextMenuSubKey[]      = L"QuickViewOpen";
 constexpr wchar_t kImageAssocShellKey[]     = L"Software\\Classes\\SystemFileAssociations\\image\\shell\\QuickViewOpen";
 constexpr wchar_t kViewerChildArg[]         = L"--viewer-child";
 constexpr wchar_t kFgCallerArg[]            = L"--fg-caller";
+constexpr wchar_t kCleanupPidArg[]          = L"--cleanup-pid";
 
 struct ExtMetaEntry {
     std::wstring_view ext;
@@ -163,21 +164,9 @@ std::wstring_view TrimWhitespace(std::wstring_view sv) {
     return sv;
 }
 
-bool EqualsIgnoreCase(std::wstring_view a, std::wstring_view b) {
-    if (a.size() != b.size()) return false;
-    for (size_t i = 0; i < a.size(); ++i) {
-        wchar_t ca = a[i];
-        wchar_t cb = b[i];
-        if (ca >= L'A' && ca <= L'Z') ca = static_cast<wchar_t>(ca + (L'a' - L'A'));
-        if (cb >= L'A' && cb <= L'Z') cb = static_cast<wchar_t>(cb + (L'a' - L'A'));
-        if (ca != cb) return false;
-    }
-    return true;
-}
-
 bool StartsWithIgnoreCase(std::wstring_view s, std::wstring_view prefix) {
     if (s.size() < prefix.size()) return false;
-    return EqualsIgnoreCase(s.substr(0, prefix.size()), prefix);
+    return ExtEqualsIgnoreCase(s.substr(0, prefix.size()), prefix);
 }
 
 std::wstring_view StripLeadingDot(std::wstring_view s) {
@@ -189,7 +178,7 @@ bool SameExtNormalized(std::wstring_view a, std::wstring_view b) {
     a = TrimWhitespace(a);
     b = TrimWhitespace(b);
     if (a.empty() || b.empty()) return false;
-    return EqualsIgnoreCase(StripLeadingDot(a), StripLeadingDot(b));
+    return ExtEqualsIgnoreCase(StripLeadingDot(a), StripLeadingDot(b));
 }
 
 std::wstring ToLowerExt(std::wstring_view ext) {
@@ -211,8 +200,9 @@ std::wstring BuildOpenCommand(std::wstring_view exePath) {
 }
 
 std::wstring BuildProgId(std::wstring_view ext) {
+    ext = StripLeadingDot(ext);
     std::wstring pid;
-    pid.reserve(9 + ext.size());
+    pid.reserve(10 + ext.size());
     pid.append(kProgIdPrefix);
     for (wchar_t c : ext) {
         pid.push_back(ToLowerAscii(c));
@@ -328,7 +318,7 @@ void CleanupLegacyImageProgId(bool& modified) {
         std::wstring extDef;
         std::wstring extKey = L"Software\\Classes\\" + extStr;
         if (RegReadStringValue(HKEY_CURRENT_USER, extKey.c_str(), nullptr, extDef) &&
-            EqualsIgnoreCase(extDef, kLegacyImageProgId))
+            ExtEqualsIgnoreCase(extDef, kLegacyImageProgId))
         {
             SafeRegDeleteValue(HKEY_CURRENT_USER, extKey.c_str(), nullptr, modified);
         }
@@ -374,15 +364,15 @@ bool IsPerExtContextMenuNeeded(std::wstring_view ext) {
            cat == AssocExtCategory::CameraRaw ||
            cat == AssocExtCategory::ExtendedRaw ||
            cat == AssocExtCategory::Archive ||
-           EqualsIgnoreCase(ext, L".webp") ||
-           EqualsIgnoreCase(ext, L".avif") ||
-           EqualsIgnoreCase(ext, L".avifs") ||
-           EqualsIgnoreCase(ext, L".heic") ||
-           EqualsIgnoreCase(ext, L".heif") ||
-           EqualsIgnoreCase(ext, L".jxl") ||
-           EqualsIgnoreCase(ext, L".svg") ||
-           EqualsIgnoreCase(ext, L".svgz") ||
-           EqualsIgnoreCase(ext, L".apng");
+           ExtEqualsIgnoreCase(ext, L".webp") ||
+           ExtEqualsIgnoreCase(ext, L".avif") ||
+           ExtEqualsIgnoreCase(ext, L".avifs") ||
+           ExtEqualsIgnoreCase(ext, L".heic") ||
+           ExtEqualsIgnoreCase(ext, L".heif") ||
+           ExtEqualsIgnoreCase(ext, L".jxl") ||
+           ExtEqualsIgnoreCase(ext, L".svg") ||
+           ExtEqualsIgnoreCase(ext, L".svgz") ||
+           ExtEqualsIgnoreCase(ext, L".apng");
 }
 
 std::wstring UrlEncodeQueryValue(std::wstring_view s) {
@@ -415,7 +405,7 @@ struct ProgIdOwnerCacheEntry {
 bool ContainsIgnoreCase(std::wstring_view haystack, std::wstring_view needle) {
     if (needle.empty() || haystack.size() < needle.size()) return false;
     for (size_t i = 0; i + needle.size() <= haystack.size(); ++i) {
-        if (EqualsIgnoreCase(haystack.substr(i, needle.size()), needle)) {
+        if (ExtEqualsIgnoreCase(haystack.substr(i, needle.size()), needle)) {
             return true;
         }
     }
@@ -435,7 +425,7 @@ bool IsProgIdOwnedByQuickView(std::wstring_view progId, std::wstring_view curren
     }
 
     for (const auto& entry : cache) {
-        if (EqualsIgnoreCase(entry.progId, progId)) {
+        if (ExtEqualsIgnoreCase(entry.progId, progId)) {
             return entry.owned;
         }
     }
@@ -445,7 +435,7 @@ bool IsProgIdOwnedByQuickView(std::wstring_view progId, std::wstring_view curren
     if (!currentAumid.empty()) {
         std::wstring regAumid;
         if (RegReadStringValue(HKEY_CLASSES_ROOT, (progIdStr + L"\\Application").c_str(), L"AppUserModelID", regAumid) &&
-            EqualsIgnoreCase(regAumid, currentAumid))
+            ExtEqualsIgnoreCase(regAumid, currentAumid))
         {
             owned = true;
         }
@@ -524,12 +514,12 @@ std::wstring ReconstructPathFromArgs(int argc, const wchar_t* const* argv, PathE
         }
     }
 
-    // Pattern 2: Normal launch — skip flags (and known flag value pairs like --fg-caller <hwnd>)
+    // Pattern 2: Normal launch — skip flags (and known flag value pairs like --fg-caller <hwnd>, --cleanup-pid <pid>)
     int firstPathIdx = -1;
     for (int i = 1; i < argc; ++i) {
         if (!argv[i] || argv[i][0] == L'\0') continue;
-        if (_wcsicmp(argv[i], kFgCallerArg) == 0) {
-            ++i; // Skip the HWND value argument
+        if (_wcsicmp(argv[i], kFgCallerArg) == 0 || _wcsicmp(argv[i], kCleanupPidArg) == 0) {
+            if (i + 1 < argc) ++i; // Skip the paired value argument
             continue;
         }
         if (argv[i][0] != L'-') {
@@ -565,7 +555,7 @@ bool IsCommandLineTemplateValid(std::wstring_view regCommand, std::wstring_view 
     if (exePath.empty()) return false;
     regCommand = TrimWhitespace(regCommand);
     std::wstring expected = BuildOpenCommand(exePath);
-    return EqualsIgnoreCase(regCommand, expected);
+    return ExtEqualsIgnoreCase(regCommand, expected);
 }
 
 uint64_t ComputeAssocOptionsHash(const FileAssocOptions& opts) {
@@ -720,6 +710,27 @@ std::wstring GetCurrentExecutablePath() {
     return (len > 0 && len < std::size(buf)) ? std::wstring(buf, len) : std::wstring{};
 }
 
+bool IsContextMenuEntryValid(const wchar_t* shellSubKey, std::wstring_view expectedLabel,
+                             std::wstring_view expectedIcon, std::wstring_view exePath)
+{
+    std::wstring regLabel;
+    if (!RegReadStringValue(HKEY_CURRENT_USER, shellSubKey, nullptr, regLabel) ||
+        regLabel != expectedLabel)
+    {
+        return false;
+    }
+    std::wstring regIcon;
+    if (!RegReadStringValue(HKEY_CURRENT_USER, shellSubKey, L"Icon", regIcon) ||
+        !ExtEqualsIgnoreCase(regIcon, expectedIcon))
+    {
+        return false;
+    }
+    std::wstring cmdKey = std::wstring(shellSubKey) + L"\\command";
+    std::wstring regCmd;
+    return RegReadStringValue(HKEY_CURRENT_USER, cmdKey.c_str(), nullptr, regCmd) &&
+           IsCommandLineTemplateValid(regCmd, exePath);
+}
+
 bool IsFileAssociationSyncNeeded(const FileAssocOptions& opts, std::wstring_view exePath) {
     if (exePath.empty() || SystemInfo::IsPackagedApp()) return false;
 
@@ -734,19 +745,21 @@ bool IsFileAssociationSyncNeeded(const FileAssocOptions& opts, std::wstring_view
         if (b) { anySelected = true; break; }
     }
 
+    const std::wstring exePathStr(exePath);
+    const std::wstring expectedCtxIcon = exePathStr + L",0";
+    const std::wstring_view expectedCtxLabel = opts.contextMenuLabel.empty()
+        ? std::wstring_view(L"Open with QuickView")
+        : opts.contextMenuLabel;
+
     // 2. Check Context Menu parity (both generic image handler and per-extension keys).
     const bool hasCtxMenu = RegKeyExists(HKEY_CURRENT_USER, kImageAssocShellKey);
     if (hasCtxMenu != opts.enableContextMenu) {
         return true;
     }
-    if (opts.enableContextMenu) {
-        std::wstring ctxCmdKey = std::wstring(kImageAssocShellKey) + L"\\command";
-        std::wstring ctxCmd;
-        if (!RegReadStringValue(HKEY_CURRENT_USER, ctxCmdKey.c_str(), nullptr, ctxCmd) ||
-            !IsCommandLineTemplateValid(ctxCmd, exePath))
-        {
-            return true;
-        }
+    if (opts.enableContextMenu &&
+        !IsContextMenuEntryValid(kImageAssocShellKey, expectedCtxLabel, expectedCtxIcon, exePath))
+    {
+        return true;
     }
 
     // 3. Check top-level Applications & Capabilities presence parity.
@@ -771,7 +784,6 @@ bool IsFileAssociationSyncNeeded(const FileAssocOptions& opts, std::wstring_view
     }
 
     const std::wstring sysDir = GetSystemDirCached();
-    const std::wstring exePathStr(exePath);
 
     // 4. Verify every extension for ProgID parity, icon style, command template, and per-extension context menu cleanup.
     for (size_t i = 0; i < ALL_ASSOCIABLE_EXTENSIONS.size(); ++i) {
@@ -787,11 +799,11 @@ bool IsFileAssociationSyncNeeded(const FileAssocOptions& opts, std::wstring_view
                 return true;
             }
             const std::wstring expectedIcon = (opts.iconStyle == AssocIconStyle::QuickViewLogo)
-                ? (exePathStr + L",0")
+                ? expectedCtxIcon
                 : GetExtensionNativeIcon(extStr, sysDir);
             std::wstring regIcon;
             if (!RegReadStringValue(HKEY_CURRENT_USER, (L"Software\\Classes\\" + progId + L"\\DefaultIcon").c_str(), nullptr, regIcon) ||
-                !EqualsIgnoreCase(regIcon, expectedIcon))
+                !ExtEqualsIgnoreCase(regIcon, expectedIcon))
             {
                 return true;
             }
@@ -814,13 +826,8 @@ bool IsFileAssociationSyncNeeded(const FileAssocOptions& opts, std::wstring_view
         if (hasExtCtx != wantExtCtx) {
             return true;
         }
-        if (wantExtCtx) {
-            std::wstring sfaCmd;
-            if (!RegReadStringValue(HKEY_CURRENT_USER, (sfaKey + L"\\command").c_str(), nullptr, sfaCmd) ||
-                !IsCommandLineTemplateValid(sfaCmd, exePath))
-            {
-                return true;
-            }
+        if (wantExtCtx && !IsContextMenuEntryValid(sfaKey.c_str(), expectedCtxLabel, expectedCtxIcon, exePath)) {
+            return true;
         }
     }
 
@@ -886,7 +893,7 @@ bool SyncFileAssociations(const FileAssocOptions& opts, std::wstring_view exePat
 
             std::wstring currentDef;
             if (RegReadStringValue(HKEY_CURRENT_USER, extKey.c_str(), nullptr, currentDef) &&
-                (EqualsIgnoreCase(currentDef, progId) || EqualsIgnoreCase(currentDef, kLegacyImageProgId)))
+                (ExtEqualsIgnoreCase(currentDef, progId) || ExtEqualsIgnoreCase(currentDef, kLegacyImageProgId)))
             {
                 SafeRegDeleteValue(HKEY_CURRENT_USER, extKey.c_str(), nullptr, modified);
             }
@@ -957,7 +964,7 @@ void UnregisterAllAssociations() {
         std::wstring currentDef;
         std::wstring extKey = L"Software\\Classes\\" + extStr;
         if (RegReadStringValue(HKEY_CURRENT_USER, extKey.c_str(), nullptr, currentDef) &&
-            EqualsIgnoreCase(currentDef, progId))
+            ExtEqualsIgnoreCase(currentDef, progId))
         {
             SafeRegDeleteValue(HKEY_CURRENT_USER, extKey.c_str(), nullptr, modified);
         }
@@ -986,7 +993,7 @@ FileAssocProbeSummary ProbeFileAssociations(std::wstring_view selectedExtsCsv, s
     }
 
     HRESULT hrCo = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    const bool didInitCo = (hrCo == S_OK);
+    const bool didInitCo = SUCCEEDED(hrCo);
     IApplicationAssociationRegistration* pAAR = nullptr;
     if (SUCCEEDED(CoCreateInstance(
             CLSID_ApplicationAssociationRegistration,

@@ -30,6 +30,7 @@
 #include <memory>
 #include <chrono>
 #include <mutex>
+#include <atomic>
 #include <shlwapi.h>
 
 // NCNN In-Process Headers
@@ -46,15 +47,29 @@ using Microsoft::WRL::ComPtr;
 // ----------------------------------------------------------------------------
 // Global Vulkan Instance Management
 // ----------------------------------------------------------------------------
+static std::mutex g_ncnnGlobalMutex;
+static bool g_gpuInitialized = false;
+static uint32_t g_liveContextCount = 0;
+
 static void EnsureNcnnGpuInstance() {
-    static std::once_flag s_once;
-    std::call_once(s_once, []() {
+    std::lock_guard<std::mutex> lock(g_ncnnGlobalMutex);
+    if (!g_gpuInitialized) {
         ncnn::create_gpu_instance();
-    });
+        g_gpuInitialized = true;
+    }
+}
+
+static void DestroyNcnnGpuInstanceIfUnused() {
+    std::lock_guard<std::mutex> lock(g_ncnnGlobalMutex);
+    if (g_gpuInitialized && g_liveContextCount == 0) {
+        ncnn::destroy_gpu_instance();
+        g_gpuInitialized = false;
+    }
 }
 
 static int GetOptimalVulkanGpuIndex() {
     EnsureNcnnGpuInstance();
+    std::lock_guard<std::mutex> lock(g_ncnnGlobalMutex);
     int gpuCount = ncnn::get_gpu_count();
     if (gpuCount <= 0) return -1;
 
@@ -73,6 +88,7 @@ static int GetOptimalVulkanGpuIndex() {
 static uint64_t GetVulkanDeviceMemoryBytes(int gpuIndex) {
     if (gpuIndex < 0) return 0;
     EnsureNcnnGpuInstance();
+    std::lock_guard<std::mutex> lock(g_ncnnGlobalMutex);
     int gpuCount = ncnn::get_gpu_count();
     if (gpuIndex >= gpuCount) return 0;
     const ncnn::GpuInfo& info = ncnn::get_gpu_info(gpuIndex);
@@ -166,8 +182,19 @@ struct LoadedNetEntry {
 // In-Process RealESRGAN NCNN Context
 // ----------------------------------------------------------------------------
 struct NcnnVulkanContextImpl {
+    std::mutex ctxMutex;
     ComPtr<ID3D11Device> d3d11Device;
     ComPtr<ID3D11DeviceContext> d3d11Context;
+
+    // Reusable staging & CPU scratch buffers to prevent repeated allocations
+    ComPtr<ID3D11Texture2D> cachedStageIn;
+    uint32_t cachedStageW = 0;
+    uint32_t cachedStageH = 0;
+    DXGI_FORMAT cachedStageFmt = DXGI_FORMAT_UNKNOWN;
+    std::vector<uint8_t> inPixels;
+    std::vector<uint8_t> outBgra;
+    std::vector<uint8_t> tileInBgra;
+    std::vector<uint8_t> tileOutBgra;
 
     // Cache of loaded nets for instant model switching without disk reload
     std::unordered_map<std::string, std::unique_ptr<LoadedNetEntry>> netCache;
@@ -176,6 +203,18 @@ struct NcnnVulkanContextImpl {
     float currentDenoise = 0.0f;
     float currentTileSize = 0.0f; // 0 = Auto (VRAM aware)
     int gpuIndex = -1;
+
+    NcnnVulkanContextImpl() {
+        std::lock_guard<std::mutex> lock(g_ncnnGlobalMutex);
+        ++g_liveContextCount;
+    }
+
+    ~NcnnVulkanContextImpl() {
+        netCache.clear();
+        cachedStageIn.Reset();
+        std::lock_guard<std::mutex> lock(g_ncnnGlobalMutex);
+        if (g_liveContextCount > 0) --g_liveContextCount;
+    }
 
     LoadedNetEntry* GetOrLoadNet(const std::string& modelId) {
         auto it = netCache.find(modelId);
@@ -241,42 +280,49 @@ struct NcnnVulkanContextImpl {
         return rawPtr;
     }
 
-    uint32_t CalculateOptimalTileSize(const std::string& modelId, uint32_t inW, uint32_t inH) const {
+    void ComputeTileGeometry(const std::string& modelId, uint32_t inW, uint32_t inH, uint32_t& outFixedTile, uint32_t& outHalo, uint32_t& outStepSize) const {
         if (currentTileSize > 0.0f) {
-            uint32_t manualTile = static_cast<uint32_t>(currentTileSize);
-            manualTile = std::clamp(manualTile, 128u, 640u);
-            return (manualTile + 31) & ~31; // Align to 32
+            uint32_t manualTile = std::clamp(static_cast<uint32_t>(currentTileSize), 128u, 640u);
+            outFixedTile = (manualTile + 31u) & ~31u;
+            if (inW <= outFixedTile && inH <= outFixedTile) {
+                outHalo = 0;
+                outStepSize = (std::max)(inW, inH);
+                outFixedTile = ((outStepSize + 31u) & ~31u);
+                if (outFixedTile < 32u) outFixedTile = 32u;
+                return;
+            }
+            outHalo = 12;
+            outStepSize = outFixedTile - outHalo * 2;
+            return;
         }
 
         // Auto mode (currentTileSize == 0.0f): VRAM-aware dynamic sizing
         uint64_t vram = GetVulkanDeviceMemoryBytes(gpuIndex);
         bool isCompactModel = (modelId.find("animevideov3") != std::string::npos || modelId.find("general-x4v3") != std::string::npos);
 
+        uint32_t tileCap = 384;
         if (isCompactModel) {
-            // Lightweight compact model (SRVGGNet-Compact)
-            if (vram >= 4ULL * 1024 * 1024 * 1024 && inW <= 1024 && inH <= 1024) {
-                // Generous VRAM: Single whole-frame tile, eliminate all halo overhead!
-                uint32_t maxDim = (std::max)(inW, inH);
-                return (maxDim + 31) & ~31;
-            } else if (vram >= 2ULL * 1024 * 1024 * 1024) {
-                return 512;
-            } else {
-                return 384;
-            }
+            if (vram >= 4ULL * 1024 * 1024 * 1024) tileCap = 1024;
+            else if (vram >= 2ULL * 1024 * 1024 * 1024) tileCap = 512;
+            else tileCap = 384;
         } else {
-            // Heavy deep residual model (RRDBNet x4plus / x4plus-anime)
-            if (vram >= 8ULL * 1024 * 1024 * 1024) {
-                return 512;
-            } else if (vram >= 4ULL * 1024 * 1024 * 1024) {
-                return 400;
-            } else {
-                return 256;
-            }
+            if (vram >= 8ULL * 1024 * 1024 * 1024) tileCap = 512;
+            else if (vram >= 4ULL * 1024 * 1024 * 1024) tileCap = 400;
+            else tileCap = 256;
         }
-    }
 
-    ~NcnnVulkanContextImpl() {
-        netCache.clear();
+        if (inW <= tileCap && inH <= tileCap) {
+            // Single whole-frame pass: zero halo overhead
+            outHalo = 0;
+            outStepSize = (std::max)(inW, inH);
+            outFixedTile = ((outStepSize + 31u) & ~31u);
+            if (outFixedTile < 32u) outFixedTile = 32u;
+            return;
+        }
+
+        outHalo = 12;
+        outFixedTile = (std::min)(tileCap, 512u);
+        outStepSize = (outFixedTile > outHalo * 2) ? (outFixedTile - outHalo * 2) : outFixedTile;
     }
 };
 
@@ -292,7 +338,7 @@ static QVX_SR_ModelInfo s_ncnnModels[] = {
         "动漫极速 (自适应 2x/3x/4x)",
         "根据缩放倍率自动匹配最优动漫模型（50~120ms），包含 2x/3x/4x 全套极速模型 (~3.5 MB)",
         4.0f,
-        true,
+        false,
         false,
         3502191,
         "https://justnullname.github.io/QuickView/models/realesr-animevideov3-x2.zip",
@@ -306,7 +352,7 @@ static QVX_SR_ModelInfo s_ncnnModels[] = {
         "动漫极速 2x",
         "二次元动漫画/动图，毫秒级极速二倍放大，极低显存 (~1.2 MB)",
         2.0f,
-        true,
+        false,
         false,
         1167404,
         "https://justnullname.github.io/QuickView/models/realesr-animevideov3-x2.zip",
@@ -320,7 +366,7 @@ static QVX_SR_ModelInfo s_ncnnModels[] = {
         "动漫平衡 3x",
         "二次元动漫画三倍高清重建，画质与速度均衡 (~1.2 MB)",
         3.0f,
-        true,
+        false,
         false,
         1167406,
         "https://justnullname.github.io/QuickView/models/realesr-animevideov3-x3.zip",
@@ -334,7 +380,7 @@ static QVX_SR_ModelInfo s_ncnnModels[] = {
         "动漫高清 4x",
         "二次元插画/壁纸四倍高清重构，线条锐化与去噪 (~1.2 MB)",
         4.0f,
-        true,
+        false,
         false,
         1167381,
         "https://justnullname.github.io/QuickView/models/realesr-animevideov3-x4.zip",
@@ -348,7 +394,7 @@ static QVX_SR_ModelInfo s_ncnnModels[] = {
         "动漫极致 4x",
         "深层残差神经网络，针对老动漫与复杂线稿进行极致纹理修复 (~8.3 MB)",
         4.0f,
-        true,
+        false,
         false,
         8286003,
         "https://justnullname.github.io/QuickView/models/realesrgan-x4plus-anime.zip",
@@ -362,7 +408,7 @@ static QVX_SR_ModelInfo s_ncnnModels[] = {
         "真实照片极速 4x",
         "0.3.0 官方超轻量摄影微型模型（~2.3 MB），毫秒级极速，消除噪点并支持降噪强度调节",
         4.0f,
-        true,
+        false,
         false,
         2283925,
         "https://justnullname.github.io/QuickView/models/realesr-general-x4v3.zip",
@@ -376,7 +422,7 @@ static QVX_SR_ModelInfo s_ncnnModels[] = {
         "真实照片极致 4x",
         "通用摄影大模型，针对真实风景、人像、静物深度消除 JPEG 块效应并还原细节 (~31.0 MB)",
         4.0f,
-        true,
+        false,
         false,
         30963424,
         "https://justnullname.github.io/QuickView/models/realesrgan-x4plus.zip",
@@ -488,6 +534,7 @@ static uint32_t NcnnVulkan_GetModelCount(void) {
 
 static const QVX_SR_ModelInfo* NcnnVulkan_GetModelInfo(uint32_t index) {
     if (index >= NcnnVulkan_GetModelCount()) return nullptr;
+    std::lock_guard<std::mutex> lock(g_ncnnGlobalMutex);
 
     std::wstring dummyParam, dummyBin;
     const char* id = s_ncnnModels[index].model_id;
@@ -534,6 +581,20 @@ static void NcnnVulkan_DestroyContext(QVX_SR_Context ctx) {
     delete impl;
 }
 
+static bool IsSupported4ChannelFormat(DXGI_FORMAT fmt) {
+    return fmt == DXGI_FORMAT_B8G8R8A8_UNORM ||
+           fmt == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB ||
+           fmt == DXGI_FORMAT_B8G8R8X8_UNORM ||
+           fmt == DXGI_FORMAT_B8G8R8X8_UNORM_SRGB ||
+           fmt == DXGI_FORMAT_R8G8B8A8_UNORM ||
+           fmt == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+}
+
+static bool IsRgbaOrderFormat(DXGI_FORMAT fmt) {
+    return fmt == DXGI_FORMAT_R8G8B8A8_UNORM ||
+           fmt == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+}
+
 // ----------------------------------------------------------------------------
 // GPU Upscale Hot-Path (Zero-Copy Pure In-Process Pipeline)
 // ----------------------------------------------------------------------------
@@ -545,6 +606,7 @@ static int32_t NcnnVulkan_UpscaleGpu(
 ) {
     if (!ctx || !in_tex || !out_tex || !params) return QVX_E_INVALIDARG;
     auto* impl = static_cast<NcnnVulkanContextImpl*>(ctx);
+    std::lock_guard<std::mutex> ctxLock(impl->ctxMutex);
 
     if (qvx::IsCancelled(params)) {
         return QVX_E_ABORT;
@@ -554,11 +616,25 @@ static int32_t NcnnVulkan_UpscaleGpu(
     uint32_t inH = params->in_height;
     uint32_t outW = params->out_width;
     uint32_t outH = params->out_height;
+    if (inW == 0 || inH == 0 || outW == 0 || outH == 0 || !impl->d3d11Device || !impl->d3d11Context) {
+        return QVX_E_INVALIDARG;
+    }
+
+    D3D11_TEXTURE2D_DESC inDesc{};
+    D3D11_TEXTURE2D_DESC outDesc{};
+    in_tex->GetDesc(&inDesc);
+    out_tex->GetDesc(&outDesc);
+    if (!IsSupported4ChannelFormat(inDesc.Format) || !IsSupported4ChannelFormat(outDesc.Format)) {
+        return QVX_E_INVALIDARG;
+    }
+    if (inDesc.Width < inW || inDesc.Height < inH || outDesc.Width < outW || outDesc.Height < outH) {
+        return QVX_E_INVALIDARG;
+    }
 
     // Resolve actual model for execution (Adaptive Anime routing)
     std::string actualModelId = impl->currentModelId;
     if (actualModelId.empty() || actualModelId == "realesr-animevideov3-auto") {
-        float ratio = (inW > 0) ? (static_cast<float>(outW) / static_cast<float>(inW)) : 2.0f;
+        float ratio = static_cast<float>(outW) / static_cast<float>(inW);
         if (ratio <= 2.2f) {
             actualModelId = "realesr-animevideov3-x2";
         } else if (ratio <= 3.2f) {
@@ -573,64 +649,75 @@ static int32_t NcnnVulkan_UpscaleGpu(
         return QVX_E_FAIL;
     }
 
-    int scale = netEntry->scale;
+    const uint32_t scale = static_cast<uint32_t>(netEntry->scale);
+    if (scale == 0) return QVX_E_FAIL;
 
     auto startTime = std::chrono::high_resolution_clock::now();
 
-    // Read back input D3D11 texture into staging memory
-    D3D11_TEXTURE2D_DESC inDesc{};
-    in_tex->GetDesc(&inDesc);
-
-    D3D11_TEXTURE2D_DESC stageDesc = inDesc;
-    stageDesc.Usage = D3D11_USAGE_STAGING;
-    stageDesc.BindFlags = 0;
-    stageDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-    stageDesc.MiscFlags = 0;
-
-    ComPtr<ID3D11Texture2D> stageIn;
-    if (FAILED(impl->d3d11Device->CreateTexture2D(&stageDesc, nullptr, &stageIn))) {
-        return QVX_E_FAIL;
+    // Reuse staging read texture when format & dimensions match
+    if (!impl->cachedStageIn || impl->cachedStageW != inDesc.Width ||
+        impl->cachedStageH != inDesc.Height || impl->cachedStageFmt != inDesc.Format) {
+        D3D11_TEXTURE2D_DESC stageDesc = inDesc;
+        stageDesc.Usage = D3D11_USAGE_STAGING;
+        stageDesc.BindFlags = 0;
+        stageDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        stageDesc.MiscFlags = 0;
+        impl->cachedStageIn.Reset();
+        if (FAILED(impl->d3d11Device->CreateTexture2D(&stageDesc, nullptr, &impl->cachedStageIn))) {
+            return QVX_E_FAIL;
+        }
+        impl->cachedStageW = inDesc.Width;
+        impl->cachedStageH = inDesc.Height;
+        impl->cachedStageFmt = inDesc.Format;
     }
 
-    impl->d3d11Context->CopyResource(stageIn.Get(), in_tex);
+    impl->d3d11Context->CopyResource(impl->cachedStageIn.Get(), in_tex);
 
     D3D11_MAPPED_SUBRESOURCE mappedIn{};
-    if (FAILED(impl->d3d11Context->Map(stageIn.Get(), 0, D3D11_MAP_READ, 0, &mappedIn))) {
+    if (FAILED(impl->d3d11Context->Map(impl->cachedStageIn.Get(), 0, D3D11_MAP_READ, 0, &mappedIn))) {
         return QVX_E_FAIL;
     }
 
-    // Immediately copy mapped pixel bytes to local memory buffer (<0.1ms)
-    std::vector<uint8_t> inPixels(static_cast<size_t>(inH) * inW * 4);
+    const bool inIsRgba = IsRgbaOrderFormat(inDesc.Format);
+    const bool outIsRgba = IsRgbaOrderFormat(outDesc.Format);
+    const size_t inByteCount = static_cast<size_t>(inH) * inW * 4;
+    impl->inPixels.resize(inByteCount);
     const uint8_t* pMappedSrc = static_cast<const uint8_t*>(mappedIn.pData);
     for (uint32_t y = 0; y < inH; ++y) {
-        memcpy(inPixels.data() + y * (inW * 4), pMappedSrc + y * mappedIn.RowPitch, inW * 4);
+        const uint8_t* sRow = pMappedSrc + static_cast<size_t>(y) * mappedIn.RowPitch;
+        uint8_t* dRow = impl->inPixels.data() + static_cast<size_t>(y) * inW * 4;
+        memcpy(dRow, sRow, static_cast<size_t>(inW) * 4);
+        if (inIsRgba) {
+            for (uint32_t x = 0; x < inW; ++x) {
+                std::swap(dRow[x * 4 + 0], dRow[x * 4 + 2]);
+            }
+        }
     }
 
-    // Instantly Unmap! Releases D3D11 Immediate Context immediately so main UI stays 100% fluid
-    impl->d3d11Context->Unmap(stageIn.Get(), 0);
-    stageIn.Reset();
+    impl->d3d11Context->Unmap(impl->cachedStageIn.Get(), 0);
 
-    const uint8_t* pSrc = inPixels.data();
-    uint32_t srcPitch = inW * 4;
+    const uint8_t* pSrc = impl->inPixels.data();
+    const uint32_t srcPitch = inW * 4;
 
-    std::vector<uint8_t> outBgra(static_cast<size_t>(outW) * outH * 4, 0);
+    impl->outBgra.assign(static_cast<size_t>(outW) * outH * 4, 0);
 
-    uint32_t FIXED_TILE = impl->CalculateOptimalTileSize(actualModelId, inW, inH);
-    const uint32_t FIXED_HALO = 12;
-    const uint32_t STEP_SIZE = (FIXED_TILE > FIXED_HALO * 2) ? (FIXED_TILE - FIXED_HALO * 2) : FIXED_TILE;
+    uint32_t FIXED_TILE = 512;
+    uint32_t FIXED_HALO = 12;
+    uint32_t STEP_SIZE = 488;
+    impl->ComputeTileGeometry(actualModelId, inW, inH, FIXED_TILE, FIXED_HALO, STEP_SIZE);
 
     uint32_t numTilesX = (inW + STEP_SIZE - 1) / STEP_SIZE;
     uint32_t numTilesY = (inH + STEP_SIZE - 1) / STEP_SIZE;
     uint32_t totalTiles = numTilesX * numTilesY;
     uint32_t completedTiles = 0;
 
-    // Pre-allocate tile buffers outside loop to eliminate heap churn
+    // Pre-allocate tile buffers on context outside loop to eliminate heap churn
     const size_t inTileBytes = static_cast<size_t>(FIXED_TILE) * FIXED_TILE * 4;
-    std::vector<uint8_t> tileInBgra(inTileBytes, 0);
+    impl->tileInBgra.resize(inTileBytes);
 
-    const int outTileDim = static_cast<int>(FIXED_TILE * scale);
+    const uint32_t outTileDim = FIXED_TILE * scale;
     const size_t outTileBytes = static_cast<size_t>(outTileDim) * outTileDim * 4;
-    std::vector<uint8_t> tileOutBgra(outTileBytes, 0);
+    impl->tileOutBgra.resize(outTileBytes);
 
     bool tileFailed = false;
 
@@ -653,20 +740,37 @@ static int32_t NcnnVulkan_UpscaleGpu(
 
             uint32_t actualInW = inEndX - inStartX;
             uint32_t actualInH = inEndY - inStartY;
+            if (actualInW == 0 || actualInH == 0) continue;
 
             uint32_t haloLeft = srcStartX - inStartX;
             uint32_t haloTop = srcStartY - inStartY;
 
-            // Zero-fill pre-allocated buffer for border alignment
-            memset(tileInBgra.data(), 0, inTileBytes);
+            // Clamp-to-edge border replication prevents black convolution border halos
+            const size_t tileRowBytes = static_cast<size_t>(FIXED_TILE) * 4;
             for (uint32_t py = 0; py < actualInH; ++py) {
-                const uint8_t* pRow = pSrc + (inStartY + py) * srcPitch + (inStartX * 4);
-                memcpy(tileInBgra.data() + py * (FIXED_TILE * 4), pRow, actualInW * 4);
+                const uint8_t* pRow = pSrc + static_cast<size_t>(inStartY + py) * srcPitch + static_cast<size_t>(inStartX) * 4;
+                uint8_t* dRow = impl->tileInBgra.data() + static_cast<size_t>(py) * tileRowBytes;
+                memcpy(dRow, pRow, static_cast<size_t>(actualInW) * 4);
+                if (actualInW < FIXED_TILE) {
+                    const uint8_t* edgePx = dRow + static_cast<size_t>(actualInW - 1) * 4;
+                    for (uint32_t px = actualInW; px < FIXED_TILE; ++px) {
+                        uint8_t* padPx = dRow + static_cast<size_t>(px) * 4;
+                        padPx[0] = edgePx[0];
+                        padPx[1] = edgePx[1];
+                        padPx[2] = edgePx[2];
+                        padPx[3] = edgePx[3];
+                    }
+                }
+            }
+            if (actualInH < FIXED_TILE) {
+                const uint8_t* lastValidRow = impl->tileInBgra.data() + static_cast<size_t>(actualInH - 1) * tileRowBytes;
+                for (uint32_t py = actualInH; py < FIXED_TILE; ++py) {
+                    memcpy(impl->tileInBgra.data() + static_cast<size_t>(py) * tileRowBytes, lastValidRow, tileRowBytes);
+                }
             }
 
-            // Convert to NCNN Mat with fixed shape
             ncnn::Mat inMat = ncnn::Mat::from_pixels(
-                tileInBgra.data(),
+                impl->tileInBgra.data(),
                 ncnn::Mat::PIXEL_BGRA2RGB,
                 static_cast<int>(FIXED_TILE),
                 static_cast<int>(FIXED_TILE)
@@ -675,43 +779,42 @@ static int32_t NcnnVulkan_UpscaleGpu(
             const float norm_vals[3] = { 1.0f / 255.0f, 1.0f / 255.0f, 1.0f / 255.0f };
             inMat.substract_mean_normalize(nullptr, norm_vals);
 
-            // NCNN GPU Extractor Forward
             ncnn::Extractor ex = netEntry->net.create_extractor();
             ex.input("data", inMat);
 
             ncnn::Mat outMat;
             int ret = ex.extract("output", outMat);
 
-            if (ret == 0 && !outMat.empty()) {
+            if (ret == 0 && !outMat.empty() &&
+                outMat.w == static_cast<int>(outTileDim) &&
+                outMat.h == static_cast<int>(outTileDim) &&
+                outMat.c >= 3) {
                 const float denorm_vals[3] = { 255.0f, 255.0f, 255.0f };
                 outMat.substract_mean_normalize(nullptr, denorm_vals);
+                outMat.to_pixels(impl->tileOutBgra.data(), ncnn::Mat::PIXEL_RGB2BGRA);
 
-                outMat.to_pixels(tileOutBgra.data(), ncnn::Mat::PIXEL_RGB2BGRA);
+                const uint32_t cropStartX = haloLeft * scale;
+                const uint32_t cropStartY = haloTop * scale;
+                const uint32_t dstStartX = srcStartX * scale;
+                const uint32_t dstStartY = srcStartY * scale;
+                const uint32_t dstW = srcW * scale;
+                const uint32_t dstH = srcH * scale;
 
-                uint32_t cropStartX = haloLeft * scale;
-                uint32_t cropStartY = haloTop * scale;
+                if (dstStartX < outW && cropStartX < outTileDim) {
+                    const uint32_t maxDstPixels = outW - dstStartX;
+                    const uint32_t maxSrcPixels = outTileDim - cropStartX;
+                    const uint32_t copyPixels = (std::min)(dstW, (std::min)(maxDstPixels, maxSrcPixels));
+                    const size_t copyBytes = static_cast<size_t>(copyPixels) * 4;
 
-                uint32_t dstStartX = srcStartX * scale;
-                uint32_t dstStartY = srcStartY * scale;
-                uint32_t dstW = srcW * scale;
-                uint32_t dstH = srcH * scale;
+                    for (uint32_t cy = 0; cy < dstH; ++cy) {
+                        const uint32_t srcY = cropStartY + cy;
+                        const uint32_t destY = dstStartY + cy;
+                        if (srcY >= outTileDim || destY >= outH) break;
 
-                for (uint32_t cy = 0; cy < dstH; ++cy) {
-                    uint32_t srcY = cropStartY + cy;
-                    if (srcY >= static_cast<uint32_t>(outTileDim)) break;
-                    uint32_t destY = dstStartY + cy;
-                    if (destY >= outH) break;
-
-                    uint8_t* destRow = outBgra.data() + destY * (outW * 4) + dstStartX * 4;
-                    const uint8_t* srcTileRow = tileOutBgra.data() + srcY * (outTileDim * 4) + cropStartX * 4;
-
-                    uint32_t copyBytes = dstW * 4;
-                    if (dstStartX * 4 + copyBytes > outW * 4) copyBytes = outW * 4 - dstStartX * 4;
-                    if ((cropStartX * 4) + copyBytes > static_cast<uint32_t>(outTileDim * 4)) {
-                        copyBytes = (outTileDim - cropStartX) * 4;
+                        uint8_t* destRow = impl->outBgra.data() + static_cast<size_t>(destY) * outW * 4 + static_cast<size_t>(dstStartX) * 4;
+                        const uint8_t* srcTileRow = impl->tileOutBgra.data() + static_cast<size_t>(srcY) * outTileDim * 4 + static_cast<size_t>(cropStartX) * 4;
+                        memcpy(destRow, srcTileRow, copyBytes);
                     }
-
-                    memcpy(destRow, srcTileRow, copyBytes);
                 }
 
                 completedTiles++;
@@ -721,7 +824,8 @@ static int32_t NcnnVulkan_UpscaleGpu(
                 }
             } else {
                 char buf[512];
-                snprintf(buf, sizeof(buf), "[QVX-SR] NCNN extract failed with code %d (Tile: %ux%u)\n", ret, tx, ty);
+                snprintf(buf, sizeof(buf), "[QVX-SR] NCNN extract failed code=%d dims=%dx%dx%d (exp %u, Tile: %ux%u)\n",
+                         ret, outMat.w, outMat.h, outMat.c, outTileDim, tx, ty);
                 OutputDebugStringA(buf);
                 tileFailed = true;
             }
@@ -733,11 +837,11 @@ static int32_t NcnnVulkan_UpscaleGpu(
     }
 
     if (!tileFailed) {
-        // [Transparency Guard] If input has transparent Alpha, reconstruct full-res Alpha via bilinear sampling
+        // [Transparency Guard] Fixed-point 16.16 bilinear Alpha reconstruction if source contains alpha < 255
         bool hasTransparentAlpha = false;
-        const uint32_t totalInPixels = inW * inH;
-        for (uint32_t i = 0; i < totalInPixels; ++i) {
-            if (inPixels[i * 4 + 3] < 255) {
+        const size_t totalInPixels = static_cast<size_t>(inW) * inH;
+        for (size_t i = 0; i < totalInPixels; ++i) {
+            if (pSrc[i * 4 + 3] < 255) {
                 hasTransparentAlpha = true;
                 break;
             }
@@ -746,42 +850,56 @@ static int32_t NcnnVulkan_UpscaleGpu(
         if (hasTransparentAlpha) {
             const float scaleX = static_cast<float>(inW) / static_cast<float>(outW);
             const float scaleY = static_cast<float>(inH) / static_cast<float>(outH);
+            std::vector<int> x0Lut(outW), x1Lut(outW), wxFixedLut(outW);
+            for (uint32_t dx = 0; dx < outW; ++dx) {
+                const float sx = (static_cast<float>(dx) + 0.5f) * scaleX - 0.5f;
+                int x0 = static_cast<int>(std::floor(sx));
+                int x1 = x0 + 1;
+                float wx = sx - static_cast<float>(x0);
+                if (x0 < 0) { x0 = 0; wx = 0.0f; }
+                if (x1 >= static_cast<int>(inW)) { x1 = static_cast<int>(inW) - 1; }
+                x0Lut[dx] = x0 * 4 + 3;
+                x1Lut[dx] = x1 * 4 + 3;
+                wxFixedLut[dx] = static_cast<int>(std::clamp(wx, 0.0f, 1.0f) * 256.0f + 0.5f);
+            }
 
             for (uint32_t dy = 0; dy < outH; ++dy) {
-                float srcY = (static_cast<float>(dy) + 0.5f) * scaleY - 0.5f;
-                int y0 = static_cast<int>(std::floor(srcY));
+                const float sy = (static_cast<float>(dy) + 0.5f) * scaleY - 0.5f;
+                int y0 = static_cast<int>(std::floor(sy));
                 int y1 = y0 + 1;
-                float wy = srcY - static_cast<float>(y0);
+                float wy = sy - static_cast<float>(y0);
                 if (y0 < 0) { y0 = 0; wy = 0.0f; }
                 if (y1 >= static_cast<int>(inH)) { y1 = static_cast<int>(inH) - 1; }
+                const int wyF = static_cast<int>(std::clamp(wy, 0.0f, 1.0f) * 256.0f + 0.5f);
+                const int invWyF = 256 - wyF;
 
-                uint8_t* outRow = outBgra.data() + dy * (outW * 4);
-                const uint8_t* inRow0 = inPixels.data() + y0 * srcPitch;
-                const uint8_t* inRow1 = inPixels.data() + y1 * srcPitch;
+                uint8_t* outRow = impl->outBgra.data() + static_cast<size_t>(dy) * outW * 4;
+                const uint8_t* inRow0 = pSrc + static_cast<size_t>(y0) * srcPitch;
+                const uint8_t* inRow1 = pSrc + static_cast<size_t>(y1) * srcPitch;
 
                 for (uint32_t dx = 0; dx < outW; ++dx) {
-                    float srcX = (static_cast<float>(dx) + 0.5f) * scaleX - 0.5f;
-                    int x0 = static_cast<int>(std::floor(srcX));
-                    int x1 = x0 + 1;
-                    float wx = srcX - static_cast<float>(x0);
-                    if (x0 < 0) { x0 = 0; wx = 0.0f; }
-                    if (x1 >= static_cast<int>(inW)) { x1 = static_cast<int>(inW) - 1; }
-
-                    float a00 = static_cast<float>(inRow0[x0 * 4 + 3]);
-                    float a01 = static_cast<float>(inRow0[x1 * 4 + 3]);
-                    float a10 = static_cast<float>(inRow1[x0 * 4 + 3]);
-                    float a11 = static_cast<float>(inRow1[x1 * 4 + 3]);
-
-                    float aTop = a00 * (1.0f - wx) + a01 * wx;
-                    float aBot = a10 * (1.0f - wx) + a11 * wx;
-                    float aFinal = aTop * (1.0f - wy) + aBot * wy;
-
-                    outRow[dx * 4 + 3] = static_cast<uint8_t>(std::clamp(aFinal + 0.5f, 0.0f, 255.0f));
+                    const int wxF = wxFixedLut[dx];
+                    const int invWxF = 256 - wxF;
+                    const int a00 = inRow0[x0Lut[dx]];
+                    const int a01 = inRow0[x1Lut[dx]];
+                    const int a10 = inRow1[x0Lut[dx]];
+                    const int a11 = inRow1[x1Lut[dx]];
+                    const int aTop = a00 * invWxF + a01 * wxF;
+                    const int aBot = a10 * invWxF + a11 * wxF;
+                    const int aVal = (aTop * invWyF + aBot * wyF + 32768) >> 16;
+                    outRow[dx * 4 + 3] = static_cast<uint8_t>(std::clamp(aVal, 0, 255));
                 }
             }
         }
 
-        impl->d3d11Context->UpdateSubresource(out_tex, 0, nullptr, outBgra.data(), outW * 4, 0);
+        if (outIsRgba) {
+            const size_t totalOutPixels = static_cast<size_t>(outW) * outH;
+            for (size_t i = 0; i < totalOutPixels; ++i) {
+                std::swap(impl->outBgra[i * 4 + 0], impl->outBgra[i * 4 + 2]);
+            }
+        }
+
+        impl->d3d11Context->UpdateSubresource(out_tex, 0, nullptr, impl->outBgra.data(), outW * 4, 0);
 
         auto endTime = std::chrono::high_resolution_clock::now();
         double durationMs = std::chrono::duration<double, std::milli>(endTime - startTime).count();
@@ -800,16 +918,6 @@ static int32_t NcnnVulkan_UpscaleGpu(
 // ----------------------------------------------------------------------------
 // Shared Handle Cross-API Upscaling (Direct DXGI Handle 0-Copy)
 // ----------------------------------------------------------------------------
-static int32_t NcnnVulkan_UpscaleShared(
-    QVX_SR_Context ctx,
-    HANDLE in_shared_handle,
-    HANDLE out_shared_handle,
-    const QVX_SR_ExecuteParams* params
-) {
-    if (!ctx || !in_shared_handle || !out_shared_handle || !params) return QVX_E_INVALIDARG;
-    return NcnnVulkan_UpscaleGpu(ctx, nullptr, nullptr, params);
-}
-
 // ----------------------------------------------------------------------------
 // Parameter Control
 // ----------------------------------------------------------------------------
@@ -825,6 +933,7 @@ static const QVX_ParamDesc* NcnnVulkan_GetParamDesc(uint32_t index) {
 static int32_t NcnnVulkan_GetParamValue(QVX_SR_Context ctx, const char* param_id, float* out_val) {
     if (!ctx || !param_id || !out_val) return QVX_E_INVALIDARG;
     auto* impl = static_cast<NcnnVulkanContextImpl*>(ctx);
+    std::lock_guard<std::mutex> lock(impl->ctxMutex);
 
     if (strcmp(param_id, "denoise") == 0) {
         *out_val = impl->currentDenoise;
@@ -839,6 +948,7 @@ static int32_t NcnnVulkan_GetParamValue(QVX_SR_Context ctx, const char* param_id
 static int32_t NcnnVulkan_SetParamValue(QVX_SR_Context ctx, const char* param_id, float val) {
     if (!ctx || !param_id) return QVX_E_INVALIDARG;
     auto* impl = static_cast<NcnnVulkanContextImpl*>(ctx);
+    std::lock_guard<std::mutex> lock(impl->ctxMutex);
 
     if (strcmp(param_id, "denoise") == 0) {
         impl->currentDenoise = std::clamp(val, 0.0f, 1.0f);
@@ -855,6 +965,7 @@ static int32_t NcnnVulkan_SetParamValue(QVX_SR_Context ctx, const char* param_id
 }
 
 static int32_t NcnnVulkan_SetLanguage(const char* lang_code) {
+    std::lock_guard<std::mutex> lock(g_ncnnGlobalMutex);
     UpdateLocalization(lang_code);
     return QVX_OK;
 }
@@ -869,7 +980,7 @@ static const QVX_SR_VTable s_ncnnVTable = {
     NcnnVulkan_CreateContext,
     NcnnVulkan_DestroyContext,
     NcnnVulkan_UpscaleGpu,
-    NcnnVulkan_UpscaleShared,
+    nullptr, // upscale_shared (unused)
     nullptr, // upscale_cpu
     NcnnVulkan_GetParamCount,
     NcnnVulkan_GetParamDesc,
@@ -903,22 +1014,13 @@ static const QVX_PluginHeader s_pluginHeader = {
 extern "C" {
     __declspec(dllexport) bool qvx_init(const QVX_PluginHeader** out_header) {
         if (!out_header) return false;
+        std::lock_guard<std::mutex> lock(g_ncnnGlobalMutex);
         *out_header = &s_pluginHeader;
-
-        // Initialize default localized strings
         UpdateLocalization(s_currentLanguage.c_str());
-
-        // Pin this DLL module in memory to prevent Windows Loader-Lock deadlocks on FreeLibrary
-        HMODULE hSelf = nullptr;
-        GetModuleHandleExW(
-            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
-            (LPCWSTR)NcnnVulkan_CreateContext,
-            &hSelf
-        );
         return true;
     }
 
     __declspec(dllexport) void qvx_shutdown(void) {
-        // Safe in-process cleanup
+        DestroyNcnnGpuInstanceIfUnused();
     }
 }

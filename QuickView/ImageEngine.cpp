@@ -413,7 +413,7 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
     std::wstring fmtUpper = info.format;
     std::transform(fmtUpper.begin(), fmtUpper.end(), fmtUpper.begin(), ::toupper);
     
-    if (!primaryMMF && !isVfsPath) {
+    if (!primaryMMF && !isVfsPath && !QuickView::IsRawPath(path)) {
         primaryMMF = std::make_shared<QuickView::MappedFile>(path);
         if (!primaryMMF->IsValid()) primaryMMF.reset(); // Fallback if map fails
     }
@@ -1317,11 +1317,9 @@ void ImageEngine::FastLane::QueueWorker() {
                     rawFrame.sourceFileSize = info.fileSize;
                     rawFrame.sourceFormat = info.format;
                     rawFrame.quality = QuickView::DecodeQuality::Preview;
-                    // [v10.5] Animation Decoder propagation
-                    QV_LOG("Anim_Probe", TraceLoggingString("Hijacked to Animator", "Action"));
                 }
 
-                // Snapshot metadata before PromoteToStandalone() moves ownership from rawFrame.
+                // Snapshot metadata and orientation BEFORE PromoteToStandalone() resets rawFrame.
                 e.metadata.Width = rawFrame.width;
                 e.metadata.Height = rawFrame.height;
                 e.metadata.Format = info.format; // [Scout] Direct from PeekHeader
@@ -1331,29 +1329,27 @@ void ImageEngine::FastLane::QueueWorker() {
                 e.metadata.colorInfo = rawFrame.colorInfo;
                 e.metadata.hdrMetadata = rawFrame.hdrMetadata;
 
+                int effectiveExif = (rawFrame.exifOrientation > 1) ? rawFrame.exifOrientation : info.exifOrientation;
+                if (effectiveExif < 1 || effectiveExif > 8) effectiveExif = 1;
+                e.metadata.ExifOrientation = effectiveExif;
+
                 auto safeFrame = rawFrame.PromoteToStandalone();
+                if (!safeFrame) {
+                    return;
+                }
+                safeFrame->exifOrientation = effectiveExif;
                 e.rawFrame = safeFrame;
 
                 if (!e.metadata.HasEmbeddedColorProfile.has_value()) {
                     e.metadata.HasEmbeddedColorProfile =
-                        e.metadata.colorInfo.hasEmbeddedIcc || (safeFrame && !safeFrame->iccProfile.empty());
+                        e.metadata.colorInfo.hasEmbeddedIcc || !safeFrame->iccProfile.empty();
                 }
-                if (e.metadata.iccProfileData.empty() && safeFrame && !safeFrame->iccProfile.empty()) {
+                if (e.metadata.iccProfileData.empty() && !safeFrame->iccProfile.empty()) {
                     e.metadata.iccProfileData.assign(safeFrame->iccProfile.begin(), safeFrame->iccProfile.end());
                 }
                 if (e.metadata.ColorSpace.empty() && !e.metadata.iccProfileData.empty()) {
                     e.metadata.ColorSpace = CImageLoader::ParseICCProfileName(e.metadata.iccProfileData.data(), e.metadata.iccProfileData.size());
                 }
-                    
-                // [v5.3] Metadata is now populated by LoadToFrame (Unified path)
-                // We don't call LoadToFrame with pMetadata in FastLane currently, 
-                // but info.format from PeekHeader is sufficient for Scout mismatch check.
-                
-                // [Fix] Propagate EXIF Orientation from Decoder to Metadata (Critical for AutoRotate)
-                int effectiveExif = (rawFrame.exifOrientation > 1) ? rawFrame.exifOrientation : info.exifOrientation;
-                if (effectiveExif < 1 || effectiveExif > 8) effectiveExif = 1;
-                e.metadata.ExifOrientation = effectiveExif;
-                safeFrame->exifOrientation = effectiveExif;
                 
                 // [v5.3 Lazy] Reverted Sync ReadMetadata. 
                 // Metadata will be populated only when InfoPanel requests it.
@@ -1580,14 +1576,18 @@ void ImageEngine::ScheduleJob(int index, QuickView::Priority pri) {
     
     // [v4.1] Smart Prefetch logic re-enabled (Unified Dispatch Integration)
 
-    // 6. Pre-flight check for classification (map non-VFS, non-RAW files once for peek + decode)
-    std::shared_ptr<QuickView::MappedFile> jobMmf;
-    if (path.find(L'|') == std::wstring::npos && !QuickView::IsRawPath(path)) {
-        jobMmf = std::make_shared<QuickView::MappedFile>(path);
-        if (!jobMmf->IsValid()) {
-            jobMmf.reset();
+    // 6. Peek small header first; defer whole-file MappedFile creation until we confirm the job
+    // will actually be dispatched (avoids mapping skipped Titan / OverCache / busy prefetch files).
+    auto ensureMapped = [&]() -> std::shared_ptr<QuickView::MappedFile> {
+        if (path.find(L'|') == std::wstring::npos && !QuickView::IsRawPath(path)) {
+            auto mmf = std::make_shared<QuickView::MappedFile>(path);
+            if (mmf->IsValid()) return mmf;
         }
-    }
+        return nullptr;
+    };
+
+    std::shared_ptr<QuickView::MappedFile> jobMmf =
+        (pri == QuickView::Priority::Critical) ? ensureMapped() : nullptr;
 
     auto info = jobMmf
         ? m_loader->PeekHeaderFromMemory(path.c_str(), jobMmf->data(), jobMmf->size())
@@ -1632,6 +1632,7 @@ void ImageEngine::ScheduleJob(int index, QuickView::Priority pri) {
     }
     
     if (info.type == CImageLoader::ImageType::TypeA_Sprint) {
+        if (!jobMmf) jobMmf = ensureMapped();
         // Small image: push to FastLane
         {
             std::lock_guard lock(m_pendingMutex);
@@ -1642,8 +1643,8 @@ void ImageEngine::ScheduleJob(int index, QuickView::Priority pri) {
         // Large image: 
         // Critical: Always submit
         // Prefetch: Only if Heavy Lane is idle to avoid blocking Critical
-        // Prefetch: Only if Heavy Lane is idle to avoid blocking Critical
         if (pri == QuickView::Priority::Critical || m_heavyPool->IsIdle()) {
+            if (!jobMmf) jobMmf = ensureMapped();
             {
                 std::lock_guard lock(m_pendingMutex);
                 m_pendingPaths.insert(path);
@@ -1819,8 +1820,9 @@ void ImageEngine::RequestFullMetadata() {
     // [v5.3] Debounce Logic
     {
         std::lock_guard<std::mutex> lock(m_fastLane.m_pendingMutex);
-        if (m_fastLane.m_pendingMetadataRequests.count(id)) return; // Already requested
-        m_fastLane.m_pendingMetadataRequests.insert(id);
+        auto& pending = m_fastLane.m_pendingMetadataRequests;
+        if (std::find(pending.begin(), pending.end(), id) != pending.end()) return; // Already requested
+        pending.push_back(id);
     }
 
     // Launch Async (Detached)
@@ -1831,7 +1833,14 @@ void ImageEngine::RequestFullMetadata() {
             ImageID id;
             ~PendingCleaner() {
                 std::lock_guard<std::mutex> lock(lane.m_pendingMutex);
-                lane.m_pendingMetadataRequests.erase(id);
+                auto& pending = lane.m_pendingMetadataRequests;
+                for (size_t i = 0; i < pending.size(); ++i) {
+                    if (pending[i] == id) {
+                        pending[i] = pending.back();
+                        pending.pop_back();
+                        break;
+                    }
+                }
             }
         } cleaner{m_fastLane, id};
 

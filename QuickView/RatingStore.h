@@ -55,6 +55,11 @@ public:
     // path. Returns nothing when this item has not been read yet.
     std::optional<QuickView::Rating::Resolved> TryGet(ImageID id) const;
 
+    // Single-lock lookup that queues a background disk read on cache miss.
+    std::optional<QuickView::Rating::Resolved> TryGetOrQueueRead(
+        ImageID id, const std::wstring& renderedPath,
+        std::wstring_view rawPath = {});
+
     // Queue a background read. `rawPath` is the hidden RAW of a folded pair
     // (empty when the item is not paired); a standalone RAW is passed as
     // `renderedPath` and resolves through its own sidecar.
@@ -117,6 +122,7 @@ private:
     // One outstanding rating change per photo: a burst of keypresses replaces
     // this entry rather than queuing several writes.
     struct PendingWrite {
+        ImageID id = 0;
         int stars = 0;
         std::wstring renderedPath;
         std::wstring rawPath;

@@ -1,6 +1,5 @@
 #include "pch.h"
 #include <initguid.h>
-#include <map>
 #include <mutex>
 #include <vector>
 #include <algorithm>
@@ -1840,16 +1839,25 @@ HRESULT CRenderEngine::AnalyzeGamutWarningIcc(
   key = HashBytes(key, &options.acmAware, sizeof(options.acmAware));
   key = HashWString(key, options.displayState.gdiDeviceName);
 
-  const GamutProgram* program = nullptr;
+  ComPtr<ID3D11ShaderResourceView> lutOverflowSrv;
+  int lutEdge = 0;
+  GamutBackendKind programBackend = GamutBackendKind::Unknown;
+  std::wstring programSrcName;
+  std::wstring programDstName;
+
   {
     std::scoped_lock lock(m_gamutProgramCacheMutex);
     auto it = m_gamutProgramCache.find(key);
-    if (it != m_gamutProgramCache.end()) {
-      program = it->second.get();
+    if (it != m_gamutProgramCache.end() && it->second) {
+      lutOverflowSrv = it->second->lut.overflowSrv;
+      lutEdge = it->second->lut.edge;
+      programBackend = it->second->backend;
+      programSrcName = it->second->srcName;
+      programDstName = it->second->dstName;
     }
   }
 
-  if (!program) {
+  if (!lutOverflowSrv && programBackend == GamutBackendKind::Unknown) {
     auto compiled = std::make_unique<GamutProgram>();
     ScopedCmsProfile srcProfile;
     ScopedCmsProfile dstProfile;
@@ -1880,7 +1888,13 @@ HRESULT CRenderEngine::AnalyzeGamutWarningIcc(
 
     {
       std::scoped_lock lock(m_gamutProgramCacheMutex);
-      program = m_gamutProgramCache.insert_or_assign(key, std::move(compiled)).first->second.get();
+      auto [it, inserted] = m_gamutProgramCache.try_emplace(key, std::move(compiled));
+      const auto* program = it->second.get();
+      lutOverflowSrv = program->lut.overflowSrv;
+      lutEdge = program->lut.edge;
+      programBackend = program->backend;
+      programSrcName = program->srcName;
+      programDstName = program->dstName;
     }
   }
 
@@ -1893,6 +1907,7 @@ HRESULT CRenderEngine::AnalyzeGamutWarningIcc(
       return E_FAIL;
     }
 
+    std::lock_guard<std::recursive_mutex> gpuLock(m_gpuContextMutex);
     ComPtr<ID3D11Texture2D> srcTexture;
     HRESULT hr = m_computeEngine->UploadAndConvert(sampledFrame.pixels, sampledFrame.width,
                                                    sampledFrame.height, sampledFrame.stride, sampledFrame.format,
@@ -1900,8 +1915,8 @@ HRESULT CRenderEngine::AnalyzeGamutWarningIcc(
     if (FAILED(hr)) return hr;
 
     hr = m_computeEngine->DispatchGamutMaskLut(
-        srcTexture.Get(), program->lut.overflowSrv.Get(),
-        program->lut.edge, 0.5f, readback);
+        srcTexture.Get(), lutOverflowSrv.Get(),
+        lutEdge, 0.5f, readback);
     return hr;
   };
 
@@ -1911,7 +1926,7 @@ HRESULT CRenderEngine::AnalyzeGamutWarningIcc(
     return hr;
   }
 
-  outResult->backendKind = program->backend;
+  outResult->backendKind = programBackend;
   if (!coarse.hasOverflow) {
     outResult->cols = coarse.width;
     outResult->rows = coarse.height;
@@ -1935,10 +1950,10 @@ HRESULT CRenderEngine::AnalyzeGamutWarningIcc(
   wchar_t buf[512];
   swprintf_s(buf, L"Gamut %s / %s / src=%s / dst=%s / ACM=%s / mask=%dx%d",
       (options.targetKind == GamutTargetKind::ProofTarget ? L"Proof" : L"Screen"),
-      (program->backend == GamutBackendKind::AnalyticMatrixTrc ? L"Analytic" :
-       (program->backend == GamutBackendKind::Lut3DCompiled ? L"LUT" : L"CPU")),
-      program->srcName.c_str(),
-      program->dstName.c_str(),
+      (programBackend == GamutBackendKind::AnalyticMatrixTrc ? L"Analytic" :
+       (programBackend == GamutBackendKind::Lut3DCompiled ? L"LUT" : L"CPU")),
+      programSrcName.c_str(),
+      programDstName.c_str(),
       (options.acmAware ? L"On" : L"Off"),
       outResult->cols, outResult->rows);
   outResult->debugSummary = buf;
@@ -1973,7 +1988,7 @@ HRESULT CRenderEngine::Initialize(HWND hwnd) {
 
   // 3. Compute Engine Initialization
   m_computeEngine = std::make_unique<QuickView::ComputeEngine>();
-  hr = m_computeEngine->Initialize(m_d3dDevice.Get());
+  hr = m_computeEngine->Initialize(m_d3dDevice.Get(), &m_gpuContextMutex);
   if (FAILED(hr)) {
     QV_LOG("Init_Warning", TraceLoggingString("Failed to initialize ComputeEngine", "Action"));
   }
@@ -2264,26 +2279,27 @@ HRESULT CRenderEngine::ResolveDestinationColorContext(
     return cacheSlot.CopyTo(outContext);
   };
 
-  if (ShouldUseHdrOutputForFrame(frame)) {
+  if (ShouldUseHdrOutputForFrameLocked(frame, m_displayColorState)) {
     return GetOrCreateStandardContext(D2D1_COLOR_SPACE_SCRGB,
                                       m_cachedScRgbColorContext);
   }
 
-  if (!m_displayColorState.gdiDeviceName.empty()) {
+  const QuickView::DisplayColorState displayState = m_displayColorState;
+  if (!displayState.gdiDeviceName.empty()) {
     if (m_cachedMonitorColorContext &&
-        m_cachedDestDeviceName == m_displayColorState.gdiDeviceName) {
+        m_cachedDestDeviceName == displayState.gdiDeviceName) {
       if (outIsSrgb)
         *outIsSrgb = m_cachedMonitorIsSrgb;
       return m_cachedMonitorColorContext.CopyTo(outContext);
     }
 
-    m_cachedDestDeviceName = m_displayColorState.gdiDeviceName;
+    m_cachedDestDeviceName = displayState.gdiDeviceName;
     m_cachedMonitorProfilePath.clear();
     m_cachedMonitorColorContext.Reset();
     m_cachedMonitorIsSrgb = true;
 
     HDC hdcMon = CreateDCW(L"DISPLAY",
-                           m_displayColorState.gdiDeviceName.c_str(), NULL, NULL);
+                           displayState.gdiDeviceName.c_str(), NULL, NULL);
     if (hdcMon) {
       DWORD dwLen = 0;
       GetICMProfileW(hdcMon, &dwLen, NULL);
@@ -2323,12 +2339,19 @@ HRESULT CRenderEngine::ResolveDestinationColorContext(
 
 bool CRenderEngine::ShouldUseHdrOutputForFrame(
     const QuickView::RawImageFrame &frame) const {
+  const QuickView::DisplayColorState displayState = GetDisplayColorState();
+  return ShouldUseHdrOutputForFrameLocked(frame, displayState);
+}
+
+bool CRenderEngine::ShouldUseHdrOutputForFrameLocked(
+    const QuickView::RawImageFrame &frame,
+    const QuickView::DisplayColorState &displayState) const {
   // [Fix] When HDR simulation is active on a physically-SDR display,
   // route through HdrToSdr so the output (BGRA8) is actually visible.
   // FP16 output on SDR gets clipped at 1.0 by DWM, rendering all
   // highlights invisible and the slider non-functional.
   if (g_runtime.ForceHdrSimulation &&
-      !m_displayColorState.highDynamicRangeUserEnabled) {
+      !displayState.highDynamicRangeUserEnabled) {
     return false;
   }
 
@@ -2339,7 +2362,7 @@ bool CRenderEngine::ShouldUseHdrOutputForFrame(
     return true;
   }
 
-  return g_config.IsAdvancedColorEnabled(m_displayColorState.advancedColorActive);
+  return g_config.IsAdvancedColorEnabled(displayState.advancedColorActive);
 }
 
 // Helper to standardize D2D1 bitmap properties creation
@@ -2414,6 +2437,8 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
   if (!frame.IsValid())
     return E_INVALIDARG;
 
+  const QuickView::DisplayColorState displayState = GetDisplayColorState();
+
   // ====================================================================
   // [GPU Pipeline] Multi-Layer Composition (GPU Bake)
   // ====================================================================
@@ -2428,7 +2453,7 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
       switch (frame.blendOp) {
           case QuickView::GpuBlendOp::UltraHdrGainMap: {
               QuickView::GpuShaderPayload payload = frame.shaderPayload;
-              payload.targetHeadroom = m_displayColorState.GetHdrHeadroomStops(g_config.HdrPeakNitsOverride);
+              payload.targetHeadroom = displayState.GetHdrHeadroomStops(g_config.HdrPeakNitsOverride);
               const bool useHdrOutput = ShouldUseHdrOutputForFrame(frame);
 
               // [v6.1.4.28] Restore stable behavior: skip GPU composition on SDR displays (headroom <= 0)
@@ -2477,7 +2502,7 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
                   m_bakeCache.lastHeadroom = payload.targetHeadroom;
                   
                   QuickView::ToneMapSettings toneMapSettings =
-                      BuildToneMapSettings(frame, m_displayColorState, true);
+                      BuildToneMapSettings(frame, displayState, true);
                   
                   // Gain Map composition results in a "fake" HDR texture. 
                   // We need to override the peak to match the gain applied.
@@ -2719,7 +2744,7 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
           if (m_computeEngine && m_computeEngine->IsAvailable()) {
               ComPtr<ID3D11Texture2D> pTex;
               const QuickView::ToneMapSettings toneMapSettings =
-                  BuildToneMapSettings(frame, m_displayColorState);
+                  BuildToneMapSettings(frame, displayState);
               QV_LOG("Render_ToneMapDecision",
                   TraceLoggingString("SDR Output Path - ToneMapHdrToSdr", "Path"),
                   TraceLoggingFloat32(g_config.HdrPeakNitsOverride, "HdrPeakNitsOverride"),
@@ -2744,7 +2769,7 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
           if (!rawBitmap) {
               g_runtime.LastFrameGpuToneMapped = false;
               std::vector<uint8_t> sdrPixels(static_cast<size_t>(frame.width) * frame.height * 4);
-              const QuickView::ToneMapSettings toneMapSettings = BuildToneMapSettings(frame, m_displayColorState);
+              const QuickView::ToneMapSettings toneMapSettings = BuildToneMapSettings(frame, displayState);
               const float exposure = toneMapSettings.exposure;
               // Apply exposure
               for (int y = 0; y < frame.height; ++y) {
@@ -2896,18 +2921,21 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
     D2D1_BITMAP_PROPERTIES1 propsWithContext = props;
     propsWithContext.colorContext = srcContext.Get();
 
-    // [Optimization] GPU Compute for non-native format conversion (RGBA/BGRX)
+    // [Optimization] GPU Compute for RGBA/HDR formats only; BGRA/BGRX upload natively via D2D.
     if (!rawBitmap && m_computeEngine && m_computeEngine->IsAvailable() &&
         frame.format != QuickView::PixelFormat::BGRA8888 &&
+        frame.format != QuickView::PixelFormat::BGRX8888 &&
         frame.pixels) {
       ComPtr<ID3D11Texture2D> pTex;
       if (SUCCEEDED(m_computeEngine->UploadAndConvert(
               frame.pixels, (int)frame.width, (int)frame.height, (int)frame.stride, frame.format,
               &pTex))) {
+        D3D11_TEXTURE2D_DESC texDesc{};
+        pTex->GetDesc(&texDesc);
         ComPtr<IDXGISurface> dxgiSurface;
         if (SUCCEEDED(pTex.As(&dxgiSurface))) {
           D2D1_BITMAP_PROPERTIES1 computeProps = propsWithContext;
-          computeProps.pixelFormat.format = DXGI_FORMAT_R8G8B8A8_UNORM;
+          computeProps.pixelFormat.format = texDesc.Format;
           computeProps.pixelFormat.alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED;
           m_d2dContext->CreateBitmapFromDxgiSurface(dxgiSurface.Get(), &computeProps, &rawBitmap);
         }
@@ -3270,6 +3298,36 @@ HRESULT CRenderEngine::ExtractTexturePixels(ID3D11Texture2D* pTexture, QuickView
     D3D11_TEXTURE2D_DESC desc;
     pTexture->GetDesc(&desc);
 
+    QuickView::PixelFormat outFormat = QuickView::PixelFormat::BGRA8888;
+    int bytesPerPixel = 4;
+    switch (desc.Format) {
+        case DXGI_FORMAT_R8G8B8A8_UNORM:
+        case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+            outFormat = QuickView::PixelFormat::RGBA8888;
+            bytesPerPixel = 4;
+            break;
+        case DXGI_FORMAT_B8G8R8A8_UNORM:
+        case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+            outFormat = QuickView::PixelFormat::BGRA8888;
+            bytesPerPixel = 4;
+            break;
+        case DXGI_FORMAT_B8G8R8X8_UNORM:
+        case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
+            outFormat = QuickView::PixelFormat::BGRX8888;
+            bytesPerPixel = 4;
+            break;
+        case DXGI_FORMAT_R16G16B16A16_FLOAT:
+            outFormat = QuickView::PixelFormat::R16G16B16A16_FLOAT;
+            bytesPerPixel = 8;
+            break;
+        case DXGI_FORMAT_R32G32B32A32_FLOAT:
+            outFormat = QuickView::PixelFormat::R32G32B32A32_FLOAT;
+            bytesPerPixel = 16;
+            break;
+        default:
+            return E_NOTIMPL;
+    }
+
     D3D11_TEXTURE2D_DESC stagingDesc = desc;
     stagingDesc.Usage = D3D11_USAGE_STAGING;
     stagingDesc.BindFlags = 0;
@@ -3288,10 +3346,8 @@ HRESULT CRenderEngine::ExtractTexturePixels(ID3D11Texture2D* pTexture, QuickView
 
     outFrame->width = static_cast<int>(desc.Width);
     outFrame->height = static_cast<int>(desc.Height);
-    outFrame->stride = static_cast<int>(desc.Width * 4);
-    outFrame->format = (desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM) 
-                       ? QuickView::PixelFormat::RGBA8888 
-                       : QuickView::PixelFormat::BGRA8888;
+    outFrame->stride = static_cast<int>(desc.Width) * bytesPerPixel;
+    outFrame->format = outFormat;
     outFrame->pixels = new uint8_t[static_cast<size_t>(outFrame->stride) * outFrame->height];
     outFrame->memoryDeleter = QuickView::MemoryDeleter::FromDeleteArray();
 
@@ -3307,17 +3363,69 @@ HRESULT CRenderEngine::ExtractTexturePixels(ID3D11Texture2D* pTexture, QuickView
 
 HRESULT CRenderEngine::ExtractBitmapPixels(ID2D1Bitmap* pBitmap, QuickView::RawImageFrame* outFrame) {
     if (!pBitmap || !outFrame) return E_INVALIDARG;
-    if (!m_d3dDevice || !m_d3dContext) return E_FAIL;
+    if (!m_d3dDevice || !m_d3dContext || !m_d2dContext) return E_FAIL;
 
     std::lock_guard<std::recursive_mutex> lock(m_gpuContextMutex);
 
-    ComPtr<IDXGISurface> dxgiSurface;
-    HRESULT hr = pBitmap->QueryInterface(IID_PPV_ARGS(&dxgiSurface));
-    if (SUCCEEDED(hr) && dxgiSurface) {
-        ComPtr<ID3D11Texture2D> srcTexture;
-        if (SUCCEEDED(dxgiSurface.As(&srcTexture)) && srcTexture) {
-            return ExtractTexturePixels(srcTexture.Get(), outFrame);
+    ComPtr<ID2D1Bitmap1> bitmap1;
+    if (SUCCEEDED(pBitmap->QueryInterface(IID_PPV_ARGS(&bitmap1))) && bitmap1) {
+        ComPtr<IDXGISurface> dxgiSurface;
+        if (SUCCEEDED(bitmap1->GetSurface(&dxgiSurface)) && dxgiSurface) {
+            ComPtr<ID3D11Texture2D> srcTexture;
+            if (SUCCEEDED(dxgiSurface.As(&srcTexture)) && srcTexture) {
+                return ExtractTexturePixels(srcTexture.Get(), outFrame);
+            }
         }
     }
-    return E_FAIL;
+
+    // Fallback for D2D bitmaps without an exposed DXGISurface (copy into CPU-readable D2D staging bitmap)
+    const D2D1_SIZE_U sz = pBitmap->GetPixelSize();
+    const D2D1_PIXEL_FORMAT pxFmt = pBitmap->GetPixelFormat();
+    if (sz.width == 0 || sz.height == 0) return E_INVALIDARG;
+
+    QuickView::PixelFormat outFormat = QuickView::PixelFormat::BGRA8888;
+    int bytesPerPixel = 4;
+    if (pxFmt.format == DXGI_FORMAT_R8G8B8A8_UNORM || pxFmt.format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) {
+        outFormat = QuickView::PixelFormat::RGBA8888;
+    } else if (pxFmt.format == DXGI_FORMAT_B8G8R8X8_UNORM || pxFmt.format == DXGI_FORMAT_B8G8R8X8_UNORM_SRGB) {
+        outFormat = QuickView::PixelFormat::BGRX8888;
+    } else if (pxFmt.format == DXGI_FORMAT_R16G16B16A16_FLOAT) {
+        outFormat = QuickView::PixelFormat::R16G16B16A16_FLOAT;
+        bytesPerPixel = 8;
+    } else if (pxFmt.format == DXGI_FORMAT_R32G32B32A32_FLOAT) {
+        outFormat = QuickView::PixelFormat::R32G32B32A32_FLOAT;
+        bytesPerPixel = 16;
+    } else if (pxFmt.format != DXGI_FORMAT_B8G8R8A8_UNORM && pxFmt.format != DXGI_FORMAT_B8G8R8A8_UNORM_SRGB) {
+        return E_NOTIMPL;
+    }
+
+    D2D1_BITMAP_PROPERTIES1 cpuProps = D2D1::BitmapProperties1(
+        D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW, pxFmt);
+    ComPtr<ID2D1Bitmap1> cpuBitmap;
+    HRESULT hr = m_d2dContext->CreateBitmap(sz, nullptr, 0, &cpuProps, &cpuBitmap);
+    if (FAILED(hr) || !cpuBitmap) return hr;
+
+    const D2D1_POINT_2U dstPt = D2D1::Point2U(0, 0);
+    const D2D1_RECT_U srcRect = D2D1::RectU(0, 0, sz.width, sz.height);
+    hr = cpuBitmap->CopyFromBitmap(&dstPt, pBitmap, &srcRect);
+    if (FAILED(hr)) return hr;
+
+    D2D1_MAPPED_RECT mapped{};
+    hr = cpuBitmap->Map(D2D1_MAP_OPTIONS_READ, &mapped);
+    if (FAILED(hr)) return hr;
+
+    outFrame->width = static_cast<int>(sz.width);
+    outFrame->height = static_cast<int>(sz.height);
+    outFrame->stride = static_cast<int>(sz.width) * bytesPerPixel;
+    outFrame->format = outFormat;
+    outFrame->pixels = new uint8_t[static_cast<size_t>(outFrame->stride) * outFrame->height];
+    outFrame->memoryDeleter = QuickView::MemoryDeleter::FromDeleteArray();
+
+    for (UINT32 row = 0; row < sz.height; ++row) {
+        memcpy(outFrame->pixels + static_cast<size_t>(row) * outFrame->stride,
+               mapped.bits + static_cast<size_t>(row) * mapped.pitch,
+               outFrame->stride);
+    }
+    cpuBitmap->Unmap();
+    return S_OK;
 }

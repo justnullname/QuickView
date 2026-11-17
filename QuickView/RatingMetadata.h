@@ -23,6 +23,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 // Reading ratings must never touch the decode pipeline, so these parsers work
 // on a plain byte prefix of a file (a header read) and pull in nothing but the
@@ -83,6 +84,37 @@ std::optional<int> ParseIsobmffRating(std::span<const uint8_t> bytes);
 //   2. If container (starts with JXL signature box): scans boxes for Exif, xml, or brob
 // Returns nothing when absent or malformed.
 std::optional<int> ParseJxlRating(std::span<const uint8_t> bytes);
+
+// Decode IFD0 tag 0x4746 (SimpleRating) value field (4 inline bytes).
+std::optional<int> DecodeTiffRatingEntry(uint16_t type, uint32_t count,
+                                         std::span<const uint8_t> valueField,
+                                         bool bigEndian);
+
+// Parse ISOBMFF/JXL Exif item payload ([4-byte big-endian tiffOffset][TIFF data]).
+std::optional<int> ParseIsoExifPayload(std::span<const uint8_t> payload);
+
+// Streaming Brotli decompression capped at maxOutputBytes (returns empty on error or cap exceeded).
+std::vector<uint8_t> DecompressBrotliBounded(std::span<const uint8_t> compressed,
+                                             size_t maxOutputBytes = 4u * 1024u * 1024u);
+
+struct IsobmffMetaLocations {
+    bool hasExif = false;
+    uint64_t exifOffset = 0;
+    uint64_t exifLength = 0;
+    bool exifInIdat = false;
+
+    bool hasXmp = false;
+    uint64_t xmpOffset = 0;
+    uint64_t xmpLength = 0;
+    bool xmpInIdat = false;
+
+    uint64_t idatOffsetInMeta = 0;
+    uint64_t idatLength = 0;
+};
+
+// Parse an ISOBMFF 'meta' FullBox (including its 8/16-byte box header) to extract
+// primary Exif and XMP item locations safely.
+bool ParseIsobmffMetaLocations(std::span<const uint8_t> metaBox, IsobmffMetaLocations& out);
 
 // Replace xmp:Rating inside an existing XMP document, touching nothing else.
 // A sidecar written by Lightroom or Capture One carries the develop settings

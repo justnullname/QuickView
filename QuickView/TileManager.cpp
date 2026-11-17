@@ -503,6 +503,15 @@ namespace QuickView {
         if (endY > maxRows) endY = maxRows;
 
         progress.lod = self->m_currentLOD;
+        for (int y = startY; y < endY; ++y) {
+            for (int x = startX; x < endX; ++x) {
+                ++progress.totalTiles;
+                TileEntry* entry = layer->GetEntry(x, y);
+                if (entry && entry->state.load(std::memory_order_relaxed) == TileStateCode::Ready) {
+                    ++progress.readyTiles;
+                }
+            }
+        }
         return progress;
     }
 

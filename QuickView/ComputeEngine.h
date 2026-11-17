@@ -2,6 +2,7 @@
 #include "pch.h"
 #include <d3d11.h>
 #include <wrl/client.h>
+#include <mutex>
 #include <vector>
 #include <memory>
 #include "ImageTypes.h"
@@ -71,7 +72,7 @@ public:
     /// Initialize Compute Context associated with a Render Device.
     /// Needs existing D3D11 Device (from RenderEngine) to share resources.
     /// </summary>
-    HRESULT Initialize(ID3D11Device* pDevice);
+    HRESULT Initialize(ID3D11Device* pDevice, std::recursive_mutex* contextMutex = nullptr);
 
     /// <summary>
     /// Available Compute Capability Check
@@ -181,8 +182,14 @@ public:
         GamutMaskReadback* outReadback);
 
 private:
+    std::recursive_mutex& ContextMutex() const noexcept {
+        return m_externalContextMutex ? *m_externalContextMutex : m_internalContextMutex;
+    }
+
     ComPtr<ID3D11Device> m_d3dDevice;
     ComPtr<ID3D11DeviceContext> m_d3dContext;
+    std::recursive_mutex* m_externalContextMutex = nullptr;
+    mutable std::recursive_mutex m_internalContextMutex;
     bool m_valid = false;
 
     // Shader Cache

@@ -51,7 +51,7 @@ enum class OptionType {
 };
 
 struct SettingsItem {
-    std::wstring label = L"";
+    std::wstring label{};
     OptionType type = OptionType::Toggle;
 
     bool* pBoolVal = nullptr;
@@ -76,17 +76,17 @@ struct SettingsItem {
     bool isHovered2 = false; 
     
     bool isDisabled = false;
-    std::wstring disabledText = L""; 
+    std::wstring disabledText{}; 
     const wchar_t* tooltipText = nullptr;
     D2D1_RECT_F tooltipIconRect = {};
     
-    std::wstring buttonText = L"Select";  
+    std::wstring buttonText{};  
     const wchar_t* buttonText2 = nullptr;       
     const wchar_t* buttonActivatedText = nullptr;     
     bool isActivated = false;             
     bool isDestructive = false;           
 
-    std::wstring statusText = L"";
+    std::wstring statusText{};
     D2D1::ColorF statusColor = D2D1::ColorF(D2D1::ColorF::White);
     DWORD statusSetTime = 0; 
     
@@ -178,11 +178,24 @@ public:
         m_pendingRebuild.store(true, std::memory_order_release);
     }
 
+    void InvalidateAiSync() { m_aiSyncDirty = true; }
+    void ClearAiSyncDirty() { m_aiSyncDirty = false; }
+    bool IsAiTabActiveAndDirty() const { return m_activeTab == m_aiTabIdx && m_aiSyncDirty; }
+    void InvalidatePluginsProbe() { m_pluginsProbeValid = false; }
+
+    static constexpr UINT WM_SETTINGS_UI_EVENT = WM_APP + 120;
+    static void HandleUiEventMessage(WPARAM wParam, LPARAM lParam);
+
     bool IsCapturingHotkey() const { return m_capturingHotkey; }
+    void ResetHotkeyCapture(bool rebuild = true) {
+        if (m_capturingHotkey || m_capturingAction != HotkeyAction::None) {
+            m_capturingHotkey = false;
+            m_capturingAction = HotkeyAction::None;
+            if (rebuild) RequestRebuild();
+        }
+    }
     void CancelHotkeyCapture() {
-        m_capturingHotkey = false;
-        m_capturingAction = HotkeyAction::None;
-        RequestRebuild();
+        ResetHotkeyCapture(true);
     }
     void OnHotkeyCaptured(const KeyCombo& combo);
 
@@ -200,8 +213,27 @@ private:
     void BuildAdvancedTab(SettingsTab& tabAdvanced);
     void BuildAboutTab(SettingsTab& tabAbout);
     
+    struct TagCloudPillCache {
+        std::wstring displayText;
+        int activeIndex = 0;
+        bool isActive = false;
+        float relX = 0.0f;
+        float relY = 0.0f;
+        float width = 0.0f;
+    };
+    struct TagCloudCacheEntry {
+        const SettingsItem* item = nullptr;
+        float contentW = -1.0f;
+        float scale = -1.0f;
+        std::wstring activeStr;
+        float totalH = 0.0f;
+        std::vector<TagCloudPillCache> pills;
+    };
     float MeasureTagCloudHeight(const SettingsItem& item, float contentW, float s) const;
+    const TagCloudCacheEntry& EnsureTagCloudLayoutCache(const SettingsItem& item, float contentW, float s) const;
     void ToggleTagCloudOption(SettingsItem& item, int idx);
+    bool OpenInputItemDialog(size_t tabIdx, size_t itemIdx);
+    void CancelSliderInputState();
     
     void DrawToggle(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rect, bool isOn, bool isHovered);
     void DrawSlider(ID2D1DeviceContext *pRT, const D2D1_RECT_F &rect, float val,
@@ -312,7 +344,6 @@ private:
     HWND m_hwnd = nullptr; 
     
     int m_hoverLinkIndex = -1; 
-    bool m_isHoveringCopyright = false;
     
     std::wstring GetRealWindowsVersion();
     void OnGlassMaterialChanged(bool save = true);
@@ -362,11 +393,23 @@ private:
     int m_gestureDropdownScrollOffset = 0;
 
     void CloseGestureDropdown();
+    D2D1_RECT_F ComputeDropdownPopupRect(const D2D1_RECT_F& anchorRect, float dropW, int count) const;
+    void DrawDropdownPopup(ID2D1DeviceContext* pRT, const D2D1_RECT_F& dropRect, int count,
+                           int selectedIdx, int hoverIdx, int scrollOffset,
+                           std::wstring_view (*getLabel)(int, void*), void* userData);
     D2D1_RECT_F GetGestureDropdownRect() const;
     void DrawGestureDropdown(ID2D1DeviceContext* pRT);
 
     static int s_controlSubTab;
     static int s_gesturePresetIdx;
+
+    // Tab probe & cache state
+    int m_pluginsTabIdx = -1;
+    int m_aiTabIdx = -1;
+    bool m_pluginsProbeValid = false;
+    bool m_aiSyncDirty = true;
+    int m_hoverSubRectHash = 0;
+    mutable std::vector<TagCloudCacheEntry> m_tagCloudCache;
 
     // File Association Center state
     QuickView::FileAssocProbeSummary m_assocProbe{};

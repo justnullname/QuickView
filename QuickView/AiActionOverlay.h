@@ -12,6 +12,7 @@
 #include <wrl/client.h>
 #include "GeekGlass.h"
 #include "AiActionTypes.h"
+#include "AiActionManager.h"
 
 namespace QuickView::UI {
 
@@ -44,6 +45,9 @@ public:
     }
     void StartInpaintSelection(std::wstring customPrompt = L"", std::string pendingActionId = "");
 
+    static AI::ActionCallback MakeWindowCompletionCallback(std::wstring actionName);
+    static void StartProgressPoller(HWND hwnd, uint64_t taskId, std::wstring actName, bool isSdWebUi, std::string baseUrl);
+
     // Text & Filter callbacks (called from Edit control subclass)
     void OnPromptTextChanged();
     void ExecuteSelectedOrPrompt();
@@ -59,6 +63,7 @@ private:
     ~AiActionOverlay();
 
     void CreateDeviceResources(ID2D1DeviceContext* dc);
+    void ComputeLayoutMetrics(float winW, float winH, float& outHudW, float& outHeaderH, float& outPromptBoxH, float& outInpaintCardH, float& outItemH, float& outPadding, float& outFooterH, int& outVisibleCount, bool& outShowAdhocCard, float& outListH);
     void CreateOrUpdateEditControl();
     void UpdateFilteredActions();
     void TriggerAction(size_t filteredIndex);

@@ -27,6 +27,7 @@ struct BootPreloadData {
     bool decodeSuccess = false;
     std::atomic<bool> headerReady{false};
     std::atomic<bool> frameReady{false};
+    std::atomic<bool> notified{false};
 };
 
 class BootPreloader {
@@ -74,7 +75,7 @@ private:
 
     std::shared_ptr<BootPreloadData> m_data;
     std::jthread m_thread;
-    std::mutex m_mutex;
+    mutable std::mutex m_mutex;
     std::condition_variable m_cvHeader;
     std::condition_variable m_cvFrame;
     std::atomic<bool> m_active{false};

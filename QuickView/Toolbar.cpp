@@ -122,7 +122,7 @@ void Toolbar::CreateResources(ID2D1RenderTarget *pRT) {
   m_textFormatUI.Reset();
   m_dwriteFactory->CreateTextFormat(
       L"Segoe UI", NULL, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-      DWRITE_FONT_STRETCH_NORMAL, 11.5f * m_uiScale, AppStrings::CurrentLocale,
+      DWRITE_FONT_STRETCH_NORMAL, 11.5f * m_uiScale, AppStrings::g.CurrentLocale,
       &m_textFormatUI);
   if (m_textFormatUI) {
     m_textFormatUI->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
@@ -539,96 +539,96 @@ void Toolbar::UpdateLayout(float winW, float winH) {
 const wchar_t *GetTooltipText(const ToolbarButton &btn) {
   switch (btn.id) {
   case ToolbarButtonID::SlideshowImmersiveToggle:
-    return AppStrings::Toolbar_Tooltip_SlideshowImmersiveToggle;
+    return AppStrings::g.Toolbar_Tooltip_SlideshowImmersiveToggle;
   case ToolbarButtonID::SlideshowExit:
-    return AppStrings::Toolbar_Tooltip_SlideshowExit;
+    return AppStrings::g.Toolbar_Tooltip_SlideshowExit;
   case ToolbarButtonID::Prev:
-    return AppStrings::Toolbar_Tooltip_Prev;
+    return AppStrings::g.Toolbar_Tooltip_Prev;
   case ToolbarButtonID::Next:
-    return AppStrings::Toolbar_Tooltip_Next;
+    return AppStrings::g.Toolbar_Tooltip_Next;
   case ToolbarButtonID::RotateL:
-    return AppStrings::Toolbar_Tooltip_RotateL;
+    return AppStrings::g.Toolbar_Tooltip_RotateL;
   case ToolbarButtonID::RotateR:
-    return AppStrings::Toolbar_Tooltip_RotateR;
+    return AppStrings::g.Toolbar_Tooltip_RotateR;
   case ToolbarButtonID::FlipH:
-    return AppStrings::Toolbar_Tooltip_FlipH;
+    return AppStrings::g.Toolbar_Tooltip_FlipH;
   case ToolbarButtonID::LockSize:
-    return btn.isToggled ? AppStrings::Toolbar_Tooltip_Unlock
-                         : AppStrings::Toolbar_Tooltip_Lock;
+    return btn.isToggled ? AppStrings::g.Toolbar_Tooltip_Unlock
+                         : AppStrings::g.Toolbar_Tooltip_Lock;
   case ToolbarButtonID::Gallery:
-    return AppStrings::Toolbar_Tooltip_Gallery;
+    return AppStrings::g.Toolbar_Tooltip_Gallery;
   case ToolbarButtonID::Exif:
-    return AppStrings::Toolbar_Tooltip_Info;
+    return AppStrings::g.Toolbar_Tooltip_Info;
   case ToolbarButtonID::RawToggle:
     // [RAW+JPEG Pairing] On a paired item the button switches the displayed
     // file rather than the decode quality
     if (btn.isPaired)
-      return btn.isToggled ? AppStrings::Toolbar_Tooltip_RawPairBack
-                           : AppStrings::Toolbar_Tooltip_RawPairView;
-    return btn.isToggled ? AppStrings::Toolbar_Tooltip_RawFull
-                         : AppStrings::Toolbar_Tooltip_RawPreview;
+      return btn.isToggled ? AppStrings::g.Toolbar_Tooltip_RawPairBack
+                           : AppStrings::g.Toolbar_Tooltip_RawPairView;
+    return btn.isToggled ? AppStrings::g.Toolbar_Tooltip_RawFull
+                         : AppStrings::g.Toolbar_Tooltip_RawPreview;
   case ToolbarButtonID::CompareRawToggle:
     if (!btn.isEnabled) return nullptr;
-    return btn.isToggled ? AppStrings::Toolbar_Tooltip_RawFull
-                         : AppStrings::Toolbar_Tooltip_RawPreview;
+    return btn.isToggled ? AppStrings::g.Toolbar_Tooltip_RawFull
+                         : AppStrings::g.Toolbar_Tooltip_RawPreview;
   case ToolbarButtonID::FixExtension:
-    return AppStrings::Toolbar_Tooltip_FixExtension;
+    return AppStrings::g.Toolbar_Tooltip_FixExtension;
   case ToolbarButtonID::GamutWarning:
-    return AppStrings::Toolbar_Tooltip_GamutWarning;
+    return AppStrings::g.Toolbar_Tooltip_GamutWarning;
   case ToolbarButtonID::Pin:
-    return btn.isToggled ? AppStrings::Toolbar_Tooltip_Unpin
-                         : AppStrings::Toolbar_Tooltip_Pin;
+    return btn.isToggled ? AppStrings::g.Toolbar_Tooltip_Unpin
+                         : AppStrings::g.Toolbar_Tooltip_Pin;
   case ToolbarButtonID::CompareToggle:
     if (g_navigator.GetArchive() != nullptr) {
-      return btn.isToggled ? AppStrings::Toolbar_Tooltip_SinglePage : AppStrings::Toolbar_Tooltip_DualPage;
+      return btn.isToggled ? AppStrings::g.Toolbar_Tooltip_SinglePage : AppStrings::g.Toolbar_Tooltip_DualPage;
     }
-    return btn.isToggled ? AppStrings::Toolbar_Tooltip_NormalMode : AppStrings::Toolbar_Tooltip_CompareMode;
+    return btn.isToggled ? AppStrings::g.Toolbar_Tooltip_NormalMode : AppStrings::g.Toolbar_Tooltip_CompareMode;
   case ToolbarButtonID::CompareOpen:
-    return AppStrings::Toolbar_Tooltip_CompareOpen;
+    return AppStrings::g.Toolbar_Tooltip_CompareOpen;
   case ToolbarButtonID::CompareSwap:
-    return AppStrings::Toolbar_Tooltip_CompareSwap;
+    return AppStrings::g.Toolbar_Tooltip_CompareSwap;
   case ToolbarButtonID::CompareLayout:
-    return AppStrings::Toolbar_Tooltip_CompareLayout;
+    return AppStrings::g.Toolbar_Tooltip_CompareLayout;
   case ToolbarButtonID::CompareInfo:
-    return AppStrings::Toolbar_Tooltip_CompareInfo;
+    return AppStrings::g.Toolbar_Tooltip_CompareInfo;
   case ToolbarButtonID::CompareDelete:
-    return AppStrings::Toolbar_Tooltip_CompareDelete;
+    return AppStrings::g.Toolbar_Tooltip_CompareDelete;
   case ToolbarButtonID::CompareZoomIn:
-    return AppStrings::Toolbar_Tooltip_CompareZoomIn;
+    return AppStrings::g.Toolbar_Tooltip_CompareZoomIn;
   case ToolbarButtonID::CompareZoomOut:
-    return AppStrings::Toolbar_Tooltip_CompareZoomOut;
+    return AppStrings::g.Toolbar_Tooltip_CompareZoomOut;
   case ToolbarButtonID::CompareSyncZoom:
-    return btn.isToggled ? AppStrings::Toolbar_Tooltip_CompareSyncZoomOn : AppStrings::Toolbar_Tooltip_CompareSyncZoomOff;
+    return btn.isToggled ? AppStrings::g.Toolbar_Tooltip_CompareSyncZoomOn : AppStrings::g.Toolbar_Tooltip_CompareSyncZoomOff;
   case ToolbarButtonID::CompareSyncPan:
-    return btn.isToggled ? AppStrings::Toolbar_Tooltip_CompareSyncPanOn : AppStrings::Toolbar_Tooltip_CompareSyncPanOff;
+    return btn.isToggled ? AppStrings::g.Toolbar_Tooltip_CompareSyncPanOn : AppStrings::g.Toolbar_Tooltip_CompareSyncPanOff;
   case ToolbarButtonID::CompareSave:
-    return AppStrings::Toolbar_Tooltip_CompareSave;
+    return AppStrings::g.Toolbar_Tooltip_CompareSave;
   case ToolbarButtonID::CompareExit:
-    return AppStrings::Toolbar_Tooltip_CompareExit;
+    return AppStrings::g.Toolbar_Tooltip_CompareExit;
   case ToolbarButtonID::AnimPlayPause:
-    return btn.isToggled ? AppStrings::Toolbar_Tooltip_AnimPause : AppStrings::Toolbar_Tooltip_AnimPlay;
+    return btn.isToggled ? AppStrings::g.Toolbar_Tooltip_AnimPause : AppStrings::g.Toolbar_Tooltip_AnimPlay;
   case ToolbarButtonID::AnimPrevFrame:
-    return AppStrings::Toolbar_Tooltip_AnimPrev;
+    return AppStrings::g.Toolbar_Tooltip_AnimPrev;
   case ToolbarButtonID::AnimNextFrame:
-    return AppStrings::Toolbar_Tooltip_AnimNext;
+    return AppStrings::g.Toolbar_Tooltip_AnimNext;
   case ToolbarButtonID::AnimDirtyRect:
-    return btn.isToggled ? AppStrings::Toolbar_Tooltip_AnimDirtyOn : AppStrings::Toolbar_Tooltip_AnimDirtyOff;
+    return btn.isToggled ? AppStrings::g.Toolbar_Tooltip_AnimDirtyOn : AppStrings::g.Toolbar_Tooltip_AnimDirtyOff;
   case ToolbarButtonID::OverlayAlphaUp:
-    return AppStrings::Toolbar_Tooltip_OverlayAlphaUp;
+    return AppStrings::g.Toolbar_Tooltip_OverlayAlphaUp;
   case ToolbarButtonID::OverlayAlphaDown:
-    return AppStrings::Toolbar_Tooltip_OverlayAlphaDown;
+    return AppStrings::g.Toolbar_Tooltip_OverlayAlphaDown;
   case ToolbarButtonID::OverlayPassthrough:
-    return btn.isToggled ? AppStrings::Toolbar_Tooltip_OverlayPassthroughOff : AppStrings::Toolbar_Tooltip_OverlayPassthroughOn;
+    return btn.isToggled ? AppStrings::g.Toolbar_Tooltip_OverlayPassthroughOff : AppStrings::g.Toolbar_Tooltip_OverlayPassthroughOn;
   case ToolbarButtonID::OverlayExit:
-    return AppStrings::Toolbar_Tooltip_OverlayExit;
+    return AppStrings::g.Toolbar_Tooltip_OverlayExit;
   case ToolbarButtonID::CropCopy:
-    return AppStrings::Toolbar_Tooltip_CropCopy;
+    return AppStrings::g.Toolbar_Tooltip_CropCopy;
   case ToolbarButtonID::CropSave:
-    return AppStrings::Toolbar_Tooltip_CropSave;
+    return AppStrings::g.Toolbar_Tooltip_CropSave;
   case ToolbarButtonID::CropApply:
-    return AppStrings::Toolbar_Tooltip_CropApply;
+    return AppStrings::g.Toolbar_Tooltip_CropApply;
   case ToolbarButtonID::CropCancel:
-    return AppStrings::Toolbar_Tooltip_CropCancel;
+    return AppStrings::g.Toolbar_Tooltip_CropCancel;
   default:
     return nullptr;
   }
@@ -1003,7 +1003,7 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
   }
 
   if (!activeTip && (m_animMode || m_slideshowMode) && m_animSpeedHover) {
-    activeTip = AppStrings::Toolbar_Tooltip_AnimSpeed;
+    activeTip = AppStrings::g.Toolbar_Tooltip_AnimSpeed;
     activeRect = m_animSpeedRect;
   }
 
@@ -1017,7 +1017,7 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
       m_dwriteFactory->CreateTextFormat(
           L"Segoe UI", NULL, DWRITE_FONT_WEIGHT_NORMAL,
           DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-          12.0f * m_uiScale, AppStrings::CurrentLocale, &tooltipFormat);
+          12.0f * m_uiScale, AppStrings::g.CurrentLocale, &tooltipFormat);
       if (tooltipFormat) {
         tooltipFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         tooltipFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);

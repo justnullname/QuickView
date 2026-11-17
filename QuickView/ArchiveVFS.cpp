@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "ArchiveVFS.h"
 #include "StringUtils.h"
+#include "SupportedExtensions.h"
 #include "QuickViewETW.h"
 #include "../third_party/unrar-mini/rar.hpp"
 
@@ -18,11 +19,11 @@ namespace QuickView {
 
         if (g_archiveCache.size() >= 8) g_archiveCache.clear();
 
-        ::std::wstring ext = ::std::filesystem::path(path).extension().wstring();
-        ::std::transform(ext.begin(), ext.end(), ext.begin(), [](wchar_t c) { return (wchar_t)::towlower(c); });
+        const std::wstring_view ext = QuickView::ExtensionOf(path);
 
         ::std::shared_ptr<IArchive> res;
-        if (ext == L".cbr" || ext == L".rar") res = ::std::make_shared<RarArchive>(path);
+        if (QuickView::ExtEqualsIgnoreCase(ext, L".cbr") || QuickView::ExtEqualsIgnoreCase(ext, L".rar"))
+            res = ::std::make_shared<RarArchive>(path);
         else res = ::std::make_shared<ZipArchive>(path);
 
         if (res && res->IsValid()) {
@@ -306,7 +307,9 @@ namespace QuickView {
             } else {
                 if (inflateReset(m_zstream.get()) != Z_OK) {
                     inflateEnd(m_zstream.get());
+                    m_zstream_init = false;
                     if (inflateInit2(m_zstream.get(), -MAX_WBITS) != Z_OK) return 0;
+                    m_zstream_init = true;
                 }
             }
 

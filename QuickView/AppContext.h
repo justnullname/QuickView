@@ -69,6 +69,35 @@ struct DialogState {
     DialogResult FinalResult = DialogResult::None;
     bool UseCustomCenter = false;
     D2D1_POINT_2F CustomCenter = D2D1::Point2F(0.0f, 0.0f);
+
+    /// Resets per-dialog content, mode flags, and interaction state (preserving UseCustomCenter/CustomCenter set prior to Show*).
+    void ResetModeState() {
+        Title.clear();
+        Message.clear();
+        QualityText.clear();
+        Buttons.clear();
+        SelectedButtonIndex = 0;
+        HasCheckbox = false;
+        CheckboxText.clear();
+        IsChecked = false;
+        HasCheckbox2 = false;
+        Checkbox2Text.clear();
+        IsChecked2 = false;
+        HasInput = false;
+        IsMultiLineInput = false;
+        InputText.clear();
+        hEdit = nullptr;
+        hInputHost = nullptr;
+        oldEditProc = nullptr;
+        hFont = nullptr;
+        HasChoice = false;
+        ChoiceOptions.clear();
+        SelectedChoiceIndex = 0;
+        IsChoiceDropdownOpen = false;
+        HoverChoiceIndex = -1;
+        IsChoiceHovered = false;
+        FinalResult = DialogResult::None;
+    }
 };
 
 // --- Smooth Zoom Definitions ---

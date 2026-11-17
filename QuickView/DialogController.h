@@ -13,7 +13,7 @@ public:
     ~DialogController() = default;
 
     std::optional<LRESULT> HandleMessage(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
-    void Render(ID2D1DeviceContext* ctx);
+    void Render(ID2D1DeviceContext* ctx, IDWriteFactory* dwriteFactory = nullptr);
 
     DialogResult ShowDialog(HWND hwnd, const std::wstring& title, const std::wstring& messageContent,
                             D2D1_COLOR_F accentColor, const std::vector<DialogButton>& buttons,

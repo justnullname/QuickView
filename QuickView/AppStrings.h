@@ -23,897 +23,867 @@ namespace AppStrings {
         French = 8
     };
 
-    extern const wchar_t* CurrentLocale;
-
     void Init();
     void SetLanguage(Language lang);
 
-    // OSD Messages
-    extern const wchar_t* OSD_NoImage;
-    extern const wchar_t* OSD_FolderEmpty;
-    extern const wchar_t* OSD_SvgStaticFallback;
-    extern const wchar_t* OSD_Lossless;
-    extern const wchar_t* OSD_ReencodedLossless;
-    extern const wchar_t* OSD_EdgeAdapted;
-    extern const wchar_t* OSD_Reencoded;
-    extern const wchar_t* OSD_ReadOnly;
-    extern const wchar_t* OSD_NotPerfect;
-    extern const wchar_t* OSD_SpanOn;
-    extern const wchar_t* OSD_SpanOff;
-    extern const wchar_t* OSD_CompareBefore;
-    extern const wchar_t* OSD_CompareAfter;
-    extern const wchar_t* OSD_CompareAnimNotSupported;
-    extern const wchar_t* OSD_UndoDeleteSuccess;
-    extern const wchar_t* OSD_UndoDeleteFailed;
-    extern const wchar_t* OSD_UndoRenameSuccess;
-    extern const wchar_t* OSD_UndoRenameFailed;
-    extern const wchar_t* OSD_UndoTransformSuccess;
-    extern const wchar_t* OSD_UndoTransformFailed;
-    // Transform Action Names
-    extern const wchar_t* Action_RotateCW;
-    extern const wchar_t* Action_RotateCCW;
-    extern const wchar_t* Action_Rotate180;
-    extern const wchar_t* Action_FlipH;
-    extern const wchar_t* Action_FlipV;
+    struct Strings {
+        const wchar_t* CurrentLocale = nullptr;
 
-    // Dialog Strings
-    extern const wchar_t* Dialog_SaveTitle;
-    extern const wchar_t* Dialog_SaveContent;
-    extern const wchar_t* Dialog_ButtonSave;
-    extern const wchar_t* Dialog_ButtonSaveAs;
-    extern const wchar_t* Dialog_ButtonDiscard;
-    extern const wchar_t* Dialog_ButtonContinue;
-    extern const wchar_t* Dialog_CropUnsavedTitle;
-    extern const wchar_t* Dialog_SaveAsTitle;
-    extern const wchar_t* Dialog_ExportTitle;
-    extern const wchar_t* Dialog_ButtonOverwrite;
-    extern const wchar_t* Dialog_EmbedICC;
-    extern const wchar_t* Dialog_SizeEstimating;
-    extern const wchar_t* Dialog_ExportError;
 
-    // Context Menu
-    extern const wchar_t* Context_Open;
-    extern const wchar_t* Context_Crop;
-    extern const wchar_t* Context_SuperResolution;
-    extern const wchar_t* Context_AiAction;
-    extern const wchar_t* Context_OpenWith;
-    extern const wchar_t* Context_Edit;
-    extern const wchar_t* Context_ShowInExplorer;
-    extern const wchar_t* Context_OpenFolder;
-    extern const wchar_t* Context_CopyPixels;
-    extern const wchar_t* Context_CopyFile;
-    extern const wchar_t* Context_CopyPath;
-    extern const wchar_t* Context_Print;
-    extern const wchar_t* Context_RotateCW;
-    extern const wchar_t* Context_RotateCCW;
-    extern const wchar_t* Context_FlipH;
-    extern const wchar_t* Context_FlipV;
-    extern const wchar_t* Context_Transform;
-    extern const wchar_t* Context_ActualSize;
-    extern const wchar_t* Context_FitToScreen;
-    extern const wchar_t* Context_FitWindow;
-    extern const wchar_t* Context_FillWindow;
-    extern const wchar_t* Context_ZoomIn;
-    extern const wchar_t* Context_ZoomOut;
-    extern const wchar_t* Context_LockWindow;
-    extern const wchar_t* Context_AlwaysOnTop;
-    extern const wchar_t* Context_HUDGallery;
-    extern const wchar_t* Context_LiteInfoPanel;
-    extern const wchar_t* Context_FullInfoPanel;
-    extern const wchar_t* Context_RenderRAW;
-    extern const wchar_t* Context_PixelArtMode;
-    extern const wchar_t* Context_Fullscreen;
-    extern const wchar_t* Context_SlideshowMode;
-    extern const wchar_t* Context_SpanDisplays;
-    extern const wchar_t* Context_View;
-    extern const wchar_t* Context_WallpaperFill;
-    extern const wchar_t* Context_WallpaperFit;
-    extern const wchar_t* Context_WallpaperTile;
-    extern const wchar_t* Context_SetAsWallpaper;
-    extern const wchar_t* Context_Rename;
-    extern const wchar_t* Context_FixExtension;
-    extern const wchar_t* Context_Delete;
-    extern const wchar_t* Context_UndoDelete;
-    extern const wchar_t* Context_UndoRename;
-    extern const wchar_t* Context_UndoTransform;
-    extern const wchar_t* Context_Undo; // New
-    extern const wchar_t* Context_SortBy;
-    extern const wchar_t* Context_NavOrder;
-    extern const wchar_t* Context_SortAscending;
-    extern const wchar_t* Context_SortDescending;
-    extern const wchar_t* Context_Settings;
-    extern const wchar_t* Context_CompareMode; // New
-    extern const wchar_t* Context_OverlayMode;
-    extern const wchar_t* Context_GalleryOpenCompare;
-    extern const wchar_t* Context_GalleryOpenNewWindow;
-    extern const wchar_t* Context_Exit;
-    
-    // Taskbar / System Menu
-    extern const wchar_t* Menu_ExitPassthrough;
+        // OSD Messages
+        const wchar_t* OSD_NoImage = nullptr;
+        const wchar_t* OSD_FolderEmpty = nullptr;
+        const wchar_t* OSD_SvgStaticFallback = nullptr;
+        const wchar_t* OSD_Lossless = nullptr;
+        const wchar_t* OSD_ReencodedLossless = nullptr;
+        const wchar_t* OSD_EdgeAdapted = nullptr;
+        const wchar_t* OSD_Reencoded = nullptr;
+        const wchar_t* OSD_ReadOnly = nullptr;
+        const wchar_t* OSD_NotPerfect = nullptr;
+        const wchar_t* OSD_SpanOn = nullptr;
+        const wchar_t* OSD_SpanOff = nullptr;
+        const wchar_t* OSD_CompareBefore = nullptr;
+        const wchar_t* OSD_CompareAfter = nullptr;
+        const wchar_t* OSD_CompareAnimNotSupported = nullptr;
+        const wchar_t* OSD_UndoDeleteSuccess = nullptr;
+        const wchar_t* OSD_UndoDeleteFailed = nullptr;
+        const wchar_t* OSD_UndoRenameSuccess = nullptr;
+        const wchar_t* OSD_UndoRenameFailed = nullptr;
+        const wchar_t* OSD_UndoTransformSuccess = nullptr;
+        const wchar_t* OSD_UndoTransformFailed = nullptr;
+        // Transform Action Names
+        const wchar_t* Action_RotateCW = nullptr;
+        const wchar_t* Action_RotateCCW = nullptr;
+        const wchar_t* Action_Rotate180 = nullptr;
+        const wchar_t* Action_FlipH = nullptr;
+        const wchar_t* Action_FlipV = nullptr;
 
-    // Messages
-    extern const wchar_t* Message_SaveErrorTitle;
-    extern const wchar_t* Message_SaveErrorContent;
-    
-    // Toolbar Tooltips
-    extern const wchar_t* Toolbar_Tooltip_Prev;
-    extern const wchar_t* Toolbar_Tooltip_Next;
-    extern const wchar_t* Toolbar_Tooltip_RotateL;
-    extern const wchar_t* Toolbar_Tooltip_RotateR;
-    extern const wchar_t* Toolbar_Tooltip_FlipH;
-    extern const wchar_t* Toolbar_Tooltip_Lock;
-    extern const wchar_t* Toolbar_Tooltip_Unlock;
-    extern const wchar_t* Toolbar_Tooltip_Gallery;
-    extern const wchar_t* Toolbar_Tooltip_Info;
-    extern const wchar_t* Toolbar_Tooltip_RawPreview; // Fast
-    extern const wchar_t* Toolbar_Tooltip_RawFull;    // Full
-    extern const wchar_t* Toolbar_Tooltip_RawPairView; // Paired item: switch to the RAW
-    extern const wchar_t* Toolbar_Tooltip_RawPairBack; // Paired RAW view: back to rendered
-    extern const wchar_t* Toolbar_Tooltip_FixExtension;
-    extern const wchar_t* Toolbar_Tooltip_Pin;
-    extern const wchar_t* Toolbar_Tooltip_Unpin;
-    extern const wchar_t* Toolbar_Tooltip_GamutWarning;
-    extern const wchar_t* Toolbar_Tooltip_CropCopy;
-    extern const wchar_t* Toolbar_Tooltip_CropSave;
-    extern const wchar_t* Toolbar_Tooltip_CropApply;
-    extern const wchar_t* Toolbar_Tooltip_CropCancel;
+        // Dialog Strings
+        const wchar_t* Dialog_SaveTitle = nullptr;
+        const wchar_t* Dialog_SaveContent = nullptr;
+        const wchar_t* Dialog_ButtonSave = nullptr;
+        const wchar_t* Dialog_ButtonSaveAs = nullptr;
+        const wchar_t* Dialog_ButtonDiscard = nullptr;
+        const wchar_t* Dialog_ButtonContinue = nullptr;
+        const wchar_t* Dialog_CropUnsavedTitle = nullptr;
+        const wchar_t* Dialog_SaveAsTitle = nullptr;
+        const wchar_t* Dialog_ExportTitle = nullptr;
+        const wchar_t* Dialog_ButtonOverwrite = nullptr;
+        const wchar_t* Dialog_EmbedICC = nullptr;
+        const wchar_t* Dialog_SizeEstimating = nullptr;
+        const wchar_t* Dialog_ExportError = nullptr;
 
-    // Overlay Mode Tooltips
-    extern const wchar_t* Toolbar_Tooltip_OverlayAlphaUp;
-    extern const wchar_t* Toolbar_Tooltip_OverlayAlphaDown;
-    extern const wchar_t* Toolbar_Tooltip_OverlayPassthroughOn;
-    extern const wchar_t* Toolbar_Tooltip_OverlayPassthroughOff;
-    extern const wchar_t* Toolbar_Tooltip_OverlayExit;
-    extern const wchar_t* Toolbar_Tooltip_OverlayZoomIn;
-    extern const wchar_t* Toolbar_Tooltip_OverlayZoomOut;
-    extern const wchar_t* Toolbar_Tooltip_NormalMode;
-    extern const wchar_t* Toolbar_Tooltip_CompareMode;
-    extern const wchar_t* Toolbar_Tooltip_SinglePage;
-    extern const wchar_t* Toolbar_Tooltip_DualPage;
-    extern const wchar_t* Toolbar_Tooltip_CompareOpen;
-    extern const wchar_t* Toolbar_Tooltip_CompareSwap;
-    extern const wchar_t* Toolbar_Tooltip_CompareLayout;
-    extern const wchar_t* Toolbar_Tooltip_CompareInfo;
-    extern const wchar_t* Toolbar_Tooltip_CompareDelete;
-    extern const wchar_t* Toolbar_Tooltip_CompareZoomIn;
-    extern const wchar_t* Toolbar_Tooltip_CompareZoomOut;
-    extern const wchar_t* Toolbar_Tooltip_CompareSyncZoomOn;
-    extern const wchar_t* Toolbar_Tooltip_CompareSyncZoomOff;
-    extern const wchar_t* Toolbar_Tooltip_CompareSyncPanOn;
-    extern const wchar_t* Toolbar_Tooltip_CompareSyncPanOff;
-    extern const wchar_t* Toolbar_Tooltip_SlideshowImmersiveToggle;
-    extern const wchar_t* Toolbar_Tooltip_SlideshowExit;
-    extern const wchar_t* Toolbar_Tooltip_CompareExit;
-    extern const wchar_t* Toolbar_Tooltip_AnimPlay;
-    extern const wchar_t* Toolbar_Tooltip_AnimPause;
-    extern const wchar_t* Toolbar_Tooltip_AnimPrev;
-    extern const wchar_t* Toolbar_Tooltip_AnimNext;
-    extern const wchar_t* Toolbar_Tooltip_AnimDirtyOn;
-    extern const wchar_t* Toolbar_Tooltip_AnimDirtyOff;
-    extern const wchar_t* Toolbar_Tooltip_AnimSpeed;
+        // Context Menu
+        const wchar_t* Context_Open = nullptr;
+        const wchar_t* Context_Crop = nullptr;
+        const wchar_t* Context_SuperResolution = nullptr;
+        const wchar_t* Context_AiAction = nullptr;
+        const wchar_t* Context_OpenWith = nullptr;
+        const wchar_t* Context_Edit = nullptr;
+        const wchar_t* Context_ShowInExplorer = nullptr;
+        const wchar_t* Context_OpenFolder = nullptr;
+        const wchar_t* Context_CopyPixels = nullptr;
+        const wchar_t* Context_CopyFile = nullptr;
+        const wchar_t* Context_CopyPath = nullptr;
+        const wchar_t* Context_Print = nullptr;
+        const wchar_t* Context_RotateCW = nullptr;
+        const wchar_t* Context_RotateCCW = nullptr;
+        const wchar_t* Context_FlipH = nullptr;
+        const wchar_t* Context_FlipV = nullptr;
+        const wchar_t* Context_Transform = nullptr;
+        const wchar_t* Context_ActualSize = nullptr;
+        const wchar_t* Context_FitToScreen = nullptr;
+        const wchar_t* Context_FitWindow = nullptr;
+        const wchar_t* Context_FillWindow = nullptr;
+        const wchar_t* Context_ZoomIn = nullptr;
+        const wchar_t* Context_ZoomOut = nullptr;
+        const wchar_t* Context_LockWindow = nullptr;
+        const wchar_t* Context_AlwaysOnTop = nullptr;
+        const wchar_t* Context_HUDGallery = nullptr;
+        const wchar_t* Context_LiteInfoPanel = nullptr;
+        const wchar_t* Context_FullInfoPanel = nullptr;
+        const wchar_t* Context_RenderRAW = nullptr;
+        const wchar_t* Context_PixelArtMode = nullptr;
+        const wchar_t* Context_Fullscreen = nullptr;
+        const wchar_t* Context_SlideshowMode = nullptr;
+        const wchar_t* Context_SpanDisplays = nullptr;
+        const wchar_t* Context_View = nullptr;
+        const wchar_t* Context_WallpaperFill = nullptr;
+        const wchar_t* Context_WallpaperFit = nullptr;
+        const wchar_t* Context_WallpaperTile = nullptr;
+        const wchar_t* Context_SetAsWallpaper = nullptr;
+        const wchar_t* Context_Rename = nullptr;
+        const wchar_t* Context_FixExtension = nullptr;
+        const wchar_t* Context_Delete = nullptr;
+        const wchar_t* Context_UndoDelete = nullptr;
+        const wchar_t* Context_UndoRename = nullptr;
+        const wchar_t* Context_UndoTransform = nullptr;
+        const wchar_t* Context_Undo = nullptr; // New
+        const wchar_t* Context_SortBy = nullptr;
+        const wchar_t* Context_NavOrder = nullptr;
+        const wchar_t* Context_SortAscending = nullptr;
+        const wchar_t* Context_SortDescending = nullptr;
+        const wchar_t* Context_Settings = nullptr;
+        const wchar_t* Context_CompareMode = nullptr; // New
+        const wchar_t* Context_OverlayMode = nullptr;
+        const wchar_t* Context_GalleryOpenCompare = nullptr;
+        const wchar_t* Context_GalleryOpenNewWindow = nullptr;
+        const wchar_t* Context_Exit = nullptr;
 
-    // OSD Messages
-    extern const wchar_t* OSD_Copied;
-    extern const wchar_t* OSD_PixelsCopied;
-    extern const wchar_t* OSD_PixelsExtracting;
-    extern const wchar_t* OSD_FileCopied;
-    extern const wchar_t* OSD_CoordinatesCopied;
-    extern const wchar_t* OSD_FilePathCopied;
-    extern const wchar_t* OSD_Zoom100;
-    extern const wchar_t* OSD_ZoomFit;
-    extern const wchar_t* OSD_ZoomFitWindow;
-    extern const wchar_t* OSD_ZoomFill;
-    extern const wchar_t* OSD_PrintInstruction;
-    extern const wchar_t* OSD_MovedToRecycleBin;
-    extern const wchar_t* OSD_WindowLocked;
-    extern const wchar_t* OSD_WindowUnlocked;
-    extern const wchar_t* OSD_AlwaysOnTopOn;
-    extern const wchar_t* OSD_AlwaysOnTopOff;
-    extern const wchar_t* OSD_WallpaperSet;
-    extern const wchar_t* OSD_WallpaperFailed;
-    extern const wchar_t* OSD_Renamed;
-    extern const wchar_t* OSD_RenameFailed;
-    extern const wchar_t* OSD_Restored; // New
-    extern const wchar_t* OSD_ExtensionFixed;
-    extern const wchar_t* OSD_FirstImage;
-    extern const wchar_t* OSD_LastImage;
-    extern const wchar_t* OSD_HD; // High Definition / Full Load
-    extern const wchar_t* OSD_ZoomPrefix;
-    extern const wchar_t* OSD_AnimPlaying;
-    extern const wchar_t* OSD_AnimPaused;
-    extern const wchar_t* OSD_AnimDirtyOn;
-    extern const wchar_t* OSD_AnimDirtyOff;
-    extern const wchar_t* OSD_GamutDetected;
-    extern const wchar_t* OSD_GamutIncompatible;
-    extern const wchar_t* OSD_GamutFailed;
-    extern const wchar_t* OSD_SlideshowStarted;
-    extern const wchar_t* OSD_SlideshowStopped;
-    extern const wchar_t* OSD_SlideshowResumed;
-    extern const wchar_t* OSD_SlideshowPaused;
-    extern const wchar_t* OSD_ImmersiveSpotlight;
-    extern const wchar_t* OSD_ImmersiveNormal;
-    extern const wchar_t* OSD_PrintJobStarted;
-    extern const wchar_t* OSD_PrintJobFinished;
-    extern const wchar_t* OSD_EnterCropMode;
-    extern const wchar_t* OSD_CropCopied;
+        // Taskbar / System Menu
+        const wchar_t* Menu_ExitPassthrough = nullptr;
 
-    extern const wchar_t* Context_ColorSpace;
-    
-    // CMS Options
-    extern const wchar_t* Settings_Option_CmsUnmanaged;
-    extern const wchar_t* Settings_Option_CmssRGB;
-    extern const wchar_t* Settings_Option_CmsP3;
-    extern const wchar_t* Settings_Option_CmsAdobeRGB;
-    extern const wchar_t* Settings_Option_CmsGray;
-    extern const wchar_t* Settings_Option_CmsProPhoto;
+        // Messages
+        const wchar_t* Message_SaveErrorTitle = nullptr;
+        const wchar_t* Message_SaveErrorContent = nullptr;
 
-    
-    // Checkbox Labels
-    extern const wchar_t* Checkbox_AlwaysSaveLossless;
-    extern const wchar_t* Checkbox_AlwaysSaveEdgeAdapted;
-    extern const wchar_t* Checkbox_AlwaysSaveLossy;
-    extern const wchar_t* Checkbox_NeverConfirmDelete;
-    
-    // HEIC Codec Missing
-    extern const wchar_t* OSD_HEICCodecMissing;
-    extern const wchar_t* Dialog_HEICTitle;
-    extern const wchar_t* Dialog_HEICContent;
-    extern const wchar_t* Dialog_HEICGetExtension;
-    extern const wchar_t* Dialog_Cancel;
+        // Toolbar Tooltips
+        const wchar_t* Toolbar_Tooltip_Prev = nullptr;
+        const wchar_t* Toolbar_Tooltip_Next = nullptr;
+        const wchar_t* Toolbar_Tooltip_RotateL = nullptr;
+        const wchar_t* Toolbar_Tooltip_RotateR = nullptr;
+        const wchar_t* Toolbar_Tooltip_FlipH = nullptr;
+        const wchar_t* Toolbar_Tooltip_Lock = nullptr;
+        const wchar_t* Toolbar_Tooltip_Unlock = nullptr;
+        const wchar_t* Toolbar_Tooltip_Gallery = nullptr;
+        const wchar_t* Toolbar_Tooltip_Info = nullptr;
+        const wchar_t* Toolbar_Tooltip_RawPreview = nullptr; // Fast
+        const wchar_t* Toolbar_Tooltip_RawFull = nullptr;    // Full
+        const wchar_t* Toolbar_Tooltip_RawPairView = nullptr; // Paired item: switch to the RAW
+        const wchar_t* Toolbar_Tooltip_RawPairBack = nullptr; // Paired RAW view: back to rendered
+        const wchar_t* Toolbar_Tooltip_FixExtension = nullptr;
+        const wchar_t* Toolbar_Tooltip_Pin = nullptr;
+        const wchar_t* Toolbar_Tooltip_Unpin = nullptr;
+        const wchar_t* Toolbar_Tooltip_GamutWarning = nullptr;
+        const wchar_t* Toolbar_Tooltip_CropCopy = nullptr;
+        const wchar_t* Toolbar_Tooltip_CropSave = nullptr;
+        const wchar_t* Toolbar_Tooltip_CropApply = nullptr;
+        const wchar_t* Toolbar_Tooltip_CropCancel = nullptr;
 
-    // Settings UI
-    extern const wchar_t* Settings_Tab_General;
-    extern const wchar_t* Settings_Tab_About;
-    extern const wchar_t* Settings_Tab_Shortcuts;
-    extern const wchar_t* Settings_Hotkey_PressKey;
-    extern const wchar_t* Settings_Hotkey_Conflict;
-    extern const wchar_t* Settings_Hotkey_ConflictPrompt;
-    extern const wchar_t* Settings_Hotkey_Restore;
-    extern const wchar_t* Settings_Hotkey_Restored;
-    extern const wchar_t* Settings_Hotkey_MouseTip;
-    
-    // Gallery Trigger Mode (Top Hover Gallery)
-    extern const wchar_t* Settings_Header_GalleryTrigger;
-    extern const wchar_t* Settings_Label_GalleryTriggerMode;
-    extern const wchar_t* Settings_Label_KeepGalleryVisibleOnThumbnailClick;
-    extern const wchar_t* Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick;
-    extern const wchar_t* Settings_Label_GalleryExpandOnClickOnly;
-    extern const wchar_t* Settings_Tooltip_GalleryExpandOnClickOnly;
-    extern const wchar_t* Settings_Option_TriggerClick;
-    extern const wchar_t* Settings_Option_TriggerHover;
-    extern const wchar_t* Settings_Option_GalleryTriggerAuto;
-    extern const wchar_t* Settings_Option_GalleryTriggerDelay;
-    extern const wchar_t* Settings_Option_GalleryTriggerClick;
-    extern const wchar_t* Settings_Option_GalleryTriggerDisable;
-    extern const wchar_t* Settings_Tooltip_GalleryTrigger;
-    extern const wchar_t* Settings_Label_GalleryTriggerAreaHeight;
-    extern const wchar_t* Settings_Label_GalleryDwellTime;
-    extern const wchar_t* Settings_Label_GalleryExitDelay;
-    extern const wchar_t* Settings_Label_GalleryMinSize;
+        // Overlay Mode Tooltips
+        const wchar_t* Toolbar_Tooltip_OverlayAlphaUp = nullptr;
+        const wchar_t* Toolbar_Tooltip_OverlayAlphaDown = nullptr;
+        const wchar_t* Toolbar_Tooltip_OverlayPassthroughOn = nullptr;
+        const wchar_t* Toolbar_Tooltip_OverlayPassthroughOff = nullptr;
+        const wchar_t* Toolbar_Tooltip_OverlayExit = nullptr;
+        const wchar_t* Toolbar_Tooltip_OverlayZoomIn = nullptr;
+        const wchar_t* Toolbar_Tooltip_OverlayZoomOut = nullptr;
+        const wchar_t* Toolbar_Tooltip_NormalMode = nullptr;
+        const wchar_t* Toolbar_Tooltip_CompareMode = nullptr;
+        const wchar_t* Toolbar_Tooltip_SinglePage = nullptr;
+        const wchar_t* Toolbar_Tooltip_DualPage = nullptr;
+        const wchar_t* Toolbar_Tooltip_CompareOpen = nullptr;
+        const wchar_t* Toolbar_Tooltip_CompareSwap = nullptr;
+        const wchar_t* Toolbar_Tooltip_CompareLayout = nullptr;
+        const wchar_t* Toolbar_Tooltip_CompareInfo = nullptr;
+        const wchar_t* Toolbar_Tooltip_CompareDelete = nullptr;
+        const wchar_t* Toolbar_Tooltip_CompareZoomIn = nullptr;
+        const wchar_t* Toolbar_Tooltip_CompareZoomOut = nullptr;
+        const wchar_t* Toolbar_Tooltip_CompareSyncZoomOn = nullptr;
+        const wchar_t* Toolbar_Tooltip_CompareSyncZoomOff = nullptr;
+        const wchar_t* Toolbar_Tooltip_CompareSyncPanOn = nullptr;
+        const wchar_t* Toolbar_Tooltip_CompareSyncPanOff = nullptr;
+        const wchar_t* Toolbar_Tooltip_SlideshowImmersiveToggle = nullptr;
+        const wchar_t* Toolbar_Tooltip_SlideshowExit = nullptr;
+        const wchar_t* Toolbar_Tooltip_CompareExit = nullptr;
+        const wchar_t* Toolbar_Tooltip_AnimPlay = nullptr;
+        const wchar_t* Toolbar_Tooltip_AnimPause = nullptr;
+        const wchar_t* Toolbar_Tooltip_AnimPrev = nullptr;
+        const wchar_t* Toolbar_Tooltip_AnimNext = nullptr;
+        const wchar_t* Toolbar_Tooltip_AnimDirtyOn = nullptr;
+        const wchar_t* Toolbar_Tooltip_AnimDirtyOff = nullptr;
+        const wchar_t* Toolbar_Tooltip_AnimSpeed = nullptr;
 
-    
-    extern const wchar_t* Settings_Group_Foundation;
-    extern const wchar_t* Settings_Group_Startup;
-    extern const wchar_t* Settings_Group_Habits; // was "Habits"
+        // OSD Messages
+        const wchar_t* OSD_Copied = nullptr;
+        const wchar_t* OSD_PixelsCopied = nullptr;
+        const wchar_t* OSD_PixelsExtracting = nullptr;
+        const wchar_t* OSD_FileCopied = nullptr;
+        const wchar_t* OSD_CoordinatesCopied = nullptr;
+        const wchar_t* OSD_FilePathCopied = nullptr;
+        const wchar_t* OSD_Zoom100 = nullptr;
+        const wchar_t* OSD_ZoomFit = nullptr;
+        const wchar_t* OSD_ZoomFitWindow = nullptr;
+        const wchar_t* OSD_ZoomFill = nullptr;
+        const wchar_t* OSD_PrintInstruction = nullptr;
+        const wchar_t* OSD_MovedToRecycleBin = nullptr;
+        const wchar_t* OSD_WindowLocked = nullptr;
+        const wchar_t* OSD_WindowUnlocked = nullptr;
+        const wchar_t* OSD_AlwaysOnTopOn = nullptr;
+        const wchar_t* OSD_AlwaysOnTopOff = nullptr;
+        const wchar_t* OSD_WallpaperSet = nullptr;
+        const wchar_t* OSD_WallpaperFailed = nullptr;
+        const wchar_t* OSD_Renamed = nullptr;
+        const wchar_t* OSD_RenameFailed = nullptr;
+        const wchar_t* OSD_Restored = nullptr; // New
+        const wchar_t* OSD_ExtensionFixed = nullptr;
+        const wchar_t* OSD_FirstImage = nullptr;
+        const wchar_t* OSD_LastImage = nullptr;
+        const wchar_t* OSD_HD = nullptr; // High Definition / Full Load
+        const wchar_t* OSD_ZoomPrefix = nullptr;
+        const wchar_t* OSD_AnimPlaying = nullptr;
+        const wchar_t* OSD_AnimPaused = nullptr;
+        const wchar_t* OSD_AnimDirtyOn = nullptr;
+        const wchar_t* OSD_AnimDirtyOff = nullptr;
+        const wchar_t* OSD_GamutDetected = nullptr;
+        const wchar_t* OSD_GamutIncompatible = nullptr;
+        const wchar_t* OSD_GamutFailed = nullptr;
+        const wchar_t* OSD_SlideshowStarted = nullptr;
+        const wchar_t* OSD_SlideshowStopped = nullptr;
+        const wchar_t* OSD_SlideshowResumed = nullptr;
+        const wchar_t* OSD_SlideshowPaused = nullptr;
+        const wchar_t* OSD_ImmersiveSpotlight = nullptr;
+        const wchar_t* OSD_ImmersiveNormal = nullptr;
+        const wchar_t* OSD_PrintJobStarted = nullptr;
+        const wchar_t* OSD_PrintJobFinished = nullptr;
+        const wchar_t* OSD_EnterCropMode = nullptr;
+        const wchar_t* OSD_CropCopied = nullptr;
+        const wchar_t* OSD_CropApplied = nullptr;
 
-    extern const wchar_t* Settings_Label_Language;
-    extern const wchar_t* Settings_Label_SingleInstance;
-    extern const wchar_t* Settings_Label_CheckUpdates;
-    extern const wchar_t* Settings_Label_UpdateChannel;
-    extern const wchar_t* Settings_Option_UpdateStable;
-    extern const wchar_t* Settings_Option_UpdatePreRelease;
-    extern const wchar_t* Settings_Tooltip_PreRelease;
-    extern const wchar_t* Settings_Label_NavLoopMode;
-    extern const wchar_t* Settings_Label_SortOrder;
-    extern const wchar_t* Settings_Label_SortDescending;
-    extern const wchar_t* Settings_Label_SortArchivesByNameAscending;
-    extern const wchar_t* Settings_Label_ConfirmDel;
-    extern const wchar_t* Settings_Label_Portable;
-    extern const wchar_t* Settings_Tooltip_Portable;
-    extern const wchar_t* Settings_Label_SpanDisplays;
-    extern const wchar_t* Settings_Label_UIScale;
-    
-    // Settings Status Messages
-    extern const wchar_t* Settings_Status_RestartRequired;
-    extern const wchar_t* Settings_Status_NoWritePerm;
-    extern const wchar_t* Settings_Status_Enabled;
+        const wchar_t* Context_ColorSpace = nullptr;
 
-    extern const wchar_t* Settings_Header_PoweredBy;
-    extern const wchar_t* Settings_Text_Copyright;
-    extern const wchar_t* Settings_Text_License;
+        // CMS Options
+        const wchar_t* Settings_Option_CmsUnmanaged = nullptr;
+        const wchar_t* Settings_Option_CmssRGB = nullptr;
+        const wchar_t* Settings_Option_CmsP3 = nullptr;
+        const wchar_t* Settings_Option_CmsAdobeRGB = nullptr;
+        const wchar_t* Settings_Option_CmsGray = nullptr;
+        const wchar_t* Settings_Option_CmsProPhoto = nullptr;
 
-    // Tabs
-    extern const wchar_t* Settings_Tab_Visuals;
-    extern const wchar_t* Settings_Tab_Controls;
-    extern const wchar_t* Settings_ControlSub_Mouse;
-    extern const wchar_t* Settings_ControlSub_Keyboard;
-    extern const wchar_t* Settings_ControlSub_Behavior;
-    extern const wchar_t* Settings_Gesture_Preset;
-    extern const wchar_t* Settings_Gesture_Preset_Default;
-    extern const wchar_t* Settings_Gesture_Preset_Standard;
-    extern const wchar_t* Settings_Gesture_Preset_Browser;
-    extern const wchar_t* Settings_Gesture_Add;
-    extern const wchar_t* Settings_Gesture_Reset;
-    extern const wchar_t* Settings_Tab_Image;
-    extern const wchar_t* Settings_Tab_Advanced;
 
-    // Visuals
-    extern const wchar_t* Settings_Header_Backdrop;
-    extern const wchar_t* Settings_Header_Window;
-    extern const wchar_t* Settings_Header_WindowLock;
-    extern const wchar_t* Settings_Header_Panel;
-    
-    extern const wchar_t* Settings_Label_CanvasColor;
-    extern const wchar_t* Settings_Option_Effects;
-    extern const wchar_t* Settings_Label_ContextMenuBackdrop;
-    extern const wchar_t* Settings_Label_CanvasEffectStyle;
-    extern const wchar_t* Settings_Tooltip_BackdropEffectsTip;
-    extern const wchar_t* Settings_Label_Overlay;
-    extern const wchar_t* Settings_Label_ShowGrid;
-    extern const wchar_t* Settings_Label_AlwaysOnTop;
-    extern const wchar_t* Settings_Label_LockWindow;
-    extern const wchar_t* Settings_Tooltip_LockWindow;
-    extern const wchar_t* Settings_Label_AutoHideTitle;
-    extern const wchar_t* Settings_Label_RoundedCorners; // [v3.1.2]
-    extern const wchar_t* Settings_Label_UIBorders;
-    extern const wchar_t* Settings_Tooltip_RoundedCorners;
-    extern const wchar_t* Settings_Label_LockToolbar;
-    extern const wchar_t* Settings_Label_WindowMinSize;
-    extern const wchar_t* Settings_Label_WindowMaxSizePercent;
-    extern const wchar_t* Settings_Label_ShowBorderIndicator;
-    extern const wchar_t* Settings_Tooltip_ShowBorderIndicator;
-    extern const wchar_t* Settings_Label_ShowNavigator;
-    extern const wchar_t* Settings_Tooltip_ShowNavigator;
+        // Checkbox Labels
+        const wchar_t* Checkbox_AlwaysSaveLossless = nullptr;
+        const wchar_t* Checkbox_AlwaysSaveEdgeAdapted = nullptr;
+        const wchar_t* Checkbox_AlwaysSaveLossy = nullptr;
+        const wchar_t* Checkbox_NeverConfirmDelete = nullptr;
 
-    extern const wchar_t* Settings_Label_KeepWindowSizeOnNav;
-    extern const wchar_t* Settings_Label_RememberLastWindowSizeAndPosition;
-    extern const wchar_t* Settings_Label_UpscaleSmallImagesWhenLocked;
-    extern const wchar_t* Settings_Label_SlideshowInterval;
-    extern const wchar_t* Settings_Label_SlideshowImmersive;
-    extern const wchar_t* Settings_Option_SlideshowNormal;
-    extern const wchar_t* Settings_Option_SlideshowSpotlight;
-    extern const wchar_t* Settings_Label_ExifMode;
-    extern const wchar_t* Settings_Label_ToolbarInfoDefault;
-    extern const wchar_t* Settings_Label_OpenFullScreenMode;
-    extern const wchar_t* Settings_Label_FullScreenZoomMode;
-    extern const wchar_t* Settings_Label_CustomLiteInfoPanel;
-    extern const wchar_t* Settings_Label_CustomFullInfoPanel;
-    extern const wchar_t* Settings_Label_InfoPanelScale;
-    extern const wchar_t* Settings_Label_ItemsInNormalMode;
-    extern const wchar_t* Settings_Label_ItemsInCompareMode;
-    extern const wchar_t* Settings_Label_SeparatorPreset;
-    extern const wchar_t* Settings_Option_FitScreen;
-    
-    extern const wchar_t* Settings_Option_Black;
-    extern const wchar_t* Settings_Option_White;
-    extern const wchar_t* Settings_Option_Grid;
-    extern const wchar_t* Settings_Option_Custom;
-    extern const wchar_t* Settings_Option_Off;
-    extern const wchar_t* Settings_Option_On;
-    extern const wchar_t* Settings_Option_Lite;
-    extern const wchar_t* Settings_Option_Full;
-    extern const wchar_t* Settings_Option_LargeOnly;
-    extern const wchar_t* Settings_Option_All;
-    extern const wchar_t* Settings_Option_SoftProofing;
+        // HEIC Codec Missing
+        const wchar_t* OSD_HEICCodecMissing = nullptr;
+        const wchar_t* Dialog_HEICTitle = nullptr;
+        const wchar_t* Dialog_HEICContent = nullptr;
+        const wchar_t* Dialog_HEICGetExtension = nullptr;
+        const wchar_t* Dialog_Cancel = nullptr;
 
-    // Controls
-    extern const wchar_t* Settings_Header_Mouse;
-    extern const wchar_t* Settings_Header_Edge;
-    
-    extern const wchar_t* Settings_Label_InvertWheel;
-    extern const wchar_t* Settings_Label_MouseAnchorZoom;
-    extern const wchar_t* Settings_Label_RightButtonDragZoom;
-    extern const wchar_t* Settings_Label_WheelZoomSpeed;
-    extern const wchar_t* Settings_Tooltip_WheelZoomSpeed;
-    extern const wchar_t* Settings_Label_ThumbWheel;
-    extern const wchar_t* Settings_Tooltip_ThumbWheel;
-    extern const wchar_t* Settings_Tooltip_MiddleDrag;
-    extern const wchar_t* Settings_Label_DoubleClick;
-    extern const wchar_t* Settings_Option_DoubleClick_Smart;
-    extern const wchar_t* Settings_Option_DoubleClick_WheelMode1;
-    extern const wchar_t* Settings_Option_DoubleClick_WheelMode2;
-    extern const wchar_t* Settings_Tooltip_DoubleClick;
-    extern const wchar_t* Settings_Tooltip_PanStepNormal;
-    extern const wchar_t* OSD_WheelMode1_NextPrevZoom;
-    extern const wchar_t* OSD_WheelMode1_ZoomNextPrev;
-    extern const wchar_t* OSD_WheelMode2_Pan;
-    extern const wchar_t* OSD_WheelMode2_Default;
-    extern const wchar_t* Settings_Label_RightDragZoomSpeed;
-    extern const wchar_t* OSD_WheelZoomSpeed;
-    extern const wchar_t* Settings_Label_InvertButtons;
-    extern const wchar_t* Settings_Header_KeyboardPan;
-    extern const wchar_t* Settings_Label_PanStepNormal;
-    extern const wchar_t* Settings_Label_PanStepFast;
-    extern const wchar_t* Settings_Label_UseFixedZoom;
-    extern const wchar_t* Settings_Tooltip_UseFixedZoom;
-    extern const wchar_t* Settings_Label_FixedZoomLevels;
-    extern const wchar_t* Dialog_FixedZoomTitle;
-    extern const wchar_t* Dialog_FixedZoomMsg;
-    extern const wchar_t* Settings_Label_ZoomModeIn;
-    extern const wchar_t* Settings_Tooltip_ZoomModeIn;
-    extern const wchar_t* Settings_Label_ZoomModeOut;
-    extern const wchar_t* Settings_Label_LeftDrag;
-    extern const wchar_t* Settings_Label_MiddleDrag;
-    extern const wchar_t* Settings_Label_MiddleClick;
-    extern const wchar_t* Settings_Label_EdgeNavClick;
-    extern const wchar_t* Settings_Label_ShowOSD;
-    extern const wchar_t* Settings_Label_DisableEdgeNavInCompare;
-    extern const wchar_t* Settings_Label_NavIndicator;
-    
-    extern const wchar_t* Settings_Option_Window;
-    extern const wchar_t* Settings_Option_Pan;
-    extern const wchar_t* Settings_Option_None;
-    extern const wchar_t* Settings_Option_Exit;
-    extern const wchar_t* Settings_Option_Arrow;
-    extern const wchar_t* Settings_Option_Cursor;
-    extern const wchar_t* Settings_Option_Manual;
+        // Settings UI
+        const wchar_t* Settings_Tab_General = nullptr;
+        const wchar_t* Settings_Tab_About = nullptr;
+        const wchar_t* Settings_Tab_Shortcuts = nullptr;
+        const wchar_t* Settings_Hotkey_PressKey = nullptr;
+        const wchar_t* Settings_Hotkey_Conflict = nullptr;
+        const wchar_t* Settings_Hotkey_ConflictPrompt = nullptr;
+        const wchar_t* Settings_Hotkey_Restore = nullptr;
+        const wchar_t* Settings_Hotkey_Restored = nullptr;
+        const wchar_t* Settings_Hotkey_MouseTip = nullptr;
 
-    // Sort Options
-    extern const wchar_t* Settings_Option_SortAuto;
-    extern const wchar_t* Settings_Option_SortName;
-    extern const wchar_t* Settings_Option_SortModified;
-    extern const wchar_t* Settings_Option_SortDateTaken;
-    extern const wchar_t* Settings_Option_SortSize;
-    extern const wchar_t* Settings_Option_SortType;
+        // Gallery Trigger Mode (Top Hover Gallery)
+        const wchar_t* Settings_Header_GalleryTrigger = nullptr;
+        const wchar_t* Settings_Label_GalleryTriggerMode = nullptr;
+        const wchar_t* Settings_Label_KeepGalleryVisibleOnThumbnailClick = nullptr;
+        const wchar_t* Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick = nullptr;
+        const wchar_t* Settings_Label_GalleryExpandOnClickOnly = nullptr;
+        const wchar_t* Settings_Tooltip_GalleryExpandOnClickOnly = nullptr;
+        const wchar_t* Settings_Option_TriggerClick = nullptr;
+        const wchar_t* Settings_Option_TriggerHover = nullptr;
+        const wchar_t* Settings_Option_GalleryTriggerAuto = nullptr;
+        const wchar_t* Settings_Option_GalleryTriggerDelay = nullptr;
+        const wchar_t* Settings_Option_GalleryTriggerClick = nullptr;
+        const wchar_t* Settings_Option_GalleryTriggerDisable = nullptr;
+        const wchar_t* Settings_Tooltip_GalleryTrigger = nullptr;
+        const wchar_t* Settings_Label_GalleryTriggerAreaHeight = nullptr;
+        const wchar_t* Settings_Label_GalleryDwellTime = nullptr;
+        const wchar_t* Settings_Label_GalleryExitDelay = nullptr;
+        const wchar_t* Settings_Label_GalleryMinSize = nullptr;
 
-    // Nav Options
-    extern const wchar_t* Settings_Option_NavLoop;
-    extern const wchar_t* Settings_Option_NavThrough;
 
-    extern const wchar_t* Settings_Option_Linear;
-    extern const wchar_t* Settings_Option_Nearest;
-    extern const wchar_t* Settings_Option_HighQualityCubic;
-    extern const wchar_t* Settings_Option_FSR;
+        const wchar_t* Settings_Group_Foundation = nullptr;
+        const wchar_t* Settings_Group_Startup = nullptr;
+        const wchar_t* Settings_Group_Habits = nullptr; // was "Habits"
 
-    // Image
-    extern const wchar_t* Settings_Header_Render;
-    extern const wchar_t* Settings_Header_Hdr;
-    extern const wchar_t* Settings_Header_Prompts;
-    extern const wchar_t* Settings_Header_System;
-    
-    extern const wchar_t* Settings_Label_AutoRotate;
-    extern const wchar_t* Settings_Label_FsrSharpness;
-    extern const wchar_t* Settings_Tooltip_FsrSharpness;
-    // Plugins
-    extern const wchar_t* Settings_Tab_Plugins;
-    extern const wchar_t* Settings_Header_Plugins_SR;
-    extern const wchar_t* Settings_Label_EnableSrPlugin;
-    extern const wchar_t* Settings_Tooltip_EnableSrPlugin;
-    extern const wchar_t* Settings_Label_SrPluginModule;
-    extern const wchar_t* Settings_Label_SrModel;
-    extern const wchar_t* Settings_Tooltip_SrModel;
-    extern const wchar_t* Settings_Label_SrAutoTrigger;
-    extern const wchar_t* Settings_Label_SrAutoTriggerMaxSourceMp;
-    extern const wchar_t* Settings_Tooltip_SrAutoTriggerMaxSourceMp;
-    extern const wchar_t* Settings_Label_SrAutoTriggerMaxWidth;
-    extern const wchar_t* Settings_Tooltip_SrAutoTriggerMaxWidth;
-    extern const wchar_t* Settings_Label_SrAutoTriggerMaxHeight;
-    extern const wchar_t* Settings_Tooltip_SrAutoTriggerMaxHeight;
-    extern const wchar_t* Settings_Value_Unlimited;
-    extern const wchar_t* Settings_Label_SrOpenInCompare;
-    extern const wchar_t* Settings_Label_SrPromptModel;
-    extern const wchar_t* Settings_Button_DownloadSrPlugin;
-    extern const wchar_t* Settings_Button_UpdateSrPlugin;
-    extern const wchar_t* Settings_Desc_PluginNotInstalled;
-    extern const wchar_t* Export_Checkbox_SuperResolution;
-    extern const wchar_t* Settings_Label_SrDebounce;
-    extern const wchar_t* Settings_Tooltip_SrDebounce;
-    extern const wchar_t* Settings_Header_PluginTriggers;
-    extern const wchar_t* Settings_Header_PluginParams;
-    extern const wchar_t* Settings_Label_SrStorageFolder;
-    extern const wchar_t* Settings_Button_OpenModelFolder;
-    extern const wchar_t* Settings_Prompt_DownloadModelFirst;
-    extern const wchar_t* Settings_Label_SrSharpness;
-    extern const wchar_t* Settings_Tooltip_SrSharpness;
-    extern const wchar_t* Settings_Label_SrDenoise;
-    extern const wchar_t* Settings_Tooltip_SrDenoise;
-    extern const wchar_t* Settings_Segment_InstalledPlugins;
-    extern const wchar_t* Settings_Segment_Marketplace;
-    extern const wchar_t* Settings_Label_SrEngine;
-    extern const wchar_t* Settings_Label_SrModelStatus;
-    extern const wchar_t* Settings_Format_DownloadModel;
-    extern const wchar_t* Settings_Header_SrComponent;
-    extern const wchar_t* Settings_Label_QuickEnableEngine;
-    extern const wchar_t* Settings_Button_QuickEnableNcnn;
-    extern const wchar_t* Settings_Label_OnlineExtensions;
-    extern const wchar_t* Settings_Button_BrowseMarketplace;
-    extern const wchar_t* Settings_Label_MarketManifest;
-    extern const wchar_t* Settings_Button_RefreshManifest;
-    extern const wchar_t* Settings_Button_SyncingManifest;
-    extern const wchar_t* Settings_Format_PluginPackageSize;
-    extern const wchar_t* Settings_Button_InstalledUpToDate;
-    extern const wchar_t* Settings_Format_UpdateTo;
-    extern const wchar_t* Settings_Button_InstallPlugin;
-    extern const wchar_t* Settings_Button_Download;
+        const wchar_t* Settings_Label_Language = nullptr;
+        const wchar_t* Settings_Label_SingleInstance = nullptr;
+        const wchar_t* Settings_Label_CheckUpdates = nullptr;
+        const wchar_t* Settings_Label_UpdateChannel = nullptr;
+        const wchar_t* Settings_Option_UpdateStable = nullptr;
+        const wchar_t* Settings_Option_UpdatePreRelease = nullptr;
+        const wchar_t* Settings_Tooltip_PreRelease = nullptr;
+        const wchar_t* Settings_Label_NavLoopMode = nullptr;
+        const wchar_t* Settings_Label_SortOrder = nullptr;
+        const wchar_t* Settings_Label_SortDescending = nullptr;
+        const wchar_t* Settings_Label_SortArchivesByNameAscending = nullptr;
+        const wchar_t* Settings_Label_ConfirmDel = nullptr;
+        const wchar_t* Settings_Label_Portable = nullptr;
+        const wchar_t* Settings_Tooltip_Portable = nullptr;
+        const wchar_t* Settings_Label_SpanDisplays = nullptr;
+        const wchar_t* Settings_Label_UIScale = nullptr;
 
-    // Super-Resolution OSD & Dialog
-    extern const wchar_t* OSD_SrProcessing;
-    extern const wchar_t* OSD_SrSuccessFormat;
-    extern const wchar_t* OSD_SrSuccessFormatSimple;
-    extern const wchar_t* OSD_SrFailed;
-    extern const wchar_t* OSD_SrPluginDisabledOrMissing;
-    extern const wchar_t* OSD_SrAnimationProcessingFormat;
-    extern const wchar_t* OSD_SrAnimationSuccessFormat;
-    extern const wchar_t* OSD_SrVectorLosslessSkipped;
-    extern const wchar_t* OSD_SrAnimationTooManyFrames;
-    extern const wchar_t* OSD_SrImageTooLargeFormat;
-    extern const wchar_t* Dialog_Title_SelectSrModel;
-    extern const wchar_t* Dialog_Msg_SelectSrModel;
-    extern const wchar_t* Dialog_Checkbox_RememberSrModelChoice;
-    extern const wchar_t* Dialog_Button_OK;
-    extern const wchar_t* Settings_Label_CMS;
-    extern const wchar_t* Settings_Label_AdvancedColor;
-    extern const wchar_t* Settings_Label_CmsFallback;
-    extern const wchar_t* Settings_Label_HdrToneMapping;
-    extern const wchar_t* Settings_Label_HdrSplineKnee;
-    extern const wchar_t* Settings_Tooltip_HdrToneMapping;
-    extern const wchar_t* Settings_Tooltip_HdrSplineKnee;
-    extern const wchar_t* Settings_Label_HdrPeakNitsOverride;
-    extern const wchar_t* Settings_Tooltip_HdrPeakNitsOverride;
-    extern const wchar_t* Settings_Label_HdrPeakPercentile;
-    extern const wchar_t* Settings_Tooltip_HdrPeakPercentile;
-    extern const wchar_t* Settings_Option_HdrPeakPercentile_100;
-    extern const wchar_t* Settings_Option_HdrPeakPercentile_99995;
-    extern const wchar_t* Settings_Option_HdrPeakPercentile_999;
-    extern const wchar_t* Settings_Label_HdrDesatThreshold;
-    extern const wchar_t* Settings_Tooltip_HdrDesatThreshold;
-    extern const wchar_t* Settings_Label_HdrMaxDesat;
-    extern const wchar_t* Settings_Tooltip_HdrMaxDesat;
-    extern const wchar_t *Settings_Option_HdrColorimetric;
-    extern const wchar_t *Settings_Option_HdrSpline;
-    extern const wchar_t *Settings_Option_HdrLegacyReinhard;
+        // Settings Status Messages
+        const wchar_t* Settings_Status_RestartRequired = nullptr;
+        const wchar_t* Settings_Status_NoWritePerm = nullptr;
+        const wchar_t* Settings_Status_Enabled = nullptr;
 
-    extern const wchar_t* Settings_Label_CustomProof;
-    extern const wchar_t* Settings_Label_CmsIntent;
-    extern const wchar_t* Settings_Label_GamutWarning;
-    extern const wchar_t* Settings_Tooltip_GamutWarning;
-    extern const wchar_t* Settings_Label_GamutAutoPrompt;
-    extern const wchar_t* Settings_Tooltip_GamutAutoPrompt;
-    extern const wchar_t* Settings_Label_GamutColor;
-    extern const wchar_t* Settings_Option_CmsIntentRelative;
-    extern const wchar_t* Settings_Option_CmsIntentPerceptual;
-    extern const wchar_t* Settings_Tooltip_CMS;
-    extern const wchar_t* Settings_Tooltip_CmsIntent;
-    extern const wchar_t* Settings_Tooltip_AdvancedColor;
-    extern const wchar_t* Settings_Tooltip_HdrToneMapping;
-    extern const wchar_t* Settings_Tooltip_ZoomAuto;
-    extern const wchar_t* Context_SoftProofing;
-    extern const wchar_t* Context_SoftProofProfile;
-    extern const wchar_t* Context_SoftProofCustom;
-    extern const wchar_t* Settings_Value_ComingSoon;
-    extern const wchar_t* Settings_Label_ForceRaw;
-    extern const wchar_t* Settings_Label_PairRawJpeg;
-    extern const wchar_t* Settings_Tooltip_PairRawJpeg;
-    extern const wchar_t* Settings_Label_Exposure;
-    extern const wchar_t* Settings_Tooltip_Exposure;
-    extern const wchar_t* Settings_Label_AddToOpenWith;
-    extern const wchar_t* Settings_Label_CustomEditor;
-    extern const wchar_t* Context_SelectEditor;
-    extern const wchar_t* OSD_EditorLaunchFailed;
-    extern const wchar_t* Settings_Action_Add;
-    extern const wchar_t* Settings_Action_Added;
-    extern const wchar_t* Settings_Status_DisabledInPortable; // Hint for portable mode
+        const wchar_t* Settings_Header_PoweredBy = nullptr;
+        const wchar_t* Settings_Text_Copyright = nullptr;
+        const wchar_t* Settings_Text_License = nullptr;
 
-    // Advanced
-    extern const wchar_t* Settings_Header_Features;
-    extern const wchar_t* Settings_Header_Performance;
-    extern const wchar_t* Settings_Header_Transparency;
-    
-    extern const wchar_t* Settings_Label_DebugHUD;
-    extern const wchar_t* Settings_Label_Prefetch;
-    extern const wchar_t* Settings_Label_MemoryReclaim;
-    extern const wchar_t* Settings_Option_MemSmart;
-    extern const wchar_t* Settings_Option_MemAggressive;
-    extern const wchar_t* Settings_Option_MemOnDemand;
-    extern const wchar_t* Settings_Tooltip_MemoryReclaim;
+        // Tabs
+        const wchar_t* Settings_Tab_Visuals = nullptr;
+        const wchar_t* Settings_Tab_Controls = nullptr;
+        const wchar_t* Settings_ControlSub_Mouse = nullptr;
+        const wchar_t* Settings_ControlSub_Keyboard = nullptr;
+        const wchar_t* Settings_ControlSub_Behavior = nullptr;
+        const wchar_t* Settings_Gesture_Preset = nullptr;
+        const wchar_t* Settings_Gesture_Preset_Default = nullptr;
+        const wchar_t* Settings_Gesture_Preset_Standard = nullptr;
+        const wchar_t* Settings_Gesture_Preset_Browser = nullptr;
+        const wchar_t* Settings_Gesture_Add = nullptr;
+        const wchar_t* Settings_Gesture_Reset = nullptr;
+        const wchar_t* Settings_Tab_Image = nullptr;
+        const wchar_t* Settings_Tab_Advanced = nullptr;
 
-    extern const wchar_t* Settings_Label_Reset;
-    extern const wchar_t* Settings_Action_Restore;
-    extern const wchar_t* Settings_Action_Done;
-    extern const wchar_t* Settings_Header_ConfigManagement;
+        // Visuals
+        const wchar_t* Settings_Header_Backdrop = nullptr;
+        const wchar_t* Settings_Header_Window = nullptr;
+        const wchar_t* Settings_Header_WindowLock = nullptr;
+        const wchar_t* Settings_Header_Panel = nullptr;
 
-    // Removed duplicated Color Management declarations
-    
-    // About
-    extern const wchar_t* Settings_Action_CheckUpdates;
-    extern const wchar_t* Settings_Action_ViewUpdate;
-    extern const wchar_t* Settings_Status_Checking;
-    extern const wchar_t* Settings_Status_UpToDate;
-    extern const wchar_t* Settings_Link_GitHub;
-    extern const wchar_t* Settings_Link_ReportIssue;
-    extern const wchar_t* Settings_Link_Hotkeys;
-    extern const wchar_t* Settings_Label_Version;
-    extern const wchar_t* Settings_Label_Build;
+        const wchar_t* Settings_Label_CanvasColor = nullptr;
+        const wchar_t* Settings_Option_Effects = nullptr;
+        const wchar_t* Settings_Label_ContextMenuBackdrop = nullptr;
+        const wchar_t* Settings_Label_CanvasEffectStyle = nullptr;
+        const wchar_t* Settings_Tooltip_BackdropEffectsTip = nullptr;
+        const wchar_t* Settings_Label_Overlay = nullptr;
+        const wchar_t* Settings_Label_ShowGrid = nullptr;
+        const wchar_t* Settings_Label_AlwaysOnTop = nullptr;
+        const wchar_t* Settings_Label_LockWindow = nullptr;
+        const wchar_t* Settings_Tooltip_LockWindow = nullptr;
+        const wchar_t* Settings_Label_AutoHideTitle = nullptr;
+        const wchar_t* Settings_Label_RoundedCorners = nullptr; // [v3.1.2]
+        const wchar_t* Settings_Label_UIBorders = nullptr;
+        const wchar_t* Settings_Tooltip_RoundedCorners = nullptr;
+        const wchar_t* Settings_Label_LockToolbar = nullptr;
+        const wchar_t* Settings_Label_WindowMinSize = nullptr;
+        const wchar_t* Settings_Label_WindowMaxSizePercent = nullptr;
+        const wchar_t* Settings_Label_ShowBorderIndicator = nullptr;
+        const wchar_t* Settings_Tooltip_ShowBorderIndicator = nullptr;
+        const wchar_t* Settings_Label_ShowNavigator = nullptr;
+        const wchar_t* Settings_Tooltip_ShowNavigator = nullptr;
 
-    // Update Dialog (Bilingual)
-    extern const wchar_t* Dialog_UpdateTitle;
-    extern const wchar_t* Dialog_UpdateContent;
-    extern const wchar_t* Dialog_UpdateLogHeader;
-    extern const wchar_t* Dialog_ButtonUpdate;
-    extern const wchar_t* Dialog_ButtonLater;
-    extern const wchar_t* Dialog_ButtonStar;
-    extern const wchar_t* Dialog_Update_LoveTitle;
-    extern const wchar_t* Dialog_Update_LoveMessage;
+        const wchar_t* Settings_Label_KeepWindowSizeOnNav = nullptr;
+        const wchar_t* Settings_Label_RememberLastWindowSizeAndPosition = nullptr;
+        const wchar_t* Settings_Label_UpscaleSmallImagesWhenLocked = nullptr;
+        const wchar_t* Settings_Label_SlideshowInterval = nullptr;
+        const wchar_t* Settings_Label_SlideshowImmersive = nullptr;
+        const wchar_t* Settings_Option_SlideshowNormal = nullptr;
+        const wchar_t* Settings_Option_SlideshowSpotlight = nullptr;
+        const wchar_t* Settings_Label_ExifMode = nullptr;
+        const wchar_t* Settings_Label_ToolbarInfoDefault = nullptr;
+        const wchar_t* Settings_Label_OpenFullScreenMode = nullptr;
+        const wchar_t* Settings_Label_FullScreenZoomMode = nullptr;
+        const wchar_t* Settings_Label_CustomLiteInfoPanel = nullptr;
+        const wchar_t* Settings_Label_CustomFullInfoPanel = nullptr;
+        const wchar_t* Settings_Label_InfoPanelScale = nullptr;
+        const wchar_t* Settings_Label_ItemsInNormalMode = nullptr;
+        const wchar_t* Settings_Label_ItemsInCompareMode = nullptr;
+        const wchar_t* Settings_Label_SeparatorPreset = nullptr;
+        const wchar_t* Settings_Option_FitScreen = nullptr;
 
-    // Passthrough Mode
-    extern const wchar_t* Dialog_PassthroughTitle;
-    extern const wchar_t* Dialog_PassthroughContent;
-    extern const wchar_t* OSD_PassthroughOn;
-    extern const wchar_t* OSD_PassthroughOff;
-    extern const wchar_t* OSD_OverlayModeOn;
-    extern const wchar_t* OSD_OverlayModeOff;
-    extern const wchar_t* OSD_Opacity;
+        const wchar_t* Settings_Option_Black = nullptr;
+        const wchar_t* Settings_Option_White = nullptr;
+        const wchar_t* Settings_Option_Grid = nullptr;
+        const wchar_t* Settings_Option_Custom = nullptr;
+        const wchar_t* Settings_Option_Off = nullptr;
+        const wchar_t* Settings_Option_On = nullptr;
+        const wchar_t* Settings_Option_Lite = nullptr;
+        const wchar_t* Settings_Option_Full = nullptr;
+        const wchar_t* Settings_Option_LargeOnly = nullptr;
+        const wchar_t* Settings_Option_All = nullptr;
+        const wchar_t* Settings_Option_SoftProofing = nullptr;
 
-    // Help Overlay
-    extern const wchar_t* Help_Desc_Edit;
-    
-    // Glossary / Tips
-    extern const wchar_t* Help_Header_Tips;
-    extern const wchar_t* Help_Tip_ContextScope;
-    extern const wchar_t* Help_Tip_Rotation;
-    extern const wchar_t* Help_Tip_VideoWall;
-    extern const wchar_t* Help_Tip_DesignerMode;
-    extern const wchar_t* Help_Tip_GamutDetection;
-    extern const wchar_t* Help_Tip_Raw;
-    extern const wchar_t* Help_Tip_JpegQ;
-    extern const wchar_t* Help_Tip_SoftProofCompare;
+        // Controls
+        const wchar_t* Settings_Header_Mouse = nullptr;
+        const wchar_t* Settings_Header_Edge = nullptr;
+
+        const wchar_t* Settings_Label_InvertWheel = nullptr;
+        const wchar_t* Settings_Label_MouseAnchorZoom = nullptr;
+        const wchar_t* Settings_Label_RightButtonDragZoom = nullptr;
+        const wchar_t* Settings_Label_WheelZoomSpeed = nullptr;
+        const wchar_t* Settings_Tooltip_WheelZoomSpeed = nullptr;
+        const wchar_t* Settings_Label_ThumbWheel = nullptr;
+        const wchar_t* Settings_Tooltip_ThumbWheel = nullptr;
+        const wchar_t* Settings_Tooltip_MiddleDrag = nullptr;
+        const wchar_t* Settings_Label_DoubleClick = nullptr;
+        const wchar_t* Settings_Option_DoubleClick_Smart = nullptr;
+        const wchar_t* Settings_Option_DoubleClick_WheelMode1 = nullptr;
+        const wchar_t* Settings_Option_DoubleClick_WheelMode2 = nullptr;
+        const wchar_t* Settings_Tooltip_DoubleClick = nullptr;
+        const wchar_t* Settings_Tooltip_PanStepNormal = nullptr;
+        const wchar_t* OSD_WheelMode1_NextPrevZoom = nullptr;
+        const wchar_t* OSD_WheelMode1_ZoomNextPrev = nullptr;
+        const wchar_t* OSD_WheelMode2_Pan = nullptr;
+        const wchar_t* OSD_WheelMode2_Default = nullptr;
+        const wchar_t* Settings_Label_RightDragZoomSpeed = nullptr;
+        const wchar_t* OSD_WheelZoomSpeed = nullptr;
+        const wchar_t* Settings_Label_InvertButtons = nullptr;
+        const wchar_t* Settings_Header_KeyboardPan = nullptr;
+        const wchar_t* Settings_Label_PanStepNormal = nullptr;
+        const wchar_t* Settings_Label_PanStepFast = nullptr;
+        const wchar_t* Settings_Label_UseFixedZoom = nullptr;
+        const wchar_t* Settings_Tooltip_UseFixedZoom = nullptr;
+        const wchar_t* Settings_Label_FixedZoomLevels = nullptr;
+        const wchar_t* Dialog_FixedZoomTitle = nullptr;
+        const wchar_t* Dialog_FixedZoomMsg = nullptr;
+        const wchar_t* Settings_Label_ZoomModeIn = nullptr;
+        const wchar_t* Settings_Tooltip_ZoomModeIn = nullptr;
+        const wchar_t* Settings_Label_ZoomModeOut = nullptr;
+        const wchar_t* Settings_Label_LeftDrag = nullptr;
+        const wchar_t* Settings_Label_MiddleDrag = nullptr;
+        const wchar_t* Settings_Label_MiddleClick = nullptr;
+        const wchar_t* Settings_Label_EdgeNavClick = nullptr;
+        const wchar_t* Settings_Label_ShowOSD = nullptr;
+        const wchar_t* Settings_Label_DisableEdgeNavInCompare = nullptr;
+        const wchar_t* Settings_Label_NavIndicator = nullptr;
+
+        const wchar_t* Settings_Option_Window = nullptr;
+        const wchar_t* Settings_Option_Pan = nullptr;
+        const wchar_t* Settings_Option_None = nullptr;
+        const wchar_t* Settings_Option_Exit = nullptr;
+        const wchar_t* Settings_Option_Arrow = nullptr;
+        const wchar_t* Settings_Option_Cursor = nullptr;
+        const wchar_t* Settings_Option_Manual = nullptr;
+
+        // Sort Options
+        const wchar_t* Settings_Option_SortAuto = nullptr;
+        const wchar_t* Settings_Option_SortName = nullptr;
+        const wchar_t* Settings_Option_SortModified = nullptr;
+        const wchar_t* Settings_Option_SortDateTaken = nullptr;
+        const wchar_t* Settings_Option_SortSize = nullptr;
+        const wchar_t* Settings_Option_SortType = nullptr;
+
+        // Nav Options
+        const wchar_t* Settings_Option_NavLoop = nullptr;
+        const wchar_t* Settings_Option_NavThrough = nullptr;
+
+        const wchar_t* Settings_Option_Linear = nullptr;
+        const wchar_t* Settings_Option_Nearest = nullptr;
+        const wchar_t* Settings_Option_HighQualityCubic = nullptr;
+        const wchar_t* Settings_Option_FSR = nullptr;
+
+        // Image
+        const wchar_t* Settings_Header_Render = nullptr;
+        const wchar_t* Settings_Header_Hdr = nullptr;
+        const wchar_t* Settings_Header_Prompts = nullptr;
+        const wchar_t* Settings_Header_System = nullptr;
+
+        const wchar_t* Settings_Label_AutoRotate = nullptr;
+        const wchar_t* Settings_Label_FsrSharpness = nullptr;
+        const wchar_t* Settings_Tooltip_FsrSharpness = nullptr;
+        // Plugins
+        const wchar_t* Settings_Tab_Plugins = nullptr;
+        const wchar_t* Settings_Label_EnableSrPlugin = nullptr;
+        const wchar_t* Settings_Label_SrModel = nullptr;
+        const wchar_t* Settings_Label_SrAutoTrigger = nullptr;
+        const wchar_t* Settings_Label_SrAutoTriggerMaxWidth = nullptr;
+        const wchar_t* Settings_Tooltip_SrAutoTriggerMaxWidth = nullptr;
+        const wchar_t* Settings_Label_SrAutoTriggerMaxHeight = nullptr;
+        const wchar_t* Settings_Tooltip_SrAutoTriggerMaxHeight = nullptr;
+        const wchar_t* Settings_Value_Unlimited = nullptr;
+        const wchar_t* Settings_Label_SrOpenInCompare = nullptr;
+        const wchar_t* Settings_Label_SrPromptModel = nullptr;
+        const wchar_t* Export_Checkbox_SuperResolution = nullptr;
+        const wchar_t* Settings_Label_SrDebounce = nullptr;
+        const wchar_t* Settings_Tooltip_SrDebounce = nullptr;
+        const wchar_t* Settings_Header_PluginTriggers = nullptr;
+        const wchar_t* Settings_Header_PluginParams = nullptr;
+        const wchar_t* Settings_Label_SrStorageFolder = nullptr;
+        const wchar_t* Settings_Button_OpenModelFolder = nullptr;
+        const wchar_t* Settings_Prompt_DownloadModelFirst = nullptr;
+        const wchar_t* Settings_Segment_InstalledPlugins = nullptr;
+        const wchar_t* Settings_Segment_Marketplace = nullptr;
+        const wchar_t* Settings_Label_SrEngine = nullptr;
+        const wchar_t* Settings_Label_SrModelStatus = nullptr;
+        const wchar_t* Settings_Format_DownloadModel = nullptr;
+        const wchar_t* Settings_Header_SrComponent = nullptr;
+        const wchar_t* Settings_Label_QuickEnableEngine = nullptr;
+        const wchar_t* Settings_Button_QuickEnableNcnn = nullptr;
+        const wchar_t* Settings_Label_OnlineExtensions = nullptr;
+        const wchar_t* Settings_Button_BrowseMarketplace = nullptr;
+        const wchar_t* Settings_Label_MarketManifest = nullptr;
+        const wchar_t* Settings_Button_RefreshManifest = nullptr;
+        const wchar_t* Settings_Button_SyncingManifest = nullptr;
+        const wchar_t* Settings_Format_PluginPackageSize = nullptr;
+        const wchar_t* Settings_Button_InstalledUpToDate = nullptr;
+        const wchar_t* Settings_Format_UpdateTo = nullptr;
+        const wchar_t* Settings_Button_InstallPlugin = nullptr;
+
+        // Super-Resolution OSD & Dialog
+        const wchar_t* OSD_SrProcessing = nullptr;
+        const wchar_t* OSD_SrSuccessFormat = nullptr;
+        const wchar_t* OSD_SrSuccessFormatSimple = nullptr;
+        const wchar_t* OSD_SrFailed = nullptr;
+        const wchar_t* OSD_SrPluginDisabledOrMissing = nullptr;
+        const wchar_t* OSD_SrAnimationProcessingFormat = nullptr;
+        const wchar_t* OSD_SrAnimationSuccessFormat = nullptr;
+        const wchar_t* OSD_SrVectorLosslessSkipped = nullptr;
+        const wchar_t* OSD_SrAnimationTooManyFrames = nullptr;
+        const wchar_t* OSD_SrImageTooLargeFormat = nullptr;
+        const wchar_t* Dialog_Title_SelectSrModel = nullptr;
+        const wchar_t* Dialog_Msg_SelectSrModel = nullptr;
+        const wchar_t* Dialog_Checkbox_RememberSrModelChoice = nullptr;
+        const wchar_t* Dialog_Button_OK = nullptr;
+        const wchar_t* Settings_Label_CMS = nullptr;
+        const wchar_t* Settings_Label_AdvancedColor = nullptr;
+        const wchar_t* Settings_Label_CmsFallback = nullptr;
+        const wchar_t* Settings_Label_HdrToneMapping = nullptr;
+        const wchar_t* Settings_Label_HdrSplineKnee = nullptr;
+        const wchar_t* Settings_Tooltip_HdrToneMapping = nullptr;
+        const wchar_t* Settings_Tooltip_HdrSplineKnee = nullptr;
+        const wchar_t* Settings_Label_HdrPeakNitsOverride = nullptr;
+        const wchar_t* Settings_Tooltip_HdrPeakNitsOverride = nullptr;
+        const wchar_t* Settings_Label_HdrPeakPercentile = nullptr;
+        const wchar_t* Settings_Tooltip_HdrPeakPercentile = nullptr;
+        const wchar_t* Settings_Option_HdrPeakPercentile_100 = nullptr;
+        const wchar_t* Settings_Option_HdrPeakPercentile_99995 = nullptr;
+        const wchar_t* Settings_Option_HdrPeakPercentile_999 = nullptr;
+        const wchar_t* Settings_Label_HdrDesatThreshold = nullptr;
+        const wchar_t* Settings_Tooltip_HdrDesatThreshold = nullptr;
+        const wchar_t* Settings_Label_HdrMaxDesat = nullptr;
+        const wchar_t* Settings_Tooltip_HdrMaxDesat = nullptr;
+        const wchar_t* Settings_Option_HdrColorimetric = nullptr;
+        const wchar_t* Settings_Option_HdrSpline = nullptr;
+        const wchar_t* Settings_Option_HdrLegacyReinhard = nullptr;
+
+        const wchar_t* Settings_Label_CustomProof = nullptr;
+        const wchar_t* Settings_Label_CmsIntent = nullptr;
+        const wchar_t* Settings_Label_GamutWarning = nullptr;
+        const wchar_t* Settings_Tooltip_GamutWarning = nullptr;
+        const wchar_t* Settings_Label_GamutAutoPrompt = nullptr;
+        const wchar_t* Settings_Tooltip_GamutAutoPrompt = nullptr;
+        const wchar_t* Settings_Label_GamutColor = nullptr;
+        const wchar_t* Settings_Option_CmsIntentRelative = nullptr;
+        const wchar_t* Settings_Option_CmsIntentPerceptual = nullptr;
+        const wchar_t* Settings_Tooltip_CMS = nullptr;
+        const wchar_t* Settings_Tooltip_CmsIntent = nullptr;
+        const wchar_t* Settings_Tooltip_AdvancedColor = nullptr;
+        const wchar_t* Settings_Tooltip_ZoomAuto = nullptr;
+        const wchar_t* Context_SoftProofing = nullptr;
+        const wchar_t* Context_SoftProofProfile = nullptr;
+        const wchar_t* Context_SoftProofCustom = nullptr;
+        const wchar_t* Settings_Value_ComingSoon = nullptr;
+        const wchar_t* Settings_Label_ForceRaw = nullptr;
+        const wchar_t* Settings_Label_PairRawJpeg = nullptr;
+        const wchar_t* Settings_Tooltip_PairRawJpeg = nullptr;
+        const wchar_t* Settings_Label_Exposure = nullptr;
+        const wchar_t* Settings_Tooltip_Exposure = nullptr;
+        const wchar_t* Settings_Label_AddToOpenWith = nullptr;
+        const wchar_t* Settings_Label_CustomEditor = nullptr;
+        const wchar_t* Context_SelectEditor = nullptr;
+        const wchar_t* OSD_EditorLaunchFailed = nullptr;
+        const wchar_t* Settings_Action_Add = nullptr;
+        const wchar_t* Settings_Action_Added = nullptr;
+        const wchar_t* Settings_Status_DisabledInPortable = nullptr; // Hint for portable mode
+
+        // Advanced
+        const wchar_t* Settings_Header_Features = nullptr;
+        const wchar_t* Settings_Header_Performance = nullptr;
+        const wchar_t* Settings_Header_Transparency = nullptr;
+
+        const wchar_t* Settings_Label_DebugHUD = nullptr;
+        const wchar_t* Settings_Label_Prefetch = nullptr;
+        const wchar_t* Settings_Label_MemoryReclaim = nullptr;
+        const wchar_t* Settings_Option_MemSmart = nullptr;
+        const wchar_t* Settings_Option_MemAggressive = nullptr;
+        const wchar_t* Settings_Option_MemOnDemand = nullptr;
+        const wchar_t* Settings_Tooltip_MemoryReclaim = nullptr;
+
+        const wchar_t* Settings_Label_Reset = nullptr;
+        const wchar_t* Settings_Action_Restore = nullptr;
+        const wchar_t* Settings_Action_Done = nullptr;
+        const wchar_t* Settings_Header_ConfigManagement = nullptr;
+
+        // Removed duplicated Color Management declarations
+
+        // About
+        const wchar_t* Settings_Action_CheckUpdates = nullptr;
+        const wchar_t* Settings_Action_ViewUpdate = nullptr;
+        const wchar_t* Settings_Status_Checking = nullptr;
+        const wchar_t* Settings_Status_UpToDate = nullptr;
+        const wchar_t* Settings_Link_GitHub = nullptr;
+        const wchar_t* Settings_Link_ReportIssue = nullptr;
+        const wchar_t* Settings_Link_Hotkeys = nullptr;
+        const wchar_t* Settings_Label_Version = nullptr;
+        const wchar_t* Settings_Label_Build = nullptr;
+
+        // Update Dialog (Bilingual)
+        const wchar_t* Dialog_UpdateTitle = nullptr;
+        const wchar_t* Dialog_UpdateContent = nullptr;
+        const wchar_t* Dialog_UpdateLogHeader = nullptr;
+        const wchar_t* Dialog_ButtonUpdate = nullptr;
+        const wchar_t* Dialog_ButtonLater = nullptr;
+        const wchar_t* Dialog_ButtonStar = nullptr;
+        const wchar_t* Dialog_Update_LoveTitle = nullptr;
+        const wchar_t* Dialog_Update_LoveMessage = nullptr;
+
+        // Passthrough Mode
+        const wchar_t* Dialog_PassthroughTitle = nullptr;
+        const wchar_t* Dialog_PassthroughContent = nullptr;
+        const wchar_t* OSD_PassthroughOn = nullptr;
+        const wchar_t* OSD_PassthroughOff = nullptr;
+        const wchar_t* OSD_OverlayModeOn = nullptr;
+        const wchar_t* OSD_OverlayModeOff = nullptr;
+        const wchar_t* OSD_Opacity = nullptr;
+
+        // Help Overlay
+        const wchar_t* Help_Desc_Edit = nullptr;
+
+        // Glossary / Tips
+        const wchar_t* Help_Header_Tips = nullptr;
+        const wchar_t* Help_Tip_ContextScope = nullptr;
+        const wchar_t* Help_Tip_Rotation = nullptr;
+        const wchar_t* Help_Tip_VideoWall = nullptr;
+        const wchar_t* Help_Tip_DesignerMode = nullptr;
+        const wchar_t* Help_Tip_GamutDetection = nullptr;
+        const wchar_t* Help_Tip_Raw = nullptr;
+        const wchar_t* Help_Tip_JpegQ = nullptr;
+        const wchar_t* Help_Tip_SoftProofCompare = nullptr;
 
 
 
-    extern const wchar_t* Settings_Option_Auto;
-    extern const wchar_t* Settings_Option_Eco;
-    extern const wchar_t* Settings_Option_Balanced;
-    extern const wchar_t* Settings_Option_Ultra;
-    
-    // Compare HUD (Mode 1/2) Localized Labels
-    extern const wchar_t* HUD_Group_Physical;
-    extern const wchar_t* HUD_Group_Scientific;
-    extern const wchar_t* HUD_Group_Encoding;
+        const wchar_t* Settings_Option_Auto = nullptr;
+        const wchar_t* Settings_Option_Eco = nullptr;
+        const wchar_t* Settings_Option_Balanced = nullptr;
+        const wchar_t* Settings_Option_Ultra = nullptr;
 
-    // HUD Tooltips
-    extern const wchar_t* HUD_Tip_Sharp_Desc;
-    extern const wchar_t* HUD_Tip_Sharp_High;
-    extern const wchar_t* HUD_Tip_Sharp_Low;
-    extern const wchar_t* HUD_Tip_Sharp_Ref;
+        // Compare HUD (Mode 1/2) Localized Labels
+        const wchar_t* HUD_Group_Physical = nullptr;
+        const wchar_t* HUD_Group_Scientific = nullptr;
+        const wchar_t* HUD_Group_Encoding = nullptr;
 
-    extern const wchar_t* HUD_Tip_Ent_Desc;
-    extern const wchar_t* HUD_Tip_Ent_High;
-    extern const wchar_t* HUD_Tip_Ent_Low;
-    extern const wchar_t* HUD_Tip_Ent_Ref;
+        // HUD Tooltips
+        const wchar_t* HUD_Tip_Sharp_Desc = nullptr;
+        const wchar_t* HUD_Tip_Sharp_High = nullptr;
+        const wchar_t* HUD_Tip_Sharp_Low = nullptr;
+        const wchar_t* HUD_Tip_Sharp_Ref = nullptr;
 
-    extern const wchar_t* HUD_Tip_BPP_Desc;
-    extern const wchar_t* HUD_Tip_BPP_High;
-    extern const wchar_t* HUD_Tip_BPP_Low;
-    extern const wchar_t* HUD_Tip_BPP_Ref;
-    
-    extern const wchar_t* HUD_Label_High;
-    extern const wchar_t* HUD_Label_Low;
-    extern const wchar_t* HUD_Label_Ref;
+        const wchar_t* HUD_Tip_Ent_Desc = nullptr;
+        const wchar_t* HUD_Tip_Ent_High = nullptr;
+        const wchar_t* HUD_Tip_Ent_Low = nullptr;
+        const wchar_t* HUD_Tip_Ent_Ref = nullptr;
 
-    // Geek Glass Settings
-    extern const wchar_t* Settings_Header_GeekGlass;
-    extern const wchar_t* Settings_Label_EnableGeekGlass;
-    extern const wchar_t* Settings_Label_GlassUIAnimations;
-    extern const wchar_t* Settings_Header_CoreMaterial;
-    extern const wchar_t* Settings_Label_BlurSigma;
-    extern const wchar_t* Settings_Status_GlassDisabled;
-    extern const wchar_t* Settings_Label_TintDensity;
-    extern const wchar_t* Settings_Tooltip_TintDensity;
-    extern const wchar_t* Settings_Label_SpecularOpacity;
-    extern const wchar_t* Settings_Tooltip_SpecularOpacity;
-    extern const wchar_t* Settings_Label_ShadowIntensity;
-    extern const wchar_t* Settings_Tooltip_ShadowIntensity;
-    extern const wchar_t* Settings_Header_VectorAssets;
-    extern const wchar_t* Settings_Label_VectorStrokeWeight;
-    extern const wchar_t* Settings_Option_StrokeStandard;
-    extern const wchar_t* Settings_Option_StrokeFine;
-    extern const wchar_t* Settings_Header_GlassTint;
-    extern const wchar_t* Settings_Label_TintProfile;
-    extern const wchar_t* Settings_Option_TintAuto;
-    extern const wchar_t* Settings_Option_TintCustom;
-    extern const wchar_t* Settings_Label_GlassCustomColor;
-    extern const wchar_t* Settings_Header_DensityMatrix;
-    extern const wchar_t* Settings_Label_OsdDensity;
-    extern const wchar_t* Settings_Tooltip_OsdDensity;
-    extern const wchar_t* Settings_Label_PanelsDensity;
-    extern const wchar_t* Settings_Tooltip_PanelsDensity;
-    extern const wchar_t* Settings_Label_ModalsDensity;
-    extern const wchar_t* Settings_Tooltip_ModalsDensity;
-    extern const wchar_t* Settings_Label_MenusDensity;
-    extern const wchar_t* Settings_Tooltip_MenusDensity;
- 
-    // Professional Tools [v3.5]
-    extern const wchar_t* Settings_Header_Professional;
-    extern const wchar_t* Settings_Label_ShowDirtyRect;
-    extern const wchar_t* Settings_Tooltip_ShowDirtyRect;
-    extern const wchar_t* Settings_Label_LoupeShape;
-    extern const wchar_t* Settings_Option_LoupeShapeSquare;
-    extern const wchar_t* Settings_Option_LoupeShapeCircle;
-    extern const wchar_t* Settings_Option_LoupeShapeFullscreen;
-    extern const wchar_t* Settings_Label_LoupeZoom;
-    extern const wchar_t* Settings_Tooltip_LoupeHotkey;
-    extern const wchar_t* Settings_Tooltip_CropModeHotkey;
+        const wchar_t* HUD_Tip_BPP_Desc = nullptr;
+        const wchar_t* HUD_Tip_BPP_High = nullptr;
+        const wchar_t* HUD_Tip_BPP_Low = nullptr;
+        const wchar_t* HUD_Tip_BPP_Ref = nullptr;
 
-    extern const wchar_t* Settings_Tab_Theme;
-    extern const wchar_t* Settings_Label_ThemeMode;
-    extern const wchar_t* Settings_Option_ThemeAuto;
-    extern const wchar_t* Settings_Option_ThemeDark;
-    extern const wchar_t* Settings_Option_ThemeLight;
-    extern const wchar_t* Settings_Option_ThemeCustom;
-    extern const wchar_t* Settings_Label_AmbientDimmer;
-    extern const wchar_t* Settings_Tooltip_AmbientDimmer;
-    extern const wchar_t* Settings_Label_AccentColor;
-    extern const wchar_t* Settings_Option_AccentSystem;
-    extern const wchar_t* Settings_Option_AccentCustom;
-    extern const wchar_t* Settings_Label_WindowBorderAccent;
-    extern const wchar_t* Settings_Option_BorderFollowSystem;
-    extern const wchar_t* Settings_Option_BorderAccent;
-    extern const wchar_t* Settings_Label_ResetGlass;
-    extern const wchar_t* Settings_Action_ResetGlass;
-    extern const wchar_t* Settings_Header_ThemeManagement;
-    extern const wchar_t* Settings_Action_ExportTheme;
-    extern const wchar_t* Settings_Action_ImportTheme;
+        const wchar_t* HUD_Label_High = nullptr;
+        const wchar_t* HUD_Label_Low = nullptr;
+        const wchar_t* HUD_Label_Ref = nullptr;
 
-    // AI Actions & Multi-modal System
-    extern const wchar_t* Toolbar_Tooltip_CompareSave;
-    extern const wchar_t* Dialog_MultiLineInputHint;
-    extern const wchar_t* Dialog_AiApiKeyTitle;
-    extern const wchar_t* Dialog_AiApiKeyPrompt;
-    extern const wchar_t* Dialog_AiPromptTitle;
-    extern const wchar_t* Dialog_AiPromptPrompt;
-    extern const wchar_t* Dialog_AiActionNameTitle;
-    extern const wchar_t* Dialog_AiActionNamePrompt;
-    extern const wchar_t* Dialog_AiBaseUrlTitle;
-    extern const wchar_t* Dialog_AiBaseUrlPrompt;
-    extern const wchar_t* AiAction_Title;
-    extern const wchar_t* AiAction_EscHint;
-    extern const wchar_t* AiAction_ScopeCropAndBlend;
-    extern const wchar_t* AiAction_ScopeForceFull;
-    extern const wchar_t* AiAction_FooterQuickKeys;
-    extern const wchar_t* AiAction_Placeholder;
-    extern const wchar_t* AiAction_InpaintTitle;
-    extern const wchar_t* AiAction_InpaintDesc;
-    extern const wchar_t* AiAction_InpaintTag;
-    extern const wchar_t* AiAction_AdhocPrefix;
-    extern const wchar_t* AiAction_AdhocSend;
-    extern const wchar_t* AiAction_CurrentModel;
-    extern const wchar_t* AiAction_NoModelSelected;
-    extern const wchar_t* OSD_AiProcessing;
-    extern const wchar_t* OSD_AiGenerationSuccess;
-    extern const wchar_t* OSD_AiFailedPrefix;
-    extern const wchar_t* OSD_AiPreparing;
-    extern const wchar_t* OSD_AiProcessingElapsed;
-    extern const wchar_t* OSD_AiConnecting;
-    extern const wchar_t* OSD_AiSamplingProgress;
-    extern const wchar_t* OSD_AiSamplingProgressEta;
-    extern const wchar_t* OSD_AiAdhocPrompt;
-    extern const wchar_t* OSD_AiTaskCancelled;
-    extern const wchar_t* OSD_AiInpaintGuide;
-    extern const wchar_t* OSD_AiInpaintGuideActionFormat;
-    extern const wchar_t* OSD_AiSelectionTooSmall;
-    extern const wchar_t* OSD_AiEmptyResult;
-    extern const wchar_t* OSD_AiDecodeFailed;
-    extern const wchar_t* OSD_AiTextureFailed;
-    extern const wchar_t* OSD_AiEmptyPromptHint;
-    extern const wchar_t* OSD_AiInpaintPromptEmptyHint;
-    extern const wchar_t* Settings_Tab_Ai;
-    extern const wchar_t* Settings_Header_AiProviders;
-    extern const wchar_t* Settings_Desc_AiProviders;
-    extern const wchar_t* Settings_Label_AiProviderName;
-    extern const wchar_t* Settings_Label_AiBaseUrl;
-    extern const wchar_t* Settings_Label_AiApiKey;
-    extern const wchar_t* Settings_Label_AiModelId;
-    extern const wchar_t* Settings_Label_AiModelUnconfigured;
-    extern const wchar_t* Settings_Label_AiMaxRes;
-    extern const wchar_t* Settings_Label_AiDefaultProfile;
-    extern const wchar_t* Settings_Button_AiSetDefault;
-    extern const wchar_t* Settings_Button_AiTestConn;
-    extern const wchar_t* Settings_Button_AiSaveProf;
-    extern const wchar_t* Settings_Button_AiDeleteProf;
-    extern const wchar_t* Settings_Button_AiAddProf;
-    extern const wchar_t* Settings_Header_AiActions;
-    extern const wchar_t* Settings_Button_AiAddAction;
-    extern const wchar_t* Settings_Label_AiActionName;
-    extern const wchar_t* Settings_Label_AiPromptTemplate;
-    extern const wchar_t* Settings_Label_AiExecModel;
-    extern const wchar_t* Settings_Option_AiDefaultModel;
-    extern const wchar_t* Settings_Label_AiScopeMode;
-    extern const wchar_t* Settings_Button_AiDeleteAction;
-    extern const wchar_t* Settings_AiModelCustom;
-    extern const wchar_t* Settings_AiModelFetching;
-    extern const wchar_t* Settings_AiModelFetchAuto;
-    extern const wchar_t* Settings_Option_AiRes4K;
-    extern const wchar_t* Settings_Option_AiRes2K;
-    extern const wchar_t* Settings_Option_AiRes1K;
-    extern const wchar_t* Settings_Option_AiResOriginal;
-    extern const wchar_t* Settings_Option_AiScopeForceFull;
-    extern const wchar_t* Settings_Option_AiScopeCropBlend;
-    extern const wchar_t* Settings_Option_AiCustomEndpoint;
-    extern const wchar_t* Settings_Option_AiLocalComfyUI;
-    extern const wchar_t* Settings_Option_AiLocalSdWebUI;
-    extern const wchar_t* OSD_AiFetchingModels;
-    extern const wchar_t* OSD_AiFetchModelsFailed;
-    extern const wchar_t* OSD_AiFetchModelsSuccessFormat;
-    extern const wchar_t* OSD_AiSetDefaultSuccessFormat;
-    extern const wchar_t* OSD_AiTestingConnection;
-    extern const wchar_t* OSD_AiConnSuccessFormat;
-    extern const wchar_t* OSD_AiSaveFailedBaseUrlEmpty;
-    extern const wchar_t* OSD_AiSaveFailedApiKeyEmpty;
-    extern const wchar_t* OSD_AiSaveFailedModelEmpty;
-    extern const wchar_t* OSD_AiSaveProfileSuccess;
-    extern const wchar_t* AiError_Http429Title;
-    extern const wchar_t* AiError_Http429Advice;
-    extern const wchar_t* AiError_Http503Title;
-    extern const wchar_t* AiError_Http503Advice;
-    extern const wchar_t* AiError_Http404Title;
-    extern const wchar_t* AiError_Http404Advice;
-    extern const wchar_t* AiError_Http401Title;
-    extern const wchar_t* AiError_Http401Advice;
-    extern const wchar_t* AiError_Http403Title;
-    extern const wchar_t* AiError_Http403Advice;
-    extern const wchar_t* AiError_Http413Title;
-    extern const wchar_t* AiError_Http413Advice;
-    extern const wchar_t* AiError_HttpGenericTitle;
-    extern const wchar_t* AiError_HttpGenericAdvice;
-    extern const wchar_t* AiError_ApiKeyEmpty;
-    extern const wchar_t* AiError_ModelEmpty;
-    extern const wchar_t* AiError_InvalidUrl;
-    extern const wchar_t* AiError_InitWinHttpFailed;
-    extern const wchar_t* AiError_ConnectFailed;
-    extern const wchar_t* AiError_CreateReqFailed;
-    extern const wchar_t* AiError_SendReqFailedFormat;
-    extern const wchar_t* AiError_NoValidDataReturned;
-    extern const wchar_t* AiError_DetailPrefix;
-    extern const wchar_t* AiError_AdvicePrefix;
-    extern const wchar_t* AiAction_DefRemoveBg;
-    extern const wchar_t* AiAction_DefInpaint;
-    extern const wchar_t* AiAction_DefAnime;
-    extern const wchar_t* AiAction_DefCyberpunk;
-    extern const wchar_t* AiAction_DefSuperDetail;
-    extern const wchar_t* AiError_RequestTimeout;
-    extern const wchar_t* AiError_HttpStatusPrefix;
-    extern const wchar_t* AiError_JsonParseFailed;
-    extern const wchar_t* AiError_NoModelsFound;
-    extern const wchar_t* AiTest_ConnSuccess;
-    extern const wchar_t* AiTest_AuthFailedPrefix;
-    extern const wchar_t* AiTest_HttpErrorPrefix;
-    extern const wchar_t* AiError_NoAvailableProfile;
+        // Geek Glass Settings
+        const wchar_t* Settings_Header_GeekGlass = nullptr;
+        const wchar_t* Settings_Label_EnableGeekGlass = nullptr;
+        const wchar_t* Settings_Label_GlassUIAnimations = nullptr;
+        const wchar_t* Settings_Header_CoreMaterial = nullptr;
+        const wchar_t* Settings_Label_BlurSigma = nullptr;
+        const wchar_t* Settings_Status_GlassDisabled = nullptr;
+        const wchar_t* Settings_Label_TintDensity = nullptr;
+        const wchar_t* Settings_Tooltip_TintDensity = nullptr;
+        const wchar_t* Settings_Label_SpecularOpacity = nullptr;
+        const wchar_t* Settings_Tooltip_SpecularOpacity = nullptr;
+        const wchar_t* Settings_Label_ShadowIntensity = nullptr;
+        const wchar_t* Settings_Tooltip_ShadowIntensity = nullptr;
+        const wchar_t* Settings_Header_VectorAssets = nullptr;
+        const wchar_t* Settings_Label_VectorStrokeWeight = nullptr;
+        const wchar_t* Settings_Option_StrokeStandard = nullptr;
+        const wchar_t* Settings_Option_StrokeFine = nullptr;
+        const wchar_t* Settings_Header_GlassTint = nullptr;
+        const wchar_t* Settings_Label_TintProfile = nullptr;
+        const wchar_t* Settings_Option_TintAuto = nullptr;
+        const wchar_t* Settings_Option_TintCustom = nullptr;
+        const wchar_t* Settings_Label_GlassCustomColor = nullptr;
+        const wchar_t* Settings_Header_DensityMatrix = nullptr;
+        const wchar_t* Settings_Label_OsdDensity = nullptr;
+        const wchar_t* Settings_Tooltip_OsdDensity = nullptr;
+        const wchar_t* Settings_Label_PanelsDensity = nullptr;
+        const wchar_t* Settings_Tooltip_PanelsDensity = nullptr;
+        const wchar_t* Settings_Label_ModalsDensity = nullptr;
+        const wchar_t* Settings_Tooltip_ModalsDensity = nullptr;
+        const wchar_t* Settings_Label_MenusDensity = nullptr;
+        const wchar_t* Settings_Tooltip_MenusDensity = nullptr;
 
-    // --- File Association Center ---
-    extern const wchar_t* Settings_Tab_FileAssoc;
-    extern const wchar_t* Settings_Header_FileAssocStatus;
-    extern const wchar_t* Settings_Header_FileAssocOptions;
-    extern const wchar_t* Settings_Header_FileAssocFormats;
-    extern const wchar_t* Settings_Label_FileAssocIconStyle;
-    extern const wchar_t* Settings_Option_FileAssocIconNative;
-    extern const wchar_t* Settings_Option_FileAssocIconApp;
-    extern const wchar_t* Settings_Label_FileAssocContextMenu;
-    extern const wchar_t* Settings_Label_FileAssocAutoRepair;
-    extern const wchar_t* Settings_Label_FileAssocPresets;
-    extern const wchar_t* Settings_Action_PresetRecommended;
-    extern const wchar_t* Settings_Action_PresetAllImages;
-    extern const wchar_t* Settings_Action_PresetPhotoRaw;
-    extern const wchar_t* Settings_Action_PresetClearAll;
-    extern const wchar_t* Settings_Action_ApplyAssoc;
-    extern const wchar_t* Settings_Action_ApplyPending;
-    extern const wchar_t* Settings_Action_SetDefaultWin;
-    extern const wchar_t* Settings_Action_RepairAssoc;
-    extern const wchar_t* Settings_Label_FileAssocCatStandard;
-    extern const wchar_t* Settings_Label_FileAssocCatModern;
-    extern const wchar_t* Settings_Label_FileAssocCatPro;
-    extern const wchar_t* Settings_Label_FileAssocCatRaw;
-    extern const wchar_t* Settings_Label_FileAssocCatExtRaw;
-    extern const wchar_t* Settings_Label_FileAssocCatArchive;
-    extern const wchar_t* Settings_Tooltip_FileAssocArchive;
-    extern const wchar_t* Settings_Status_AssocApplied;
-    extern const wchar_t* Settings_Status_AssocSummaryFormat;
-    extern const wchar_t* Settings_Status_AssocBrokenHint;
-    extern const wchar_t* Settings_Status_AssocPendingHint;
-    extern const wchar_t* Settings_Status_AssocStoreManaged;
-    extern const wchar_t* Settings_Label_StoreUpdatesManaged;
-    extern const wchar_t* Settings_Action_OpenStore;
-    extern const wchar_t* Settings_Status_AssocLegend;
-    extern const wchar_t* Context_OpenWithQuickView;
+        // Professional Tools [v3.5]
+        const wchar_t* Settings_Header_Professional = nullptr;
+        const wchar_t* Settings_Label_ShowDirtyRect = nullptr;
+        const wchar_t* Settings_Tooltip_ShowDirtyRect = nullptr;
+        const wchar_t* Settings_Label_LoupeShape = nullptr;
+        const wchar_t* Settings_Option_LoupeShapeSquare = nullptr;
+        const wchar_t* Settings_Option_LoupeShapeCircle = nullptr;
+        const wchar_t* Settings_Option_LoupeShapeFullscreen = nullptr;
+        const wchar_t* Settings_Label_LoupeZoom = nullptr;
+        const wchar_t* Settings_Tooltip_LoupeHotkey = nullptr;
+        const wchar_t* Settings_Tooltip_CropModeHotkey = nullptr;
+
+        const wchar_t* Settings_Tab_Theme = nullptr;
+        const wchar_t* Settings_Label_ThemeMode = nullptr;
+        const wchar_t* Settings_Option_ThemeAuto = nullptr;
+        const wchar_t* Settings_Option_ThemeDark = nullptr;
+        const wchar_t* Settings_Option_ThemeLight = nullptr;
+        const wchar_t* Settings_Option_ThemeCustom = nullptr;
+        const wchar_t* Settings_Label_AmbientDimmer = nullptr;
+        const wchar_t* Settings_Tooltip_AmbientDimmer = nullptr;
+        const wchar_t* Settings_Label_AccentColor = nullptr;
+        const wchar_t* Settings_Option_AccentSystem = nullptr;
+        const wchar_t* Settings_Option_AccentCustom = nullptr;
+        const wchar_t* Settings_Label_WindowBorderAccent = nullptr;
+        const wchar_t* Settings_Option_BorderFollowSystem = nullptr;
+        const wchar_t* Settings_Option_BorderAccent = nullptr;
+        const wchar_t* Settings_Label_ResetGlass = nullptr;
+        const wchar_t* Settings_Action_ResetGlass = nullptr;
+        const wchar_t* Settings_Header_ThemeManagement = nullptr;
+        const wchar_t* Settings_Action_ExportTheme = nullptr;
+        const wchar_t* Settings_Action_ImportTheme = nullptr;
+
+        // AI Actions & Multi-modal System
+        const wchar_t* Toolbar_Tooltip_CompareSave = nullptr;
+        const wchar_t* Dialog_MultiLineInputHint = nullptr;
+        const wchar_t* Dialog_AiApiKeyTitle = nullptr;
+        const wchar_t* Dialog_AiApiKeyPrompt = nullptr;
+        const wchar_t* Dialog_AiPromptTitle = nullptr;
+        const wchar_t* Dialog_AiPromptPrompt = nullptr;
+        const wchar_t* Dialog_AiActionNameTitle = nullptr;
+        const wchar_t* Dialog_AiActionNamePrompt = nullptr;
+        const wchar_t* Dialog_AiBaseUrlTitle = nullptr;
+        const wchar_t* Dialog_AiBaseUrlPrompt = nullptr;
+        const wchar_t* AiAction_Title = nullptr;
+        const wchar_t* AiAction_EscHint = nullptr;
+        const wchar_t* AiAction_ScopeCropAndBlend = nullptr;
+        const wchar_t* AiAction_ScopeForceFull = nullptr;
+        const wchar_t* AiAction_FooterQuickKeys = nullptr;
+        const wchar_t* AiAction_Placeholder = nullptr;
+        const wchar_t* AiAction_InpaintTitle = nullptr;
+        const wchar_t* AiAction_InpaintDesc = nullptr;
+        const wchar_t* AiAction_InpaintTag = nullptr;
+        const wchar_t* AiAction_AdhocPrefix = nullptr;
+        const wchar_t* AiAction_AdhocSend = nullptr;
+        const wchar_t* AiAction_CurrentModel = nullptr;
+        const wchar_t* AiAction_NoModelSelected = nullptr;
+        const wchar_t* OSD_AiProcessing = nullptr;
+        const wchar_t* OSD_AiGenerationSuccess = nullptr;
+        const wchar_t* OSD_AiCompleted = nullptr;
+        const wchar_t* OSD_AiPreparing = nullptr;
+        const wchar_t* OSD_AiProcessingElapsed = nullptr;
+        const wchar_t* OSD_AiConnecting = nullptr;
+        const wchar_t* OSD_AiSamplingProgress = nullptr;
+        const wchar_t* OSD_AiSamplingProgressEta = nullptr;
+        const wchar_t* OSD_AiAdhocPrompt = nullptr;
+        const wchar_t* OSD_AiTaskCancelled = nullptr;
+        const wchar_t* OSD_AiInpaintGuide = nullptr;
+        const wchar_t* OSD_AiInpaintGuideActionFormat = nullptr;
+        const wchar_t* OSD_AiSelectionTooSmall = nullptr;
+        const wchar_t* OSD_AiEmptyResult = nullptr;
+        const wchar_t* OSD_AiDecodeFailed = nullptr;
+        const wchar_t* OSD_AiTextureFailed = nullptr;
+        const wchar_t* OSD_AiEmptyPromptHint = nullptr;
+        const wchar_t* OSD_AiInpaintPromptEmptyHint = nullptr;
+        const wchar_t* Settings_Tab_Ai = nullptr;
+        const wchar_t* Settings_Header_AiProviders = nullptr;
+        const wchar_t* Settings_Desc_AiProviders = nullptr;
+        const wchar_t* Settings_Label_AiProviderName = nullptr;
+        const wchar_t* Settings_Label_AiBaseUrl = nullptr;
+        const wchar_t* Settings_Label_AiApiKey = nullptr;
+        const wchar_t* Settings_Label_AiModelId = nullptr;
+        const wchar_t* Settings_Label_AiModelUnconfigured = nullptr;
+        const wchar_t* Settings_Label_AiMaxRes = nullptr;
+        const wchar_t* Settings_Label_AiDefaultProfile = nullptr;
+        const wchar_t* Settings_Button_AiSetDefault = nullptr;
+        const wchar_t* Settings_Button_AiTestConn = nullptr;
+        const wchar_t* Settings_Button_AiSaveProf = nullptr;
+        const wchar_t* Settings_Button_AiDeleteProf = nullptr;
+        const wchar_t* Settings_Button_AiAddProf = nullptr;
+        const wchar_t* Settings_Header_AiActions = nullptr;
+        const wchar_t* Settings_Button_AiAddAction = nullptr;
+        const wchar_t* Settings_Label_AiActionName = nullptr;
+        const wchar_t* Settings_Label_AiPromptTemplate = nullptr;
+        const wchar_t* Settings_Label_AiExecModel = nullptr;
+        const wchar_t* Settings_Option_AiDefaultModel = nullptr;
+        const wchar_t* Settings_Label_AiScopeMode = nullptr;
+        const wchar_t* Settings_Button_AiDeleteAction = nullptr;
+        const wchar_t* Settings_AiModelCustom = nullptr;
+        const wchar_t* Settings_AiModelFetching = nullptr;
+        const wchar_t* Settings_AiModelFetchAuto = nullptr;
+        const wchar_t* Settings_Option_AiRes4K = nullptr;
+        const wchar_t* Settings_Option_AiRes2K = nullptr;
+        const wchar_t* Settings_Option_AiRes1K = nullptr;
+        const wchar_t* Settings_Option_AiResOriginal = nullptr;
+        const wchar_t* Settings_Option_AiScopeForceFull = nullptr;
+        const wchar_t* Settings_Option_AiScopeCropBlend = nullptr;
+        const wchar_t* Settings_Option_AiCustomEndpoint = nullptr;
+        const wchar_t* Settings_Option_AiLocalComfyUI = nullptr;
+        const wchar_t* Settings_Option_AiLocalSdWebUI = nullptr;
+        const wchar_t* OSD_AiFetchingModels = nullptr;
+        const wchar_t* OSD_AiFetchModelsFailed = nullptr;
+        const wchar_t* OSD_AiFetchModelsSuccessFormat = nullptr;
+        const wchar_t* OSD_AiSetDefaultSuccessFormat = nullptr;
+        const wchar_t* OSD_AiTestingConnection = nullptr;
+        const wchar_t* OSD_AiConnSuccessFormat = nullptr;
+        const wchar_t* OSD_AiSaveFailedBaseUrlEmpty = nullptr;
+        const wchar_t* OSD_AiSaveFailedApiKeyEmpty = nullptr;
+        const wchar_t* OSD_AiSaveFailedModelEmpty = nullptr;
+        const wchar_t* OSD_AiSaveProfileSuccess = nullptr;
+        const wchar_t* AiError_ApiKeyEmpty = nullptr;
+        const wchar_t* AiError_ModelEmpty = nullptr;
+        const wchar_t* AiError_InvalidUrl = nullptr;
+        const wchar_t* AiError_InitWinHttpFailed = nullptr;
+        const wchar_t* AiError_ConnectFailed = nullptr;
+        const wchar_t* AiError_CreateReqFailed = nullptr;
+        const wchar_t* AiError_NoValidDataReturned = nullptr;
+        const wchar_t* AiError_RequestTimeout = nullptr;
+        const wchar_t* AiError_HttpStatusPrefix = nullptr;
+        const wchar_t* AiError_JsonParseFailed = nullptr;
+        const wchar_t* AiError_NoModelsFound = nullptr;
+        const wchar_t* AiTest_ConnSuccess = nullptr;
+        const wchar_t* AiTest_AuthFailedPrefix = nullptr;
+        const wchar_t* AiTest_HttpErrorPrefix = nullptr;
+        const wchar_t* AiError_NoAvailableProfile = nullptr;
+
+        // --- File Association Center ---
+        const wchar_t* Settings_Tab_FileAssoc = nullptr;
+        const wchar_t* Settings_Header_FileAssocStatus = nullptr;
+        const wchar_t* Settings_Header_FileAssocOptions = nullptr;
+        const wchar_t* Settings_Header_FileAssocFormats = nullptr;
+        const wchar_t* Settings_Label_FileAssocIconStyle = nullptr;
+        const wchar_t* Settings_Option_FileAssocIconNative = nullptr;
+        const wchar_t* Settings_Option_FileAssocIconApp = nullptr;
+        const wchar_t* Settings_Label_FileAssocContextMenu = nullptr;
+        const wchar_t* Settings_Label_FileAssocAutoRepair = nullptr;
+        const wchar_t* Settings_Label_FileAssocPresets = nullptr;
+        const wchar_t* Settings_Action_PresetRecommended = nullptr;
+        const wchar_t* Settings_Action_PresetAllImages = nullptr;
+        const wchar_t* Settings_Action_PresetPhotoRaw = nullptr;
+        const wchar_t* Settings_Action_PresetClearAll = nullptr;
+        const wchar_t* Settings_Action_ApplyAssoc = nullptr;
+        const wchar_t* Settings_Action_ApplyPending = nullptr;
+        const wchar_t* Settings_Action_SetDefaultWin = nullptr;
+        const wchar_t* Settings_Action_RepairAssoc = nullptr;
+        const wchar_t* Settings_Label_FileAssocCatStandard = nullptr;
+        const wchar_t* Settings_Label_FileAssocCatModern = nullptr;
+        const wchar_t* Settings_Label_FileAssocCatPro = nullptr;
+        const wchar_t* Settings_Label_FileAssocCatRaw = nullptr;
+        const wchar_t* Settings_Label_FileAssocCatExtRaw = nullptr;
+        const wchar_t* Settings_Label_FileAssocCatArchive = nullptr;
+        const wchar_t* Settings_Tooltip_FileAssocArchive = nullptr;
+        const wchar_t* Settings_Status_AssocApplied = nullptr;
+        const wchar_t* Settings_Status_AssocSummaryFormat = nullptr;
+        const wchar_t* Settings_Status_AssocBrokenHint = nullptr;
+        const wchar_t* Settings_Status_AssocPendingHint = nullptr;
+        const wchar_t* Settings_Status_AssocStoreManaged = nullptr;
+        const wchar_t* Settings_Label_StoreUpdatesManaged = nullptr;
+        const wchar_t* Settings_Action_OpenStore = nullptr;
+        const wchar_t* Settings_Status_AssocLegend = nullptr;
+        const wchar_t* Context_OpenWithQuickView = nullptr;
+
+    };
+
+    inline Strings g{};
 
     // Hotkey Action Name resolver
     std::wstring GetHotkeyActionName(::HotkeyAction action);

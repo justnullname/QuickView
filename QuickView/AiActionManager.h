@@ -222,6 +222,8 @@ public:
     static std::string EncryptApiKey(std::string_view plainText);
     static std::string DecryptApiKey(std::string_view cipherBase64);
 
+    static void SetVisualFrameProviders(VisualFrameSnapshotFn snapshotFn, VisualBgraProviderFn renderFn);
+
     // --- Execution & Task Lifecycle ---
     uint64_t ExecuteAction(
         const ActionDesc& action, HWND hwnd,
@@ -269,12 +271,6 @@ public:
     static bool PollSdProgress(std::string_view baseUrl, SdProgressInfo& outInfo);
 
     // --- Image Processing & Inpainting Helper ---
-    // Downsamples BGRA image buffer to fit maxDim while maintaining aspect ratio and aligning to step
-    static bool PrepareImageBuffer(
-        const uint8_t* srcBgra, int srcW, int srcH, int srcStride,
-        MaxResolution maxRes, uint32_t stepAlignment,
-        std::vector<uint8_t>& outBgra, int& outW, int& outH);
-
     // Encodes BGRA raw pixels into PNG format stream in memory via WIC
     static bool EncodeToPngMemory(
         const uint8_t* bgra, int width, int height, int stride,
@@ -298,14 +294,15 @@ private:
     void InitDefaultTemplates();
 
     // Worker thread function
-    void WorkerThread(uint64_t taskId, ActionDesc action, ModelProfile profile, HWND hwnd, ActionCallback callback);
+    void WorkerThread(uint64_t taskId, VisualFrameSnapshot snapshot, ActionDesc action, ModelProfile profile, HWND hwnd, ActionCallback callback);
     void InpaintWorkerThread(
-        uint64_t taskId, int cropL, int cropT, int cropR, int cropB,
+        uint64_t taskId, VisualFrameSnapshot snapshot, int cropL, int cropT, int cropR, int cropB,
         std::wstring prompt, ModelProfile profile, HWND hwnd,
         ActionCallback callback,
         std::optional<ActionDesc> sourceAction = std::nullopt);
 
-    bool OpenAiHttpRequest(
+    HINTERNET OpenAiHttpRequest(
+        uint64_t taskId,
         const wchar_t* userAgent,
         const wchar_t* hostName,
         INTERNET_PORT port,
@@ -314,6 +311,7 @@ private:
         const std::wstring& fullPath,
         int timeoutSeconds,
         std::wstring& outError);
+    void CloseActiveHttpHandlesIfOwner(uint64_t taskId);
 
     std::vector<ModelProfile> m_profiles;
     std::vector<ActionDesc> m_actions;
@@ -324,6 +322,7 @@ private:
     std::atomic<bool> m_isRunning{ false };
     std::atomic<uint64_t> m_currentTaskId{ 0 };
     std::mutex m_taskMutex;
+    uint64_t m_activeHttpTaskId = 0;
     HINTERNET m_activeSession = nullptr;
     HINTERNET m_activeConnect = nullptr;
     HINTERNET m_activeRequest = nullptr;

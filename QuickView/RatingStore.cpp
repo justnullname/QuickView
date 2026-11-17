@@ -50,16 +50,6 @@ constexpr DWORD MAX_SIDECAR_BYTES = 4 * 1024 * 1024;
 constexpr auto SELF_WRITE_ECHO = std::chrono::milliseconds(600);
 std::atomic<int64_t> g_lastSelfWriteTick{ 0 };
 
-LARGE_INTEGER FileSizeOf(const std::wstring& path) {
-    LARGE_INTEGER size{};
-    WIN32_FILE_ATTRIBUTE_DATA data{};
-    if (GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &data)) {
-        size.HighPart = (LONG)data.nFileSizeHigh;
-        size.LowPart = data.nFileSizeLow;
-    }
-    return size;
-}
-
 // Wide-char file API throughout: a path round-tripped through a narrow code
 // page fails to open on non-ASCII names.
 std::vector<uint8_t> ReadFilePrefix(const std::wstring& path, DWORD maxBytes) {
@@ -113,6 +103,9 @@ void RatingStore::Shutdown() {
     m_cv.notify_all();
     if (m_worker.joinable()) m_worker.join();
 
+    {
+        std::lock_guard<std::mutex> writeLock(m_writeMutex);
+    }
     m_writeCv.notify_all();
     if (m_writeWorker.joinable()) m_writeWorker.join();
 }
@@ -132,6 +125,57 @@ std::optional<int> RatingStore::ReadRatingFromSidecar(const std::wstring& sideca
 
 namespace {
 
+bool IsInFileRatableExtension(std::wstring_view ext) {
+    return QuickView::ExtEqualsIgnoreCase(ext, L".jpg") ||
+           QuickView::ExtEqualsIgnoreCase(ext, L".jpeg") ||
+           QuickView::ExtEqualsIgnoreCase(ext, L".jpe") ||
+           QuickView::ExtEqualsIgnoreCase(ext, L".jfif") ||
+           QuickView::ExtEqualsIgnoreCase(ext, L".tif") ||
+           QuickView::ExtEqualsIgnoreCase(ext, L".tiff") ||
+           QuickView::ExtEqualsIgnoreCase(ext, L".png") ||
+           QuickView::ExtEqualsIgnoreCase(ext, L".apng") ||
+           QuickView::ExtEqualsIgnoreCase(ext, L".webp") ||
+           QuickView::ExtEqualsIgnoreCase(ext, L".avif") ||
+           QuickView::ExtEqualsIgnoreCase(ext, L".avifs") ||
+           QuickView::ExtEqualsIgnoreCase(ext, L".heic") ||
+           QuickView::ExtEqualsIgnoreCase(ext, L".heif") ||
+           QuickView::ExtEqualsIgnoreCase(ext, L".jxl");
+}
+
+bool SeekHandleAbsolute(HANDLE file, uint64_t offset) {
+    if (offset > static_cast<uint64_t>(INT64_MAX)) return false;
+    LARGE_INTEGER li{};
+    li.QuadPart = static_cast<LONGLONG>(offset);
+    return SetFilePointerEx(file, li, nullptr, FILE_BEGIN) != FALSE;
+}
+
+bool ReadExactHandleBytes(HANDLE file, void* dst, size_t bytes) {
+    auto* out = static_cast<uint8_t*>(dst);
+    size_t offset = 0;
+    while (offset < bytes) {
+        const DWORD chunk = static_cast<DWORD>((std::min)(bytes - offset, static_cast<size_t>(0x40000000u)));
+        DWORD read = 0;
+        if (!ReadFile(file, out + offset, chunk, &read, nullptr) || read == 0) {
+            return false;
+        }
+        offset += read;
+    }
+    return true;
+}
+
+bool ReadHandleSpan(HANDLE file, uint64_t offset, uint64_t length, uint64_t fileSize,
+                    size_t maxBytes, std::vector<uint8_t>& out) {
+    if (length == 0 || length > maxBytes) return false;
+    if (offset > fileSize || length > fileSize - offset) return false;
+    if (!SeekHandleAbsolute(file, offset)) return false;
+    out.resize(static_cast<size_t>(length));
+    if (!ReadExactHandleBytes(file, out.data(), out.size())) {
+        out.clear();
+        return false;
+    }
+    return true;
+}
+
 std::optional<int> ReadTiffRatingDirect(const std::wstring& path) {
     HANDLE file = CreateFileW(path.c_str(), GENERIC_READ,
                               FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -146,8 +190,7 @@ std::optional<int> ReadTiffRatingDirect(const std::wstring& path) {
     }
 
     uint8_t header[8];
-    DWORD read = 0;
-    if (!ReadFile(file, header, 8, &read, nullptr) || read != 8) {
+    if (!ReadExactHandleBytes(file, header, 8)) {
         CloseHandle(file);
         return std::nullopt;
     }
@@ -170,57 +213,37 @@ std::optional<int> ReadTiffRatingDirect(const std::wstring& path) {
                     : (uint32_t)((b[0] << 24) | (b[1] << 16) | (b[2] << 8) | b[3]);
     };
 
-    uint32_t ifdOffset = read32(header + 4);
-    if (ifdOffset < 8 || (LONGLONG)ifdOffset + 2 > fileSize.QuadPart) {
-        CloseHandle(file);
-        return std::nullopt;
-    }
-
-    LARGE_INTEGER seekPos{};
-    seekPos.QuadPart = ifdOffset;
-    if (!SetFilePointerEx(file, seekPos, nullptr, FILE_BEGIN)) {
+    const uint32_t ifdOffset = read32(header + 4);
+    if (ifdOffset < 8 || (LONGLONG)ifdOffset + 2 > fileSize.QuadPart ||
+        !SeekHandleAbsolute(file, ifdOffset)) {
         CloseHandle(file);
         return std::nullopt;
     }
 
     uint8_t countBytes[2];
-    if (!ReadFile(file, countBytes, 2, &read, nullptr) || read != 2) {
+    if (!ReadExactHandleBytes(file, countBytes, 2)) {
         CloseHandle(file);
         return std::nullopt;
     }
 
-    uint16_t entryCount = read16(countBytes);
-    // Sanity limit on IFD entry count to prevent massive allocations on corrupted headers
+    const uint16_t entryCount = read16(countBytes);
     if (entryCount == 0 || entryCount > 4096 ||
         (LONGLONG)ifdOffset + 2 + (LONGLONG)entryCount * 12 > fileSize.QuadPart) {
         CloseHandle(file);
         return std::nullopt;
     }
 
-    std::vector<uint8_t> entries(entryCount * 12);
-    if (!ReadFile(file, entries.data(), (DWORD)entries.size(), &read, nullptr) || read != entries.size()) {
-        CloseHandle(file);
-        return std::nullopt;
-    }
+    std::vector<uint8_t> entries(static_cast<size_t>(entryCount) * 12);
+    const bool readOk = ReadExactHandleBytes(file, entries.data(), entries.size());
     CloseHandle(file);
+    if (!readOk) return std::nullopt;
 
     constexpr uint16_t TAG_SIMPLE_RATING = 0x4746;
     for (uint16_t i = 0; i < entryCount; ++i) {
-        const uint8_t* e = entries.data() + i * 12;
+        const uint8_t* e = entries.data() + static_cast<size_t>(i) * 12;
         if (read16(e) != TAG_SIMPLE_RATING) continue;
-
-        const uint16_t type = read16(e + 2);
-        const uint32_t count = read32(e + 4);
-        if (count != 1) return std::nullopt;
-
-        int value = 0;
-        switch (type) {
-            case 1: value = e[8]; break;
-            case 3: value = read16(e + 8); break;
-            case 4: value = (int)read32(e + 8); break;
-            default: return std::nullopt;
-        }
-        if (QuickView::Rating::IsValidRating(value)) return value;
+        return QuickView::Rating::DecodeTiffRatingEntry(
+            read16(e + 2), read32(e + 4), std::span<const uint8_t>(e + 8, 4), !isLE);
     }
 
     return std::nullopt;
@@ -238,6 +261,7 @@ std::optional<int> ReadWebpRatingDirect(const std::wstring& path) {
         CloseHandle(file);
         return std::nullopt;
     }
+    const uint64_t totalBytes = static_cast<uint64_t>(fileSize.QuadPart);
 
     // Read initial 30 bytes: 12 bytes RIFF header + up to 18 bytes for first chunk (VP8X)
     uint8_t initHeader[30];
@@ -254,60 +278,81 @@ std::optional<int> ReadWebpRatingDirect(const std::wstring& path) {
     }
 
     // Check if the first chunk is VP8X (Extended WebP)
+    bool allowExif = true;
+    bool allowXmp = true;
     if (read >= 21 && std::memcmp(initHeader + 12, "VP8X", 4) == 0) {
         const uint8_t flags = initHeader[20];
-        // Bit 2 (0x04) indicates presence of XMP chunk. If unset, file has no XMP.
-        if ((flags & 0x04) == 0) {
+        allowXmp = (flags & 0x04) != 0;
+        allowExif = (flags & 0x08) != 0;
+        if (!allowXmp && !allowExif) {
             CloseHandle(file);
             return std::nullopt;
         }
     } else if (read >= 16 && (std::memcmp(initHeader + 12, "VP8 ", 4) == 0 ||
-                             std::memcmp(initHeader + 12, "VP8L", 4) == 0)) {
+                              std::memcmp(initHeader + 12, "VP8L", 4) == 0)) {
         // Simple WebP without VP8X header contains no metadata chunks
         CloseHandle(file);
         return std::nullopt;
     }
 
-    // Stream through RIFF chunks to locate "XMP "
-    LONGLONG pos = 12;
-    LARGE_INTEGER seekPos{};
-    seekPos.QuadPart = 12;
-    if (!SetFilePointerEx(file, seekPos, nullptr, FILE_BEGIN)) {
-        CloseHandle(file);
-        return std::nullopt;
-    }
+    // Stream through RIFF chunks: EXIF takes precedence over XMP, matching ParseWebpRating.
+    std::optional<int> fromXmp;
+    uint64_t pos = 12;
 
-    while (pos + 8 <= fileSize.QuadPart) {
+    while (pos + 8 <= totalBytes) {
+        if (!SeekHandleAbsolute(file, pos)) break;
         uint8_t chunkHdr[8];
-        if (!ReadFile(file, chunkHdr, 8, &read, nullptr) || read != 8) break;
+        if (!ReadExactHandleBytes(file, chunkHdr, 8)) break;
 
         const uint32_t chunkLen = static_cast<uint32_t>(chunkHdr[4]) |
                                   (static_cast<uint32_t>(chunkHdr[5]) << 8) |
                                   (static_cast<uint32_t>(chunkHdr[6]) << 16) |
                                   (static_cast<uint32_t>(chunkHdr[7]) << 24);
+        const uint64_t dataPos = pos + 8;
+        if (chunkLen > totalBytes - dataPos) break;
 
-        if (std::memcmp(chunkHdr, "XMP ", 4) == 0) {
-            // Found XMP! Read up to 256KB of XMP payload
-            const DWORD xmpReadLen = (std::min)(chunkLen, static_cast<uint32_t>(256 * 1024));
-            std::string xmpBuf(xmpReadLen, '\0');
-            if (ReadFile(file, xmpBuf.data(), xmpReadLen, &read, nullptr) && read == xmpReadLen) {
-                CloseHandle(file);
-                return QuickView::Rating::ParseXmpRating(xmpBuf);
+        if (allowExif && std::memcmp(chunkHdr, "EXIF", 4) == 0 && chunkLen > 8) {
+            const size_t exifReadLen = (std::min)(static_cast<size_t>(chunkLen), size_t{ 2u * 1024u * 1024u });
+            std::vector<uint8_t> exifBuf(exifReadLen);
+            if (ReadExactHandleBytes(file, exifBuf.data(), exifReadLen)) {
+                size_t tiffOff = 0;
+                if (exifReadLen >= 6 && std::memcmp(exifBuf.data(), "Exif\0\0", 6) == 0) {
+                    tiffOff = 6;
+                }
+                if (exifReadLen > tiffOff + 8) {
+                    if (auto r = QuickView::Rating::ParseTiffRating(
+                            std::span<const uint8_t>(exifBuf.data() + tiffOff, exifReadLen - tiffOff))) {
+                        CloseHandle(file);
+                        return r;
+                    }
+                }
             }
-            break;
+        } else if (allowXmp && !fromXmp && std::memcmp(chunkHdr, "XMP ", 4) == 0 && chunkLen > 0) {
+            const size_t xmpReadLen = (std::min)(static_cast<size_t>(chunkLen), size_t{ 1024u * 1024u });
+            std::string xmpBuf(xmpReadLen, '\0');
+            if (ReadExactHandleBytes(file, xmpBuf.data(), xmpReadLen)) {
+                fromXmp = QuickView::Rating::ParseXmpRating(xmpBuf);
+            }
         }
 
-        // Advance to next chunk (8 bytes header + chunkLen + 1-byte padding if odd)
-        const LONGLONG advance = chunkLen + (chunkLen & 1);
+        const uint64_t advance = static_cast<uint64_t>(chunkLen) + (chunkLen & 1u);
+        if (8 + advance > totalBytes - pos) break;
         pos += 8 + advance;
-        if (pos > fileSize.QuadPart) break;
-
-        seekPos.QuadPart = advance;
-        if (!SetFilePointerEx(file, seekPos, nullptr, FILE_CURRENT)) break;
     }
 
     CloseHandle(file);
-    return std::nullopt;
+    return fromXmp;
+}
+
+uint32_t ReadBe32Bytes(const uint8_t* p) {
+    return (static_cast<uint32_t>(p[0]) << 24) |
+           (static_cast<uint32_t>(p[1]) << 16) |
+           (static_cast<uint32_t>(p[2]) << 8) |
+           static_cast<uint32_t>(p[3]);
+}
+
+uint64_t ReadBe64Bytes(const uint8_t* p) {
+    return (static_cast<uint64_t>(ReadBe32Bytes(p)) << 32) | ReadBe32Bytes(p + 4);
 }
 
 std::optional<int> ReadIsobmffRatingDirect(const std::wstring& path) {
@@ -318,27 +363,91 @@ std::optional<int> ReadIsobmffRatingDirect(const std::wstring& path) {
         return rating;
     }
 
-    // If prefix had 'ftyp' but rating wasn't resolved (e.g. metadata located after mdat),
-    // open the file to resolve item locations.
+    // If metadata resides after mdat or past the initial 128KB prefix, stream only
+    // box headers to locate 'meta' and read just the metadata box + item extents.
     if (prefix.size() >= 12 && std::memcmp(prefix.data() + 4, "ftyp", 4) == 0) {
         HANDLE file = CreateFileW(path.c_str(), GENERIC_READ,
                                   FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                   nullptr, OPEN_EXISTING,
                                   FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
-        if (file != INVALID_HANDLE_VALUE) {
-            LARGE_INTEGER fileSize{};
-            if (GetFileSizeEx(file, &fileSize) && fileSize.QuadPart > (LONGLONG)HEADER_READ_BYTES) {
-                if (fileSize.QuadPart <= 16 * 1024 * 1024) {
-                    std::vector<uint8_t> fullBuf(static_cast<size_t>(fileSize.QuadPart));
-                    DWORD r = 0;
-                    if (ReadFile(file, fullBuf.data(), static_cast<DWORD>(fullBuf.size()), &r, nullptr) && r == fullBuf.size()) {
+        if (file == INVALID_HANDLE_VALUE) return std::nullopt;
+
+        LARGE_INTEGER fileSizeLi{};
+        if (!GetFileSizeEx(file, &fileSizeLi) || fileSizeLi.QuadPart <= (LONGLONG)HEADER_READ_BYTES) {
+            CloseHandle(file);
+            return std::nullopt;
+        }
+        const uint64_t fileSize = static_cast<uint64_t>(fileSizeLi.QuadPart);
+
+        uint64_t pos = 0;
+        uint64_t metaPos = 0, metaLen = 0;
+        while (pos + 8 <= fileSize) {
+            if (!SeekHandleAbsolute(file, pos)) break;
+            uint8_t hdr[16];
+            if (!ReadExactHandleBytes(file, hdr, 8)) break;
+
+            uint64_t boxSize = ReadBe32Bytes(hdr);
+            size_t hdrSize = 8;
+            if (boxSize == 1) {
+                if (pos + 16 > fileSize || !ReadExactHandleBytes(file, hdr + 8, 8)) break;
+                boxSize = ReadBe64Bytes(hdr + 8);
+                hdrSize = 16;
+            } else if (boxSize == 0) {
+                boxSize = fileSize - pos;
+            }
+            if (boxSize < hdrSize || boxSize > fileSize - pos) break;
+
+            if (std::memcmp(hdr + 4, "meta", 4) == 0) {
+                metaPos = pos;
+                metaLen = boxSize;
+                break;
+            }
+            pos += boxSize;
+        }
+
+        std::vector<uint8_t> metaBuf;
+        QuickView::Rating::IsobmffMetaLocations loc{};
+        if (metaLen >= 12 && ReadHandleSpan(file, metaPos, metaLen, fileSize, 8u * 1024u * 1024u, metaBuf) &&
+            QuickView::Rating::ParseIsobmffMetaLocations(metaBuf, loc)) {
+            auto loadItem = [&](uint64_t offset, uint64_t length, bool inIdat,
+                                std::vector<uint8_t>& storage) -> std::span<const uint8_t> {
+                if (length == 0 || length > 4u * 1024u * 1024u) return {};
+                if (inIdat) {
+                    if (offset > loc.idatLength || length > loc.idatLength - offset) return {};
+                    return std::span<const uint8_t>(
+                        metaBuf.data() + static_cast<size_t>(loc.idatOffsetInMeta + offset),
+                        static_cast<size_t>(length));
+                }
+                if (offset < prefix.size() && length <= prefix.size() - offset) {
+                    return std::span<const uint8_t>(prefix.data() + static_cast<size_t>(offset),
+                                                    static_cast<size_t>(length));
+                }
+                if (ReadHandleSpan(file, offset, length, fileSize, 4u * 1024u * 1024u, storage)) {
+                    return storage;
+                }
+                return {};
+            };
+
+            std::vector<uint8_t> itemBuf;
+            if (loc.hasExif) {
+                const auto exifSpan = loadItem(loc.exifOffset, loc.exifLength, loc.exifInIdat, itemBuf);
+                if (auto r = QuickView::Rating::ParseIsoExifPayload(exifSpan)) {
+                    CloseHandle(file);
+                    return r;
+                }
+            }
+            if (loc.hasXmp) {
+                const auto xmpSpan = loadItem(loc.xmpOffset, loc.xmpLength, loc.xmpInIdat, itemBuf);
+                if (!xmpSpan.empty()) {
+                    if (auto r = QuickView::Rating::ParseXmpRating(
+                            std::string_view(reinterpret_cast<const char*>(xmpSpan.data()), xmpSpan.size()))) {
                         CloseHandle(file);
-                        return QuickView::Rating::ParseIsobmffRating(fullBuf);
+                        return r;
                     }
                 }
             }
-            CloseHandle(file);
         }
+        CloseHandle(file);
     }
 
     return std::nullopt;
@@ -364,20 +473,74 @@ std::optional<int> ReadJxlRatingDirect(const std::wstring& path) {
                                   FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                   nullptr, OPEN_EXISTING,
                                   FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
-        if (file != INVALID_HANDLE_VALUE) {
-            LARGE_INTEGER fileSize{};
-            if (GetFileSizeEx(file, &fileSize) && fileSize.QuadPart > (LONGLONG)HEADER_READ_BYTES) {
-                if (fileSize.QuadPart <= 16 * 1024 * 1024) {
-                    std::vector<uint8_t> fullBuf(static_cast<size_t>(fileSize.QuadPart));
-                    DWORD r = 0;
-                    if (ReadFile(file, fullBuf.data(), static_cast<DWORD>(fullBuf.size()), &r, nullptr) && r == fullBuf.size()) {
+        if (file == INVALID_HANDLE_VALUE) return std::nullopt;
+
+        LARGE_INTEGER fileSizeLi{};
+        if (!GetFileSizeEx(file, &fileSizeLi) || fileSizeLi.QuadPart <= (LONGLONG)HEADER_READ_BYTES) {
+            CloseHandle(file);
+            return std::nullopt;
+        }
+        const uint64_t fileSize = static_cast<uint64_t>(fileSizeLi.QuadPart);
+
+        std::optional<int> fromXmp;
+        uint64_t pos = 12;
+        std::vector<uint8_t> boxBuf;
+
+        while (pos + 8 <= fileSize) {
+            if (!SeekHandleAbsolute(file, pos)) break;
+            uint8_t hdr[16];
+            if (!ReadExactHandleBytes(file, hdr, 8)) break;
+
+            uint64_t boxSize = ReadBe32Bytes(hdr);
+            size_t hdrSize = 8;
+            if (boxSize == 1) {
+                if (pos + 16 > fileSize || !ReadExactHandleBytes(file, hdr + 8, 8)) break;
+                boxSize = ReadBe64Bytes(hdr + 8);
+                hdrSize = 16;
+            } else if (boxSize == 0) {
+                boxSize = fileSize - pos;
+            }
+            if (boxSize < hdrSize || boxSize > fileSize - pos) break;
+
+            const uint64_t payloadOff = pos + hdrSize;
+            const uint64_t payloadLen = boxSize - hdrSize;
+            const bool isExif = (std::memcmp(hdr + 4, "Exif", 4) == 0);
+            const bool isXml = (std::memcmp(hdr + 4, "xml ", 4) == 0);
+            const bool isBrob = (std::memcmp(hdr + 4, "brob", 4) == 0);
+
+            if ((isExif || (isXml && !fromXmp) || isBrob) && payloadLen > 4 &&
+                ReadHandleSpan(file, payloadOff, payloadLen, fileSize, 4u * 1024u * 1024u, boxBuf)) {
+                if (isExif) {
+                    if (auto r = QuickView::Rating::ParseIsoExifPayload(boxBuf)) {
                         CloseHandle(file);
-                        return QuickView::Rating::ParseJxlRating(fullBuf);
+                        return r;
+                    }
+                } else if (isXml) {
+                    fromXmp = QuickView::Rating::ParseXmpRating(
+                        std::string_view(reinterpret_cast<const char*>(boxBuf.data()), boxBuf.size()));
+                } else if (isBrob && boxBuf.size() > 4) {
+                    const uint8_t* origType = boxBuf.data();
+                    const std::span<const uint8_t> comp(boxBuf.data() + 4, boxBuf.size() - 4);
+                    if (std::memcmp(origType, "Exif", 4) == 0) {
+                        const auto decomp = QuickView::Rating::DecompressBrotliBounded(comp);
+                        if (auto r = QuickView::Rating::ParseIsoExifPayload(decomp)) {
+                            CloseHandle(file);
+                            return r;
+                        }
+                    } else if (std::memcmp(origType, "xml ", 4) == 0 && !fromXmp) {
+                        const auto decomp = QuickView::Rating::DecompressBrotliBounded(comp);
+                        if (!decomp.empty()) {
+                            fromXmp = QuickView::Rating::ParseXmpRating(
+                                std::string_view(reinterpret_cast<const char*>(decomp.data()), decomp.size()));
+                        }
                     }
                 }
             }
-            CloseHandle(file);
+
+            pos += boxSize;
         }
+        CloseHandle(file);
+        return fromXmp;
     }
 
     return std::nullopt;
@@ -387,11 +550,8 @@ std::optional<int> ReadJxlRatingDirect(const std::wstring& path) {
 
 std::optional<int> RatingStore::ReadRatingFromFile(const std::wstring& path) {
     const std::wstring_view ext = QuickView::ExtensionOf(path);
+    if (!IsInFileRatableExtension(ext)) return std::nullopt;
 
-    const bool isJpeg = QuickView::ExtEqualsIgnoreCase(ext, L".jpg") ||
-                        QuickView::ExtEqualsIgnoreCase(ext, L".jpeg") ||
-                        QuickView::ExtEqualsIgnoreCase(ext, L".jpe") ||
-                        QuickView::ExtEqualsIgnoreCase(ext, L".jfif");
     const bool isTiff = QuickView::ExtEqualsIgnoreCase(ext, L".tif") ||
                         QuickView::ExtEqualsIgnoreCase(ext, L".tiff");
     const bool isPng = QuickView::ExtEqualsIgnoreCase(ext, L".png") ||
@@ -402,7 +562,6 @@ std::optional<int> RatingStore::ReadRatingFromFile(const std::wstring& path) {
                            QuickView::ExtEqualsIgnoreCase(ext, L".heic") ||
                            QuickView::ExtEqualsIgnoreCase(ext, L".heif");
     const bool isJxl = QuickView::ExtEqualsIgnoreCase(ext, L".jxl");
-    if (!isJpeg && !isTiff && !isPng && !isWebp && !isIsobmff && !isJxl) return std::nullopt;
 
     if (isTiff) {
         // An IFD in a real-world TIFF can reside anywhere, very frequently placed at the
@@ -436,32 +595,29 @@ std::optional<int> RatingStore::ReadRatingFromFile(const std::wstring& path) {
 
 RatingStore::Writability RatingStore::GetWritability(const std::wstring& renderedPath,
                                                     const std::wstring& rawPath) {
-    // A RAW is rated through its sidecar, so the RAW itself never has to be
-    // writable -- only the folder does, which the write attempt will report.
-    if (!rawPath.empty()) return Writability::Writable;
-
     if (renderedPath.find(L'|') != std::wstring::npos) {
         return Writability::UnsupportedFormat; // entry inside an archive
     }
 
     const std::wstring_view ext = QuickView::ExtensionOf(renderedPath);
-    const bool inFileRatable = QuickView::ExtEqualsIgnoreCase(ext, L".jpg") ||
-                               QuickView::ExtEqualsIgnoreCase(ext, L".jpeg") ||
-                               QuickView::ExtEqualsIgnoreCase(ext, L".jpe") ||
-                               QuickView::ExtEqualsIgnoreCase(ext, L".jfif") ||
-                               QuickView::ExtEqualsIgnoreCase(ext, L".tif") ||
-                               QuickView::ExtEqualsIgnoreCase(ext, L".tiff") ||
-                               QuickView::ExtEqualsIgnoreCase(ext, L".png") ||
-                               QuickView::ExtEqualsIgnoreCase(ext, L".apng") ||
-                               QuickView::ExtEqualsIgnoreCase(ext, L".webp") ||
-                               QuickView::ExtEqualsIgnoreCase(ext, L".avif") ||
-                               QuickView::ExtEqualsIgnoreCase(ext, L".avifs") ||
-                               QuickView::ExtEqualsIgnoreCase(ext, L".heic") ||
-                               QuickView::ExtEqualsIgnoreCase(ext, L".heif") ||
-                               QuickView::ExtEqualsIgnoreCase(ext, L".jxl");
-    // A standalone RAW still resolves through a sidecar of its own.
-    if (!inFileRatable && !QuickView::IsRawPath(renderedPath)) {
+    const bool inFileRatable = IsInFileRatableExtension(ext);
+    const bool usesSidecarOnly = !rawPath.empty() || QuickView::IsRawPath(renderedPath);
+    if (!inFileRatable && !usesSidecarOnly) {
         return Writability::UnsupportedFormat;
+    }
+
+    // Paired RAW+rendered views and standalone RAWs write their sidecar next to the RAW/file.
+    // A read-only camera RAW itself must remain rateable as long as its .xmp sidecar is writable.
+    if (usesSidecarOnly) {
+        const std::wstring& sidecarOwner = rawPath.empty() ? renderedPath : rawPath;
+        const std::wstring sidecarPath = SidecarPathFor(sidecarOwner);
+        if (!sidecarPath.empty()) {
+            const DWORD scAttrs = GetFileAttributesW(sidecarPath.c_str());
+            if (scAttrs != INVALID_FILE_ATTRIBUTES && (scAttrs & FILE_ATTRIBUTE_READONLY)) {
+                return Writability::ReadOnlyFile;
+            }
+        }
+        return Writability::Writable;
     }
 
     const DWORD attrs = GetFileAttributesW(renderedPath.c_str());
@@ -492,6 +648,7 @@ QuickView::Rating::Resolved RatingStore::ApplyRatingOptimistic(
         // into one write: only the last value survives to reach the disk.
         std::lock_guard<std::mutex> lock(m_writeMutex);
         PendingWrite& pending = m_pendingWrites[id];
+        pending.id = id;
         pending.stars = stars;
         pending.renderedPath = renderedPath;
         pending.rawPath = rawPath;
@@ -547,22 +704,54 @@ bool RatingStore::WriteSidecar(const std::wstring& ownerPath, int stars, bool al
     const std::wstring sidecarPath = SidecarPathFor(ownerPath);
     if (sidecarPath.empty()) return false;
 
-    // The whole document is read, not just the prefix used for display: an
-    // update has to copy through everything it is not changing. A file too
-    // large to read whole would come back truncated, and writing that back
-    // would destroy the rest of it, so the write is refused instead.
+    // Distinguish missing sidecar (safe to create if allowCreate) from an existing
+    // sidecar that cannot be read cleanly (e.g. sharing lock from external editor).
+    bool fileExists = false;
     std::string existing;
     {
-        const LARGE_INTEGER size = FileSizeOf(sidecarPath);
-        if (size.QuadPart > (LONGLONG)MAX_SIDECAR_BYTES) return false;
-        const std::vector<uint8_t> bytes = ReadFilePrefix(sidecarPath, MAX_SIDECAR_BYTES);
-        existing.assign(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+        HANDLE hRead = INVALID_HANDLE_VALUE;
+        DWORD lastErr = 0;
+        for (int attempt = 0; attempt < 5; ++attempt) {
+            hRead = CreateFileW(sidecarPath.c_str(), GENERIC_READ,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                nullptr, OPEN_EXISTING,
+                                FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+            if (hRead != INVALID_HANDLE_VALUE) break;
+            lastErr = GetLastError();
+            if (lastErr == ERROR_FILE_NOT_FOUND || lastErr == ERROR_PATH_NOT_FOUND) break;
+            if (attempt + 1 < 5) Sleep(15);
+        }
+
+        if (hRead == INVALID_HANDLE_VALUE) {
+            if (lastErr != ERROR_FILE_NOT_FOUND && lastErr != ERROR_PATH_NOT_FOUND) {
+                return false; // Locked or inaccessible existing sidecar: never overwrite.
+            }
+        } else {
+            fileExists = true;
+            LARGE_INTEGER size{};
+            if (!GetFileSizeEx(hRead, &size) || size.QuadPart < 0 || size.QuadPart > (LONGLONG)MAX_SIDECAR_BYTES) {
+                CloseHandle(hRead);
+                return false;
+            }
+            if (size.QuadPart > 0) {
+                existing.resize(static_cast<size_t>(size.QuadPart));
+                const bool readOk = ReadExactHandleBytes(hRead, existing.data(), existing.size());
+                CloseHandle(hRead);
+                if (!readOk) return false;
+            } else {
+                CloseHandle(hRead);
+            }
+        }
     }
 
     std::string updated;
-    if (existing.empty()) {
+    if (!fileExists) {
         if (!allowCreate) return true;                          // update-only owner
         if (stars <= QuickView::Rating::MIN_STARS) return true; // nothing to write
+        updated = QuickView::Rating::BuildMinimalXmp(stars);
+    } else if (existing.empty()) {
+        if (!allowCreate) return false;
+        if (stars <= QuickView::Rating::MIN_STARS) return true;
         updated = QuickView::Rating::BuildMinimalXmp(stars);
     } else {
         const auto edited = QuickView::Rating::UpdateXmpRating(existing, stars);
@@ -575,9 +764,12 @@ bool RatingStore::WriteSidecar(const std::wstring& ownerPath, int stars, bool al
         updated = *edited;
     }
 
-    // Write through a temp file so a failure cannot leave a half-written
-    // sidecar where the original was.
-    const std::wstring tempPath = sidecarPath + L".qvtmp";
+    // Write through a unique temp file so a failure cannot leave a half-written
+    // sidecar or collide with delete-pending handles.
+    static std::atomic<uint64_t> s_tmpSeq{ 0 };
+    const std::wstring tempPath =
+        sidecarPath + L"." + std::to_wstring(GetCurrentProcessId()) + L"." +
+        std::to_wstring(s_tmpSeq.fetch_add(1, std::memory_order_relaxed)) + L".qvtmp";
     {
         HANDLE file = CreateFileW(tempPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
                                   FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -594,34 +786,53 @@ bool RatingStore::WriteSidecar(const std::wstring& ownerPath, int stars, bool al
 
     NotifySelfWrite(); // our own change; the watcher should not rescan for it
 
-    if (existing.empty()) {
+    if (!fileExists) {
         if (!MoveFileExW(tempPath.c_str(), sidecarPath.c_str(), MOVEFILE_REPLACE_EXISTING)) {
             DeleteFileW(tempPath.c_str());
             return false;
         }
         return true;
     }
-    if (!ReplaceFileW(sidecarPath.c_str(), tempPath.c_str(), nullptr,
-                      REPLACEFILE_IGNORE_MERGE_ERRORS, nullptr, nullptr)) {
-        DeleteFileW(tempPath.c_str());
-        return false;
+    for (int retry = 0; retry < 5; ++retry) {
+        if (ReplaceFileW(sidecarPath.c_str(), tempPath.c_str(), nullptr,
+                         REPLACEFILE_IGNORE_MERGE_ERRORS, nullptr, nullptr)) {
+            return true;
+        }
+        if (retry + 1 < 5) Sleep(20);
     }
-    return true;
+    DeleteFileW(tempPath.c_str());
+    return false;
 }
 
 void RatingStore::PerformWrite(const PendingWrite& write) {
     if (write.renderedPath.empty()) return;
 
+    const ImageID targetId = (write.id != 0)
+        ? write.id
+        : FileNavigator::PathToImageID(write.rawPath.empty() ? write.renderedPath : write.rawPath);
+
+    auto rollbackCacheFromDisk = [&]() {
+        const std::optional<int> inFile = ReadRatingFromFile(write.renderedPath);
+        const std::wstring owner = write.rawPath.empty() ? write.renderedPath : write.rawPath;
+        const std::optional<int> sidecar = ReadRatingFromSidecar(SidecarPathFor(owner));
+        const auto diskResolved = QuickView::Rating::ResolvePairRating(inFile, sidecar);
+
+        bool updated = false;
+        {
+            std::scoped_lock lock(m_writeMutex, m_cacheMutex);
+            if (m_pendingWrites.find(targetId) == m_pendingWrites.end()) {
+                m_cache[targetId] = diskResolved;
+                updated = true;
+            }
+        }
+        if (updated && m_hwnd) {
+            PostMessageW(m_hwnd, WM_RATING_READY, (WPARAM)targetId, 0);
+        }
+    };
+
     // The sidecar goes first, because it is the side that wins when the two
     // disagree: if the in-file write then fails, what the user sees is still
     // the rating they set, rather than the old one coming back.
-    //
-    // Which file owns the sidecar mirrors how reading resolves it, and it has
-    // to: a sidecar that is read but not written would keep overruling the
-    // rating the user just set. A RAW may have one created for it, since that
-    // is the only place its rating can live; for anything else an existing
-    // sidecar is updated but never brought into being, because a rating
-    // belongs inside a JPEG or TIFF.
     const std::wstring sidecarOwner =
         write.rawPath.empty() ? write.renderedPath : write.rawPath;
     const bool ownerIsRaw = QuickView::IsRawPath(sidecarOwner);
@@ -629,7 +840,8 @@ void RatingStore::PerformWrite(const PendingWrite& write) {
         GetFileAttributesW(SidecarPathFor(sidecarOwner).c_str()) != INVALID_FILE_ATTRIBUTES;
     if (ownerIsRaw || sidecarExists) {
         if (!WriteSidecar(sidecarOwner, write.stars, /*allowCreate*/ ownerIsRaw)) {
-            return; // refused: leave the in-file half alone as well
+            rollbackCacheFromDisk();
+            return; // refused: leave the in-file half alone and sync UI with disk
         }
     }
 
@@ -637,18 +849,26 @@ void RatingStore::PerformWrite(const PendingWrite& write) {
     if (QuickView::IsRawPath(write.renderedPath)) return;
 
     const auto status = QuickView::Rating::WriteRatingToImage(
-        write.renderedPath, write.stars, /*allowTranscode*/ true);
+        write.renderedPath, write.stars, /*allowTranscode*/ !write.resident);
 
     if (status == QuickView::Rating::WriteStatus::WrittenInPlace ||
         status == QuickView::Rating::WriteStatus::WrittenTranscode) {
         NotifySelfWrite();
     } else if (status == QuickView::Rating::WriteStatus::NeedsTranscode) {
-        // The file was locked or busy. Reschedule it with a safe delay.
         std::lock_guard<std::mutex> lock(m_writeMutex);
-        auto& pending = m_pendingWrites[FileNavigator::PathToImageID(write.renderedPath)];
-        pending = write;
-        pending.due = std::chrono::steady_clock::now() + RESIDENT_TRANSCODE_DELAY;
-        m_writeCv.notify_one();
+        if (m_pendingWrites.find(targetId) == m_pendingWrites.end()) {
+            auto& pending = m_pendingWrites[targetId];
+            pending = write;
+            pending.id = targetId;
+            pending.due = write.resident
+                ? std::chrono::steady_clock::time_point::max()
+                : (std::chrono::steady_clock::now() + RESIDENT_TRANSCODE_DELAY);
+            m_writeCv.notify_one();
+        }
+    } else if (status == QuickView::Rating::WriteStatus::Failed) {
+        if (!ownerIsRaw && !sidecarExists) {
+            rollbackCacheFromDisk();
+        }
     }
 }
 
@@ -708,6 +928,23 @@ std::optional<QuickView::Rating::Resolved> RatingStore::TryGet(ImageID id) const
     return it->second;
 }
 
+std::optional<QuickView::Rating::Resolved> RatingStore::TryGetOrQueueRead(
+    ImageID id, const std::wstring& renderedPath, std::wstring_view rawPath) {
+    {
+        std::lock_guard<std::mutex> cacheLock(m_cacheMutex);
+        auto it = m_cache.find(id);
+        if (it != m_cache.end()) return it->second;
+    }
+    if (renderedPath.empty()) return std::nullopt;
+    {
+        std::lock_guard<std::mutex> lock(m_queueMutex);
+        if (!m_pending.insert(id).second) return std::nullopt;
+        m_queue.push_back(Task{ id, renderedPath, std::wstring(rawPath), m_generation.load() });
+    }
+    m_cv.notify_one();
+    return std::nullopt;
+}
+
 void RatingStore::QueueRead(ImageID id, const std::wstring& renderedPath,
                             const std::wstring& rawPath) {
     // Deliberately not gated on m_running: the first image can be navigated to
@@ -757,17 +994,18 @@ void RatingStore::WorkerLoop() {
 
         const auto resolved = QuickView::Rating::ResolvePairRating(inFile, sidecar);
 
-        if (task.generation != m_generation.load()) continue; // folder moved on
-
+        bool committed = false;
         {
-            std::lock_guard<std::mutex> cacheLock(m_cacheMutex);
-            m_cache[task.id] = resolved;
-        }
-        {
-            std::lock_guard<std::mutex> lock(m_queueMutex);
+            std::scoped_lock lock(m_cacheMutex, m_queueMutex);
+            if (task.generation != m_generation.load()) continue;
+            // Erase from pending even if cache already holds an optimistic rating.
             m_pending.erase(task.id);
+            if (m_cache.find(task.id) == m_cache.end()) {
+                m_cache[task.id] = resolved;
+                committed = true;
+            }
         }
-        if (m_hwnd) {
+        if (committed && m_hwnd) {
             PostMessageW(m_hwnd, WM_RATING_READY, (WPARAM)task.id, 0);
         }
     }

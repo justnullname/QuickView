@@ -41,8 +41,8 @@ public:
     void OnUserLater();
 
     // State Access
-    UpdateStatus GetStatus() const { return m_status; }
-    const VersionInfo& GetRemoteVersion() const { return m_remoteInfo; }
+    UpdateStatus GetStatus() const { return m_status.load(std::memory_order_acquire); }
+    VersionInfo GetRemoteVersion() const;
     bool IsUpdatePending() const { return m_isUpdatePending; }
 
     // One-shot flags consumed by UI thread on WM_UPDATE_FOUND
@@ -65,7 +65,7 @@ private:
     ~UpdateManager() = default;
 
     void CheckThread(int delaySeconds, bool allowDowngrade, int channel, std::string lastCheckedVer);
-    bool CheckVersion(int initialChannel, std::string_view lastCheckedVer, bool allowDowngrade);
+    bool CheckVersion(int initialChannel, std::string_view lastCheckedVer, bool allowDowngrade, VersionInfo& outInfo);
     bool DownloadUpdate(const std::string& url, const std::wstring& destPath);
     
     // Helpers
@@ -76,12 +76,14 @@ private:
 private:
     std::string m_currentVersion;
     std::atomic<UpdateStatus> m_status{ UpdateStatus::Idle };
+    mutable std::mutex m_dataMutex;
     VersionInfo m_remoteInfo;
     
     bool m_isUpdatePending = false;     // True if user clicked "Later" or "Restart"
     bool m_shouldRestartNow = false;    // True if "Restart Now"
     std::atomic<bool> m_autoSwitchedToPreRelease{ false };
     std::atomic<bool> m_channelCalibrationCompleted{ false };
+    std::atomic<bool> m_cancelCurrentWork{ false };
     struct PendingCheckParams {
         bool valid = false;
         bool allowDowngrade = false;

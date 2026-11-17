@@ -642,10 +642,10 @@ void GalleryOverlay::Render(ID2D1DeviceContext *pDC, const D2D1_SIZE_F &size,
         DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(m_dwriteFactory.GetAddressOf()));
     }
     if (m_dwriteFactory && !m_textFormat) {
-        m_dwriteFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_MEDIUM, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f * g_uiScale, AppStrings::CurrentLocale, &m_textFormat);
-        m_dwriteFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 10.0f * g_uiScale, AppStrings::CurrentLocale, &m_textFormatStats);
-        m_dwriteFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 20.0f * g_uiScale, AppStrings::CurrentLocale, &m_textFormatOSD);
-        m_dwriteFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 9.0f * g_uiScale, AppStrings::CurrentLocale, &m_textFormatBadge);
+        m_dwriteFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_MEDIUM, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f * g_uiScale, AppStrings::g.CurrentLocale, &m_textFormat);
+        m_dwriteFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 10.0f * g_uiScale, AppStrings::g.CurrentLocale, &m_textFormatStats);
+        m_dwriteFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 20.0f * g_uiScale, AppStrings::g.CurrentLocale, &m_textFormatOSD);
+        m_dwriteFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 9.0f * g_uiScale, AppStrings::g.CurrentLocale, &m_textFormatBadge);
         if (m_textFormatBadge) {
             m_textFormatBadge->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
             m_textFormatBadge->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -710,6 +710,9 @@ void GalleryOverlay::Render(ID2D1DeviceContext *pDC, const D2D1_SIZE_F &size,
     D2D1_RECT_F thumbsClip = D2D1::RectF(currentLeftMargin - 6.0f * scale, 0.0f, size.width - currentLeftMargin + 6.0f * scale, galleryH);
     pDC->PushAxisAlignedClip(thumbsClip, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     
+    const D2D1_COLOR_F starAccentColor = QuickView::UI::Theme::ClampCustomAccentText(
+        tp.isLight ? tp.accentFill : tp.accentText, false);
+
     // Single item draw lambda to keep Z-Order multipass loops clean and hyper-efficient
     auto drawItem = [&](int i) {
         D2D1_RECT_F cellRect = GetItemRect(i, size.width);
@@ -817,12 +820,16 @@ void GalleryOverlay::Render(ID2D1DeviceContext *pDC, const D2D1_SIZE_F &size,
         // thumbnails; an unrated photo gets no chip, so a folder nobody has
         // rated stays exactly as quiet as before.
         {
-            const auto rating = g_ratingStore.TryGet(imgId);
-            if (!rating && !m_isZooming) {
+            std::optional<QuickView::Rating::Resolved> rating;
+            if (m_isZooming) {
+                rating = g_ratingStore.TryGet(imgId);
+            } else {
                 const FileNavigator::PairedRaw* ratingRaw = m_pNav->GetPairedRaw(imgId);
-                g_ratingStore.QueueRead(imgId, path, ratingRaw ? ratingRaw->path : std::wstring());
+                rating = g_ratingStore.TryGetOrQueueRead(
+                    imgId, path,
+                    ratingRaw ? std::wstring_view(ratingRaw->path) : std::wstring_view{});
             }
-            if (rating && rating->stars > 0) {
+            if (rating && rating->stars > 0 && m_brushBg && m_brushText && m_textFormatBadge) {
                 static constexpr std::wstring_view SOLID_STARS[] = {
                     L"", L"\u2605", L"\u2605\u2605", L"\u2605\u2605\u2605", L"\u2605\u2605\u2605\u2605", L"\u2605\u2605\u2605\u2605\u2605"
                 };
@@ -840,10 +847,7 @@ void GalleryOverlay::Render(ID2D1DeviceContext *pDC, const D2D1_SIZE_F &size,
                 pDC->FillRoundedRectangle(D2D1::RoundedRect(badge, br, br), m_brushBg.Get());
 
                 D2D1_COLOR_F prevStarTxt = m_brushText->GetColor();
-                // Filled stars always sit on a dark chip regardless of light/dark UI mode
-                const D2D1_COLOR_F accentColor = QuickView::UI::Theme::ClampCustomAccentText(
-                    tp.isLight ? tp.accentFill : tp.accentText, false);
-                m_brushText->SetColor(accentColor);
+                m_brushText->SetColor(starAccentColor);
                 m_brushText->SetOpacity(m_transitionProgress * 0.95f);
                 pDC->DrawText(stars.data(), (UINT32)stars.length(), m_textFormatBadge.Get(), badge, m_brushText.Get());
                 m_brushText->SetColor(prevStarTxt);
@@ -853,23 +857,25 @@ void GalleryOverlay::Render(ID2D1DeviceContext *pDC, const D2D1_SIZE_F &size,
 
         // [RAW+JPEG Pairing] "+CR3"-style badge: this item carries a hidden
         // RAW. Theme-independent dark chip so it reads on any photo content.
-        if (const FileNavigator::PairedRaw* pairedRaw = m_pNav->GetPairedRaw(imgId)) {
-            const std::wstring badgeText = FileNavigator::PairedRawLabel(*pairedRaw);
-            const float bw = (8.0f + 6.5f * (float)badgeText.length()) * g_uiScale;
-            const float bh = 15.0f * g_uiScale;
-            const float bm = 5.0f * g_uiScale;
-            const float br = 3.5f * g_uiScale;
-            D2D1_RECT_F badge = D2D1::RectF(cellRect.right - bm - bw, cellRect.top + bm, cellRect.right - bm, cellRect.top + bm + bh);
-            m_brushBg->SetColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.55f));
-            m_brushBg->SetOpacity(m_transitionProgress);
-            pDC->FillRoundedRectangle(D2D1::RoundedRect(badge, br, br), m_brushBg.Get());
+        if (m_brushBg && m_brushText && m_textFormatBadge) {
+            if (const FileNavigator::PairedRaw* pairedRaw = m_pNav->GetPairedRaw(imgId)) {
+                const std::wstring badgeText = FileNavigator::PairedRawLabel(*pairedRaw);
+                const float bw = (8.0f + 6.5f * (float)badgeText.length()) * g_uiScale;
+                const float bh = 15.0f * g_uiScale;
+                const float bm = 5.0f * g_uiScale;
+                const float br = 3.5f * g_uiScale;
+                D2D1_RECT_F badge = D2D1::RectF(cellRect.right - bm - bw, cellRect.top + bm, cellRect.right - bm, cellRect.top + bm + bh);
+                m_brushBg->SetColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.55f));
+                m_brushBg->SetOpacity(m_transitionProgress);
+                pDC->FillRoundedRectangle(D2D1::RoundedRect(badge, br, br), m_brushBg.Get());
 
-            D2D1_COLOR_F prevBadgeTxt = m_brushText->GetColor();
-            m_brushText->SetColor(D2D1::ColorF(D2D1::ColorF::White));
-            m_brushText->SetOpacity(m_transitionProgress * 0.95f);
-            pDC->DrawText(badgeText.c_str(), (UINT32)badgeText.length(), m_textFormatBadge.Get(), badge, m_brushText.Get());
-            m_brushText->SetColor(prevBadgeTxt);
-            m_brushText->SetOpacity(1.0f);
+                D2D1_COLOR_F prevBadgeTxt = m_brushText->GetColor();
+                m_brushText->SetColor(D2D1::ColorF(D2D1::ColorF::White));
+                m_brushText->SetOpacity(m_transitionProgress * 0.95f);
+                pDC->DrawText(badgeText.c_str(), (UINT32)badgeText.length(), m_textFormatBadge.Get(), badge, m_brushText.Get());
+                m_brushText->SetColor(prevBadgeTxt);
+                m_brushText->SetOpacity(1.0f);
+            }
         }
     };
     

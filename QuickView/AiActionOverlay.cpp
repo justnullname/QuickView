@@ -23,52 +23,92 @@ extern void AdjustWindowForOverlay(HWND hwnd, bool isClosed);
 #define EM_SETCUEBANNER 0x1501
 #endif
 
-namespace {
-
-struct AiActionUiCtx {
-    std::wstring actionName;
-    std::shared_ptr<std::atomic<bool>> taskFinished;
-};
-
-void OnAiActionComplete(void* ctx, const QuickView::AI::ExecutionResult& res) {
-    auto* pCtx = static_cast<AiActionUiCtx*>(ctx);
-    if (pCtx && pCtx->taskFinished) {
-        pCtx->taskFinished->store(true);
-    }
-    if (!IsWindow(g_mainHwnd)) return;
-
-    if (!res.success) {
-        g_osd.EndPersistentTask(g_mainHwnd);
-        QuickView::AI::AiActionManager::ShowAiErrorDialog(g_mainHwnd, res);
-        return;
-    }
-
-    if (!res.resultImageData.empty()) {
-        auto* pData = new QuickView::AI::AsyncAiImageResult();
-        pData->imageData = std::move(res.resultImageData);
-        pData->actionName = pCtx ? pCtx->actionName : L"";
-        pData->width = res.imageWidth;
-        pData->height = res.imageHeight;
-        PostMessageW(g_mainHwnd, QuickView::AI::WM_AI_ACTION_COMPLETED, 0, reinterpret_cast<LPARAM>(pData));
-    } else if (!res.textContent.empty()) {
-        std::wstring displayMsg = (pCtx ? pCtx->actionName : L"") + L": " + res.textContent;
-        g_osd.EndPersistentTask(g_mainHwnd, displayMsg, false, D2D1::ColorF(D2D1::ColorF::LightGreen), 8000);
-    } else {
-        g_osd.EndPersistentTask(g_mainHwnd);
-    }
-}
-
-void CleanAiActionUiCtx(void* ctx) {
-    delete static_cast<AiActionUiCtx*>(ctx);
-}
-
-} // anonymous namespace
-
 namespace QuickView::UI {
 
 AiActionOverlay& AiActionOverlay::Instance() {
     static AiActionOverlay instance;
     return instance;
+}
+
+AI::ActionCallback AiActionOverlay::MakeWindowCompletionCallback(std::wstring actionName) {
+    auto* pName = new std::wstring(std::move(actionName));
+    return AI::ActionCallback(
+        [](void* ctx, const AI::ExecutionResult& res) {
+            const auto* pActName = static_cast<const std::wstring*>(ctx);
+            if (!IsWindow(g_mainHwnd)) return;
+
+            auto* pData = new AI::AsyncAiImageResult();
+            pData->taskId = res.taskId;
+            pData->actionName = pActName ? *pActName : L"";
+            pData->execResult = res;
+            if (!PostMessageW(g_mainHwnd, AI::WM_AI_ACTION_COMPLETED, 0, reinterpret_cast<LPARAM>(pData))) {
+                delete pData;
+            }
+        },
+        pName,
+        [](void* ctx) {
+            delete static_cast<std::wstring*>(ctx);
+        });
+}
+
+void AiActionOverlay::StartProgressPoller(HWND hwnd, uint64_t taskId, std::wstring actName, bool isSdWebUi, std::string baseUrl) {
+    if (taskId == 0) return;
+    QuickView::RunDetached([hwnd, taskId, actName = std::move(actName), isSdWebUi, baseUrl = std::move(baseUrl)]() {
+        auto startTime = std::chrono::steady_clock::now();
+        while (AI::AiActionManager::Instance().IsRunning() &&
+               AI::AiActionManager::Instance().GetCurrentTaskId() == taskId) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+            if (!AI::AiActionManager::Instance().IsRunning() ||
+                AI::AiActionManager::Instance().GetCurrentTaskId() != taskId ||
+                !IsWindow(hwnd)) {
+                break;
+            }
+            const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - startTime).count();
+            const int elapsedSec = static_cast<int>(elapsedMs / 1000);
+
+            auto* pProg = new AI::AsyncAiProgressInfo();
+            pProg->taskId = taskId;
+
+            bool postedSd = false;
+            if (isSdWebUi && !baseUrl.empty()) {
+                AI::AiActionManager::SdProgressInfo prog;
+                if (AI::AiActionManager::PollSdProgress(baseUrl, prog) && prog.totalSteps > 0 && prog.progress > 0.0f) {
+                    wchar_t sdMsg[256] = { 0 };
+                    const int pct = static_cast<int>(prog.progress * 100.0f);
+                    if (prog.eta > 0.0f) {
+                        const wchar_t* sdFmtEta = AppStrings::g.OSD_AiSamplingProgressEta ? AppStrings::g.OSD_AiSamplingProgressEta : L"AI 采样中: %d%% (%d/%d步, 约剩%.0fs) [耗时%ds, Esc取消]";
+                        swprintf_s(sdMsg, sdFmtEta, pct, prog.currentStep, prog.totalSteps, prog.eta, elapsedSec);
+                    } else {
+                        const wchar_t* sdFmt = AppStrings::g.OSD_AiSamplingProgress ? AppStrings::g.OSD_AiSamplingProgress : L"AI 采样中: %d%% (%d/%d步) [耗时%ds, Esc取消]";
+                        swprintf_s(sdMsg, sdFmt, pct, prog.currentStep, prog.totalSteps, elapsedSec);
+                    }
+                    pProg->message = sdMsg;
+                    pProg->progress = std::clamp(prog.progress, 0.05f, 0.99f);
+                    postedSd = true;
+                }
+            }
+
+            if (!postedSd) {
+                wchar_t cloudMsg[256] = { 0 };
+                if (elapsedSec < 3) {
+                    const wchar_t* connFmt = AppStrings::g.OSD_AiConnecting ? AppStrings::g.OSD_AiConnecting : L"AI 连接中: %s (Esc取消)...";
+                    swprintf_s(cloudMsg, connFmt, actName.c_str());
+                } else {
+                    const wchar_t* procFmt = AppStrings::g.OSD_AiProcessingElapsed ? AppStrings::g.OSD_AiProcessingElapsed : L"AI: %s 处理中 [%ds, Esc取消]...";
+                    swprintf_s(cloudMsg, procFmt, actName.c_str(), elapsedSec);
+                }
+                float fakeProgress = 1.0f - std::exp(-static_cast<float>(elapsedSec) / 25.0f);
+                pProg->message = cloudMsg;
+                pProg->progress = std::clamp(fakeProgress, 0.05f, 0.95f);
+            }
+
+            if (!PostMessageW(hwnd, AI::WM_AI_ACTION_PROGRESS, 0, reinterpret_cast<LPARAM>(pProg))) {
+                delete pProg;
+                break;
+            }
+        }
+    });
 }
 
 AiActionOverlay::AiActionOverlay() {
@@ -172,6 +212,10 @@ void AiActionOverlay::CreateDeviceResources(ID2D1DeviceContext* dc) {
 }
 
 LRESULT CALLBACK AiActionOverlay::HostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    if (msg == WM_COMMAND && HIWORD(wParam) == EN_CHANGE) {
+        AiActionOverlay::Instance().OnPromptTextChanged();
+        return 0;
+    }
     if (msg == WM_CTLCOLOREDIT || msg == WM_CTLCOLORSTATIC) {
         HDC hdc = reinterpret_cast<HDC>(wParam);
         bool isLight = IsLightThemeActive();
@@ -267,7 +311,7 @@ LRESULT CALLBACK AiActionOverlay::EditSubclassProc(HWND hwnd, UINT msg, WPARAM w
             if (textLen == 0 && !isComposing) {
                 if (wParam == '0' || wParam == VK_NUMPAD0) {
                     HWND h = self.m_hwnd ? self.m_hwnd : g_mainHwnd;
-                    const wchar_t* inpaintTip = AppStrings::OSD_AiInpaintPromptEmptyHint ? AppStrings::OSD_AiInpaintPromptEmptyHint : L"请先输入局部重绘提示词";
+                    const wchar_t* inpaintTip = AppStrings::g.OSD_AiInpaintPromptEmptyHint ? AppStrings::g.OSD_AiInpaintPromptEmptyHint : L"请先输入局部重绘提示词";
                     g_osd.Show(h, inpaintTip, false, false, D2D1::ColorF(1.0f, 0.6f, 0.2f), OSDPosition::Bottom, 2500);
                     SetFocus(hwnd);
                     return 0;
@@ -291,6 +335,17 @@ LRESULT CALLBACK AiActionOverlay::EditSubclassProc(HWND hwnd, UINT msg, WPARAM w
         }
 
         case WM_CHAR: {
+            if (wParam == L'\r' || wParam == L'\n') {
+                HIMC hImc = ImmGetContext(hwnd);
+                bool isComposing = false;
+                if (hImc) {
+                    isComposing = (ImmGetCompositionStringW(hImc, GCS_COMPSTR, nullptr, 0) > 0);
+                    ImmReleaseContext(hwnd, hImc);
+                }
+                if (!isComposing) {
+                    return 0;
+                }
+            }
             LRESULT res = CallWindowProcW(self.m_origEditProc, hwnd, msg, wParam, lParam);
             self.OnPromptTextChanged();
             return res;
@@ -422,7 +477,7 @@ void AiActionOverlay::CreateOrUpdateEditControl() {
                 ImmAssociateContext(m_hwndPromptEdit, g_defaultIMC);
             }
             SendMessageW(m_hwndPromptEdit, WM_SETFONT, reinterpret_cast<WPARAM>(m_hFontEdit), TRUE);
-            const wchar_t* ph = AppStrings::AiAction_Placeholder ? AppStrings::AiAction_Placeholder : L"输入临时提示词，或搜索预设动作...";
+            const wchar_t* ph = AppStrings::g.AiAction_Placeholder ? AppStrings::g.AiAction_Placeholder : L"输入临时提示词，或搜索预设动作...";
             SendMessageW(m_hwndPromptEdit, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(ph));
             m_origEditProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(
                 m_hwndPromptEdit, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(EditSubclassProc)));
@@ -505,6 +560,41 @@ void AiActionOverlay::EnsureSelectionVisible() {
     m_scrollIndex = std::clamp(m_scrollIndex, 0, maxScroll);
 }
 
+void AiActionOverlay::ComputeLayoutMetrics(
+    float winW, float winH,
+    float& outHudW, float& outHeaderH, float& outPromptBoxH,
+    float& outInpaintCardH, float& outItemH, float& outPadding, float& outFooterH,
+    int& outVisibleCount, bool& outShowAdhocCard, float& outListH)
+{
+    const int filteredCount = static_cast<int>(m_filteredActionIndices.size());
+
+    outHudW = 440.0f * m_uiScale;
+    outHeaderH = 46.0f * m_uiScale;
+    outPromptBoxH = (m_isPromptExpanded ? 96.0f : 38.0f) * m_uiScale;
+    outInpaintCardH = 46.0f * m_uiScale;
+    outItemH = 44.0f * m_uiScale;
+    outPadding = 12.0f * m_uiScale;
+    outFooterH = 28.0f * m_uiScale;
+
+    outVisibleCount = (std::min)(filteredCount, m_maxVisibleItems);
+    outShowAdhocCard = !m_currentPromptText.empty();
+    const float adhocCardH = outShowAdhocCard ? outItemH : 0.0f;
+    outListH = (outVisibleCount > 0) ? (outVisibleCount * (outItemH + 6.0f * m_uiScale)) : 0.0f;
+
+    const float hudH = outHeaderH + outPromptBoxH + 10.0f * m_uiScale + outInpaintCardH +
+        (outShowAdhocCard ? (10.0f * m_uiScale + adhocCardH) : 0.0f) +
+        (outVisibleCount > 0 ? (10.0f * m_uiScale + outListH) : 8.0f * m_uiScale) +
+        outFooterH + outPadding * 2.0f;
+
+    const float hudX = (winW - outHudW) * 0.5f;
+    float hudY = (winH - hudH) * 0.38f;
+    if (hudY < 25.0f) hudY = 25.0f;
+
+    m_hudRect = D2D1::RectF(hudX, hudY, hudX + outHudW, hudY + hudH);
+    const float curY = hudY + outHeaderH;
+    m_promptBoxRect = D2D1::RectF(hudX + outPadding, curY, hudX + outHudW - outPadding, curY + outPromptBoxH);
+}
+
 void AiActionOverlay::Show() {
     m_visible = true;
     m_hoverIndex = -1;
@@ -522,13 +612,22 @@ void AiActionOverlay::Show() {
     m_selectedIndex = -1;
     EnsureSelectionVisible();
 
+    RECT rc{};
+    if (targetHwnd && GetClientRect(targetHwnd, &rc) && rc.right > rc.left && rc.bottom > rc.top) {
+        float hudW = 0.0f, headerH = 0.0f, promptBoxH = 0.0f, inpaintCardH = 0.0f, itemH = 0.0f, padding = 0.0f, footerH = 0.0f, listH = 0.0f;
+        int visibleCount = 0;
+        bool showAdhocCard = false;
+        ComputeLayoutMetrics(static_cast<float>(rc.right - rc.left), static_cast<float>(rc.bottom - rc.top),
+                             hudW, headerH, promptBoxH, inpaintCardH, itemH, padding, footerH, visibleCount, showAdhocCard, listH);
+    }
+
     CreateOrUpdateEditControl();
 
     if (m_hwndInputHost) {
         ShowWindow(m_hwndInputHost, SW_SHOW);
     }
     if (m_hwndPromptEdit) {
-        const wchar_t* ph = AppStrings::AiAction_Placeholder ? AppStrings::AiAction_Placeholder : L"输入临时提示词，或搜索预设动作...";
+        const wchar_t* ph = AppStrings::g.AiAction_Placeholder ? AppStrings::g.AiAction_Placeholder : L"输入临时提示词，或搜索预设动作...";
         SendMessageW(m_hwndPromptEdit, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(ph));
         ShowWindow(m_hwndPromptEdit, SW_SHOW);
         SetFocus(m_hwndPromptEdit);
@@ -580,7 +679,7 @@ void AiActionOverlay::ExecuteSelectedOrPrompt() {
         const auto* defaultProf = AI::AiActionManager::Instance().GetDefaultProfile();
         AI::ActionDesc customAct;
         customAct.id = "adhoc_prompt";
-        customAct.name = AppStrings::OSD_AiAdhocPrompt ? AppStrings::OSD_AiAdhocPrompt : L"临时指令";
+        customAct.name = AppStrings::g.OSD_AiAdhocPrompt ? AppStrings::g.OSD_AiAdhocPrompt : L"临时指令";
         customAct.modelProfileId = defaultProf ? defaultProf->id : "";
         customAct.promptTemplate = m_currentPromptText;
         customAct.scopeMode = hasActiveSelection ? AI::ScopeMode::CropAndBlend : AI::ScopeMode::FullImage;
@@ -589,43 +688,30 @@ void AiActionOverlay::ExecuteSelectedOrPrompt() {
         int cropT = hasActiveSelection ? (int)std::round((std::min)(g_cropState.CropTop, g_cropState.CropBottom)) : 0;
         int cropR = hasActiveSelection ? (int)std::round((std::max)(g_cropState.CropLeft, g_cropState.CropRight)) : 0;
         int cropB = hasActiveSelection ? (int)std::round((std::max)(g_cropState.CropTop, g_cropState.CropBottom)) : 0;
+        if (hasActiveSelection) {
+            g_cropState.Reset();
+            RequestRepaint(QuickView::PaintLayer::All);
+        }
 
         Hide();
         HWND hwnd = m_hwnd ? m_hwnd : g_mainHwnd;
         wchar_t initMsg[256] = { 0 };
-        const wchar_t* prepFmt = AppStrings::OSD_AiPreparing ? AppStrings::OSD_AiPreparing : L"AI: %s 准备中 (Esc取消)...";
+        const wchar_t* prepFmt = AppStrings::g.OSD_AiPreparing ? AppStrings::g.OSD_AiPreparing : L"AI: %s 准备中 (Esc取消)...";
         swprintf_s(initMsg, prepFmt, customAct.name.c_str());
         g_osd.StartPersistentTask(hwnd, initMsg, D2D1::ColorF(D2D1::ColorF::White), OSDPosition::Bottom, 0.05f);
 
-        auto taskFinished = std::make_shared<std::atomic<bool>>(false);
-        std::wstring adhocName = customAct.name;
-        auto* ctx = new AiActionUiCtx{ adhocName, taskFinished };
         uint64_t currentTaskId = AI::AiActionManager::Instance().ExecuteAction(
-            customAct, hwnd, AI::ActionCallback(OnAiActionComplete, ctx, CleanAiActionUiCtx),
+            customAct, hwnd, MakeWindowCompletionCallback(customAct.name),
             m_currentPromptText, cropL, cropT, cropR, cropB);
 
-        QuickView::RunDetached([hwnd, adhocName, currentTaskId, taskFinished]() {
-            auto startTime = std::chrono::steady_clock::now();
-            while (!taskFinished->load() && AI::AiActionManager::Instance().IsRunning() && AI::AiActionManager::Instance().GetCurrentTaskId() == currentTaskId) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(300));
-                if (taskFinished->load() || !AI::AiActionManager::Instance().IsRunning() || AI::AiActionManager::Instance().GetCurrentTaskId() != currentTaskId) {
-                    break;
-                }
-                int elapsedSec = static_cast<int>(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - startTime).count());
-                wchar_t cloudMsg[256] = { 0 };
-                const wchar_t* procFmt = AppStrings::OSD_AiProcessingElapsed ? AppStrings::OSD_AiProcessingElapsed : L"AI: %s 处理中 [%ds, Esc取消]...";
-                swprintf_s(cloudMsg, procFmt, adhocName.c_str(), elapsedSec);
-                float fakeProgress = 1.0f - std::exp(-static_cast<float>(elapsedSec) / 25.0f);
-                fakeProgress = (std::max)(0.05f, (std::min)(fakeProgress, 0.95f));
-                g_osd.UpdatePersistentTask(hwnd, cloudMsg, fakeProgress);
-            }
-        });
+        const bool isSdWebUi = defaultProf && (defaultProf->protocol == AI::ApiProtocol::StabilityInpaint);
+        StartProgressPoller(hwnd, currentTaskId, customAct.name, isSdWebUi, defaultProf ? defaultProf->baseUrl : "");
         return;
     }
 
     // Both prompt is empty and no preset action was selected
     HWND hwnd = m_hwnd ? m_hwnd : g_mainHwnd;
-    const wchar_t* promptTip = AppStrings::OSD_AiEmptyPromptHint ? AppStrings::OSD_AiEmptyPromptHint : L"请输入提示词，或选择预设动作";
+    const wchar_t* promptTip = AppStrings::g.OSD_AiEmptyPromptHint ? AppStrings::g.OSD_AiEmptyPromptHint : L"请输入提示词，或选择预设动作";
     g_osd.Show(hwnd, promptTip, false, false, D2D1::ColorF(1.0f, 0.6f, 0.2f), OSDPosition::Bottom, 2500);
     if (m_hwndPromptEdit) SetFocus(m_hwndPromptEdit);
 }
@@ -647,10 +733,19 @@ void AiActionOverlay::TriggerAction(size_t filteredIndex) {
         StartInpaintSelection(m_currentPromptText, act.id);
 
         wchar_t guide[256] = { 0 };
-        const wchar_t* guideFmt = AppStrings::OSD_AiInpaintGuideActionFormat ? AppStrings::OSD_AiInpaintGuideActionFormat : L"请使用鼠标左键框选区域，按 Enter 执行 [%s]";
+        const wchar_t* guideFmt = AppStrings::g.OSD_AiInpaintGuideActionFormat ? AppStrings::g.OSD_AiInpaintGuideActionFormat : L"请使用鼠标左键框选区域，按 Enter 执行 [%s]";
         swprintf_s(guide, guideFmt, act.name.c_str());
         g_osd.Show(m_hwnd ? m_hwnd : g_mainHwnd, guide, false, false, QuickView::UI::Theme::GetThemePalette().accentText, OSDPosition::Bottom, 5000);
         return;
+    }
+
+    int cropL = hasActiveSelection ? (int)std::round((std::min)(g_cropState.CropLeft, g_cropState.CropRight)) : 0;
+    int cropT = hasActiveSelection ? (int)std::round((std::min)(g_cropState.CropTop, g_cropState.CropBottom)) : 0;
+    int cropR = hasActiveSelection ? (int)std::round((std::max)(g_cropState.CropLeft, g_cropState.CropRight)) : 0;
+    int cropB = hasActiveSelection ? (int)std::round((std::max)(g_cropState.CropTop, g_cropState.CropBottom)) : 0;
+    if (hasActiveSelection) {
+        g_cropState.Reset();
+        RequestRepaint(QuickView::PaintLayer::All);
     }
 
     Hide();
@@ -663,65 +758,15 @@ void AiActionOverlay::TriggerAction(size_t filteredIndex) {
     HWND hwnd = m_hwnd ? m_hwnd : g_mainHwnd;
 
     wchar_t initMsg[256] = { 0 };
-    const wchar_t* prepFmt = AppStrings::OSD_AiPreparing ? AppStrings::OSD_AiPreparing : L"AI: %s 准备中 (Esc取消)...";
+    const wchar_t* prepFmt = AppStrings::g.OSD_AiPreparing ? AppStrings::g.OSD_AiPreparing : L"AI: %s 准备中 (Esc取消)...";
     swprintf_s(initMsg, prepFmt, act.name.c_str());
     g_osd.StartPersistentTask(hwnd, initMsg, D2D1::ColorF(D2D1::ColorF::White), OSDPosition::Bottom, 0.05f);
 
-    auto taskFinished = std::make_shared<std::atomic<bool>>(false);
-
-    int cropL = hasActiveSelection ? (int)std::round((std::min)(g_cropState.CropLeft, g_cropState.CropRight)) : 0;
-    int cropT = hasActiveSelection ? (int)std::round((std::min)(g_cropState.CropTop, g_cropState.CropBottom)) : 0;
-    int cropR = hasActiveSelection ? (int)std::round((std::max)(g_cropState.CropLeft, g_cropState.CropRight)) : 0;
-    int cropB = hasActiveSelection ? (int)std::round((std::max)(g_cropState.CropTop, g_cropState.CropBottom)) : 0;
-
-    auto* ctx = new AiActionUiCtx{ act.name, taskFinished };
     uint64_t currentTaskId = AI::AiActionManager::Instance().ExecuteAction(
-        act, hwnd, AI::ActionCallback(OnAiActionComplete, ctx, CleanAiActionUiCtx),
+        act, hwnd, MakeWindowCompletionCallback(act.name),
         m_currentPromptText, cropL, cropT, cropR, cropB);
 
-    std::wstring actName = act.name;
-    QuickView::RunDetached([hwnd, actName, baseUrl, isSdWebUi, currentTaskId, taskFinished]() {
-        auto startTime = std::chrono::steady_clock::now();
-        while (!taskFinished->load() && AI::AiActionManager::Instance().IsRunning() && AI::AiActionManager::Instance().GetCurrentTaskId() == currentTaskId) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(300));
-            if (taskFinished->load() || !AI::AiActionManager::Instance().IsRunning() || AI::AiActionManager::Instance().GetCurrentTaskId() != currentTaskId) {
-                break;
-            }
-            auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - startTime).count();
-            int elapsedSec = static_cast<int>(elapsedMs / 1000);
-
-            if (isSdWebUi) {
-                AI::AiActionManager::SdProgressInfo prog;
-                if (AI::AiActionManager::PollSdProgress(baseUrl, prog) && prog.totalSteps > 0 && prog.progress > 0.0f) {
-                    wchar_t sdMsg[256] = { 0 };
-                    int pct = static_cast<int>(prog.progress * 100.0f);
-                    if (prog.eta > 0.0f) {
-                        const wchar_t* sdFmtEta = AppStrings::OSD_AiSamplingProgressEta ? AppStrings::OSD_AiSamplingProgressEta : L"AI 采样中: %d%% (%d/%d步, 约剩%.0fs) [耗时%ds, Esc取消]";
-                        swprintf_s(sdMsg, sdFmtEta, pct, prog.currentStep, prog.totalSteps, prog.eta, elapsedSec);
-                    } else {
-                        const wchar_t* sdFmt = AppStrings::OSD_AiSamplingProgress ? AppStrings::OSD_AiSamplingProgress : L"AI 采样中: %d%% (%d/%d步) [耗时%ds, Esc取消]";
-                        swprintf_s(sdMsg, sdFmt, pct, prog.currentStep, prog.totalSteps, elapsedSec);
-                    }
-                    g_osd.UpdatePersistentTask(hwnd, sdMsg, (std::max)(0.05f, (std::min)(prog.progress, 0.99f)));
-                    continue;
-                }
-            }
-
-            wchar_t cloudMsg[256] = { 0 };
-            if (elapsedSec < 3) {
-                const wchar_t* connFmt = AppStrings::OSD_AiConnecting ? AppStrings::OSD_AiConnecting : L"AI 连接中: %s (Esc取消)...";
-                swprintf_s(cloudMsg, connFmt, actName.c_str());
-            } else {
-                const wchar_t* procFmt = AppStrings::OSD_AiProcessingElapsed ? AppStrings::OSD_AiProcessingElapsed : L"AI: %s 处理中 [%ds, Esc取消]...";
-                swprintf_s(cloudMsg, procFmt, actName.c_str(), elapsedSec);
-            }
-
-            float fakeProgress = 1.0f - std::exp(-static_cast<float>(elapsedSec) / 25.0f);
-            fakeProgress = (std::max)(0.05f, (std::min)(fakeProgress, 0.95f));
-
-            g_osd.UpdatePersistentTask(hwnd, cloudMsg, fakeProgress);
-        }
-    });
+    StartProgressPoller(hwnd, currentTaskId, act.name, isSdWebUi, std::move(baseUrl));
 }
 
 void AiActionOverlay::StartInpaintSelection(std::wstring customPrompt, std::string pendingActionId) {
@@ -738,7 +783,7 @@ void AiActionOverlay::StartInpaintSelection(std::wstring customPrompt, std::stri
     g_cropState.PendingCustomPrompt = std::move(customPrompt);
     g_cropState.PendingActionId = std::move(pendingActionId);
 
-    const wchar_t* guide = AppStrings::OSD_AiInpaintGuide ? AppStrings::OSD_AiInpaintGuide : L"请使用鼠标左键框选局部重绘区域 (Enter 执行, Esc 取消)";
+    const wchar_t* guide = AppStrings::g.OSD_AiInpaintGuide ? AppStrings::g.OSD_AiInpaintGuide : L"请使用鼠标左键框选局部重绘区域 (Enter 执行, Esc 取消)";
     g_osd.Show(m_hwnd ? m_hwnd : g_mainHwnd, guide, false, false, QuickView::UI::Theme::GetThemePalette().accentText, OSDPosition::Bottom, 4000);
     RequestRepaint(QuickView::PaintLayer::All);
 }
@@ -749,7 +794,7 @@ bool AiActionOverlay::OnKeyDown(WPARAM key) {
     if (key == VK_ESCAPE) {
         if (AI::AiActionManager::Instance().IsRunning()) {
             AI::AiActionManager::Instance().CancelCurrentTask();
-            const wchar_t* cancelMsg = AppStrings::OSD_AiTaskCancelled ? AppStrings::OSD_AiTaskCancelled : L"AI 任务已取消";
+            const wchar_t* cancelMsg = AppStrings::g.OSD_AiTaskCancelled ? AppStrings::g.OSD_AiTaskCancelled : L"AI 任务已取消";
             g_osd.EndPersistentTask(m_hwnd ? m_hwnd : g_mainHwnd, cancelMsg, false, D2D1::ColorF(D2D1::ColorF::LightSalmon), 1500);
         }
         Hide();
@@ -820,7 +865,7 @@ bool AiActionOverlay::OnLButtonDown(float x, float y) {
         y >= m_inpaintCardRect.top && y <= m_inpaintCardRect.bottom) {
         if (m_currentPromptText.empty()) {
             HWND hwnd = m_hwnd ? m_hwnd : g_mainHwnd;
-            const wchar_t* inpaintTip = AppStrings::OSD_AiInpaintPromptEmptyHint ? AppStrings::OSD_AiInpaintPromptEmptyHint : L"请先输入局部重绘提示词";
+            const wchar_t* inpaintTip = AppStrings::g.OSD_AiInpaintPromptEmptyHint ? AppStrings::g.OSD_AiInpaintPromptEmptyHint : L"请先输入局部重绘提示词";
             g_osd.Show(hwnd, inpaintTip, false, false, D2D1::ColorF(1.0f, 0.6f, 0.2f), OSDPosition::Bottom, 2500);
             if (m_hwndPromptEdit) SetFocus(m_hwndPromptEdit);
             return true;
@@ -884,29 +929,13 @@ void AiActionOverlay::Render(ID2D1DeviceContext* dc, float winW, float winH) {
     const auto& allActions = AI::AiActionManager::Instance().GetActions();
     int filteredCount = static_cast<int>(m_filteredActionIndices.size());
 
-    float hudW = 440.0f * m_uiScale;
-    float headerH = 46.0f * m_uiScale;
-    float promptBoxH = (m_isPromptExpanded ? 96.0f : 38.0f) * m_uiScale;
-    float inpaintCardH = 46.0f * m_uiScale;
-    float itemH = 44.0f * m_uiScale;
-    float padding = 12.0f * m_uiScale;
-    float footerH = 28.0f * m_uiScale;
+    float hudW = 0.0f, headerH = 0.0f, promptBoxH = 0.0f, inpaintCardH = 0.0f, itemH = 0.0f, padding = 0.0f, footerH = 0.0f, listH = 0.0f;
+    int visibleCount = 0;
+    bool showAdhocCard = false;
+    ComputeLayoutMetrics(winW, winH, hudW, headerH, promptBoxH, inpaintCardH, itemH, padding, footerH, visibleCount, showAdhocCard, listH);
 
-    int visibleCount = (std::min)(filteredCount, m_maxVisibleItems);
-    bool showAdhocCard = !m_currentPromptText.empty();
-    float adhocCardH = showAdhocCard ? itemH : 0.0f;
-    float listH = (visibleCount > 0) ? (visibleCount * (itemH + 6.0f * m_uiScale)) : 0.0f;
-
-    float hudH = headerH + promptBoxH + 10.0f * m_uiScale + inpaintCardH +
-        (showAdhocCard ? (10.0f * m_uiScale + adhocCardH) : 0.0f) +
-        (visibleCount > 0 ? (10.0f * m_uiScale + listH) : 8.0f * m_uiScale) +
-        footerH + padding * 2.0f;
-
-    float hudX = (winW - hudW) * 0.5f;
-    float hudY = (winH - hudH) * 0.38f;
-    if (hudY < 25.0f) hudY = 25.0f;
-
-    m_hudRect = D2D1::RectF(hudX, hudY, hudX + hudW, hudY + hudH);
+    const float hudX = m_hudRect.left;
+    const float hudY = m_hudRect.top;
 
     bool isLight = IsLightThemeActive();
 
@@ -955,12 +984,12 @@ void AiActionOverlay::Render(ID2D1DeviceContext* dc, float winW, float winH) {
 
     // 3. Draw Title Header
     D2D1_RECT_F titleRect = D2D1::RectF(hudX + padding + 6.0f, hudY + padding, hudX + hudW - padding - 90.0f * m_uiScale, hudY + headerH);
-    std::wstring titleText = L"✨ " + std::wstring(AppStrings::AiAction_Title ? AppStrings::AiAction_Title : L"AI 指令台");
+    std::wstring titleText = L"✨ " + std::wstring(AppStrings::g.AiAction_Title ? AppStrings::g.AiAction_Title : L"AI 指令台");
     dc->DrawText(titleText.c_str(), static_cast<UINT32>(titleText.size()), m_fontTitle.Get(), titleRect, m_brushText.Get());
 
     // Esc Hint
     D2D1_RECT_F escRect = D2D1::RectF(hudX + hudW - 85.0f * m_uiScale, hudY + padding + 2.0f, hudX + hudW - padding, hudY + headerH);
-    const wchar_t* escText = AppStrings::AiAction_EscHint ? AppStrings::AiAction_EscHint : L"[Esc] 退出";
+    const wchar_t* escText = AppStrings::g.AiAction_EscHint ? AppStrings::g.AiAction_EscHint : L"[Esc] 退出";
     dc->DrawText(escText, static_cast<UINT32>(wcslen(escText)), m_fontDetail.Get(), escRect, m_brushTextDim.Get());
 
     float curY = hudY + headerH;
@@ -1000,7 +1029,7 @@ void AiActionOverlay::Render(ID2D1DeviceContext* dc, float winW, float winH) {
     if (m_currentPromptText.empty() && !isEditFocused) {
         D2D1_RECT_F phRect = D2D1::RectF(m_promptBoxRect.left + 30.0f * m_uiScale, m_promptBoxRect.top + 7.0f * m_uiScale,
                                          m_promptBoxRect.right - 35.0f * m_uiScale, m_promptBoxRect.top + 28.0f * m_uiScale);
-        const wchar_t* phText = AppStrings::AiAction_Placeholder ? AppStrings::AiAction_Placeholder : L"输入临时提示词，或搜索预设动作...";
+        const wchar_t* phText = AppStrings::g.AiAction_Placeholder ? AppStrings::g.AiAction_Placeholder : L"输入临时提示词，或搜索预设动作...";
         dc->DrawText(phText, static_cast<UINT32>(wcslen(phText)), m_fontDetail.Get(), phRect, m_brushTextDim.Get());
     }
 
@@ -1037,16 +1066,16 @@ void AiActionOverlay::Render(ID2D1DeviceContext* dc, float winW, float winH) {
     // Inpaint Card Title & Subtitle
     float inpaintTextX = badgeX + badgeW + 10.0f * m_uiScale;
     D2D1_RECT_F inpaintTitleR = D2D1::RectF(inpaintTextX, m_inpaintCardRect.top + 5.0f * m_uiScale, m_inpaintCardRect.right - 85.0f * m_uiScale, m_inpaintCardRect.top + 25.0f * m_uiScale);
-    std::wstring inpaintTitle = L"✨ " + std::wstring(AppStrings::AiAction_InpaintTitle ? AppStrings::AiAction_InpaintTitle : L"选区局部重绘 (AI Inpaint)");
+    std::wstring inpaintTitle = L"✨ " + std::wstring(AppStrings::g.AiAction_InpaintTitle ? AppStrings::g.AiAction_InpaintTitle : L"选区局部重绘 (AI Inpaint)");
     dc->DrawText(inpaintTitle.c_str(), static_cast<UINT32>(inpaintTitle.size()), m_fontItem.Get(), inpaintTitleR, m_brushText.Get());
 
     D2D1_RECT_F inpaintSubR = D2D1::RectF(inpaintTextX, m_inpaintCardRect.top + 25.0f * m_uiScale, m_inpaintCardRect.right - 85.0f * m_uiScale, m_inpaintCardRect.bottom - 4.0f * m_uiScale);
-    const wchar_t* inpaintSub = AppStrings::AiAction_InpaintDesc ? AppStrings::AiAction_InpaintDesc : L"框选局部画面无痕消除或替换";
+    const wchar_t* inpaintSub = AppStrings::g.AiAction_InpaintDesc ? AppStrings::g.AiAction_InpaintDesc : L"框选局部画面无痕消除或替换";
     dc->DrawText(inpaintSub, static_cast<UINT32>(wcslen(inpaintSub)), m_fontDetail.Get(), inpaintSubR, m_brushTextDim.Get());
 
     // Inpaint Tag
     D2D1_RECT_F inpaintTagR = D2D1::RectF(m_inpaintCardRect.right - 80.0f * m_uiScale, m_inpaintCardRect.top + (inpaintCardH - 18.0f * m_uiScale) * 0.5f, m_inpaintCardRect.right - 8.0f * m_uiScale, m_inpaintCardRect.bottom);
-    const wchar_t* tagInpaint = AppStrings::AiAction_InpaintTag ? AppStrings::AiAction_InpaintTag : L"框选模式";
+    const wchar_t* tagInpaint = AppStrings::g.AiAction_InpaintTag ? AppStrings::g.AiAction_InpaintTag : L"框选模式";
     dc->DrawText(tagInpaint, static_cast<UINT32>(wcslen(tagInpaint)), m_fontDetail.Get(), inpaintTagR, m_brushAccent.Get());
 
     curY += inpaintCardH + 10.0f * m_uiScale;
@@ -1070,7 +1099,7 @@ void AiActionOverlay::Render(ID2D1DeviceContext* dc, float winW, float winH) {
         }
 
         D2D1_RECT_F textR = D2D1::RectF(m_adhocCardRect.left + 12.0f * m_uiScale, m_adhocCardRect.top + 4.0f * m_uiScale, m_adhocCardRect.right - 95.0f * m_uiScale, m_adhocCardRect.bottom - 4.0f * m_uiScale);
-        const wchar_t* adhocPrefix = AppStrings::AiAction_AdhocPrefix ? AppStrings::AiAction_AdhocPrefix : L"✨ 发送临时指令: \"";
+        const wchar_t* adhocPrefix = AppStrings::g.AiAction_AdhocPrefix ? AppStrings::g.AiAction_AdhocPrefix : L"✨ 发送临时指令: \"";
         std::wstring hintMsg = std::wstring(adhocPrefix) + m_currentPromptText + L"\"";
         if (hintMsg.size() > 32) {
             hintMsg = hintMsg.substr(0, 29) + L"...\"";
@@ -1078,7 +1107,7 @@ void AiActionOverlay::Render(ID2D1DeviceContext* dc, float winW, float winH) {
         dc->DrawText(hintMsg.c_str(), static_cast<UINT32>(hintMsg.size()), m_fontItem.Get(), textR, m_brushText.Get());
 
         D2D1_RECT_F tagR = D2D1::RectF(m_adhocCardRect.right - 90.0f * m_uiScale, m_adhocCardRect.top + (itemH - 18.0f * m_uiScale) * 0.5f, m_adhocCardRect.right - 8.0f * m_uiScale, m_adhocCardRect.bottom);
-        const wchar_t* tagEnter = AppStrings::AiAction_AdhocSend ? AppStrings::AiAction_AdhocSend : L"Enter 发送";
+        const wchar_t* tagEnter = AppStrings::g.AiAction_AdhocSend ? AppStrings::g.AiAction_AdhocSend : L"Enter 发送";
         dc->DrawText(tagEnter, static_cast<UINT32>(wcslen(tagEnter)), m_fontDetail.Get(), tagR, isAdhocSelected ? m_brushAccent.Get() : m_brushTextDim.Get());
 
         curY += itemH + 10.0f * m_uiScale;
@@ -1152,9 +1181,9 @@ void AiActionOverlay::Render(ID2D1DeviceContext* dc, float winW, float winH) {
             // Scope Tag
             const wchar_t* tagStr = L"";
             if (act.scopeMode == AI::ScopeMode::CropAndBlend) {
-                tagStr = AppStrings::AiAction_ScopeCropAndBlend ? AppStrings::AiAction_ScopeCropAndBlend : L"选区修补";
+                tagStr = AppStrings::g.AiAction_ScopeCropAndBlend ? AppStrings::g.AiAction_ScopeCropAndBlend : L"选区修补";
             } else {
-                tagStr = AppStrings::AiAction_ScopeForceFull ? AppStrings::AiAction_ScopeForceFull : L"全图";
+                tagStr = AppStrings::g.AiAction_ScopeForceFull ? AppStrings::g.AiAction_ScopeForceFull : L"全图";
             }
 
             D2D1_RECT_F tagR = D2D1::RectF(itemR.right - 80.0f * m_uiScale, itemR.top + (itemH - 18.0f * m_uiScale) * 0.5f, itemR.right - 8.0f * m_uiScale, itemR.bottom);
@@ -1191,9 +1220,9 @@ void AiActionOverlay::Render(ID2D1DeviceContext* dc, float winW, float winH) {
 
     // 8. Footer Status Bar
     const auto* defaultProf = AI::AiActionManager::Instance().GetDefaultProfile();
-    std::wstring profileName = defaultProf ? defaultProf->displayName : (AppStrings::AiAction_NoModelSelected ? AppStrings::AiAction_NoModelSelected : L"未选择模型");
-    const wchar_t* modelLabel = AppStrings::AiAction_CurrentModel ? AppStrings::AiAction_CurrentModel : L"当前模型";
-    const wchar_t* quickHint = AppStrings::AiAction_FooterQuickKeys ? AppStrings::AiAction_FooterQuickKeys : L"按 1~9 / 0 快速执行";
+    std::wstring profileName = defaultProf ? defaultProf->displayName : (AppStrings::g.AiAction_NoModelSelected ? AppStrings::g.AiAction_NoModelSelected : L"未选择模型");
+    const wchar_t* modelLabel = AppStrings::g.AiAction_CurrentModel ? AppStrings::g.AiAction_CurrentModel : L"当前模型";
+    const wchar_t* quickHint = AppStrings::g.AiAction_FooterQuickKeys ? AppStrings::g.AiAction_FooterQuickKeys : L"按 1~9 / 0 快速执行";
     wchar_t statusBuf[256] = { 0 };
     swprintf_s(statusBuf, L"⚡ %s: %s  |  %s", modelLabel, profileName.c_str(), quickHint);
 

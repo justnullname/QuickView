@@ -193,6 +193,8 @@ struct AuxLayer {
 
     ~AuxLayer() {
         if (pixels && deleter) deleter(pixels);
+        deleter.DestroyCtx();
+        deleter.Clear();
         pixels = nullptr;
     }
 
@@ -209,6 +211,8 @@ struct AuxLayer {
     AuxLayer& operator=(AuxLayer&& o) noexcept {
         if (this != &o) {
             if (pixels && deleter) deleter(pixels);
+            deleter.DestroyCtx();
+            deleter.Clear();
             pixels = o.pixels;
             width = o.width;
             height = o.height;
@@ -221,18 +225,19 @@ struct AuxLayer {
     }
 
     std::unique_ptr<AuxLayer> Clone() const {
-        if (!pixels) return nullptr;
+        if (!pixels || width <= 0 || height <= 0 || stride <= 0) return nullptr;
+        const size_t size = static_cast<size_t>(stride) * static_cast<size_t>(height);
+        if (size == 0) return nullptr;
+        uint8_t* dst = static_cast<uint8_t*>(_aligned_malloc(size, 64));
+        if (!dst) return nullptr;
+        memcpy(dst, pixels, size);
         auto cloned = std::make_unique<AuxLayer>();
         cloned->width = width;
         cloned->height = height;
         cloned->stride = stride;
         cloned->bytesPerPixel = bytesPerPixel;
-        size_t size = (size_t)stride * height;
-        cloned->pixels = (uint8_t*)_aligned_malloc(size, 64);
-        if (cloned->pixels) {
-            memcpy(cloned->pixels, pixels, size);
-            cloned->deleter = MemoryDeleter::FromAlignedFree();
-        }
+        cloned->pixels = dst;
+        cloned->deleter = MemoryDeleter::FromAlignedFree();
         return cloned;
     }
 };
@@ -489,6 +494,7 @@ struct RawImageFrame {
         sourceFormat.clear();
         dpiX = 96.0;
         dpiY = 96.0;
+        memoryDeleter.DestroyCtx();
         memoryDeleter.Clear();
         onAuxLayerReady.DestroyCtx();
         onAuxLayerReady.Clear();
@@ -514,17 +520,34 @@ struct RawImageFrame {
 
     /// Promote this frame into a standalone heap-owned shared_ptr (zero-copy when already heap-backed).
     [[nodiscard]] std::shared_ptr<RawImageFrame> PromoteToStandalone() {
-        if (!IsSvg() && !IsWebView() && pixels && memoryDeleter.pfn == nullptr) {
-            const size_t bufSize = GetBufferSize();
-            uint8_t* heapPixels = static_cast<uint8_t*>(_aligned_malloc(bufSize, 64));
-            if (heapPixels) {
+        if (!IsSvg() && !IsWebView()) {
+            if (!pixels) {
+                Release();
+                return nullptr;
+            }
+            if (memoryDeleter.pfn == nullptr) {
+                const size_t bufSize = GetBufferSize();
+                if (bufSize == 0) {
+                    Release();
+                    return nullptr;
+                }
+                uint8_t* heapPixels = static_cast<uint8_t*>(_aligned_malloc(bufSize, 64));
+                if (!heapPixels) {
+                    Release();
+                    return nullptr;
+                }
                 memcpy(heapPixels, pixels, bufSize);
                 pixels = heapPixels;
                 memoryDeleter = MemoryDeleter::FromAlignedFree();
             }
         }
         if (auxLayer && auxLayer->pixels && auxLayer->deleter.pfn == nullptr) {
-            auxLayer = auxLayer->Clone();
+            auto clonedAux = auxLayer->Clone();
+            if (!clonedAux) {
+                Release();
+                return nullptr;
+            }
+            auxLayer = std::move(clonedAux);
         }
         onAuxLayerReady.DestroyCtx();
         onAuxLayerReady.Clear();
@@ -533,6 +556,10 @@ struct RawImageFrame {
 
     /// Deep-copy this frame into a new standalone heap-owned shared_ptr.
     [[nodiscard]] std::shared_ptr<RawImageFrame> CloneToStandalone() const {
+        if (!IsSvg() && !IsWebView()) {
+            const size_t bufSize = GetBufferSize();
+            if (!pixels || bufSize == 0) return nullptr;
+        }
         auto copy = std::make_shared<RawImageFrame>();
         copy->width = width;
         copy->height = height;
@@ -559,18 +586,16 @@ struct RawImageFrame {
             if (svg) {
                 copy->svg = std::make_unique<SvgData>(*svg);
             }
-        } else if (pixels) {
+        } else {
             const size_t bufSize = GetBufferSize();
-            if (bufSize > 0) {
-                uint8_t* heapPixels = static_cast<uint8_t*>(_aligned_malloc(bufSize, 64));
-                if (heapPixels) {
-                    memcpy(heapPixels, pixels, bufSize);
-                    copy->pixels = heapPixels;
-                    copy->memoryDeleter = MemoryDeleter::FromAlignedFree();
-                }
-            }
+            uint8_t* heapPixels = static_cast<uint8_t*>(_aligned_malloc(bufSize, 64));
+            if (!heapPixels) return nullptr;
+            memcpy(heapPixels, pixels, bufSize);
+            copy->pixels = heapPixels;
+            copy->memoryDeleter = MemoryDeleter::FromAlignedFree();
             if (auxLayer && auxLayer->pixels) {
                 copy->auxLayer = auxLayer->Clone();
+                if (!copy->auxLayer) return nullptr;
             }
         }
         return copy;

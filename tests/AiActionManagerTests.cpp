@@ -425,6 +425,104 @@ TEST_F(AiActionManagerTest, InpaintActionParameterPreservation) {
     EXPECT_FLOAT_EQ(actCopy.cfgScale, 9.5f);
 }
 
+TEST_F(AiActionManagerTest, LoadConfigHandlesNullOrWrongTypedStringFieldsSafely) {
+    auto& mgr = QuickView::AI::AiActionManager::Instance();
+    const std::wstring cfgPath = mgr.GetConfigFilePath();
+
+    FILE* fp = nullptr;
+    _wfopen_s(&fp, cfgPath.c_str(), L"wb");
+    ASSERT_NE(fp, nullptr);
+    const char* malformedJson = R"({
+        "default_profile": 123,
+        "last_action": null,
+        "profiles": [
+            "not_an_object",
+            {
+                "id": null,
+                "name": 42,
+                "protocol": 3,
+                "base_url": null,
+                "encrypted_key": false,
+                "default_model": 99,
+                "fetched_models": [123, null, "valid-model"]
+            }
+        ],
+        "actions": [
+            12345,
+            {
+                "id": null,
+                "name": null,
+                "profile_id": 7,
+                "prompt": null,
+                "negative_prompt": null
+            }
+        ]
+    })";
+    fwrite(malformedJson, 1, strlen(malformedJson), fp);
+    fclose(fp);
+
+    EXPECT_TRUE(mgr.ReloadConfig());
+    ASSERT_EQ(mgr.GetProfiles().size(), 1u);
+    EXPECT_EQ(mgr.GetProfiles()[0].displayName, L"Google Gemini");
+    ASSERT_EQ(mgr.GetProfiles()[0].fetchedModels.size(), 1u);
+    EXPECT_EQ(mgr.GetProfiles()[0].fetchedModels[0], "valid-model");
+    ASSERT_EQ(mgr.GetActions().size(), 1u);
+}
+
+TEST_F(AiActionManagerTest, VisualProviderSnapshotAndRenderIntegrationInpaintSlice) {
+    static std::wstring s_capturedPath;
+    static std::vector<uint8_t> s_fakeVisualBgra;
+
+    s_capturedPath.clear();
+    // Construct 40x20 BGRA upright visual frame
+    s_fakeVisualBgra.assign(40 * 20 * 4, 128);
+    for (int i = 0; i < 40 * 20; ++i) s_fakeVisualBgra[i * 4 + 3] = 255;
+
+    QuickView::AI::AiActionManager::SetVisualFrameProviders(
+        [](QuickView::AI::VisualFrameSnapshot& out) -> bool {
+            out.imagePath = L"C:\\fake_visual_snapshot.jpg";
+            out.effectiveExif = 6;
+            out.netRotation = 90;
+            s_capturedPath = out.imagePath;
+            return true;
+        },
+        [](const QuickView::AI::VisualFrameSnapshot&, std::vector<uint8_t>& outBgra, uint32_t& outW, uint32_t& outH, uint32_t& outStride) -> bool {
+            outW = 40;
+            outH = 20;
+            outStride = 40 * 4;
+            outBgra = s_fakeVisualBgra;
+            return true;
+        });
+
+    auto& mgr = QuickView::AI::AiActionManager::Instance();
+    mgr.GetProfiles()[0].baseUrl = "http://127.0.0.1:1/"; // fast local refuse
+    mgr.GetProfiles()[0].protocol = QuickView::AI::ApiProtocol::StabilityInpaint;
+
+    HANDLE hDone = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    static QuickView::AI::ExecutionResult s_lastRes;
+    s_lastRes = {};
+    struct WaitCtx { HANDLE ev; };
+    WaitCtx* wCtx = new WaitCtx{ hDone };
+
+    mgr.ExecuteInpaint(
+        2, 2, 38, 18, L"test fill", nullptr,
+        QuickView::AI::ActionCallback(
+            [](void* ctx, const QuickView::AI::ExecutionResult& res) {
+                s_lastRes = res;
+                SetEvent(static_cast<WaitCtx*>(ctx)->ev);
+            },
+            wCtx,
+            [](void* ctx) { delete static_cast<WaitCtx*>(ctx); }));
+
+    EXPECT_EQ(s_capturedPath, L"C:\\fake_visual_snapshot.jpg");
+    EXPECT_EQ(WaitForSingleObject(hDone, 10000), WAIT_OBJECT_0);
+    CloseHandle(hDone);
+    EXPECT_FALSE(s_lastRes.success);
+    EXPECT_EQ(s_lastRes.sourceImagePath, L"C:\\fake_visual_snapshot.jpg");
+
+    QuickView::AI::AiActionManager::SetVisualFrameProviders(nullptr, nullptr);
+}
+
 
 
 

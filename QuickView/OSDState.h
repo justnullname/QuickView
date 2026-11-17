@@ -52,7 +52,19 @@ struct OSDState {
         }
     }
 
+    void ClearTransientFlags() {
+        IsCompareOSD = false;
+        IsError = false;
+        IsWarning = false;
+    }
+
     void StartPersistentTask(HWND hwnd, const std::wstring& msg, D2D1_COLOR_F color = D2D1::ColorF(1.0f, 0.85f, 0.2f), OSDPosition pos = OSDPosition::Bottom, float initialProgress = 0.0f) {
+        if (!g_config.ShowOSD) {
+            PersistentTask.IsActive = false;
+            PersistentTask.Message.clear();
+            PersistentTask.Progress = -1.0f;
+            return;
+        }
         PersistentTask.IsActive = true;
         PersistentTask.Message = msg;
         PersistentTask.Color = color;
@@ -63,6 +75,7 @@ struct OSDState {
     }
 
     void UpdatePersistentTaskProgress(HWND hwnd, float progress) {
+        if (!g_config.ShowOSD || !PersistentTask.IsActive) return;
         PersistentTask.Progress = progress;
         // If transient OSD expired or currently showing persistent task, update live progress
         if (!IsTransientActive()) {
@@ -74,11 +87,17 @@ struct OSDState {
     }
 
     void UpdatePersistentTask(HWND hwnd, const std::wstring& msg, float progress = -1.0f) {
+        if (!g_config.ShowOSD) return;
+        PersistentTask.IsActive = true;
         PersistentTask.Message = msg;
         if (progress >= 0.0f) {
             PersistentTask.Progress = progress;
         }
         Message = msg;
+        ClearTransientFlags();
+        CustomColor = PersistentTask.Color;
+        Position = PersistentTask.Position;
+        Duration = 60000;
         if (progress >= 0.0f) {
             Progress = progress;
         }
@@ -92,10 +111,11 @@ struct OSDState {
     void EndPersistentTask(HWND hwnd, const std::wstring& completionMsg = L"", bool error = false, D2D1_COLOR_F color = D2D1::ColorF(0.4f, 1.0f, 0.4f), DWORD durationMs = 2000) {
         PersistentTask.IsActive = false;
         PersistentTask.Progress = -1.0f;
-        if (!completionMsg.empty()) {
+        if (!completionMsg.empty() && g_config.ShowOSD) {
             Show(hwnd, completionMsg, error, false, color, OSDPosition::Bottom, durationMs, -1.0f);
         } else {
             Message.clear();
+            ClearTransientFlags();
             Progress = -1.0f;
             if (hwnd) RequestRepaint(QuickView::PaintLayer::Dynamic);
         }
@@ -136,6 +156,7 @@ struct OSDState {
     }
 
     bool IsVisible() const {
+        if (!g_config.ShowOSD) return false;
         if (PersistentTask.IsActive) return true;
         return IsTransientActive();
     }

@@ -124,7 +124,7 @@ public:
     bool IsExporting() const { return m_isExporting.load(std::memory_order_relaxed); }
     void ForceAbortExport(); // Cancel in-flight export and clean up .tmp file
 
-    void Render(ID2D1DeviceContext* dc, float width, float height, IDWriteTextFormat* textFormat);
+    void Render(ID2D1DeviceContext* dc, float width, float height, IDWriteTextFormat* textFormat, IDWriteFactory* dwriteFactory = nullptr);
 
     PanelLayout ComputeLayout(float canvasWidth, float canvasHeight) const;
 
@@ -140,6 +140,7 @@ private:
 
     // State
     HWND m_hwnd = nullptr;
+    IDWriteFactory* m_dwriteFactory = nullptr;
     int m_cropWidth = 0;
     int m_cropHeight = 0;
     int m_targetWidth = 0;

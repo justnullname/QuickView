@@ -1,13 +1,13 @@
 #include "pch.h"
 #include <DirectXPackedVector.h>
 #include <cstdint>
-#include <filesystem>
-#include <map>
 #include <memory>
 #include <string>
 #include <vector>
 #include <wincodec.h>
 #include <wincodecsdk.h>
+
+#include "StringUtils.h"
 
 
 #include "ImageLoader.h"
@@ -1053,8 +1053,10 @@ HRESULT CollapseFloatResultToSdr(const QuickView::Codec::DecodeContext &ctx,
 
 bool TryProbeAnimatedBuffer(std::shared_ptr<QuickView::MappedFile> fileMap,
                             const std::wstring &fmt,
-                            QuickView::Codec::DecodeResult &result) {
-  if (!ShouldProbeAnimatedBufferCodec(fmt) || !fileMap || !fileMap->IsValid()) {
+                            QuickView::Codec::DecodeResult &result,
+                            const QuickView::Codec::DecodeContext *ctx = nullptr) {
+  if ((ctx && ctx->forcePreview) ||
+      !ShouldProbeAnimatedBufferCodec(fmt) || !fileMap || !fileMap->IsValid()) {
     return false;
   }
 
@@ -1087,13 +1089,26 @@ bool TryProbeAnimatedBuffer(std::shared_ptr<QuickView::MappedFile> fileMap,
   result.stride = firstFrame->stride;
   result.format = firstFrame->format;
 
-  // Transfer ownership of the aligned pixel buffer to DecodeResult.
-  result.pixels = firstFrame->pixels;
-  firstFrame->pixels = nullptr;
-  firstFrame->memoryDeleter.Clear();
+  if (ctx && ctx->allocator) {
+    const size_t totalBytes = static_cast<size_t>(firstFrame->stride) * static_cast<size_t>(firstFrame->height);
+    uint8_t *allocated = ctx->allocator(totalBytes);
+    if (!allocated) {
+      return false;
+    }
+    memcpy(allocated, firstFrame->pixels, totalBytes);
+    result.pixels = allocated;
+    // firstFrame retains ownership and cleans up its aligned buffer on scope exit.
+  } else {
+    // Transfer ownership of the aligned pixel buffer to DecodeResult.
+    result.pixels = firstFrame->pixels;
+    firstFrame->pixels = nullptr;
+    firstFrame->memoryDeleter.DestroyCtx();
+    firstFrame->memoryDeleter.Clear();
+    result.animator = std::move(animator);
+  }
 
+  result.success = true;
   result.frameMeta = firstFrame->frameMeta;
-  result.animator = std::move(animator);
   result.metadata.Width = firstFrame->width;
   result.metadata.Height = firstFrame->height;
   result.metadata.Format = fmt;
@@ -2064,7 +2079,10 @@ static int ReadJpegExifOrientation(const uint8_t *data, size_t size) {
     if (marker == 0xD9 || marker == 0xDA)
       break;
 
-    uint16_t segLen = (data[offset + 2] << 8) | data[offset + 3];
+    uint16_t segLen = (static_cast<uint16_t>(data[offset + 2]) << 8) | data[offset + 3];
+    if (segLen < 2 || static_cast<size_t>(segLen) > size - (offset + 2)) {
+      break;
+    }
 
     // APP1 (EXIF)
     if (marker == 0xE1 && segLen > 8) {
@@ -2096,7 +2114,7 @@ static int ReadJpegExifOrientation(const uint8_t *data, size_t size) {
 
         // IFD0 offset
         uint32_t ifdOffset = read32(tiff + 4);
-        if (ifdOffset + 2 > tiffLen)
+        if (static_cast<uint64_t>(ifdOffset) + 2 > tiffLen)
           return 1;
 
         const uint8_t *ifd = tiff + ifdOffset;
@@ -4862,7 +4880,7 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize,
     // Get file size (cheap)
     // Actually we iterate file path anyway. But if we read to vector, we know size.
     // If we use WIC, we might not know size unless we query file.
-    // Let's use std::filesystem for non-vector paths logic
+    // Query file size via Win32 attribute probe
     // But most paths read vector.
     
     // Detect format
@@ -4871,9 +4889,7 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize,
     // [Phase 6] Surgical Optimizations
     
     // Check IO Cost FIRST
-    uintmax_t fsize = 0;
-    std::error_code ec;
-    fsize = std::filesystem::file_size(filePath, ec);
+    uintmax_t fsize = QuickView::QueryFileSize(filePath);
 
     // [STE] Universal Scout Lane Hard Limit
     // If Scout Lane (!allowSlow) AND file > 10MB, ABORT immediately.
@@ -9377,7 +9393,7 @@ HRESULT CImageLoader::LoadImageUnifiedInternal(LPCWSTR filePath,
     size_t mappedSize = fileMap->size();
 
     // Dispatch
-    if (TryProbeAnimatedBuffer(fileMap, fmt, result)) { // APNG supported by Wuffs
+    if (TryProbeAnimatedBuffer(fileMap, fmt, result, &ctx)) { // APNG supported by Wuffs
       return S_OK;
     }
 
@@ -9754,10 +9770,10 @@ HRESULT CImageLoader::GetImageInfoFast(LPCWSTR filePath, ImageInfo *pInfo) {
     return E_INVALIDARG;
   *pInfo = ImageInfo{}; // Reset
 
-  // 1. Get file size (cheap filesystem call)
-  std::error_code ec_size;
-  pInfo->fileSize = std::filesystem::file_size(filePath, ec_size);
-  if (ec_size) {
+  // 1. Get file size (cheap Win32 GetFileAttributesExW call)
+  bool sizeOk = false;
+  pInfo->fileSize = QuickView::QueryFileSize(filePath, &sizeOk);
+  if (!sizeOk) {
     // Fallback for VFS
     CImageLoader::ImageHeaderInfo vfsPeek = PeekHeader(filePath);
     if (vfsPeek.fileSize > 0)
@@ -10474,7 +10490,8 @@ HRESULT CImageLoader::GetImageInfoFastFromMemory(const uint8_t *data, size_t siz
     pInfo->height = 512;
 
     // Parse Dimensions (approximate from first 64KB)
-    std::string xml(data, data + size);
+    const size_t xmlProbeBytes = (std::min)(size, size_t{ 65536 });
+    std::string xml(data, data + xmlProbeBytes);
 
     {
       float pw = 0, ph = 0;
@@ -11606,9 +11623,9 @@ static void PopulateFileStats(LPCWSTR filePath,
     return;
 
   // File Size
-  std::error_code ec;
-  uintmax_t size = std::filesystem::file_size(filePath, ec);
-  if (!ec)
+  bool sizeOk = false;
+  uint64_t size = QuickView::QueryFileSize(filePath, &sizeOk);
+  if (sizeOk)
     meta->FileSize = size;
 
   // Date (Fallback to Modify Date) + [v5.3] Timestamps
@@ -13619,8 +13636,7 @@ CImageLoader::ImageHeaderInfo CImageLoader::PeekHeader(LPCWSTR filePath) {
   }
 
   // Get file size
-  std::error_code ec;
-  result.fileSize = std::filesystem::file_size(filePath, ec);
+  result.fileSize = QuickView::QueryFileSize(filePath);
 
   // [v9.3] Use extension-first format detection (handles RAW correctly)
   result.format = DetectFormatFromContent(filePath);
@@ -13954,7 +13970,7 @@ HRESULT CImageLoader::LoadToFrame(
         // PHASE 1: ID SANITIZATION (Fix Broken Links)
         // =========================================================
         {
-          std::map<std::string, std::string> replacements;
+          std::vector<std::pair<std::string, std::string>> replacements;
           int count = 0;
 
           size_t pos_id = 0;
@@ -13983,10 +13999,19 @@ HRESULT CImageLoader::LoadToFrame(
               unsafe = true;
             }
 
-            if (unsafe && replacements.find(val) == replacements.end()) {
-              char buf[64];
-              sprintf_s(buf, "qv_fix_%d", count++);
-              replacements[val] = std::string(buf);
+            if (unsafe) {
+              bool dup = false;
+              for (const auto& [k, v] : replacements) {
+                if (k == val) {
+                  dup = true;
+                  break;
+                }
+              }
+              if (!dup) {
+                char buf[64];
+                sprintf_s(buf, "qv_fix_%d", count++);
+                replacements.emplace_back(std::move(val), std::string(buf));
+              }
             }
           }
 
@@ -14082,10 +14107,11 @@ HRESULT CImageLoader::LoadToFrame(
 
           // Collected CSS rules: className -> {fill, stroke}
           struct CSSRule {
+            std::string className;
             std::string fill;
             std::string stroke;
           };
-          std::map<std::string, CSSRule> cssRules;
+          std::vector<CSSRule> cssRules;
 
           // --- Pass 1: Parse all <style> blocks ---
           size_t styleSearch = 0;
@@ -14160,12 +14186,21 @@ HRESULT CImageLoader::LoadToFrame(
               std::string_view strokeSV = ExtractCSSProp(body, "stroke");
 
               if (!fillSV.empty() || !strokeSV.empty()) {
-                std::string key(clsName);
-                auto &rule = cssRules[key];
-                if (!fillSV.empty() && rule.fill.empty())
-                  rule.fill = std::string(fillSV);
-                if (!strokeSV.empty() && rule.stroke.empty())
-                  rule.stroke = std::string(strokeSV);
+                CSSRule *rulePtr = nullptr;
+                for (auto &existing : cssRules) {
+                  if (existing.className == clsName) {
+                    rulePtr = &existing;
+                    break;
+                  }
+                }
+                if (!rulePtr) {
+                  cssRules.push_back(CSSRule{std::string(clsName), {}, {}});
+                  rulePtr = &cssRules.back();
+                }
+                if (!fillSV.empty() && rulePtr->fill.empty())
+                  rulePtr->fill = std::string(fillSV);
+                if (!strokeSV.empty() && rulePtr->stroke.empty())
+                  rulePtr->stroke = std::string(strokeSV);
               }
 
               rp = bc + 1;
@@ -14184,7 +14219,7 @@ HRESULT CImageLoader::LoadToFrame(
             };
             std::vector<Injection> injections;
             injections.reserve(cssRules.size());
-            for (auto &[cls, rule] : cssRules) {
+            for (const auto &rule : cssRules) {
               std::string prefix;
               if (!rule.fill.empty()) {
                 prefix += "fill=\"";
@@ -14197,7 +14232,7 @@ HRESULT CImageLoader::LoadToFrame(
                 prefix += "\" ";
               }
               if (!prefix.empty()) {
-                injections.push_back({cls, std::move(prefix)});
+                injections.push_back({rule.className, std::move(prefix)});
               }
             }
 
@@ -14308,25 +14343,30 @@ HRESULT CImageLoader::LoadToFrame(
           const bool isLight = IsLightThemeActive();
           const std::string contrastReplacement = isLight ? "#212121" : "#F0F0F0";
 
-          // 1. currentColor replacement
-          {
-            size_t pos = 0;
-            constexpr std::string_view kTarget = "currentColor";
-            while ((pos = CiFind(svgContent, kTarget, pos)) != std::string_view::npos) {
-              svgContent.replace(pos, kTarget.size(), contrastReplacement);
-              pos += contrastReplacement.size();
+          auto replaceAllCi = [&](std::string &text, std::string_view from, std::string_view to) {
+            size_t pos = CiFind(text, from, 0);
+            if (pos == std::string_view::npos) return;
+            std::string rebuilt;
+            rebuilt.reserve(text.size());
+            size_t prev = 0;
+            while (pos != std::string_view::npos) {
+              rebuilt.append(text, prev, pos - prev);
+              rebuilt.append(to);
+              prev = pos + from.size();
+              pos = CiFind(text, from, prev);
             }
-          }
+            rebuilt.append(text, prev, text.size() - prev);
+            text = std::move(rebuilt);
+          };
+
+          // 1. currentColor replacement (single linear pass)
+          replaceAllCi(svgContent, "currentColor", contrastReplacement);
 
           // 2. Dark theme fill replacement for dark icon sets (#212121, #242424, etc.)
           if (!isLight) {
             constexpr std::string_view kDarkFills[] = { "#212121", "#242424", "#202020", "#1f1f1f" };
             for (const auto& darkFill : kDarkFills) {
-              size_t pos = 0;
-              while ((pos = CiFind(svgContent, darkFill, pos)) != std::string_view::npos) {
-                svgContent.replace(pos, darkFill.size(), "#F0F0F0");
-                pos += 7;
-              }
+              replaceAllCi(svgContent, darkFill, "#F0F0F0");
             }
           }
         }

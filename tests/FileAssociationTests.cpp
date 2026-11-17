@@ -78,6 +78,25 @@ TEST(FileAssociationTest, ReconstructPathSkipsKnownFlagsBeforeSpacedPath) {
         L"D:\\My Vacation Photos\\Summer 2026\\IMG 0042.JPG");
 }
 
+TEST(FileAssociationTest, ReconstructPathSkipsCleanupPidOnSelfUpdateRestart) {
+    const wchar_t* argvOnlyPid[] = {
+        L"QuickView.exe",
+        L"--cleanup-pid",
+        L"42912"
+    };
+    EXPECT_TRUE(ReconstructPathFromArgs(3, argvOnlyPid, &MockPathNeverExists).empty());
+
+    const wchar_t* argvWithImage[] = {
+        L"QuickView.exe",
+        L"--cleanup-pid",
+        L"42912",
+        L"D:\\My Vacation Photos\\Summer 2026\\IMG 0042.JPG"
+    };
+    EXPECT_EQ(
+        ReconstructPathFromArgs(4, argvWithImage, &MockPathExistsSpacedPhoto),
+        L"D:\\My Vacation Photos\\Summer 2026\\IMG 0042.JPG");
+}
+
 TEST(FileAssociationTest, ReconstructPathViewerChildModeReturnsExactNextArg) {
     const wchar_t* argv[] = {
         L"QuickView.exe",

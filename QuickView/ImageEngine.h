@@ -5,7 +5,6 @@
 #include <list>
 #include <unordered_map>
 #include <unordered_set>
-#include <set>
 #include <atomic>
 #include <string>
 #include <mutex>
@@ -351,7 +350,7 @@ private:
         mutable std::mutex m_debugMutex; // [v3.2] For loader name
         
         std::mutex m_pendingMutex;
-        std::set<ImageID> m_pendingMetadataRequests;
+        std::vector<ImageID> m_pendingMetadataRequests;
 
         struct FastLaneCommand {
             std::wstring path;

@@ -5,9 +5,11 @@
 #include <winhttp.h>
 #include <wincodec.h>
 #include <shlwapi.h>
+#include <wrl/client.h>
 #include <thread>
 #include <cmath>
 #include <algorithm>
+#include <limits>
 #include "EditState.h"
 #include "OSDState.h"
 #include "AppStrings.h"
@@ -25,6 +27,127 @@ extern OSDState g_osd;
 extern std::wstring GetCurrentActiveImagePath();
 
 namespace QuickView::AI {
+
+using Microsoft::WRL::ComPtr;
+
+static VisualFrameSnapshotFn s_visualSnapshotFn = nullptr;
+static VisualBgraProviderFn s_visualRenderFn = nullptr;
+
+struct ScopedComInit {
+    HRESULT hr = E_FAIL;
+    ScopedComInit() { hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED); }
+    ~ScopedComInit() {
+        if (SUCCEEDED(hr)) {
+            CoUninitialize();
+        }
+    }
+    ScopedComInit(const ScopedComInit&) = delete;
+    ScopedComInit& operator=(const ScopedComInit&) = delete;
+};
+
+struct ScopedWinHttpHandle {
+    HINTERNET h = nullptr;
+    ScopedWinHttpHandle() = default;
+    explicit ScopedWinHttpHandle(HINTERNET handle) : h(handle) {}
+    ~ScopedWinHttpHandle() { Reset(); }
+    void Reset(HINTERNET newHandle = nullptr) {
+        if (h) WinHttpCloseHandle(h);
+        h = newHandle;
+    }
+    HINTERNET Release() {
+        HINTERNET old = h;
+        h = nullptr;
+        return old;
+    }
+    explicit operator bool() const noexcept { return h != nullptr; }
+    ScopedWinHttpHandle(const ScopedWinHttpHandle&) = delete;
+    ScopedWinHttpHandle& operator=(const ScopedWinHttpHandle&) = delete;
+};
+
+static bool ReadJsonStr(yyjson_val* obj, const char* key, std::string& out) {
+    if (!obj || !yyjson_is_obj(obj) || !key) return false;
+    yyjson_val* v = yyjson_obj_get(obj, key);
+    if (v && yyjson_is_str(v)) {
+        const char* s = yyjson_get_str(v);
+        if (s) {
+            out = s;
+            return true;
+        }
+    }
+    return false;
+}
+
+static const char* SelectClosestGeminiAspectRatio(OutputAspectRatio ratio, uint32_t w, uint32_t h) {
+    switch (ratio) {
+        case OutputAspectRatio::Landscape_16_9: return "16:9";
+        case OutputAspectRatio::Portrait_9_16:  return "9:16";
+        case OutputAspectRatio::Standard_4_3:   return "4:3";
+        case OutputAspectRatio::Vertical_3_4:   return "3:4";
+        case OutputAspectRatio::Square_1_1:     return "1:1";
+        case OutputAspectRatio::Auto:
+        default: {
+            if (w == 0 || h == 0) return "1:1";
+            struct AspectChoice { const char* label; float ratio; };
+            static constexpr AspectChoice kChoices[] = {
+                { "21:9", 21.0f / 9.0f },
+                { "16:9", 16.0f / 9.0f },
+                { "3:2",  3.0f / 2.0f },
+                { "4:3",  4.0f / 3.0f },
+                { "5:4",  5.0f / 4.0f },
+                { "1:1",  1.0f },
+                { "4:5",  4.0f / 5.0f },
+                { "3:4",  3.0f / 4.0f },
+                { "2:3",  2.0f / 3.0f },
+                { "9:16", 9.0f / 16.0f },
+            };
+            const float target = static_cast<float>(w) / static_cast<float>(h);
+            const char* bestLabel = "1:1";
+            float bestDiff = (std::numeric_limits<float>::max)();
+            for (const auto& c : kChoices) {
+                const float diff = std::abs(std::log(target / c.ratio));
+                if (diff < bestDiff) {
+                    bestDiff = diff;
+                    bestLabel = c.label;
+                }
+            }
+            return bestLabel;
+        }
+    }
+}
+
+static std::string BuildOpenAiMultipartEditPayload(
+    const std::string& boundary,
+    const std::string& targetModel,
+    const std::string& utf8Prompt,
+    const std::vector<uint8_t>& imagePngBytes,
+    const std::vector<uint8_t>* maskPngBytes)
+{
+    std::string body;
+    auto addFormField = [&](const std::string& name, const std::string& value) {
+        body += "--" + boundary + "\r\n";
+        body += "Content-Disposition: form-data; name=\"" + name + "\"\r\n\r\n";
+        body += value + "\r\n";
+    };
+    auto addFileField = [&](const std::string& name, const std::string& filename, const std::vector<uint8_t>& fileBytes) {
+        body += "--" + boundary + "\r\n";
+        body += "Content-Disposition: form-data; name=\"" + name + "\"; filename=\"" + filename + "\"\r\n";
+        body += "Content-Type: image/png\r\n\r\n";
+        body.append(reinterpret_cast<const char*>(fileBytes.data()), fileBytes.size());
+        body += "\r\n";
+    };
+
+    addFormField("model", targetModel);
+    addFormField("prompt", utf8Prompt);
+    addFormField("response_format", "b64_json");
+    if (!imagePngBytes.empty()) {
+        addFileField("image", "image.png", imagePngBytes);
+    }
+    if (maskPngBytes && !maskPngBytes->empty()) {
+        addFileField("mask", "mask.png", *maskPngBytes);
+    }
+    body += "--" + boundary + "--\r\n";
+    return body;
+}
 
 struct HttpExchangeResult {
     bool ok = false;
@@ -49,11 +172,24 @@ static HttpExchangeResult SendRequestAndReadResponse(
     const std::atomic<uint64_t>& currentTaskId)
 {
     HttpExchangeResult res;
+    if (!hRequest || expectedTaskId != currentTaskId.load()) {
+        res.interrupted = true;
+        return res;
+    }
+
     BOOL bSend = WinHttpSendRequest(hRequest, headers.c_str(), static_cast<DWORD>(headers.size()),
                                     const_cast<void*>(payloadData), payloadLen, payloadLen, 0);
 
     if (!bSend || !WinHttpReceiveResponse(hRequest, nullptr)) {
+        if (expectedTaskId != currentTaskId.load()) {
+            res.interrupted = true;
+            return res;
+        }
         DWORD dwErr = GetLastError();
+        if (dwErr == ERROR_WINHTTP_OPERATION_CANCELLED) {
+            res.interrupted = true;
+            return res;
+        }
         if (dwErr == ERROR_WINHTTP_CANNOT_CONNECT) {
             res.mainTitle = L"连接失败 (12029)";
             wchar_t buf[256];
@@ -99,9 +235,22 @@ static HttpExchangeResult SendRequestAndReadResponse(
         }
         std::vector<char> buf(bytesAvailable);
         DWORD bytesRead = 0;
-        if (WinHttpReadData(hRequest, buf.data(), bytesAvailable, &bytesRead) && bytesRead > 0) {
-            res.body.append(buf.data(), bytesRead);
+        if (!WinHttpReadData(hRequest, buf.data(), bytesAvailable, &bytesRead)) {
+            if (expectedTaskId != currentTaskId.load()) {
+                res.interrupted = true;
+                return res;
+            }
+            break;
         }
+        if (bytesRead > 0) {
+            res.body.append(buf.data(), bytesRead);
+        } else {
+            break;
+        }
+    }
+    if (expectedTaskId != currentTaskId.load()) {
+        res.interrupted = true;
+        return res;
     }
 
     if (statusCode != 200) {
@@ -140,38 +289,31 @@ static bool DownloadImageFromUrl(const std::wstring& wUrl, std::vector<uint8_t>&
     std::wstring host(urlComp.lpszHostName, urlComp.dwHostNameLength);
     std::wstring path(urlComp.lpszUrlPath, urlComp.dwUrlPathLength);
 
-    HINTERNET hSession = WinHttpOpen(L"QuickView-AI-Download/2.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    ScopedWinHttpHandle hSession(WinHttpOpen(L"QuickView-AI-Download/2.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
     if (!hSession) return false;
 
-    HINTERNET hConnect = WinHttpConnect(hSession, host.c_str(), urlComp.nPort, 0);
-    if (!hConnect) {
-        WinHttpCloseHandle(hSession);
-        return false;
-    }
+    ScopedWinHttpHandle hConnect(WinHttpConnect(hSession.h, host.c_str(), urlComp.nPort, 0));
+    if (!hConnect) return false;
 
     DWORD flags = (urlComp.nScheme == INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0;
-    HINTERNET hReq = WinHttpOpenRequest(hConnect, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
-    if (!hReq) {
-        WinHttpCloseHandle(hConnect);
-        WinHttpCloseHandle(hSession);
-        return false;
-    }
+    ScopedWinHttpHandle hReq(WinHttpOpenRequest(hConnect.h, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags));
+    if (!hReq) return false;
 
-    WinHttpSetTimeouts(hReq, 5000, 5000, 30000, 30000);
+    WinHttpSetTimeouts(hReq.h, 5000, 5000, 30000, 30000);
 
     bool ok = false;
-    if (WinHttpSendRequest(hReq, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
-        WinHttpReceiveResponse(hReq, nullptr)) {
+    if (WinHttpSendRequest(hReq.h, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
+        WinHttpReceiveResponse(hReq.h, nullptr)) {
         DWORD statusCode = 0;
         DWORD dwSize = sizeof(statusCode);
-        WinHttpQueryHeaders(hReq, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &dwSize, WINHTTP_NO_HEADER_INDEX);
+        WinHttpQueryHeaders(hReq.h, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &dwSize, WINHTTP_NO_HEADER_INDEX);
         if (statusCode == 200) {
             DWORD bytesAvailable = 0;
-            while (WinHttpQueryDataAvailable(hReq, &bytesAvailable) && bytesAvailable > 0) {
+            while (WinHttpQueryDataAvailable(hReq.h, &bytesAvailable) && bytesAvailable > 0) {
                 size_t curSize = outBytes.size();
                 outBytes.resize(curSize + bytesAvailable);
                 DWORD bytesRead = 0;
-                if (WinHttpReadData(hReq, outBytes.data() + curSize, bytesAvailable, &bytesRead) && bytesRead > 0) {
+                if (WinHttpReadData(hReq.h, outBytes.data() + curSize, bytesAvailable, &bytesRead) && bytesRead > 0) {
                     outBytes.resize(curSize + bytesRead);
                 } else {
                     outBytes.resize(curSize);
@@ -182,9 +324,6 @@ static bool DownloadImageFromUrl(const std::wstring& wUrl, std::vector<uint8_t>&
         }
     }
 
-    WinHttpCloseHandle(hReq);
-    WinHttpCloseHandle(hConnect);
-    WinHttpCloseHandle(hSession);
     return ok;
 }
 
@@ -196,8 +335,9 @@ static bool Base64ToBinary(const char* b64, size_t b64Len, std::vector<uint8_t>&
         b64 += skip;
         b64Len -= skip;
     }
+    if (b64Len == 0) return false;
     DWORD binLen = 0;
-    if (!CryptStringToBinaryA(b64, static_cast<DWORD>(b64Len), CRYPT_STRING_BASE64, nullptr, &binLen, nullptr, nullptr)) {
+    if (!CryptStringToBinaryA(b64, static_cast<DWORD>(b64Len), CRYPT_STRING_BASE64, nullptr, &binLen, nullptr, nullptr) || binLen == 0) {
         return false;
     }
     outBytes.resize(binLen);
@@ -205,7 +345,8 @@ static bool Base64ToBinary(const char* b64, size_t b64Len, std::vector<uint8_t>&
         outBytes.clear();
         return false;
     }
-    return true;
+    outBytes.resize(binLen);
+    return !outBytes.empty();
 }
 
 static bool CrackEndpointUrl(
@@ -226,7 +367,7 @@ static bool CrackEndpointUrl(
     urlComp.dwUrlPathLength = 1024;
 
     if (!WinHttpCrackUrl(wUrl.c_str(), static_cast<DWORD>(wUrl.size()), 0, &urlComp)) {
-        outError = AppStrings::AiError_InvalidUrl;
+        outError = AppStrings::g.AiError_InvalidUrl;
         return false;
     }
     outPort = urlComp.nPort;
@@ -338,135 +479,199 @@ static bool ExtractImageFromYyjson(yyjson_val* root, std::vector<uint8_t>& outIm
     return false;
 }
 
-static bool LoadAndEncodeActiveImage(const std::wstring& filePath, MaxResolution maxRes, std::string& outBase64, std::string& outMimeType, uint32_t& outWidth, uint32_t& outHeight) {
+static bool EncodePngBytesToBase64OrBytes(
+    const std::vector<uint8_t>& pngBytes,
+    std::vector<uint8_t>* outPngBytes,
+    std::string& outBase64)
+{
+    if (pngBytes.empty()) return false;
+    outBase64 = BinaryToBase64(pngBytes.data(), pngBytes.size());
+    if (outPngBytes) {
+        *outPngBytes = pngBytes;
+    }
+    return !outBase64.empty();
+}
+
+static bool LoadVisualImageAsPng(
+    const VisualFrameSnapshot& snapshot,
+    MaxResolution maxRes,
+    std::string& outBase64,
+    std::string& outMimeType,
+    std::vector<uint8_t>* outPngBytes,
+    uint32_t& outWidth,
+    uint32_t& outHeight)
+{
     outWidth = 0;
     outHeight = 0;
-    if (filePath.empty() || !PathFileExistsW(filePath.c_str())) return false;
+    outBase64.clear();
+    if (outPngBytes) outPngBytes->clear();
 
-    std::wstring ext = PathFindExtensionW(filePath.c_str());
-    for (auto& c : ext) c = towlower(c);
+    const uint32_t limit = (maxRes == MaxResolution::NoLimit) ? 0 : static_cast<uint32_t>(maxRes);
+    const std::wstring& filePath = snapshot.imagePath;
+    const bool hasVisualEdits = snapshot.effectiveExif != 1 || snapshot.netRotation != 0 ||
+                                snapshot.netFlipH || snapshot.flipV || snapshot.hasCrop ||
+                                !snapshot.memoryBgra.empty();
 
-    HANDLE hFile = CreateFileW(filePath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (hFile == INVALID_HANDLE_VALUE) return false;
+    std::wstring ext;
+    if (!filePath.empty()) {
+        ext = PathFindExtensionW(filePath.c_str());
+        for (auto& c : ext) c = towlower(c);
+    }
 
-    LARGE_INTEGER fSize{};
-    GetFileSizeEx(hFile, &fSize);
-    uint32_t limit = (maxRes == MaxResolution::NoLimit) ? 0 : static_cast<uint32_t>(maxRes);
+    const bool canPassThroughRawFile = !hasVisualEdits && !outPngBytes && !filePath.empty() &&
+        PathFileExistsW(filePath.c_str()) &&
+        (ext == L".jpg" || ext == L".jpeg" || ext == L".png" || ext == L".webp") &&
+        (limit == 0 || limit >= 2048);
 
-    // Fast path: direct pass-through for existing JPG/PNG/WebP under 4MB if high-res policy
-    if (fSize.QuadPart > 0 && fSize.QuadPart <= 4 * 1024 * 1024 &&
-        (ext == L".jpg" || ext == L".jpeg" || ext == L".png" || ext == L".webp") && limit >= 2048) {
-        std::vector<uint8_t> rawBuf(static_cast<size_t>(fSize.QuadPart));
-        DWORD bytesRead = 0;
-        if (ReadFile(hFile, rawBuf.data(), static_cast<DWORD>(fSize.QuadPart), &bytesRead, nullptr) && bytesRead == fSize.QuadPart) {
-            CloseHandle(hFile);
-            outBase64 = BinaryToBase64(rawBuf.data(), rawBuf.size());
-            if (ext == L".jpg" || ext == L".jpeg") outMimeType = "image/jpeg";
-            else if (ext == L".webp") outMimeType = "image/webp";
-            else outMimeType = "image/png";
+    if (canPassThroughRawFile) {
+        HANDLE hFile = CreateFileW(filePath.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (hFile != INVALID_HANDLE_VALUE) {
+            LARGE_INTEGER fSize{};
+            if (GetFileSizeEx(hFile, &fSize) && fSize.QuadPart > 0 && fSize.QuadPart <= 4 * 1024 * 1024) {
+                std::vector<uint8_t> rawBuf(static_cast<size_t>(fSize.QuadPart));
+                DWORD bytesRead = 0;
+                if (ReadFile(hFile, rawBuf.data(), static_cast<DWORD>(fSize.QuadPart), &bytesRead, nullptr) && bytesRead == fSize.QuadPart) {
+                    CloseHandle(hFile);
+                    outBase64 = BinaryToBase64(rawBuf.data(), rawBuf.size());
+                    if (ext == L".jpg" || ext == L".jpeg") outMimeType = "image/jpeg";
+                    else if (ext == L".webp") outMimeType = "image/webp";
+                    else outMimeType = "image/png";
 
-            // Query dimensions via WIC cheaply
-            IWICImagingFactory* pFactory = nullptr;
-            if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pFactory)))) {
-                IWICBitmapDecoder* pDec = nullptr;
-                if (SUCCEEDED(pFactory->CreateDecoderFromFilename(filePath.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &pDec))) {
-                    IWICBitmapFrameDecode* pFr = nullptr;
-                    if (SUCCEEDED(pDec->GetFrame(0, &pFr))) {
-                        UINT w = 0, h = 0;
-                        pFr->GetSize(&w, &h);
-                        outWidth = w;
-                        outHeight = h;
-                        pFr->Release();
+                    ComPtr<IWICImagingFactory> pFactory;
+                    if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pFactory)))) {
+                        ComPtr<IWICBitmapDecoder> pDec;
+                        if (SUCCEEDED(pFactory->CreateDecoderFromFilename(filePath.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &pDec))) {
+                            ComPtr<IWICBitmapFrameDecode> pFr;
+                            if (SUCCEEDED(pDec->GetFrame(0, &pFr))) {
+                                UINT w = 0, h = 0;
+                                if (SUCCEEDED(pFr->GetSize(&w, &h))) {
+                                    outWidth = w;
+                                    outHeight = h;
+                                }
+                            }
+                        }
                     }
-                    pDec->Release();
+                    if (!outBase64.empty()) return true;
                 }
-                pFactory->Release();
             }
-            return !outBase64.empty();
+            CloseHandle(hFile);
         }
     }
-    CloseHandle(hFile);
 
-    // WIC Robust Decoding and Adaptive Downscaling
-    IWICImagingFactory* pFactory = nullptr;
+    // Prefer unified visual renderer when registered (handles RAW/AVIF/JXL/HEIC/SVG/EXIF/crops/prior edits)
+    if (s_visualRenderFn) {
+        std::vector<uint8_t> bgra;
+        uint32_t w = 0, h = 0, stride = 0;
+        if (s_visualRenderFn(snapshot, bgra, w, h, stride) && !bgra.empty() && w > 0 && h > 0) {
+            outWidth = w;
+            outHeight = h;
+
+            uint32_t targetW = w;
+            uint32_t targetH = h;
+            if (limit > 0 && (w > limit || h > limit)) {
+                if (w >= h) {
+                    targetW = limit;
+                    targetH = (std::max)(1u, static_cast<uint32_t>(std::lround(static_cast<double>(h) * limit / w)));
+                } else {
+                    targetH = limit;
+                    targetW = (std::max)(1u, static_cast<uint32_t>(std::lround(static_cast<double>(w) * limit / h)));
+                }
+            }
+
+            std::vector<uint8_t> pngBytes;
+            if (targetW != w || targetH != h) {
+                std::vector<uint8_t> scaled(static_cast<size_t>(targetW) * targetH * 4);
+                AiActionManager::ResampleBgraExact(bgra.data(), static_cast<int>(w), static_cast<int>(h), static_cast<int>(stride),
+                                                 scaled.data(), static_cast<int>(targetW), static_cast<int>(targetH), static_cast<int>(targetW * 4));
+                if (!AiActionManager::EncodeToPngMemory(scaled.data(), static_cast<int>(targetW), static_cast<int>(targetH), static_cast<int>(targetW * 4), pngBytes)) {
+                    return false;
+                }
+            } else {
+                if (!AiActionManager::EncodeToPngMemory(bgra.data(), static_cast<int>(w), static_cast<int>(h), static_cast<int>(stride), pngBytes)) {
+                    return false;
+                }
+            }
+            outMimeType = "image/png";
+            return EncodePngBytesToBase64OrBytes(pngBytes, outPngBytes, outBase64);
+        }
+    }
+
+    if (filePath.empty() || !PathFileExistsW(filePath.c_str())) return false;
+
+    // WIC fallback for standalone tests
+    ComPtr<IWICImagingFactory> pFactory;
     if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pFactory)))) {
         return false;
     }
 
-    bool success = false;
-    IWICBitmapDecoder* pDecoder = nullptr;
-    if (SUCCEEDED(pFactory->CreateDecoderFromFilename(filePath.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &pDecoder))) {
-        IWICBitmapFrameDecode* pFrame = nullptr;
-        if (SUCCEEDED(pDecoder->GetFrame(0, &pFrame))) {
-            UINT origW = 0, origH = 0;
-            pFrame->GetSize(&origW, &origH);
-            outWidth = origW;
-            outHeight = origH;
-
-            UINT targetW = origW;
-            UINT targetH = origH;
-            if (limit > 0 && (origW > limit || origH > limit)) {
-                if (origW >= origH) {
-                    targetW = limit;
-                    targetH = (UINT)std::max<UINT>(1, (UINT)std::round((float)origH * (float)limit / (float)origW));
-                } else {
-                    targetH = limit;
-                    targetW = (UINT)std::max<UINT>(1, (UINT)std::round((float)origW * (float)limit / (float)origH));
-                }
-            }
-
-            IWICBitmapSource* pSource = pFrame;
-            IWICBitmapScaler* pScaler = nullptr;
-            if (targetW != origW || targetH != origH) {
-                if (SUCCEEDED(pFactory->CreateBitmapScaler(&pScaler))) {
-                    if (SUCCEEDED(pScaler->Initialize(pFrame, targetW, targetH, WICBitmapInterpolationModeHighQualityCubic))) {
-                        pSource = pScaler;
-                    }
-                }
-            }
-
-            IStream* pStream = nullptr;
-            if (SUCCEEDED(CreateStreamOnHGlobal(nullptr, TRUE, &pStream))) {
-                IWICBitmapEncoder* pEncoder = nullptr;
-                if (SUCCEEDED(pFactory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &pEncoder))) {
-                    if (SUCCEEDED(pEncoder->Initialize(pStream, WICBitmapEncoderNoCache))) {
-                        IWICBitmapFrameEncode* pDstFrame = nullptr;
-                        if (SUCCEEDED(pEncoder->CreateNewFrame(&pDstFrame, nullptr))) {
-                            pDstFrame->Initialize(nullptr);
-                            pDstFrame->SetSize(targetW, targetH);
-                            WICPixelFormatGUID pixelFormat = GUID_WICPixelFormatDontCare;
-                            pDstFrame->SetPixelFormat(&pixelFormat);
-                            pDstFrame->WriteSource(pSource, nullptr);
-                            pDstFrame->Commit();
-                            pEncoder->Commit();
-
-                            STATSTG stat{};
-                            if (SUCCEEDED(pStream->Stat(&stat, STATFLAG_NONAME)) && stat.cbSize.QuadPart > 0) {
-                                LARGE_INTEGER liZero{};
-                                pStream->Seek(liZero, STREAM_SEEK_SET, nullptr);
-                                std::vector<uint8_t> pngBytes(static_cast<size_t>(stat.cbSize.QuadPart));
-                                ULONG read = 0;
-                                if (SUCCEEDED(pStream->Read(pngBytes.data(), static_cast<ULONG>(pngBytes.size()), &read)) && read == pngBytes.size()) {
-                                    outBase64 = BinaryToBase64(pngBytes.data(), pngBytes.size());
-                                    outMimeType = "image/png";
-                                    success = !outBase64.empty();
-                                }
-                            }
-                            pDstFrame->Release();
-                        }
-                        pEncoder->Release();
-                    }
-                }
-                pStream->Release();
-            }
-
-            if (pScaler) pScaler->Release();
-            pFrame->Release();
-        }
-        pDecoder->Release();
+    ComPtr<IWICBitmapDecoder> pDecoder;
+    if (FAILED(pFactory->CreateDecoderFromFilename(filePath.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &pDecoder))) {
+        return false;
     }
-    pFactory->Release();
-    return success;
+
+    ComPtr<IWICBitmapFrameDecode> pFrame;
+    if (FAILED(pDecoder->GetFrame(0, &pFrame))) {
+        return false;
+    }
+
+    UINT origW = 0, origH = 0;
+    if (FAILED(pFrame->GetSize(&origW, &origH)) || origW == 0 || origH == 0) {
+        return false;
+    }
+    outWidth = origW;
+    outHeight = origH;
+
+    UINT targetW = origW;
+    UINT targetH = origH;
+    if (limit > 0 && (origW > limit || origH > limit)) {
+        if (origW >= origH) {
+            targetW = limit;
+            targetH = (std::max)(1u, static_cast<UINT>(std::lround(static_cast<double>(origH) * limit / origW)));
+        } else {
+            targetH = limit;
+            targetW = (std::max)(1u, static_cast<UINT>(std::lround(static_cast<double>(origW) * limit / origH)));
+        }
+    }
+
+    IWICBitmapSource* pSource = pFrame.Get();
+    ComPtr<IWICBitmapScaler> pScaler;
+    if (targetW != origW || targetH != origH) {
+        if (SUCCEEDED(pFactory->CreateBitmapScaler(&pScaler)) &&
+            SUCCEEDED(pScaler->Initialize(pFrame.Get(), targetW, targetH, WICBitmapInterpolationModeHighQualityCubic))) {
+            pSource = pScaler.Get();
+        }
+    }
+
+    ComPtr<IStream> pStream;
+    if (FAILED(CreateStreamOnHGlobal(nullptr, TRUE, &pStream))) return false;
+    ComPtr<IWICBitmapEncoder> pEncoder;
+    if (FAILED(pFactory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &pEncoder))) return false;
+    if (FAILED(pEncoder->Initialize(pStream.Get(), WICBitmapEncoderNoCache))) return false;
+    ComPtr<IWICBitmapFrameEncode> pDstFrame;
+    if (FAILED(pEncoder->CreateNewFrame(&pDstFrame, nullptr))) return false;
+    if (FAILED(pDstFrame->Initialize(nullptr)) ||
+        FAILED(pDstFrame->SetSize(targetW, targetH))) return false;
+    WICPixelFormatGUID pixelFormat = GUID_WICPixelFormatDontCare;
+    if (FAILED(pDstFrame->SetPixelFormat(&pixelFormat)) ||
+        FAILED(pDstFrame->WriteSource(pSource, nullptr)) ||
+        FAILED(pDstFrame->Commit()) ||
+        FAILED(pEncoder->Commit())) {
+        return false;
+    }
+
+    STATSTG stat{};
+    if (FAILED(pStream->Stat(&stat, STATFLAG_NONAME)) || stat.cbSize.QuadPart == 0 || stat.cbSize.QuadPart > UINT_MAX) {
+        return false;
+    }
+    LARGE_INTEGER liZero{};
+    if (FAILED(pStream->Seek(liZero, STREAM_SEEK_SET, nullptr))) return false;
+    std::vector<uint8_t> pngBytes(static_cast<size_t>(stat.cbSize.QuadPart));
+    ULONG read = 0;
+    if (FAILED(pStream->Read(pngBytes.data(), static_cast<ULONG>(pngBytes.size()), &read)) || read != pngBytes.size()) {
+        return false;
+    }
+    outMimeType = "image/png";
+    return EncodePngBytesToBase64OrBytes(pngBytes, outPngBytes, outBase64);
 }
 
 void AiActionManager::ExtractSemanticError(
@@ -685,7 +890,13 @@ AiActionManager::~AiActionManager() {
     CancelCurrentTask();
 }
 
-bool AiActionManager::OpenAiHttpRequest(
+void AiActionManager::SetVisualFrameProviders(VisualFrameSnapshotFn snapshotFn, VisualBgraProviderFn renderFn) {
+    s_visualSnapshotFn = snapshotFn;
+    s_visualRenderFn = renderFn;
+}
+
+HINTERNET AiActionManager::OpenAiHttpRequest(
+    uint64_t taskId,
     const wchar_t* userAgent,
     const wchar_t* hostName,
     INTERNET_PORT port,
@@ -695,29 +906,69 @@ bool AiActionManager::OpenAiHttpRequest(
     int timeoutSeconds,
     std::wstring& outError)
 {
-    std::lock_guard<std::mutex> lock(m_taskMutex);
-    m_activeSession = WinHttpOpen(userAgent, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!m_activeSession) {
-        outError = AppStrings::AiError_InitWinHttpFailed;
-        return false;
+    ScopedWinHttpHandle hSession(WinHttpOpen(userAgent, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
+    if (!hSession) {
+        outError = AppStrings::g.AiError_InitWinHttpFailed;
+        return nullptr;
     }
 
     DWORD recvTimeout = (timeoutSeconds > 0) ? (static_cast<DWORD>(timeoutSeconds) * 1000) : (isLocal ? 0 : 600000);
-    WinHttpSetTimeouts(m_activeSession, 5000, 10000, 30000, recvTimeout);
+    WinHttpSetTimeouts(hSession.h, 5000, 10000, 30000, recvTimeout);
 
-    m_activeConnect = WinHttpConnect(m_activeSession, hostName, port, 0);
-    if (!m_activeConnect) {
-        outError = AppStrings::AiError_ConnectFailed;
-        return false;
+    ScopedWinHttpHandle hConnect(WinHttpConnect(hSession.h, hostName, port, 0));
+    if (!hConnect) {
+        outError = AppStrings::g.AiError_ConnectFailed;
+        return nullptr;
     }
 
     DWORD flags = isHttps ? WINHTTP_FLAG_SECURE : 0;
-    m_activeRequest = WinHttpOpenRequest(m_activeConnect, L"POST", fullPath.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
-    if (!m_activeRequest) {
-        outError = AppStrings::AiError_CreateReqFailed;
-        return false;
+    ScopedWinHttpHandle hRequest(WinHttpOpenRequest(hConnect.h, L"POST", fullPath.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags));
+    if (!hRequest) {
+        outError = AppStrings::g.AiError_CreateReqFailed;
+        return nullptr;
     }
-    return true;
+
+    std::lock_guard<std::mutex> lock(m_taskMutex);
+    if (taskId != m_currentTaskId.load()) {
+        return nullptr;
+    }
+    if (m_activeRequest) {
+        WinHttpCloseHandle(m_activeRequest);
+        m_activeRequest = nullptr;
+    }
+    if (m_activeConnect) {
+        WinHttpCloseHandle(m_activeConnect);
+        m_activeConnect = nullptr;
+    }
+    if (m_activeSession) {
+        WinHttpCloseHandle(m_activeSession);
+        m_activeSession = nullptr;
+    }
+
+    m_activeHttpTaskId = taskId;
+    m_activeSession = hSession.Release();
+    m_activeConnect = hConnect.Release();
+    m_activeRequest = hRequest.Release();
+    return m_activeRequest;
+}
+
+void AiActionManager::CloseActiveHttpHandlesIfOwner(uint64_t taskId) {
+    std::lock_guard<std::mutex> lock(m_taskMutex);
+    if (taskId == 0 || m_activeHttpTaskId == taskId) {
+        if (m_activeRequest) {
+            WinHttpCloseHandle(m_activeRequest);
+            m_activeRequest = nullptr;
+        }
+        if (m_activeConnect) {
+            WinHttpCloseHandle(m_activeConnect);
+            m_activeConnect = nullptr;
+        }
+        if (m_activeSession) {
+            WinHttpCloseHandle(m_activeSession);
+            m_activeSession = nullptr;
+        }
+        m_activeHttpTaskId = 0;
+    }
 }
 
 bool AiActionManager::Init() {
@@ -968,31 +1219,27 @@ bool AiActionManager::LoadConfig() {
         size_t idx, maxIdx;
         yyjson_val* pVal;
         yyjson_arr_foreach(vProfiles, idx, maxIdx, pVal) {
+            if (!yyjson_is_obj(pVal)) continue;
             ModelProfile p;
-            yyjson_val* id = yyjson_obj_get(pVal, "id");
-            if (id) p.id = yyjson_get_str(id);
-            yyjson_val* name = yyjson_obj_get(pVal, "name");
-            if (name) {
-                const char* nStr = yyjson_get_str(name);
-                if (nStr) p.displayName = Utf8ToWide(nStr);
+            ReadJsonStr(pVal, "id", p.id);
+            std::string nameUtf8;
+            if (ReadJsonStr(pVal, "name", nameUtf8)) {
+                p.displayName = Utf8ToWide(nameUtf8);
             }
             if (p.displayName.empty() || p.displayName[0] < 32) {
                 p.displayName = L"Google Gemini";
             }
             yyjson_val* proto = yyjson_obj_get(pVal, "protocol");
-            if (proto) p.protocol = static_cast<ApiProtocol>(yyjson_get_int(proto));
-            yyjson_val* url = yyjson_obj_get(pVal, "base_url");
-            if (url) p.baseUrl = yyjson_get_str(url);
-            yyjson_val* key = yyjson_obj_get(pVal, "encrypted_key");
-            if (key) p.encryptedApiKey = yyjson_get_str(key);
-            yyjson_val* model = yyjson_obj_get(pVal, "default_model");
-            if (model) p.defaultModel = yyjson_get_str(model);
+            if (proto && yyjson_is_int(proto)) p.protocol = static_cast<ApiProtocol>(yyjson_get_int(proto));
+            ReadJsonStr(pVal, "base_url", p.baseUrl);
+            ReadJsonStr(pVal, "encrypted_key", p.encryptedApiKey);
+            ReadJsonStr(pVal, "default_model", p.defaultModel);
             yyjson_val* maxR = yyjson_obj_get(pVal, "max_resolution");
-            if (maxR) p.maxResolution = static_cast<MaxResolution>(yyjson_get_uint(maxR));
+            if (maxR && yyjson_is_uint(maxR)) p.maxResolution = static_cast<MaxResolution>(yyjson_get_uint(maxR));
             yyjson_val* timeout = yyjson_obj_get(pVal, "timeout_seconds");
-            if (timeout) p.timeoutSeconds = yyjson_get_int(timeout);
+            if (timeout && yyjson_is_int(timeout)) p.timeoutSeconds = yyjson_get_int(timeout);
             yyjson_val* custom = yyjson_obj_get(pVal, "is_custom");
-            if (custom) p.isCustom = yyjson_get_bool(custom);
+            if (custom && yyjson_is_bool(custom)) p.isCustom = yyjson_get_bool(custom);
 
             yyjson_val* vFetched = yyjson_obj_get(pVal, "fetched_models");
             if (vFetched && yyjson_is_arr(vFetched)) {
@@ -1000,8 +1247,10 @@ bool AiActionManager::LoadConfig() {
                 size_t mIdx, mMax;
                 yyjson_val* mVal;
                 yyjson_arr_foreach(vFetched, mIdx, mMax, mVal) {
-                    const char* mStr = yyjson_get_str(mVal);
-                    if (mStr) p.fetchedModels.push_back(mStr);
+                    if (yyjson_is_str(mVal)) {
+                        const char* mStr = yyjson_get_str(mVal);
+                        if (mStr) p.fetchedModels.push_back(mStr);
+                    }
                 }
             }
 
@@ -1016,13 +1265,12 @@ bool AiActionManager::LoadConfig() {
         size_t idx, maxIdx;
         yyjson_val* aVal;
         yyjson_arr_foreach(vActions, idx, maxIdx, aVal) {
+            if (!yyjson_is_obj(aVal)) continue;
             ActionDesc a;
-            yyjson_val* id = yyjson_obj_get(aVal, "id");
-            if (id) a.id = yyjson_get_str(id);
-            yyjson_val* name = yyjson_obj_get(aVal, "name");
-            if (name) {
-                const char* nStr = yyjson_get_str(name);
-                if (nStr) a.name = Utf8ToWide(nStr);
+            ReadJsonStr(aVal, "id", a.id);
+            std::string actNameUtf8;
+            if (ReadJsonStr(aVal, "name", actNameUtf8)) {
+                a.name = Utf8ToWide(actNameUtf8);
             }
 
             // Smooth migration for legacy Chinese default action names to standard English
@@ -1037,18 +1285,15 @@ bool AiActionManager::LoadConfig() {
             } else if (a.id == "action_anime_style" && (a.name.empty() || a.name == L"日漫插画与艺术风格化")) {
                 a.name = L"Anime & Illustration Stylization";
             }
-            yyjson_val* prof = yyjson_obj_get(aVal, "profile_id");
-            if (prof) a.modelProfileId = yyjson_get_str(prof);
+            ReadJsonStr(aVal, "profile_id", a.modelProfileId);
 
-            yyjson_val* prompt = yyjson_obj_get(aVal, "prompt");
-            if (prompt) {
-                const char* pStr = yyjson_get_str(prompt);
-                if (pStr) a.promptTemplate = Utf8ToWide(pStr);
+            std::string promptUtf8;
+            if (ReadJsonStr(aVal, "prompt", promptUtf8)) {
+                a.promptTemplate = Utf8ToWide(promptUtf8);
             }
-            yyjson_val* neg = yyjson_obj_get(aVal, "negative_prompt");
-            if (neg) {
-                const char* nStr = yyjson_get_str(neg);
-                if (nStr) a.negativePrompt = Utf8ToWide(nStr);
+            std::string negUtf8;
+            if (ReadJsonStr(aVal, "negative_prompt", negUtf8)) {
+                a.negativePrompt = Utf8ToWide(negUtf8);
             }
             yyjson_val* scope = yyjson_obj_get(aVal, "scope_mode");
             if (scope) {
@@ -1176,127 +1421,62 @@ bool AiActionManager::SaveConfig() {
 }
 
 // --- Image Processing & Inpainting Helper ---
-bool AiActionManager::PrepareImageBuffer(
-    const uint8_t* srcBgra, int srcW, int srcH, int srcStride,
-    MaxResolution maxRes, uint32_t stepAlignment,
-    std::vector<uint8_t>& outBgra, int& outW, int& outH) {
-
-    if (!srcBgra || srcW <= 0 || srcH <= 0) return false;
-
-    float scale = 1.0f;
-    uint32_t limit = static_cast<uint32_t>(maxRes);
-    if (limit > 0) {
-        int maxDim = (std::max)(srcW, srcH);
-        if (maxDim > static_cast<int>(limit)) {
-            scale = static_cast<float>(limit) / static_cast<float>(maxDim);
-        }
-    }
-
-    int targetW = static_cast<int>(std::round(srcW * scale));
-    int targetH = static_cast<int>(std::round(srcH * scale));
-
-    if (stepAlignment > 1) {
-        targetW = (targetW / stepAlignment) * stepAlignment;
-        targetH = (targetH / stepAlignment) * stepAlignment;
-        if (targetW <= 0) targetW = stepAlignment;
-        if (targetH <= 0) targetH = stepAlignment;
-    }
-
-    outW = targetW;
-    outH = targetH;
-    outBgra.resize(outW * outH * 4);
-
-    // Fast bilinear resample
-    float xRatio = static_cast<float>(srcW - 1) / (std::max)(1, targetW - 1);
-    float yRatio = static_cast<float>(srcH - 1) / (std::max)(1, targetH - 1);
-
-    for (int y = 0; y < targetH; ++y) {
-        float srcY = y * yRatio;
-        int yLow = static_cast<int>(srcY);
-        int yHigh = (std::min)(yLow + 1, srcH - 1);
-        float yWeight = srcY - yLow;
-
-        const uint8_t* rowLow = srcBgra + yLow * srcStride;
-        const uint8_t* rowHigh = srcBgra + yHigh * srcStride;
-        uint8_t* dstRow = outBgra.data() + y * (outW * 4);
-
-        for (int x = 0; x < targetW; ++x) {
-            float srcX = x * xRatio;
-            int xLow = static_cast<int>(srcX);
-            int xHigh = (std::min)(xLow + 1, srcW - 1);
-            float xWeight = srcX - xLow;
-
-            const uint8_t* p00 = rowLow + xLow * 4;
-            const uint8_t* p10 = rowLow + xHigh * 4;
-            const uint8_t* p01 = rowHigh + xLow * 4;
-            const uint8_t* p11 = rowHigh + xHigh * 4;
-
-            for (int c = 0; c < 4; ++c) {
-                float val = (1.0f - xWeight) * (1.0f - yWeight) * p00[c] +
-                            xWeight * (1.0f - yWeight) * p10[c] +
-                            (1.0f - xWeight) * yWeight * p01[c] +
-                            xWeight * yWeight * p11[c];
-                dstRow[x * 4 + c] = static_cast<uint8_t>(std::clamp(val, 0.0f, 255.0f));
-            }
-        }
-    }
-    return true;
-}
-
 bool AiActionManager::EncodeToPngMemory(
     const uint8_t* bgra, int width, int height, int stride,
     std::vector<uint8_t>& outPngBytes) {
 
-    if (!bgra || width <= 0 || height <= 0) return false;
+    if (!bgra || width <= 0 || height <= 0 || stride < width * 4) return false;
+    const size_t totalBytes = static_cast<size_t>(stride) * static_cast<size_t>(height);
+    if (totalBytes > static_cast<size_t>((std::numeric_limits<UINT>::max)())) return false;
 
-    IStream* pStream = nullptr;
+    ComPtr<IStream> pStream;
     if (FAILED(CreateStreamOnHGlobal(nullptr, TRUE, &pStream)) || !pStream) {
         return false;
     }
 
-    IWICImagingFactory* pFactory = nullptr;
-    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pFactory)))) {
-        pStream->Release();
+    ComPtr<IWICImagingFactory> pFactory;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pFactory))) || !pFactory) {
         return false;
     }
 
-    IWICBitmapEncoder* pEncoder = nullptr;
-    if (FAILED(pFactory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &pEncoder))) {
-        pFactory->Release();
-        pStream->Release();
+    ComPtr<IWICBitmapEncoder> pEncoder;
+    if (FAILED(pFactory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &pEncoder)) || !pEncoder) {
         return false;
     }
 
-    pEncoder->Initialize(pStream, WICBitmapEncoderNoCache);
-    IWICBitmapFrameEncode* pFrame = nullptr;
-    pEncoder->CreateNewFrame(&pFrame, nullptr);
-    pFrame->Initialize(nullptr);
-    pFrame->SetSize(width, height);
+    if (FAILED(pEncoder->Initialize(pStream.Get(), WICBitmapEncoderNoCache))) return false;
+    ComPtr<IWICBitmapFrameEncode> pFrame;
+    if (FAILED(pEncoder->CreateNewFrame(&pFrame, nullptr)) || !pFrame) return false;
+    if (FAILED(pFrame->Initialize(nullptr))) return false;
+    if (FAILED(pFrame->SetSize(static_cast<UINT>(width), static_cast<UINT>(height)))) return false;
 
     WICPixelFormatGUID format = GUID_WICPixelFormat32bppBGRA;
-    pFrame->SetPixelFormat(&format);
-    pFrame->WritePixels(height, stride, stride * height, const_cast<BYTE*>(bgra));
-    pFrame->Commit();
-    pEncoder->Commit();
+    if (FAILED(pFrame->SetPixelFormat(&format))) return false;
+    if (FAILED(pFrame->WritePixels(static_cast<UINT>(height), static_cast<UINT>(stride), static_cast<UINT>(totalBytes), const_cast<BYTE*>(bgra)))) {
+        return false;
+    }
+    if (FAILED(pFrame->Commit()) || FAILED(pEncoder->Commit())) return false;
 
-    pFrame->Release();
-    pEncoder->Release();
-    pFactory->Release();
-
-    // Read bytes from stream
-    STATSTG stat;
-    pStream->Stat(&stat, STATFLAG_NONAME);
-    ULONG streamSize = static_cast<ULONG>(stat.cbSize.QuadPart);
+    STATSTG stat{};
+    if (FAILED(pStream->Stat(&stat, STATFLAG_NONAME)) || stat.cbSize.QuadPart == 0 ||
+        stat.cbSize.QuadPart > static_cast<ULONGLONG>((std::numeric_limits<ULONG>::max)())) {
+        return false;
+    }
+    const ULONG streamSize = static_cast<ULONG>(stat.cbSize.QuadPart);
     outPngBytes.resize(streamSize);
 
     LARGE_INTEGER liZero{};
-    liZero.QuadPart = 0;
-    pStream->Seek(liZero, STREAM_SEEK_SET, nullptr);
+    if (FAILED(pStream->Seek(liZero, STREAM_SEEK_SET, nullptr))) {
+        outPngBytes.clear();
+        return false;
+    }
     ULONG bytesRead = 0;
-    pStream->Read(outPngBytes.data(), streamSize, &bytesRead);
-    pStream->Release();
-
-    return bytesRead > 0;
+    if (FAILED(pStream->Read(outPngBytes.data(), streamSize, &bytesRead)) || bytesRead == 0) {
+        outPngBytes.clear();
+        return false;
+    }
+    outPngBytes.resize(bytesRead);
+    return true;
 }
 
 void AiActionManager::ResampleBgraExact(
@@ -1388,7 +1568,7 @@ void AiActionManager::BlendMaskGuidedFeathered(
             dPixel[0] = static_cast<uint8_t>(std::clamp(sPixel[0] * srcA + dPixel[0] * invA, 0.0f, 255.0f));
             dPixel[1] = static_cast<uint8_t>(std::clamp(sPixel[1] * srcA + dPixel[1] * invA, 0.0f, 255.0f));
             dPixel[2] = static_cast<uint8_t>(std::clamp(sPixel[2] * srcA + dPixel[2] * invA, 0.0f, 255.0f));
-            dPixel[3] = static_cast<uint8_t>(std::clamp(sPixel[3] * srcA + dPixel[3] * invA, 0.0f, 255.0f));
+            dPixel[3] = static_cast<uint8_t>(std::clamp(255.0f * srcA + dPixel[3] * invA, 0.0f, 255.0f));
         }
     }
 }
@@ -1413,7 +1593,7 @@ uint64_t AiActionManager::ExecuteAction(
         if (onComplete) {
             ExecutionResult err;
             err.success = false;
-            err.errorMessage = AppStrings::AiError_NoAvailableProfile;
+            err.errorMessage = AppStrings::g.AiError_NoAvailableProfile;
             onComplete(err);
         }
         return 0;
@@ -1422,6 +1602,11 @@ uint64_t AiActionManager::ExecuteAction(
     uint64_t taskId = ++m_currentTaskId;
     m_isRunning.store(true);
     m_lastActionId = action.id;
+
+    VisualFrameSnapshot snapshot;
+    if (!s_visualSnapshotFn || !s_visualSnapshotFn(snapshot)) {
+        snapshot.imagePath = GetCurrentActiveImagePath();
+    }
 
     ModelProfile profCopy = *profile;
     ActionDesc actCopy = action;
@@ -1448,14 +1633,14 @@ uint64_t AiActionManager::ExecuteAction(
 
     if (shouldInpaint && hasSelection) {
         std::wstring promptCopy = actCopy.promptTemplate;
-        QuickView::RunDetached([this, taskId, cropL, cropT, cropR, cropB, promptCopy, profCopy, hwnd, actCopy, onComplete = std::move(onComplete)]() mutable {
-            InpaintWorkerThread(taskId, cropL, cropT, cropR, cropB, promptCopy, profCopy, hwnd, std::move(onComplete), actCopy);
+        QuickView::RunDetached([this, taskId, snapshot = std::move(snapshot), cropL, cropT, cropR, cropB, promptCopy, profCopy, hwnd, actCopy, onComplete = std::move(onComplete)]() mutable {
+            InpaintWorkerThread(taskId, std::move(snapshot), cropL, cropT, cropR, cropB, promptCopy, profCopy, hwnd, std::move(onComplete), actCopy);
         });
         return taskId;
     }
 
-    QuickView::RunDetached([this, taskId, actCopy, profCopy, hwnd, onComplete = std::move(onComplete)]() mutable {
-        WorkerThread(taskId, actCopy, profCopy, hwnd, std::move(onComplete));
+    QuickView::RunDetached([this, taskId, snapshot = std::move(snapshot), actCopy, profCopy, hwnd, onComplete = std::move(onComplete)]() mutable {
+        WorkerThread(taskId, std::move(snapshot), actCopy, profCopy, hwnd, std::move(onComplete));
     });
 
     return taskId;
@@ -1464,20 +1649,7 @@ uint64_t AiActionManager::ExecuteAction(
 void AiActionManager::CancelCurrentTask() {
     m_currentTaskId.fetch_add(1);
     m_isRunning.store(false);
-
-    std::lock_guard<std::mutex> lock(m_taskMutex);
-    if (m_activeRequest) {
-        WinHttpCloseHandle(m_activeRequest);
-        m_activeRequest = nullptr;
-    }
-    if (m_activeConnect) {
-        WinHttpCloseHandle(m_activeConnect);
-        m_activeConnect = nullptr;
-    }
-    if (m_activeSession) {
-        WinHttpCloseHandle(m_activeSession);
-        m_activeSession = nullptr;
-    }
+    CloseActiveHttpHandlesIfOwner(0);
 }
 
 static void ComputeTargetDimensions(
@@ -1532,15 +1704,32 @@ static void ComputeTargetDimensions(
 }
 
 void AiActionManager::WorkerThread(
-    uint64_t taskId, ActionDesc action, ModelProfile profile,
+    uint64_t taskId, VisualFrameSnapshot snapshot, ActionDesc action, ModelProfile profile,
     HWND /*hwnd*/, ActionCallback callback) {
+
+    ScopedComInit comGuard;
+    struct HttpHandleGuard {
+        AiActionManager* mgr;
+        uint64_t tid;
+        ~HttpHandleGuard() { mgr->CloseActiveHttpHandlesIfOwner(tid); }
+    } httpGuard{ this, taskId };
 
     ExecutionResult result;
     result.success = false;
+    result.taskId = taskId;
+    result.sourceImagePath = snapshot.imagePath;
+
+    auto finishTask = [&](bool invokeCb) {
+        if (taskId == m_currentTaskId.load()) {
+            m_isRunning.store(false);
+            if (invokeCb && callback) {
+                callback(result);
+            }
+        }
+    };
 
     // Check cancellation
     if (taskId != m_currentTaskId.load()) {
-        m_isRunning.store(false);
         return;
     }
 
@@ -1551,26 +1740,28 @@ void AiActionManager::WorkerThread(
 
     std::string apiKey = DecryptApiKey(profile.encryptedApiKey);
     if (!isLocal && apiKey.empty()) {
-        result.errorMessage = AppStrings::AiError_ApiKeyEmpty;
-        m_isRunning.store(false);
-        if (callback) callback(result);
+        result.errorMessage = AppStrings::g.AiError_ApiKeyEmpty;
+        finishTask(true);
         return;
     }
 
     // Determine target model
     std::string targetModel = profile.defaultModel;
     if (targetModel.empty() && profile.protocol != ApiProtocol::StabilityInpaint && profile.protocol != ApiProtocol::ComfyUI) {
-        result.errorMessage = AppStrings::AiError_ModelEmpty;
-        m_isRunning.store(false);
-        if (callback) callback(result);
+        result.errorMessage = AppStrings::g.AiError_ModelEmpty;
+        finishTask(true);
         return;
     }
 
-    // Load and encode active image (if any)
+    // Load and encode active visual image (if any)
     std::string imageBase64;
     std::string imageMimeType;
+    std::vector<uint8_t> editPngBytes;
+    const bool wantsRawPngBytes = (profile.protocol == ApiProtocol::OpenAiImagesEdit);
     uint32_t imgW = 0, imgH = 0;
-    bool hasImage = LoadAndEncodeActiveImage(GetCurrentActiveImagePath(), profile.maxResolution, imageBase64, imageMimeType, imgW, imgH);
+    bool hasImage = LoadVisualImageAsPng(
+        snapshot, profile.maxResolution, imageBase64, imageMimeType,
+        wantsRawPngBytes ? &editPngBytes : nullptr, imgW, imgH);
 
     // Parse URL & Endpoint
     wchar_t hostName[256] = { 0 };
@@ -1578,8 +1769,7 @@ void AiActionManager::WorkerThread(
     bool isHttps = false;
     std::wstring fullPath;
     if (!CrackEndpointUrl(profile.baseUrl, hostName, port, isHttps, fullPath, result.errorMessage)) {
-        m_isRunning.store(false);
-        if (callback) callback(result);
+        finishTask(true);
         return;
     }
 
@@ -1598,20 +1788,17 @@ void AiActionManager::WorkerThread(
         }
     } else if (effectiveProtocol == ApiProtocol::OpenAiImagesGenerate) {
         if (fullPath.find(L"images/generations") == std::wstring::npos) fullPath += L"images/generations";
-    } else if (profile.protocol == ApiProtocol::OpenAiImagesEdit) {
+    } else if (effectiveProtocol == ApiProtocol::OpenAiImagesEdit) {
         if (fullPath.find(L"images/edits") == std::wstring::npos) fullPath += L"images/edits";
     }
 
-    if (!OpenAiHttpRequest(L"QuickView-AI/2.0", hostName, port, isHttps, isLocal, fullPath, profile.timeoutSeconds, result.errorMessage)) {
-        m_isRunning.store(false);
-        if (callback) callback(result);
+    HINTERNET hRequest = OpenAiHttpRequest(taskId, L"QuickView-AI/2.0", hostName, port, isHttps, isLocal, fullPath, profile.timeoutSeconds, result.errorMessage);
+    if (!hRequest) {
+        if (taskId == m_currentTaskId.load()) {
+            finishTask(true);
+        }
         return;
     }
-
-    // Build JSON Payload via yyjson
-    yyjson_mut_doc* doc = yyjson_mut_doc_new(nullptr);
-    yyjson_mut_val* root = yyjson_mut_obj(doc);
-    yyjson_mut_doc_set_root(doc, root);
 
     // Prompt UTF-8
     std::string utf8Prompt = WideToUtf8(action.promptTemplate);
@@ -1634,278 +1821,269 @@ void AiActionManager::WorkerThread(
         }
     }
 
-    if (effectiveProtocol == ApiProtocol::StabilityInpaint) {
-        yyjson_mut_obj_add_str(doc, root, "prompt", utf8Prompt.c_str());
-        if (!action.negativePrompt.empty()) {
-            std::string utf8Neg = WideToUtf8(action.negativePrompt);
-            yyjson_mut_obj_add_str(doc, root, "negative_prompt", utf8Neg.c_str());
+    std::wstring headers;
+    std::string postPayload;
+
+    if (effectiveProtocol == ApiProtocol::OpenAiImagesEdit && hasImage && !editPngBytes.empty()) {
+        const std::string boundary = "----QuickViewEditBoundary9A2C4E";
+        headers = L"Content-Type: multipart/form-data; boundary=" + Utf8ToWide(boundary) + L"\r\n";
+        if (!apiKey.empty()) {
+            headers += L"Authorization: Bearer " + Utf8ToWide(apiKey) + L"\r\n";
         }
-        int actualSteps = (action.samplingSteps >= 5 && action.samplingSteps <= 150) ? action.samplingSteps : 25;
-        yyjson_mut_obj_add_int(doc, root, "steps", actualSteps);
-        double actualCfg = (action.cfgScale >= 1.0f && action.cfgScale <= 30.0f) ? static_cast<double>(action.cfgScale) : 7.0;
-        yyjson_mut_obj_add_real(doc, root, "cfg_scale", actualCfg);
+        postPayload = BuildOpenAiMultipartEditPayload(boundary, targetModel, utf8Prompt, editPngBytes, nullptr);
+    } else {
+        // Build JSON Payload via yyjson
+        yyjson_mut_doc* doc = yyjson_mut_doc_new(nullptr);
+        yyjson_mut_val* root = yyjson_mut_obj(doc);
+        yyjson_mut_doc_set_root(doc, root);
 
-        int targetW = 1024;
-        int targetH = 1024;
-        ComputeTargetDimensions(action.aspectRatio, action.targetResolution, imgW, imgH, targetW, targetH);
-        yyjson_mut_obj_add_int(doc, root, "width", targetW);
-        yyjson_mut_obj_add_int(doc, root, "height", targetH);
-
-        if (hasImage) {
-            yyjson_mut_val* initArr = yyjson_mut_arr(doc);
-            yyjson_mut_arr_append(initArr, yyjson_mut_str(doc, imageBase64.c_str()));
-            yyjson_mut_obj_add_val(doc, root, "init_images", initArr);
-            double actualDenoise = (action.denoisingStrength > 0.0f && action.denoisingStrength <= 1.0f) ?
-                                   static_cast<double>(action.denoisingStrength) : 0.35;
-            yyjson_mut_obj_add_real(doc, root, "denoising_strength", actualDenoise);
-        }
-
-        if (!targetModel.empty() && targetModel != "default") {
-            std::string cleanModel = targetModel;
-            size_t bracketPos = cleanModel.rfind(" [");
-            if (bracketPos != std::string::npos && cleanModel.back() == ']') {
-                cleanModel = cleanModel.substr(0, bracketPos);
-            }
-            yyjson_mut_val* overrideSettings = yyjson_mut_obj(doc);
-            yyjson_mut_obj_add_str(doc, overrideSettings, "sd_model_checkpoint", cleanModel.c_str());
-            yyjson_mut_obj_add_val(doc, root, "override_settings", overrideSettings);
-        }
-    } else if (isAnthropic) {
-        yyjson_mut_obj_add_str(doc, root, "model", targetModel.c_str());
-        yyjson_mut_obj_add_int(doc, root, "max_tokens", 2048);
-
-        yyjson_mut_val* msgs = yyjson_mut_arr(doc);
-        yyjson_mut_obj_add_val(doc, root, "messages", msgs);
-
-        yyjson_mut_val* userMsg = yyjson_mut_obj(doc);
-        yyjson_mut_obj_add_str(doc, userMsg, "role", "user");
-
-        if (hasImage) {
-            yyjson_mut_val* contentArr = yyjson_mut_arr(doc);
-            yyjson_mut_obj_add_val(doc, userMsg, "content", contentArr);
-
-            yyjson_mut_val* imgObj = yyjson_mut_obj(doc);
-            yyjson_mut_obj_add_str(doc, imgObj, "type", "image");
-            yyjson_mut_val* srcObj = yyjson_mut_obj(doc);
-            yyjson_mut_obj_add_str(doc, srcObj, "type", "base64");
-            yyjson_mut_obj_add_str(doc, srcObj, "media_type", imageMimeType.c_str());
-            yyjson_mut_obj_add_str(doc, srcObj, "data", imageBase64.c_str());
-            yyjson_mut_obj_add_val(doc, imgObj, "source", srcObj);
-            yyjson_mut_arr_append(contentArr, imgObj);
-
-            yyjson_mut_val* txtObj = yyjson_mut_obj(doc);
-            yyjson_mut_obj_add_str(doc, txtObj, "type", "text");
-            yyjson_mut_obj_add_str(doc, txtObj, "text", utf8Prompt.c_str());
-            yyjson_mut_arr_append(contentArr, txtObj);
-        } else {
-            yyjson_mut_obj_add_str(doc, userMsg, "content", utf8Prompt.c_str());
-        }
-        yyjson_mut_arr_append(msgs, userMsg);
-    } else if (effectiveProtocol == ApiProtocol::GeminiNative) {
-        const char* geminiSizeStr = "1K";
-        if (action.targetResolution == TargetResolution::Res_2K) geminiSizeStr = "2K";
-        else if (action.targetResolution == TargetResolution::Res_4K) geminiSizeStr = "4K";
-
-        const char* geminiAspect = "1:1";
-        switch (action.aspectRatio) {
-            case OutputAspectRatio::Landscape_16_9: geminiAspect = "16:9"; break;
-            case OutputAspectRatio::Portrait_9_16:  geminiAspect = "9:16"; break;
-            case OutputAspectRatio::Standard_4_3:   geminiAspect = "4:3"; break;
-            case OutputAspectRatio::Vertical_3_4:   geminiAspect = "3:4"; break;
-            case OutputAspectRatio::Square_1_1:     geminiAspect = "1:1"; break;
-            case OutputAspectRatio::Auto:
-            default:
-                if (imgW > 0 && imgH > 0) {
-                    float aspect = static_cast<float>(imgW) / static_cast<float>(imgH);
-                    if (aspect >= 1.5f) geminiAspect = "16:9";
-                    else if (aspect >= 1.15f) geminiAspect = "4:3";
-                    else if (aspect <= 0.65f) geminiAspect = "9:16";
-                    else if (aspect <= 0.85f) geminiAspect = "3:4";
-                    else geminiAspect = "1:1";
-                }
-                break;
-        }
-
-        if (targetModel.rfind("imagen-", 0) == 0) {
-            // Google Imagen 3 Predict Schema
-            yyjson_mut_val* instancesArr = yyjson_mut_arr(doc);
-            yyjson_mut_val* instObj = yyjson_mut_obj(doc);
-            yyjson_mut_obj_add_str(doc, instObj, "prompt", utf8Prompt.c_str());
-            yyjson_mut_arr_append(instancesArr, instObj);
-            yyjson_mut_obj_add_val(doc, root, "instances", instancesArr);
-
-            yyjson_mut_val* paramsObj = yyjson_mut_obj(doc);
-            yyjson_mut_obj_add_int(doc, paramsObj, "sampleCount", 1);
-            yyjson_mut_obj_add_str(doc, paramsObj, "aspectRatio", geminiAspect);
-            yyjson_mut_obj_add_str(doc, paramsObj, "imageSize", geminiSizeStr);
+        if (effectiveProtocol == ApiProtocol::StabilityInpaint) {
+            yyjson_mut_obj_add_str(doc, root, "prompt", utf8Prompt.c_str());
             if (!action.negativePrompt.empty()) {
                 std::string utf8Neg = WideToUtf8(action.negativePrompt);
-                yyjson_mut_obj_add_str(doc, paramsObj, "negative_prompt", utf8Neg.c_str());
+                yyjson_mut_obj_add_str(doc, root, "negative_prompt", utf8Neg.c_str());
             }
-            yyjson_mut_obj_add_val(doc, root, "parameters", paramsObj);
-        } else {
-            // Google Gemini generateContent Schema (Nano Banana Pro / Gemini 2.0 / Gemini 3 Pro)
-            yyjson_mut_val* contentsArr = yyjson_mut_arr(doc);
-            yyjson_mut_val* contentItem = yyjson_mut_obj(doc);
-            yyjson_mut_obj_add_str(doc, contentItem, "role", "user");
+            int actualSteps = (action.samplingSteps >= 5 && action.samplingSteps <= 150) ? action.samplingSteps : 25;
+            yyjson_mut_obj_add_int(doc, root, "steps", actualSteps);
+            double actualCfg = (action.cfgScale >= 1.0f && action.cfgScale <= 30.0f) ? static_cast<double>(action.cfgScale) : 7.0;
+            yyjson_mut_obj_add_real(doc, root, "cfg_scale", actualCfg);
 
-            yyjson_mut_val* partsArr = yyjson_mut_arr(doc);
+            int targetW = 1024;
+            int targetH = 1024;
+            ComputeTargetDimensions(action.aspectRatio, action.targetResolution, imgW, imgH, targetW, targetH);
+            yyjson_mut_obj_add_int(doc, root, "width", targetW);
+            yyjson_mut_obj_add_int(doc, root, "height", targetH);
 
-            // 1. Text prompt part
-            yyjson_mut_val* textPart = yyjson_mut_obj(doc);
-            yyjson_mut_obj_add_str(doc, textPart, "text", utf8Prompt.c_str());
-            yyjson_mut_arr_append(partsArr, textPart);
-
-            // 2. Multimodal Image part (if active image present)
             if (hasImage) {
-                yyjson_mut_val* imgPart = yyjson_mut_obj(doc);
-                yyjson_mut_val* inlineData = yyjson_mut_obj(doc);
-                yyjson_mut_obj_add_str(doc, inlineData, "mimeType", imageMimeType.c_str());
-                yyjson_mut_obj_add_str(doc, inlineData, "data", imageBase64.c_str());
-                yyjson_mut_obj_add_val(doc, imgPart, "inlineData", inlineData);
-                yyjson_mut_arr_append(partsArr, imgPart);
+                yyjson_mut_val* initArr = yyjson_mut_arr(doc);
+                yyjson_mut_arr_append(initArr, yyjson_mut_str(doc, imageBase64.c_str()));
+                yyjson_mut_obj_add_val(doc, root, "init_images", initArr);
+                double actualDenoise = (action.denoisingStrength > 0.0f && action.denoisingStrength <= 1.0f) ?
+                                       static_cast<double>(action.denoisingStrength) : 0.35;
+                yyjson_mut_obj_add_real(doc, root, "denoising_strength", actualDenoise);
             }
 
-            yyjson_mut_obj_add_val(doc, contentItem, "parts", partsArr);
-            yyjson_mut_arr_append(contentsArr, contentItem);
-            yyjson_mut_obj_add_val(doc, root, "contents", contentsArr);
-
-            // Generation config: request both image and text modality with native resolution
-            yyjson_mut_val* genConfig = yyjson_mut_obj(doc);
-            yyjson_mut_val* respModalities = yyjson_mut_arr(doc);
-            yyjson_mut_arr_add_strcpy(doc, respModalities, "IMAGE");
-            yyjson_mut_arr_add_strcpy(doc, respModalities, "TEXT");
-            yyjson_mut_obj_add_val(doc, genConfig, "responseModalities", respModalities);
-
-            // Inject imageConfig (aspectRatio + imageSize 1K/2K/4K for Google AI Studio / Gemini 3.1)
-            yyjson_mut_val* imgConfig = yyjson_mut_obj(doc);
-            yyjson_mut_obj_add_str(doc, imgConfig, "aspectRatio", geminiAspect);
-            yyjson_mut_obj_add_str(doc, imgConfig, "imageSize", geminiSizeStr);
-            yyjson_mut_obj_add_val(doc, genConfig, "imageConfig", imgConfig);
-
-            yyjson_mut_obj_add_val(doc, root, "generationConfig", genConfig);
-        }
-    } else if (effectiveProtocol == ApiProtocol::OpenAiImagesGenerate) {
-        yyjson_mut_obj_add_str(doc, root, "model", targetModel.c_str());
-        yyjson_mut_obj_add_str(doc, root, "prompt", utf8Prompt.c_str());
-        yyjson_mut_obj_add_int(doc, root, "n", 1);
-        yyjson_mut_obj_add_str(doc, root, "response_format", "b64_json");
-
-        const char* dalleQuality = (action.targetResolution == TargetResolution::Res_1K) ? "standard" : "hd";
-        yyjson_mut_obj_add_str(doc, root, "quality", dalleQuality);
-
-        const char* dalleSize = "1024x1024";
-        switch (action.aspectRatio) {
-            case OutputAspectRatio::Landscape_16_9:
-            case OutputAspectRatio::Standard_4_3:
-                dalleSize = "1792x1024";
-                break;
-            case OutputAspectRatio::Portrait_9_16:
-            case OutputAspectRatio::Vertical_3_4:
-                dalleSize = "1024x1792";
-                break;
-            case OutputAspectRatio::Square_1_1:
-                dalleSize = "1024x1024";
-                break;
-            case OutputAspectRatio::Auto:
-            default:
-                if (imgW > 0 && imgH > 0) {
-                    float aspect = static_cast<float>(imgW) / static_cast<float>(imgH);
-                    if (aspect >= 1.3f) dalleSize = "1792x1024";
-                    else if (aspect <= 0.77f) dalleSize = "1024x1792";
-                    else dalleSize = "1024x1024";
-                } else {
-                    dalleSize = "1024x1024";
+            if (!targetModel.empty() && targetModel != "default") {
+                std::string cleanModel = targetModel;
+                size_t bracketPos = cleanModel.rfind(" [");
+                if (bracketPos != std::string::npos && cleanModel.back() == ']') {
+                    cleanModel = cleanModel.substr(0, bracketPos);
                 }
-                break;
-        }
-        yyjson_mut_obj_add_str(doc, root, "size", dalleSize);
+                yyjson_mut_val* overrideSettings = yyjson_mut_obj(doc);
+                yyjson_mut_obj_add_str(doc, overrideSettings, "sd_model_checkpoint", cleanModel.c_str());
+                yyjson_mut_obj_add_val(doc, root, "override_settings", overrideSettings);
+            }
+        } else if (isAnthropic) {
+            yyjson_mut_obj_add_str(doc, root, "model", targetModel.c_str());
+            yyjson_mut_obj_add_int(doc, root, "max_tokens", 2048);
 
-        // Compatible extensions for 3rd-party image platforms (SiliconFlow, DashScope, Flux, etc.)
-        if (!action.negativePrompt.empty()) {
-            std::string utf8Neg = WideToUtf8(action.negativePrompt);
-            yyjson_mut_obj_add_str(doc, root, "negative_prompt", utf8Neg.c_str());
-        }
-        if (action.samplingSteps > 0) {
-            yyjson_mut_obj_add_int(doc, root, "steps", action.samplingSteps);
-            yyjson_mut_obj_add_int(doc, root, "num_inference_steps", action.samplingSteps);
-        }
-        if (action.cfgScale > 0.0f) {
-            yyjson_mut_obj_add_real(doc, root, "guidance_scale", static_cast<double>(action.cfgScale));
-        }
-    } else {
-        yyjson_mut_obj_add_str(doc, root, "model", targetModel.c_str());
-        yyjson_mut_val* msgs = yyjson_mut_arr(doc);
-        yyjson_mut_obj_add_val(doc, root, "messages", msgs);
+            yyjson_mut_val* msgs = yyjson_mut_arr(doc);
+            yyjson_mut_obj_add_val(doc, root, "messages", msgs);
 
-        yyjson_mut_val* userMsg = yyjson_mut_obj(doc);
-        yyjson_mut_obj_add_str(doc, userMsg, "role", "user");
+            yyjson_mut_val* userMsg = yyjson_mut_obj(doc);
+            yyjson_mut_obj_add_str(doc, userMsg, "role", "user");
 
-        if (hasImage) {
-            yyjson_mut_val* contentArr = yyjson_mut_arr(doc);
-            yyjson_mut_obj_add_val(doc, userMsg, "content", contentArr);
+            if (hasImage) {
+                yyjson_mut_val* contentArr = yyjson_mut_arr(doc);
+                yyjson_mut_obj_add_val(doc, userMsg, "content", contentArr);
 
-            yyjson_mut_val* textObj = yyjson_mut_obj(doc);
-            yyjson_mut_obj_add_str(doc, textObj, "type", "text");
-            yyjson_mut_obj_add_str(doc, textObj, "text", utf8Prompt.c_str());
-            yyjson_mut_arr_append(contentArr, textObj);
+                yyjson_mut_val* imgObj = yyjson_mut_obj(doc);
+                yyjson_mut_obj_add_str(doc, imgObj, "type", "image");
+                yyjson_mut_val* srcObj = yyjson_mut_obj(doc);
+                yyjson_mut_obj_add_str(doc, srcObj, "type", "base64");
+                yyjson_mut_obj_add_str(doc, srcObj, "media_type", imageMimeType.c_str());
+                yyjson_mut_obj_add_str(doc, srcObj, "data", imageBase64.c_str());
+                yyjson_mut_obj_add_val(doc, imgObj, "source", srcObj);
+                yyjson_mut_arr_append(contentArr, imgObj);
 
-            yyjson_mut_val* imgObj = yyjson_mut_obj(doc);
-            yyjson_mut_obj_add_str(doc, imgObj, "type", "image_url");
-            yyjson_mut_val* urlChild = yyjson_mut_obj(doc);
-            std::string dataUrl = "data:" + imageMimeType + ";base64," + imageBase64;
-            yyjson_mut_obj_add_str(doc, urlChild, "url", dataUrl.c_str());
-            yyjson_mut_obj_add_val(doc, imgObj, "image_url", urlChild);
-            yyjson_mut_arr_append(contentArr, imgObj);
+                yyjson_mut_val* txtObj = yyjson_mut_obj(doc);
+                yyjson_mut_obj_add_str(doc, txtObj, "type", "text");
+                yyjson_mut_obj_add_str(doc, txtObj, "text", utf8Prompt.c_str());
+                yyjson_mut_arr_append(contentArr, txtObj);
+            } else {
+                yyjson_mut_obj_add_str(doc, userMsg, "content", utf8Prompt.c_str());
+            }
+            yyjson_mut_arr_append(msgs, userMsg);
+        } else if (effectiveProtocol == ApiProtocol::GeminiNative) {
+            const char* geminiSizeStr = "1K";
+            if (action.targetResolution == TargetResolution::Res_2K) geminiSizeStr = "2K";
+            else if (action.targetResolution == TargetResolution::Res_4K) geminiSizeStr = "4K";
+
+            const char* geminiAspect = SelectClosestGeminiAspectRatio(action.aspectRatio, imgW, imgH);
+
+            if (targetModel.rfind("imagen-", 0) == 0) {
+                yyjson_mut_val* instancesArr = yyjson_mut_arr(doc);
+                yyjson_mut_val* instObj = yyjson_mut_obj(doc);
+                yyjson_mut_obj_add_str(doc, instObj, "prompt", utf8Prompt.c_str());
+                yyjson_mut_arr_append(instancesArr, instObj);
+                yyjson_mut_obj_add_val(doc, root, "instances", instancesArr);
+
+                yyjson_mut_val* paramsObj = yyjson_mut_obj(doc);
+                yyjson_mut_obj_add_int(doc, paramsObj, "sampleCount", 1);
+                yyjson_mut_obj_add_str(doc, paramsObj, "aspectRatio", geminiAspect);
+                yyjson_mut_obj_add_str(doc, paramsObj, "imageSize", geminiSizeStr);
+                if (!action.negativePrompt.empty()) {
+                    std::string utf8Neg = WideToUtf8(action.negativePrompt);
+                    yyjson_mut_obj_add_str(doc, paramsObj, "negative_prompt", utf8Neg.c_str());
+                }
+                yyjson_mut_obj_add_val(doc, root, "parameters", paramsObj);
+            } else {
+                yyjson_mut_val* contentsArr = yyjson_mut_arr(doc);
+                yyjson_mut_val* contentItem = yyjson_mut_obj(doc);
+                yyjson_mut_obj_add_str(doc, contentItem, "role", "user");
+
+                yyjson_mut_val* partsArr = yyjson_mut_arr(doc);
+
+                yyjson_mut_val* textPart = yyjson_mut_obj(doc);
+                yyjson_mut_obj_add_str(doc, textPart, "text", utf8Prompt.c_str());
+                yyjson_mut_arr_append(partsArr, textPart);
+
+                if (hasImage) {
+                    yyjson_mut_val* imgPart = yyjson_mut_obj(doc);
+                    yyjson_mut_val* inlineData = yyjson_mut_obj(doc);
+                    yyjson_mut_obj_add_str(doc, inlineData, "mimeType", imageMimeType.c_str());
+                    yyjson_mut_obj_add_str(doc, inlineData, "data", imageBase64.c_str());
+                    yyjson_mut_obj_add_val(doc, imgPart, "inlineData", inlineData);
+                    yyjson_mut_arr_append(partsArr, imgPart);
+                }
+
+                yyjson_mut_obj_add_val(doc, contentItem, "parts", partsArr);
+                yyjson_mut_arr_append(contentsArr, contentItem);
+                yyjson_mut_obj_add_val(doc, root, "contents", contentsArr);
+
+                yyjson_mut_val* genConfig = yyjson_mut_obj(doc);
+                yyjson_mut_val* respModalities = yyjson_mut_arr(doc);
+                yyjson_mut_arr_add_strcpy(doc, respModalities, "IMAGE");
+                yyjson_mut_arr_add_strcpy(doc, respModalities, "TEXT");
+                yyjson_mut_obj_add_val(doc, genConfig, "responseModalities", respModalities);
+
+                yyjson_mut_val* imgConfig = yyjson_mut_obj(doc);
+                yyjson_mut_obj_add_str(doc, imgConfig, "aspectRatio", geminiAspect);
+                yyjson_mut_obj_add_str(doc, imgConfig, "imageSize", geminiSizeStr);
+                yyjson_mut_obj_add_val(doc, genConfig, "imageConfig", imgConfig);
+
+                yyjson_mut_obj_add_val(doc, root, "generationConfig", genConfig);
+            }
+        } else if (effectiveProtocol == ApiProtocol::OpenAiImagesGenerate) {
+            yyjson_mut_obj_add_str(doc, root, "model", targetModel.c_str());
+            yyjson_mut_obj_add_str(doc, root, "prompt", utf8Prompt.c_str());
+            yyjson_mut_obj_add_int(doc, root, "n", 1);
+            yyjson_mut_obj_add_str(doc, root, "response_format", "b64_json");
+
+            const char* dalleQuality = (action.targetResolution == TargetResolution::Res_1K) ? "standard" : "hd";
+            yyjson_mut_obj_add_str(doc, root, "quality", dalleQuality);
+
+            const char* dalleSize = "1024x1024";
+            switch (action.aspectRatio) {
+                case OutputAspectRatio::Landscape_16_9:
+                case OutputAspectRatio::Standard_4_3:
+                    dalleSize = "1792x1024";
+                    break;
+                case OutputAspectRatio::Portrait_9_16:
+                case OutputAspectRatio::Vertical_3_4:
+                    dalleSize = "1024x1792";
+                    break;
+                case OutputAspectRatio::Square_1_1:
+                    dalleSize = "1024x1024";
+                    break;
+                case OutputAspectRatio::Auto:
+                default:
+                    if (imgW > 0 && imgH > 0) {
+                        float aspect = static_cast<float>(imgW) / static_cast<float>(imgH);
+                        if (aspect >= 1.3f) dalleSize = "1792x1024";
+                        else if (aspect <= 0.77f) dalleSize = "1024x1792";
+                        else dalleSize = "1024x1024";
+                    }
+                    break;
+            }
+            yyjson_mut_obj_add_str(doc, root, "size", dalleSize);
+
+            if (!action.negativePrompt.empty()) {
+                std::string utf8Neg = WideToUtf8(action.negativePrompt);
+                yyjson_mut_obj_add_str(doc, root, "negative_prompt", utf8Neg.c_str());
+            }
+            if (action.samplingSteps > 0) {
+                yyjson_mut_obj_add_int(doc, root, "steps", action.samplingSteps);
+                yyjson_mut_obj_add_int(doc, root, "num_inference_steps", action.samplingSteps);
+            }
+            if (action.cfgScale > 0.0f) {
+                yyjson_mut_obj_add_real(doc, root, "guidance_scale", static_cast<double>(action.cfgScale));
+            }
         } else {
-            yyjson_mut_obj_add_str(doc, userMsg, "content", utf8Prompt.c_str());
-        }
-        yyjson_mut_arr_append(msgs, userMsg);
-    }
+            yyjson_mut_obj_add_str(doc, root, "model", targetModel.c_str());
+            yyjson_mut_val* msgs = yyjson_mut_arr(doc);
+            yyjson_mut_obj_add_val(doc, root, "messages", msgs);
 
-    size_t payloadLen = 0;
-    char* payloadStr = yyjson_mut_write(doc, 0, &payloadLen);
-    yyjson_mut_doc_free(doc);
+            yyjson_mut_val* userMsg = yyjson_mut_obj(doc);
+            yyjson_mut_obj_add_str(doc, userMsg, "role", "user");
 
-    // Build Headers
-    std::wstring headers = L"Content-Type: application/json\r\n";
-    if (isAnthropic) {
-        if (!apiKey.empty()) {
-            std::wstring wKey = Utf8ToWide(apiKey);
-            headers += L"x-api-key: " + wKey + L"\r\n";
+            if (hasImage) {
+                yyjson_mut_val* contentArr = yyjson_mut_arr(doc);
+                yyjson_mut_obj_add_val(doc, userMsg, "content", contentArr);
+
+                yyjson_mut_val* textObj = yyjson_mut_obj(doc);
+                yyjson_mut_obj_add_str(doc, textObj, "type", "text");
+                yyjson_mut_obj_add_str(doc, textObj, "text", utf8Prompt.c_str());
+                yyjson_mut_arr_append(contentArr, textObj);
+
+                yyjson_mut_val* imgObj = yyjson_mut_obj(doc);
+                yyjson_mut_obj_add_str(doc, imgObj, "type", "image_url");
+                yyjson_mut_val* urlChild = yyjson_mut_obj(doc);
+                std::string dataUrl = "data:" + imageMimeType + ";base64," + imageBase64;
+                yyjson_mut_obj_add_str(doc, urlChild, "url", dataUrl.c_str());
+                yyjson_mut_obj_add_val(doc, imgObj, "image_url", urlChild);
+                yyjson_mut_arr_append(contentArr, imgObj);
+            } else {
+                yyjson_mut_obj_add_str(doc, userMsg, "content", utf8Prompt.c_str());
+            }
+            yyjson_mut_arr_append(msgs, userMsg);
         }
-        headers += L"anthropic-version: 2023-06-01\r\n";
-    } else if (effectiveProtocol == ApiProtocol::GeminiNative) {
-        if (!apiKey.empty()) {
-            std::wstring wKey = Utf8ToWide(apiKey);
-            headers += L"x-goog-api-key: " + wKey + L"\r\n";
+
+        size_t payloadLen = 0;
+        char* payloadStr = yyjson_mut_write(doc, 0, &payloadLen);
+        yyjson_mut_doc_free(doc);
+        if (!payloadStr) {
+            result.errorMessage = AppStrings::g.AiError_JsonParseFailed;
+            finishTask(true);
+            return;
         }
-    } else if (!apiKey.empty()) {
-        std::wstring wKey = Utf8ToWide(apiKey);
-        headers += L"Authorization: Bearer " + wKey + L"\r\n";
+        postPayload.assign(payloadStr, payloadLen);
+        free(payloadStr);
+
+        // Build Headers
+        headers = L"Content-Type: application/json\r\n";
+        if (isAnthropic) {
+            if (!apiKey.empty()) {
+                headers += L"x-api-key: " + Utf8ToWide(apiKey) + L"\r\n";
+            }
+            headers += L"anthropic-version: 2023-06-01\r\n";
+        } else if (effectiveProtocol == ApiProtocol::GeminiNative) {
+            if (!apiKey.empty()) {
+                headers += L"x-goog-api-key: " + Utf8ToWide(apiKey) + L"\r\n";
+            }
+        } else if (!apiKey.empty()) {
+            headers += L"Authorization: Bearer " + Utf8ToWide(apiKey) + L"\r\n";
+        }
     }
 
     // Send Request & Read Response via unified helper
     auto httpRes = SendRequestAndReadResponse(
-        m_activeRequest, headers, payloadStr, static_cast<DWORD>(payloadLen),
+        hRequest, headers, postPayload.data(), static_cast<DWORD>(postPayload.size()),
         hostName, port, isLocal, taskId, m_currentTaskId);
-    free(payloadStr);
 
     if (httpRes.interrupted) {
-        m_isRunning.store(false);
         return;
     }
 
     result.httpStatusCode = httpRes.statusCode;
-    result.rawResponseBody = httpRes.body;
 
     if (!httpRes.ok) {
+        result.rawResponseBody = std::move(httpRes.body);
         result.mainTitle = std::move(httpRes.mainTitle);
         result.detailMessage = std::move(httpRes.detailMessage);
         result.actionAdvice = std::move(httpRes.actionAdvice);
         result.errorMessage = std::move(httpRes.errorMessage);
-        m_isRunning.store(false);
-        if (callback) callback(result);
+        finishTask(true);
         return;
     }
 
@@ -1916,11 +2094,9 @@ void AiActionManager::WorkerThread(
     if (respDoc) {
         yyjson_val* rRoot = yyjson_doc_get_root(respDoc);
         if (rRoot) {
-            // 0. Try extracting image from JSON structures (Gemini, Imagen, SD, OpenAI, SiliconFlow)
             if (ExtractImageFromYyjson(rRoot, result.resultImageData)) {
                 result.success = true;
             } else {
-                // Check for Gemini text in candidates
                 yyjson_val* vCandidates = yyjson_obj_get(rRoot, "candidates");
                 if (vCandidates && yyjson_is_arr(vCandidates) && yyjson_arr_size(vCandidates) > 0) {
                     yyjson_val* firstCand = yyjson_arr_get(vCandidates, 0);
@@ -1943,7 +2119,6 @@ void AiActionManager::WorkerThread(
                 }
             }
 
-            // 1. Try Anthropic response structure: content[0].text
             if (!result.success && isAnthropic) {
                 yyjson_val* vContent = yyjson_obj_get(rRoot, "content");
                 if (vContent && yyjson_is_arr(vContent) && yyjson_arr_size(vContent) > 0) {
@@ -1956,7 +2131,6 @@ void AiActionManager::WorkerThread(
                 }
             }
 
-            // 2. Try Chat Completions structure: choices[0].message.content
             if (!result.success) {
                 yyjson_val* vChoices = yyjson_obj_get(rRoot, "choices");
                 if (vChoices && yyjson_is_arr(vChoices) && yyjson_arr_size(vChoices) > 0) {
@@ -1968,7 +2142,6 @@ void AiActionManager::WorkerThread(
                             const char* cStr = yyjson_get_str(cVal);
                             std::string contentStr = cStr ? cStr : "";
 
-                            // Look for embedded Base64 image
                             size_t b64Pos = contentStr.find(";base64,");
                             if (b64Pos != std::string::npos) {
                                 size_t startPos = b64Pos + 8;
@@ -1980,10 +2153,36 @@ void AiActionManager::WorkerThread(
                                 }
                             }
 
-                            // If not an image, preserve full text response
                             if (!result.success && !contentStr.empty()) {
                                 result.textContent = Utf8ToWide(contentStr);
                                 result.success = true;
+                            }
+                        } else if (cVal && yyjson_is_arr(cVal)) {
+                            size_t cIdx = 0, cMax = 0;
+                            yyjson_val* block = nullptr;
+                            yyjson_arr_foreach(cVal, cIdx, cMax, block) {
+                                if (!yyjson_is_obj(block)) continue;
+                                yyjson_val* imgUrlObj = yyjson_obj_get(block, "image_url");
+                                if (imgUrlObj && yyjson_is_obj(imgUrlObj)) {
+                                    std::string uStr;
+                                    if (ReadJsonStr(imgUrlObj, "url", uStr)) {
+                                        if (uStr.find(";base64,") != std::string::npos) {
+                                            if (Base64ToBinary(uStr.c_str(), uStr.size(), result.resultImageData)) {
+                                                result.success = true;
+                                                break;
+                                            }
+                                        } else if (DownloadImageFromUrl(Utf8ToWide(uStr), result.resultImageData)) {
+                                            result.success = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                std::string txt;
+                                if (ReadJsonStr(block, "text", txt) && !txt.empty()) {
+                                    if (!result.textContent.empty()) result.textContent += L"\n";
+                                    result.textContent += Utf8ToWide(txt);
+                                    result.success = true;
+                                }
                             }
                         }
                     }
@@ -1994,13 +2193,11 @@ void AiActionManager::WorkerThread(
     }
 
     if (!result.success) {
-        result.errorMessage = AppStrings::AiError_NoValidDataReturned;
+        result.errorMessage = AppStrings::g.AiError_NoValidDataReturned;
+        result.rawResponseBody = std::move(responseBody);
     }
 
-    m_isRunning.store(false);
-    if (callback && taskId == m_currentTaskId.load()) {
-        callback(result);
-    }
+    finishTask(true);
 }
 
 void AiActionManager::FetchModelsAsync(
@@ -2013,7 +2210,7 @@ void AiActionManager::FetchModelsAsync(
         std::vector<std::string> models;
 
         if (baseUrl.empty()) {
-            if (onComplete) onComplete(false, {}, AppStrings::AiError_InvalidUrl);
+            if (onComplete) onComplete(false, {}, AppStrings::g.AiError_InvalidUrl);
             return;
         }
 
@@ -2023,9 +2220,9 @@ void AiActionManager::FetchModelsAsync(
         urlComp.dwHostNameLength = static_cast<DWORD>(-1);
         urlComp.dwUrlPathLength = static_cast<DWORD>(-1);
 
-        std::wstring wUrl(baseUrl.begin(), baseUrl.end());
+        std::wstring wUrl = Utf8ToWide(baseUrl);
         if (!WinHttpCrackUrl(wUrl.c_str(), static_cast<DWORD>(wUrl.length()), 0, &urlComp)) {
-            if (onComplete) onComplete(false, {}, AppStrings::AiError_InvalidUrl);
+            if (onComplete) onComplete(false, {}, AppStrings::g.AiError_InvalidUrl);
             return;
         }
 
@@ -2072,30 +2269,27 @@ void AiActionManager::FetchModelsAsync(
             }
         }
 
-        HINTERNET hSession = WinHttpOpen(L"QuickView-AI-Fetch/2.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+        ScopedWinHttpHandle hSession(WinHttpOpen(L"QuickView-AI-Fetch/2.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
         if (!hSession) {
-            if (onComplete) onComplete(false, {}, AppStrings::AiError_InitWinHttpFailed);
+            if (onComplete) onComplete(false, {}, AppStrings::g.AiError_InitWinHttpFailed);
             return;
         }
 
-        HINTERNET hConnect = WinHttpConnect(hSession, host.c_str(), urlComp.nPort, 0);
+        ScopedWinHttpHandle hConnect(WinHttpConnect(hSession.h, host.c_str(), urlComp.nPort, 0));
         if (!hConnect) {
-            WinHttpCloseHandle(hSession);
-            if (onComplete) onComplete(false, {}, AppStrings::AiError_ConnectFailed);
+            if (onComplete) onComplete(false, {}, AppStrings::g.AiError_ConnectFailed);
             return;
         }
 
         DWORD flags = (urlComp.nScheme == INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0;
-        HINTERNET hReq = WinHttpOpenRequest(hConnect, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
+        ScopedWinHttpHandle hReq(WinHttpOpenRequest(hConnect.h, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags));
         if (!hReq) {
-            WinHttpCloseHandle(hConnect);
-            WinHttpCloseHandle(hSession);
-            if (onComplete) onComplete(false, {}, AppStrings::AiError_CreateReqFailed);
+            if (onComplete) onComplete(false, {}, AppStrings::g.AiError_CreateReqFailed);
             return;
         }
 
         // 15s timeout
-        WinHttpSetTimeouts(hReq, 5000, 5000, 15000, 15000);
+        WinHttpSetTimeouts(hReq.h, 5000, 5000, 15000, 15000);
 
         std::wstring headers;
         if (isAnthropic) {
@@ -2111,46 +2305,41 @@ void AiActionManager::FetchModelsAsync(
             headers = L"Authorization: Bearer " + Utf8ToWide(apiKey) + L"\r\n";
         }
 
-        BOOL sent = WinHttpSendRequest(hReq,
+        BOOL sent = WinHttpSendRequest(hReq.h,
             headers.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : headers.c_str(),
             static_cast<DWORD>(headers.length()),
             WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
 
-        if (!sent || !WinHttpReceiveResponse(hReq, nullptr)) {
-            WinHttpCloseHandle(hReq);
-            WinHttpCloseHandle(hConnect);
-            WinHttpCloseHandle(hSession);
-            if (onComplete) onComplete(false, {}, AppStrings::AiError_RequestTimeout);
+        if (!sent || !WinHttpReceiveResponse(hReq.h, nullptr)) {
+            if (onComplete) onComplete(false, {}, AppStrings::g.AiError_RequestTimeout);
             return;
         }
 
         DWORD statusCode = 0;
         DWORD dwSize = sizeof(statusCode);
-        WinHttpQueryHeaders(hReq, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &dwSize, WINHTTP_NO_HEADER_INDEX);
+        WinHttpQueryHeaders(hReq.h, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &dwSize, WINHTTP_NO_HEADER_INDEX);
 
         std::string respBody;
         DWORD bytesAvailable = 0;
-        while (WinHttpQueryDataAvailable(hReq, &bytesAvailable) && bytesAvailable > 0) {
+        while (WinHttpQueryDataAvailable(hReq.h, &bytesAvailable) && bytesAvailable > 0) {
             std::vector<char> buf(bytesAvailable);
             DWORD bytesRead = 0;
-            if (WinHttpReadData(hReq, buf.data(), bytesAvailable, &bytesRead) && bytesRead > 0) {
+            if (WinHttpReadData(hReq.h, buf.data(), bytesAvailable, &bytesRead) && bytesRead > 0) {
                 respBody.append(buf.data(), bytesRead);
+            } else {
+                break;
             }
         }
 
-        WinHttpCloseHandle(hReq);
-        WinHttpCloseHandle(hConnect);
-        WinHttpCloseHandle(hSession);
-
         if (statusCode != 200) {
-            if (onComplete) onComplete(false, {}, std::wstring(AppStrings::AiError_HttpStatusPrefix) + std::to_wstring(statusCode) + L")");
+            if (onComplete) onComplete(false, {}, std::wstring(AppStrings::g.AiError_HttpStatusPrefix) + std::to_wstring(statusCode) + L")");
             return;
         }
 
         // Parse JSON via yyjson
         yyjson_doc* doc = yyjson_read(respBody.c_str(), respBody.size(), 0);
         if (!doc) {
-            if (onComplete) onComplete(false, {}, AppStrings::AiError_JsonParseFailed);
+            if (onComplete) onComplete(false, {}, AppStrings::g.AiError_JsonParseFailed);
             return;
         }
 
@@ -2229,7 +2418,7 @@ void AiActionManager::FetchModelsAsync(
         models.erase(std::unique(models.begin(), models.end()), models.end());
 
         if (models.empty()) {
-            if (onComplete) onComplete(false, {}, AppStrings::AiError_NoModelsFound);
+            if (onComplete) onComplete(false, {}, AppStrings::g.AiError_NoModelsFound);
         } else {
             if (onComplete) onComplete(true, models, L"");
         }
@@ -2244,7 +2433,7 @@ void AiActionManager::TestConnectionAsync(
 {
     QuickView::RunDetached([baseUrl = std::move(baseUrl), apiKey = std::move(apiKey), protocol, onComplete = std::move(onComplete)]() mutable {
         if (baseUrl.empty()) {
-            if (onComplete) onComplete(false, 0, 0, AppStrings::AiError_InvalidUrl);
+            if (onComplete) onComplete(false, 0, 0, AppStrings::g.AiError_InvalidUrl);
             return;
         }
 
@@ -2254,9 +2443,9 @@ void AiActionManager::TestConnectionAsync(
         urlComp.dwHostNameLength = static_cast<DWORD>(-1);
         urlComp.dwUrlPathLength = static_cast<DWORD>(-1);
 
-        std::wstring wUrl(baseUrl.begin(), baseUrl.end());
+        std::wstring wUrl = Utf8ToWide(baseUrl);
         if (!WinHttpCrackUrl(wUrl.c_str(), static_cast<DWORD>(wUrl.length()), 0, &urlComp)) {
-            if (onComplete) onComplete(false, 0, 0, AppStrings::AiError_InvalidUrl);
+            if (onComplete) onComplete(false, 0, 0, AppStrings::g.AiError_InvalidUrl);
             return;
         }
 
@@ -2305,30 +2494,27 @@ void AiActionManager::TestConnectionAsync(
 
         auto startTime = std::chrono::steady_clock::now();
 
-        HINTERNET hSession = WinHttpOpen(L"QuickView-AI-Probe/2.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+        ScopedWinHttpHandle hSession(WinHttpOpen(L"QuickView-AI-Probe/2.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
         if (!hSession) {
-            if (onComplete) onComplete(false, 0, 0, AppStrings::AiError_InitWinHttpFailed);
+            if (onComplete) onComplete(false, 0, 0, AppStrings::g.AiError_InitWinHttpFailed);
             return;
         }
 
-        HINTERNET hConnect = WinHttpConnect(hSession, host.c_str(), urlComp.nPort, 0);
+        ScopedWinHttpHandle hConnect(WinHttpConnect(hSession.h, host.c_str(), urlComp.nPort, 0));
         if (!hConnect) {
-            WinHttpCloseHandle(hSession);
-            if (onComplete) onComplete(false, 0, 0, AppStrings::AiError_ConnectFailed);
+            if (onComplete) onComplete(false, 0, 0, AppStrings::g.AiError_ConnectFailed);
             return;
         }
 
         DWORD flags = (urlComp.nScheme == INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0;
-        HINTERNET hReq = WinHttpOpenRequest(hConnect, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
+        ScopedWinHttpHandle hReq(WinHttpOpenRequest(hConnect.h, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags));
         if (!hReq) {
-            WinHttpCloseHandle(hConnect);
-            WinHttpCloseHandle(hSession);
-            if (onComplete) onComplete(false, 0, 0, AppStrings::AiError_CreateReqFailed);
+            if (onComplete) onComplete(false, 0, 0, AppStrings::g.AiError_CreateReqFailed);
             return;
         }
 
         // 10s probe timeout
-        WinHttpSetTimeouts(hReq, 3000, 4000, 10000, 10000);
+        WinHttpSetTimeouts(hReq.h, 3000, 4000, 10000, 10000);
 
         std::wstring headers;
         if (isAnthropic) {
@@ -2344,16 +2530,13 @@ void AiActionManager::TestConnectionAsync(
             headers = L"Authorization: Bearer " + Utf8ToWide(apiKey) + L"\r\n";
         }
 
-        BOOL sent = WinHttpSendRequest(hReq,
+        BOOL sent = WinHttpSendRequest(hReq.h,
             headers.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : headers.c_str(),
             static_cast<DWORD>(headers.length()),
             WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
 
-        if (!sent || !WinHttpReceiveResponse(hReq, nullptr)) {
-            WinHttpCloseHandle(hReq);
-            WinHttpCloseHandle(hConnect);
-            WinHttpCloseHandle(hSession);
-            if (onComplete) onComplete(false, 0, 0, AppStrings::AiError_RequestTimeout);
+        if (!sent || !WinHttpReceiveResponse(hReq.h, nullptr)) {
+            if (onComplete) onComplete(false, 0, 0, AppStrings::g.AiError_RequestTimeout);
             return;
         }
 
@@ -2362,18 +2545,14 @@ void AiActionManager::TestConnectionAsync(
 
         DWORD statusCode = 0;
         DWORD dwSize = sizeof(statusCode);
-        WinHttpQueryHeaders(hReq, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &dwSize, WINHTTP_NO_HEADER_INDEX);
-
-        WinHttpCloseHandle(hReq);
-        WinHttpCloseHandle(hConnect);
-        WinHttpCloseHandle(hSession);
+        WinHttpQueryHeaders(hReq.h, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &dwSize, WINHTTP_NO_HEADER_INDEX);
 
         if (statusCode >= 200 && statusCode < 300) {
-            if (onComplete) onComplete(true, static_cast<int>(statusCode), latencyMs, AppStrings::AiTest_ConnSuccess);
+            if (onComplete) onComplete(true, static_cast<int>(statusCode), latencyMs, AppStrings::g.AiTest_ConnSuccess);
         } else if (statusCode == 401 || statusCode == 403) {
-            if (onComplete) onComplete(false, static_cast<int>(statusCode), latencyMs, std::wstring(AppStrings::AiTest_AuthFailedPrefix) + std::to_wstring(statusCode) + L")");
+            if (onComplete) onComplete(false, static_cast<int>(statusCode), latencyMs, std::wstring(AppStrings::g.AiTest_AuthFailedPrefix) + std::to_wstring(statusCode) + L")");
         } else {
-            if (onComplete) onComplete(false, static_cast<int>(statusCode), latencyMs, std::wstring(AppStrings::AiTest_HttpErrorPrefix) + std::to_wstring(statusCode));
+            if (onComplete) onComplete(false, static_cast<int>(statusCode), latencyMs, std::wstring(AppStrings::g.AiTest_HttpErrorPrefix) + std::to_wstring(statusCode));
         }
     });
 }
@@ -2395,55 +2574,34 @@ bool AiActionManager::PollSdProgress(std::string_view baseUrl, SdProgressInfo& o
     if (path.empty() || path.back() != L'/') path += L'/';
     path += L"sdapi/v1/progress?skip_current_image=true";
 
-    HINTERNET hSession = WinHttpOpen(L"QuickView-Poll/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    ScopedWinHttpHandle hSession(WinHttpOpen(L"QuickView-Poll/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
     if (!hSession) return false;
 
     // Fast timeouts for polling: 500ms resolve, 500ms connect, 500ms send, 1000ms receive
-    WinHttpSetTimeouts(hSession, 500, 500, 500, 1000);
+    WinHttpSetTimeouts(hSession.h, 500, 500, 500, 1000);
 
-    HINTERNET hConnect = WinHttpConnect(hSession, host.c_str(), urlComp.nPort, 0);
-    if (!hConnect) {
-        WinHttpCloseHandle(hSession);
-        return false;
-    }
+    ScopedWinHttpHandle hConnect(WinHttpConnect(hSession.h, host.c_str(), urlComp.nPort, 0));
+    if (!hConnect) return false;
 
     DWORD flags = (urlComp.nScheme == INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0;
-    HINTERNET hReq = WinHttpOpenRequest(hConnect, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
-    if (!hReq) {
-        WinHttpCloseHandle(hConnect);
-        WinHttpCloseHandle(hSession);
-        return false;
-    }
+    ScopedWinHttpHandle hReq(WinHttpOpenRequest(hConnect.h, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags));
+    if (!hReq) return false;
 
-    BOOL sent = WinHttpSendRequest(hReq, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
-    if (!sent || !WinHttpReceiveResponse(hReq, nullptr)) {
-        WinHttpCloseHandle(hReq);
-        WinHttpCloseHandle(hConnect);
-        WinHttpCloseHandle(hSession);
-        return false;
-    }
+    BOOL sent = WinHttpSendRequest(hReq.h, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
+    if (!sent || !WinHttpReceiveResponse(hReq.h, nullptr)) return false;
 
     DWORD statusCode = 0;
     DWORD dwSize = sizeof(statusCode);
-    WinHttpQueryHeaders(hReq, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &dwSize, WINHTTP_NO_HEADER_INDEX);
-    if (statusCode != 200) {
-        WinHttpCloseHandle(hReq);
-        WinHttpCloseHandle(hConnect);
-        WinHttpCloseHandle(hSession);
-        return false;
-    }
+    WinHttpQueryHeaders(hReq.h, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &dwSize, WINHTTP_NO_HEADER_INDEX);
+    if (statusCode != 200) return false;
 
     std::string resp;
     DWORD dwDownloaded = 0;
     char buf[2048];
-    while (WinHttpReadData(hReq, buf, sizeof(buf), &dwDownloaded) && dwDownloaded > 0) {
+    while (WinHttpReadData(hReq.h, buf, sizeof(buf), &dwDownloaded) && dwDownloaded > 0) {
         resp.append(buf, dwDownloaded);
         if (resp.size() > 65536) break; // sanity limit
     }
-
-    WinHttpCloseHandle(hReq);
-    WinHttpCloseHandle(hConnect);
-    WinHttpCloseHandle(hSession);
 
     if (resp.empty()) return false;
 
@@ -2483,55 +2641,36 @@ static bool LoadActiveImageAsBgra(const std::wstring& filePath, std::vector<uint
     outWidth = outHeight = outStride = 0;
     if (filePath.empty() || !PathFileExistsW(filePath.c_str())) return false;
 
-    IWICImagingFactory* pFactory = nullptr;
-    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pFactory)))) return false;
+    ComPtr<IWICImagingFactory> pFactory;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pFactory))) || !pFactory) return false;
 
-    IWICBitmapDecoder* pDecoder = nullptr;
-    if (FAILED(pFactory->CreateDecoderFromFilename(filePath.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &pDecoder))) {
-        pFactory->Release();
+    ComPtr<IWICBitmapDecoder> pDecoder;
+    if (FAILED(pFactory->CreateDecoderFromFilename(filePath.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &pDecoder)) || !pDecoder) {
         return false;
     }
 
-    IWICBitmapFrameDecode* pFrame = nullptr;
-    if (FAILED(pDecoder->GetFrame(0, &pFrame))) {
-        pDecoder->Release();
-        pFactory->Release();
+    ComPtr<IWICBitmapFrameDecode> pFrame;
+    if (FAILED(pDecoder->GetFrame(0, &pFrame)) || !pFrame) {
         return false;
     }
 
     UINT w = 0, h = 0;
-    pFrame->GetSize(&w, &h);
-    if (w == 0 || h == 0) {
-        pFrame->Release();
-        pDecoder->Release();
-        pFactory->Release();
+    if (FAILED(pFrame->GetSize(&w, &h)) || w == 0 || h == 0) {
         return false;
     }
 
-    IWICFormatConverter* pConv = nullptr;
-    if (FAILED(pFactory->CreateFormatConverter(&pConv))) {
-        pFrame->Release();
-        pDecoder->Release();
-        pFactory->Release();
+    ComPtr<IWICFormatConverter> pConv;
+    if (FAILED(pFactory->CreateFormatConverter(&pConv)) || !pConv) {
         return false;
     }
 
-    if (FAILED(pConv->Initialize(pFrame, GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr, 0.0f, WICBitmapPaletteTypeCustom))) {
-        pConv->Release();
-        pFrame->Release();
-        pDecoder->Release();
-        pFactory->Release();
+    if (FAILED(pConv->Initialize(pFrame.Get(), GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr, 0.0f, WICBitmapPaletteTypeCustom))) {
         return false;
     }
 
     UINT stride = w * 4;
     outBgra.resize(static_cast<size_t>(stride) * h);
     HRESULT hr = pConv->CopyPixels(nullptr, stride, static_cast<UINT>(outBgra.size()), outBgra.data());
-
-    pConv->Release();
-    pFrame->Release();
-    pDecoder->Release();
-    pFactory->Release();
 
     if (FAILED(hr)) {
         outBgra.clear();
@@ -2545,53 +2684,38 @@ static bool LoadActiveImageAsBgra(const std::wstring& filePath, std::vector<uint
 }
 
 static bool DecodeMemoryToBgra(const uint8_t* data, size_t size, std::vector<uint8_t>& outBgra, uint32_t& outW, uint32_t& outH, uint32_t& outStride) {
-    if (!data || size == 0) return false;
-    IWICImagingFactory* pFactory = nullptr;
-    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pFactory)))) return false;
+    outW = outH = outStride = 0;
+    if (!data || size == 0 || size > static_cast<size_t>((std::numeric_limits<UINT>::max)())) return false;
+    ComPtr<IWICImagingFactory> pFactory;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pFactory))) || !pFactory) return false;
 
-    IStream* pStream = SHCreateMemStream(data, static_cast<UINT>(size));
-    if (!pStream) {
-        pFactory->Release();
+    ComPtr<IStream> pStream;
+    pStream.Attach(SHCreateMemStream(data, static_cast<UINT>(size)));
+    if (!pStream) return false;
+
+    ComPtr<IWICBitmapDecoder> pDecoder;
+    if (FAILED(pFactory->CreateDecoderFromStream(pStream.Get(), nullptr, WICDecodeMetadataCacheOnLoad, &pDecoder)) || !pDecoder) {
         return false;
     }
 
-    IWICBitmapDecoder* pDecoder = nullptr;
-    if (FAILED(pFactory->CreateDecoderFromStream(pStream, nullptr, WICDecodeMetadataCacheOnLoad, &pDecoder))) {
-        pStream->Release();
-        pFactory->Release();
-        return false;
-    }
-
-    IWICBitmapFrameDecode* pFrame = nullptr;
-    if (FAILED(pDecoder->GetFrame(0, &pFrame))) {
-        pDecoder->Release();
-        pStream->Release();
-        pFactory->Release();
+    ComPtr<IWICBitmapFrameDecode> pFrame;
+    if (FAILED(pDecoder->GetFrame(0, &pFrame)) || !pFrame) {
         return false;
     }
 
     UINT w = 0, h = 0;
-    pFrame->GetSize(&w, &h);
-    IWICFormatConverter* pConv = nullptr;
-    pFactory->CreateFormatConverter(&pConv);
-    if (!pConv || FAILED(pConv->Initialize(pFrame, GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr, 0.0f, WICBitmapPaletteTypeCustom))) {
-        if (pConv) pConv->Release();
-        pFrame->Release();
-        pDecoder->Release();
-        pStream->Release();
-        pFactory->Release();
+    if (FAILED(pFrame->GetSize(&w, &h)) || w == 0 || h == 0) {
+        return false;
+    }
+    ComPtr<IWICFormatConverter> pConv;
+    if (FAILED(pFactory->CreateFormatConverter(&pConv)) || !pConv ||
+        FAILED(pConv->Initialize(pFrame.Get(), GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr, 0.0f, WICBitmapPaletteTypeCustom))) {
         return false;
     }
 
     UINT stride = w * 4;
     outBgra.resize(static_cast<size_t>(stride) * h);
     HRESULT hr = pConv->CopyPixels(nullptr, stride, static_cast<UINT>(outBgra.size()), outBgra.data());
-
-    pConv->Release();
-    pFrame->Release();
-    pDecoder->Release();
-    pStream->Release();
-    pFactory->Release();
 
     if (FAILED(hr)) {
         outBgra.clear();
@@ -2637,7 +2761,7 @@ uint64_t AiActionManager::ExecuteInpaint(
         if (onComplete) {
             ExecutionResult err;
             err.success = false;
-            err.errorMessage = AppStrings::AiError_NoAvailableProfile;
+            err.errorMessage = AppStrings::g.AiError_NoAvailableProfile;
             onComplete(err);
         }
         return 0;
@@ -2646,69 +2770,129 @@ uint64_t AiActionManager::ExecuteInpaint(
     uint64_t taskId = ++m_currentTaskId;
     m_isRunning.store(true);
 
+    VisualFrameSnapshot snapshot;
+    if (!s_visualSnapshotFn || !s_visualSnapshotFn(snapshot)) {
+        snapshot.imagePath = GetCurrentActiveImagePath();
+    }
+
     ModelProfile profCopy = *profile;
     std::wstring promptCopy(customPrompt);
     std::optional<ActionDesc> actionOpt;
     if (sourceAction) actionOpt = *sourceAction;
 
-    QuickView::RunDetached([this, taskId, cropL, cropT, cropR, cropB, promptCopy, profCopy, hwnd, actionOpt, onComplete = std::move(onComplete)]() mutable {
-        InpaintWorkerThread(taskId, cropL, cropT, cropR, cropB, promptCopy, profCopy, hwnd, std::move(onComplete), actionOpt);
+    QuickView::RunDetached([this, taskId, snapshot = std::move(snapshot), cropL, cropT, cropR, cropB, promptCopy, profCopy, hwnd, actionOpt, onComplete = std::move(onComplete)]() mutable {
+        InpaintWorkerThread(taskId, std::move(snapshot), cropL, cropT, cropR, cropB, promptCopy, profCopy, hwnd, std::move(onComplete), actionOpt);
     });
 
     return taskId;
 }
 
 void AiActionManager::InpaintWorkerThread(
-    uint64_t taskId, int cropL, int cropT, int cropR, int cropB,
+    uint64_t taskId, VisualFrameSnapshot snapshot, int cropL, int cropT, int cropR, int cropB,
     std::wstring prompt, ModelProfile profile, HWND /*hwnd*/,
     ActionCallback callback,
     std::optional<ActionDesc> sourceAction) {
 
+    ScopedComInit comGuard;
+    struct HttpHandleGuard {
+        AiActionManager* mgr;
+        uint64_t tid;
+        ~HttpHandleGuard() { mgr->CloseActiveHttpHandlesIfOwner(tid); }
+    } httpGuard{ this, taskId };
+
     ExecutionResult result;
     result.success = false;
+    result.taskId = taskId;
+    result.sourceImagePath = snapshot.imagePath;
+
+    auto finishTask = [&](bool invokeCb) {
+        if (taskId == m_currentTaskId.load()) {
+            m_isRunning.store(false);
+            if (invokeCb && callback) {
+                callback(result);
+            }
+        }
+    };
 
     if (taskId != m_currentTaskId.load()) {
-        m_isRunning.store(false);
         return;
     }
 
-    // 1. Load active image as raw BGRA
+    // 1. Load active visual image as raw BGRA (respecting EXIF orientation, transforms, crops, and prior AI edits)
     std::vector<uint8_t> origBgra;
     uint32_t origW = 0, origH = 0, origStride = 0;
-    if (!LoadActiveImageAsBgra(GetCurrentActiveImagePath(), origBgra, origW, origH, origStride) || origBgra.empty()) {
+    bool loadedVisual = false;
+    if (s_visualRenderFn) {
+        loadedVisual = s_visualRenderFn(snapshot, origBgra, origW, origH, origStride);
+    }
+    if (!loadedVisual || origBgra.empty()) {
+        loadedVisual = LoadActiveImageAsBgra(snapshot.imagePath, origBgra, origW, origH, origStride);
+    }
+    if (!loadedVisual || origBgra.empty() || origW == 0 || origH == 0) {
         result.errorMessage = L"读取当前图像像素数据失败";
-        m_isRunning.store(false);
-        if (callback) callback(result);
+        finishTask(true);
         return;
     }
 
     // 2. Normalize Selection Coordinates
-    int selX0 = std::clamp((std::min)(cropL, cropR), 0, (int)origW);
-    int selY0 = std::clamp((std::min)(cropT, cropB), 0, (int)origH);
-    int selX1 = std::clamp((std::max)(cropL, cropR), 0, (int)origW);
-    int selY1 = std::clamp((std::max)(cropT, cropB), 0, (int)origH);
+    int selX0 = std::clamp((std::min)(cropL, cropR), 0, static_cast<int>(origW));
+    int selY0 = std::clamp((std::min)(cropT, cropB), 0, static_cast<int>(origH));
+    int selX1 = std::clamp((std::max)(cropL, cropR), 0, static_cast<int>(origW));
+    int selY1 = std::clamp((std::max)(cropT, cropB), 0, static_cast<int>(origH));
     int selW = selX1 - selX0;
     int selH = selY1 - selY0;
 
     if (selW < 8 || selH < 8) {
         result.errorMessage = L"选区尺寸过小，请重新框选";
-        m_isRunning.store(false);
-        if (callback) callback(result);
+        finishTask(true);
         return;
     }
 
-    // 3. Smart Context Margin (20% padding, aligned to 8px)
-    int padX = (std::max)(32, static_cast<int>(selW * 0.20f));
-    int padY = (std::max)(32, static_cast<int>(selH * 0.20f));
+    // 3. Smart Context Margin (cover 100% of selection + round UP to 8px multiple within image bounds)
+    int padX = (std::max)(48, selW / 3);
+    int padY = (std::max)(48, selH / 3);
     int sliceX0 = (std::max)(0, selX0 - padX);
     int sliceY0 = (std::max)(0, selY0 - padY);
-    int sliceX1 = (std::min)((int)origW, selX1 + padX);
-    int sliceY1 = (std::min)((int)origH, selY1 + padY);
+    int sliceX1 = (std::min)(static_cast<int>(origW), selX1 + padX);
+    int sliceY1 = (std::min)(static_cast<int>(origH), selY1 + padY);
 
-    int sliceW = ((sliceX1 - sliceX0) / 8) * 8;
-    int sliceH = ((sliceY1 - sliceY0) / 8) * 8;
-    if (sliceW <= 0) sliceW = 8;
-    if (sliceH <= 0) sliceH = 8;
+    auto alignSliceSpan = [](int sel0, int sel1, int imgDim, int& s0, int& s1) {
+        int rawSpan = s1 - s0;
+        int aligned = ((rawSpan + 7) / 8) * 8;
+        if (aligned <= imgDim) {
+            int extra = aligned - rawSpan;
+            int addRight = (std::min)(extra, imgDim - s1);
+            s1 += addRight;
+            extra -= addRight;
+            int addLeft = (std::min)(extra, s0);
+            s0 -= addLeft;
+            if (s1 - s0 > aligned) {
+                s1 = s0 + aligned;
+            }
+        } else {
+            s0 = 0;
+            s1 = imgDim;
+        }
+        // Guarantee selection is strictly contained inside the slice
+        if (s0 > sel0) s0 = sel0;
+        if (s1 < sel1) s1 = sel1;
+    };
+
+    alignSliceSpan(selX0, selX1, static_cast<int>(origW), sliceX0, sliceX1);
+    alignSliceSpan(selY0, selY1, static_cast<int>(origH), sliceY0, sliceY1);
+
+    int sliceW = sliceX1 - sliceX0;
+    int sliceH = sliceY1 - sliceY0;
+    if (sliceW <= 0 || sliceH <= 0) {
+        result.errorMessage = L"生成选区切片尺寸无效";
+        finishTask(true);
+        return;
+    }
+
+    const bool isGemini = (profile.protocol == ApiProtocol::GeminiNative);
+    const bool isSd = (profile.protocol == ApiProtocol::StabilityInpaint);
+    const bool isOpenAiChat = (profile.protocol == ApiProtocol::OpenAiChat || profile.protocol == ApiProtocol::CustomJsonPost);
+    const bool isOpenAiTransparentMask = (!isGemini && !isSd && !isOpenAiChat);
 
     // 4. Extract Slice Image and Generate Binary Mask
     std::vector<uint8_t> sliceBgra(static_cast<size_t>(sliceW) * sliceH * 4, 0);
@@ -2716,25 +2900,29 @@ void AiActionManager::InpaintWorkerThread(
 
     for (int y = 0; y < sliceH; ++y) {
         int srcY = sliceY0 + y;
-        if (srcY >= (int)origH) break;
-        const uint8_t* srcRow = origBgra.data() + srcY * origStride;
-        uint8_t* sliceRow = sliceBgra.data() + y * (sliceW * 4);
-        uint8_t* maskRow = maskBgra.data() + y * (sliceW * 4);
+        const uint8_t* srcRow = origBgra.data() + static_cast<size_t>(srcY) * origStride;
+        uint8_t* sliceRow = sliceBgra.data() + static_cast<size_t>(y) * sliceW * 4;
+        uint8_t* maskRow = maskBgra.data() + static_cast<size_t>(y) * sliceW * 4;
 
         for (int x = 0; x < sliceW; ++x) {
             int srcX = sliceX0 + x;
-            if (srcX >= (int)origW) break;
-
-            const uint8_t* sPx = srcRow + srcX * 4;
-            uint8_t* dSlicePx = sliceRow + x * 4;
-            uint8_t* dMaskPx = maskRow + x * 4;
+            const uint8_t* sPx = srcRow + static_cast<size_t>(srcX) * 4;
+            uint8_t* dSlicePx = sliceRow + static_cast<size_t>(x) * 4;
+            uint8_t* dMaskPx = maskRow + static_cast<size_t>(x) * 4;
 
             dSlicePx[0] = sPx[0];
             dSlicePx[1] = sPx[1];
             dSlicePx[2] = sPx[2];
             dSlicePx[3] = sPx[3];
 
-            if (srcX >= selX0 && srcX < selX1 && srcY >= selY0 && srcY < selY1) {
+            const bool insideSel = (srcX >= selX0 && srcX < selX1 && srcY >= selY0 && srcY < selY1);
+            if (isOpenAiTransparentMask) {
+                // OpenAI /images/edits uses alpha == 0 for the editable area and alpha == 255 to preserve
+                dMaskPx[0] = sPx[0];
+                dMaskPx[1] = sPx[1];
+                dMaskPx[2] = sPx[2];
+                dMaskPx[3] = insideSel ? 0 : 255;
+            } else if (insideSel) {
                 dMaskPx[0] = 255;
                 dMaskPx[1] = 255;
                 dMaskPx[2] = 255;
@@ -2752,8 +2940,7 @@ void AiActionManager::InpaintWorkerThread(
     if (!EncodeToPngMemory(sliceBgra.data(), sliceW, sliceH, sliceW * 4, slicePngBytes) ||
         !EncodeToPngMemory(maskBgra.data(), sliceW, sliceH, sliceW * 4, maskPngBytes)) {
         result.errorMessage = L"编码选区图像切片失败";
-        m_isRunning.store(false);
-        if (callback) callback(result);
+        finishTask(true);
         return;
     }
 
@@ -2797,9 +2984,8 @@ void AiActionManager::InpaintWorkerThread(
 
     std::string apiKey = DecryptApiKey(profile.encryptedApiKey);
     if (!isLocal && apiKey.empty()) {
-        result.errorMessage = AppStrings::AiError_ApiKeyEmpty;
-        m_isRunning.store(false);
-        if (callback) callback(result);
+        result.errorMessage = AppStrings::g.AiError_ApiKeyEmpty;
+        finishTask(true);
         return;
     }
 
@@ -2808,13 +2994,9 @@ void AiActionManager::InpaintWorkerThread(
     bool isHttps = false;
     std::wstring fullPath;
     if (!CrackEndpointUrl(profile.baseUrl, hostName, port, isHttps, fullPath, result.errorMessage)) {
-        m_isRunning.store(false);
-        if (callback) callback(result);
+        finishTask(true);
         return;
     }
-
-    bool isGemini = (profile.protocol == ApiProtocol::GeminiNative);
-    bool isSd = (profile.protocol == ApiProtocol::StabilityInpaint);
 
     std::string targetModel = profile.defaultModel;
     if (targetModel.empty()) {
@@ -2827,20 +3009,34 @@ void AiActionManager::InpaintWorkerThread(
         ResolveGeminiPath(fullPath, targetModel);
     } else if (isSd) {
         ResolveSdPath(fullPath, true);
+    } else if (isOpenAiChat) {
+        if (fullPath.find(L"chat/completions") == std::wstring::npos) {
+            fullPath += L"chat/completions";
+        }
     } else {
         if (fullPath.find(L"images/edits") == std::wstring::npos) {
             fullPath += L"images/edits";
         }
     }
 
-    if (!OpenAiHttpRequest(L"QuickView-AI-Inpaint/2.0", hostName, port, isHttps, isLocal, fullPath, profile.timeoutSeconds, result.errorMessage)) {
-        m_isRunning.store(false);
-        if (callback) callback(result);
+    HINTERNET hRequest = OpenAiHttpRequest(taskId, L"QuickView-AI-Inpaint/2.0", hostName, port, isHttps, isLocal, fullPath, profile.timeoutSeconds, result.errorMessage);
+    if (!hRequest) {
+        if (taskId == m_currentTaskId.load()) {
+            finishTask(true);
+        }
         return;
     }
 
     std::wstring headers;
     std::string postPayload;
+
+    std::string inpaintTaskDesc;
+    if (isCustomUserPrompt) {
+        inpaintTaskDesc = "Task: Inpainting & Generative Fill. Image 1 is the context slice, Image 2 is the binary mask (white = region to modify, black = keep completely unchanged). Modify only the white masked area to match: " +
+            utf8Prompt + ". Seamlessly match surrounding lighting, texture, and colors. Output only the complete restored image.";
+    } else {
+        inpaintTaskDesc = "Task: Object Removal & Inpainting. Image 1 is the context slice, Image 2 is the binary mask (white = region to remove/fill, black = keep completely unchanged). Remove what is inside the white masked region and fill seamlessly matching surrounding background texture and lighting. Output only the complete restored image.";
+    }
 
     if (isGemini) {
         headers = L"Content-Type: application/json\r\n";
@@ -2858,18 +3054,10 @@ void AiActionManager::InpaintWorkerThread(
 
         yyjson_mut_val* partsArr = yyjson_mut_arr(doc);
 
-        std::string inpaintTaskDesc;
-        if (isCustomUserPrompt) {
-            inpaintTaskDesc = "Task: Inpainting & Generative Fill. Modify only the masked area to seamlessly match the instruction: " +
-                utf8Prompt + ". Seamlessly blend the reconstructed region with the surrounding context, maintaining consistent lighting, texture, and colors. Output only the complete restored image.";
-        } else {
-            inpaintTaskDesc = "Task: Object Removal & Inpainting. Seamlessly remove whatever is in the masked region and fill it with natural background continuation matching the surrounding texture and lighting. Output only the complete restored image.";
-        }
         yyjson_mut_val* textPart = yyjson_mut_obj(doc);
         yyjson_mut_obj_add_str(doc, textPart, "text", inpaintTaskDesc.c_str());
         yyjson_mut_arr_append(partsArr, textPart);
 
-        // 1. Original Image Slice
         yyjson_mut_val* imgPart = yyjson_mut_obj(doc);
         yyjson_mut_val* imgData = yyjson_mut_obj(doc);
         yyjson_mut_obj_add_str(doc, imgData, "mimeType", "image/png");
@@ -2877,7 +3065,6 @@ void AiActionManager::InpaintWorkerThread(
         yyjson_mut_obj_add_val(doc, imgPart, "inlineData", imgData);
         yyjson_mut_arr_append(partsArr, imgPart);
 
-        // 2. Binary Inpaint Mask (White = target inpaint zone, Black = preserved context)
         yyjson_mut_val* maskPart = yyjson_mut_obj(doc);
         yyjson_mut_val* maskData = yyjson_mut_obj(doc);
         yyjson_mut_obj_add_str(doc, maskData, "mimeType", "image/png");
@@ -2889,18 +3076,27 @@ void AiActionManager::InpaintWorkerThread(
         yyjson_mut_arr_append(contentsArr, contentItem);
         yyjson_mut_obj_add_val(doc, root, "contents", contentsArr);
 
-        // Request IMAGE response modality
         yyjson_mut_val* genConfig = yyjson_mut_obj(doc);
         yyjson_mut_val* respModalities = yyjson_mut_arr(doc);
         yyjson_mut_arr_add_strcpy(doc, respModalities, "IMAGE");
         yyjson_mut_obj_add_val(doc, genConfig, "responseModalities", respModalities);
+
+        yyjson_mut_val* imgConfig = yyjson_mut_obj(doc);
+        yyjson_mut_obj_add_str(doc, imgConfig, "aspectRatio",
+            SelectClosestGeminiAspectRatio(OutputAspectRatio::Auto, static_cast<uint32_t>(sliceW), static_cast<uint32_t>(sliceH)));
+        yyjson_mut_obj_add_val(doc, genConfig, "imageConfig", imgConfig);
         yyjson_mut_obj_add_val(doc, root, "generationConfig", genConfig);
 
         size_t pLen = 0;
         char* pStr = yyjson_mut_write(doc, 0, &pLen);
+        yyjson_mut_doc_free(doc);
+        if (!pStr) {
+            result.errorMessage = AppStrings::g.AiError_JsonParseFailed;
+            finishTask(true);
+            return;
+        }
         postPayload.assign(pStr, pLen);
         free(pStr);
-        yyjson_mut_doc_free(doc);
     } else if (isSd) {
         headers = L"Content-Type: application/json\r\n";
         yyjson_mut_doc* doc = yyjson_mut_doc_new(nullptr);
@@ -2925,59 +3121,89 @@ void AiActionManager::InpaintWorkerThread(
 
         size_t pLen = 0;
         char* pStr = yyjson_mut_write(doc, 0, &pLen);
+        yyjson_mut_doc_free(doc);
+        if (!pStr) {
+            result.errorMessage = AppStrings::g.AiError_JsonParseFailed;
+            finishTask(true);
+            return;
+        }
         postPayload.assign(pStr, pLen);
         free(pStr);
+    } else if (isOpenAiChat) {
+        headers = L"Content-Type: application/json\r\n";
+        if (!apiKey.empty()) {
+            headers += L"Authorization: Bearer " + Utf8ToWide(apiKey) + L"\r\n";
+        }
+        yyjson_mut_doc* doc = yyjson_mut_doc_new(nullptr);
+        yyjson_mut_val* root = yyjson_mut_obj(doc);
+        yyjson_mut_doc_set_root(doc, root);
+
+        yyjson_mut_obj_add_str(doc, root, "model", targetModel.c_str());
+        yyjson_mut_val* msgs = yyjson_mut_arr(doc);
+        yyjson_mut_obj_add_val(doc, root, "messages", msgs);
+
+        yyjson_mut_val* userMsg = yyjson_mut_obj(doc);
+        yyjson_mut_obj_add_str(doc, userMsg, "role", "user");
+        yyjson_mut_val* contentArr = yyjson_mut_arr(doc);
+        yyjson_mut_obj_add_val(doc, userMsg, "content", contentArr);
+
+        auto addText = [&](const std::string& txt) {
+            yyjson_mut_val* obj = yyjson_mut_obj(doc);
+            yyjson_mut_obj_add_str(doc, obj, "type", "text");
+            yyjson_mut_obj_add_str(doc, obj, "text", txt.c_str());
+            yyjson_mut_arr_append(contentArr, obj);
+        };
+        auto addPngUrl = [&](const std::string& b64) {
+            yyjson_mut_val* obj = yyjson_mut_obj(doc);
+            yyjson_mut_obj_add_str(doc, obj, "type", "image_url");
+            yyjson_mut_val* urlObj = yyjson_mut_obj(doc);
+            std::string url = "data:image/png;base64," + b64;
+            yyjson_mut_obj_add_str(doc, urlObj, "url", url.c_str());
+            yyjson_mut_obj_add_val(doc, obj, "image_url", urlObj);
+            yyjson_mut_arr_append(contentArr, obj);
+        };
+
+        addText(inpaintTaskDesc);
+        addPngUrl(sliceB64);
+        addPngUrl(maskB64);
+        yyjson_mut_arr_append(msgs, userMsg);
+
+        size_t pLen = 0;
+        char* pStr = yyjson_mut_write(doc, 0, &pLen);
         yyjson_mut_doc_free(doc);
+        if (!pStr) {
+            result.errorMessage = AppStrings::g.AiError_JsonParseFailed;
+            finishTask(true);
+            return;
+        }
+        postPayload.assign(pStr, pLen);
+        free(pStr);
     } else {
         std::string boundary = "----QuickViewBoundary7MA4YWxkTrZu0gW";
         headers = L"Content-Type: multipart/form-data; boundary=" + Utf8ToWide(boundary) + L"\r\n";
         if (!apiKey.empty()) {
             headers += L"Authorization: Bearer " + Utf8ToWide(apiKey) + L"\r\n";
         }
-
-        std::string body;
-        auto addFormField = [&](const std::string& name, const std::string& value) {
-            body += "--" + boundary + "\r\n";
-            body += "Content-Disposition: form-data; name=\"" + name + "\"\r\n\r\n";
-            body += value + "\r\n";
-        };
-        auto addFileField = [&](const std::string& name, const std::string& filename, const std::vector<uint8_t>& fileBytes) {
-            body += "--" + boundary + "\r\n";
-            body += "Content-Disposition: form-data; name=\"" + name + "\"; filename=\"" + filename + "\"\r\n";
-            body += "Content-Type: image/png\r\n\r\n";
-            body.append(reinterpret_cast<const char*>(fileBytes.data()), fileBytes.size());
-            body += "\r\n";
-        };
-
-        addFormField("model", targetModel);
-        addFormField("prompt", utf8Prompt);
-        addFormField("response_format", "b64_json");
-        addFileField("image", "image.png", slicePngBytes);
-        addFileField("mask", "mask.png", maskPngBytes);
-
-        body += "--" + boundary + "--\r\n";
-        postPayload = std::move(body);
+        postPayload = BuildOpenAiMultipartEditPayload(boundary, targetModel, utf8Prompt, slicePngBytes, &maskPngBytes);
     }
 
     auto httpRes = SendRequestAndReadResponse(
-        m_activeRequest, headers, postPayload.data(), static_cast<DWORD>(postPayload.size()),
+        hRequest, headers, postPayload.data(), static_cast<DWORD>(postPayload.size()),
         hostName, port, isLocal, taskId, m_currentTaskId);
 
     if (httpRes.interrupted) {
-        m_isRunning.store(false);
         return;
     }
 
     result.httpStatusCode = httpRes.statusCode;
-    result.rawResponseBody = httpRes.body;
 
     if (!httpRes.ok) {
+        result.rawResponseBody = std::move(httpRes.body);
         result.mainTitle = std::move(httpRes.mainTitle);
         result.detailMessage = std::move(httpRes.detailMessage);
         result.actionAdvice = std::move(httpRes.actionAdvice);
         result.errorMessage = std::move(httpRes.errorMessage);
-        m_isRunning.store(false);
-        if (callback) callback(result);
+        finishTask(true);
         return;
     }
 
@@ -2988,13 +3214,33 @@ void AiActionManager::InpaintWorkerThread(
     if (doc) {
         yyjson_val* root = yyjson_doc_get_root(doc);
         ExtractImageFromYyjson(root, aiImgBytes);
+        if (aiImgBytes.empty() && isOpenAiChat && root) {
+            yyjson_val* vChoices = yyjson_obj_get(root, "choices");
+            if (vChoices && yyjson_is_arr(vChoices) && yyjson_arr_size(vChoices) > 0) {
+                yyjson_val* msgObj = yyjson_obj_get(yyjson_arr_get(vChoices, 0), "message");
+                yyjson_val* cVal = msgObj ? yyjson_obj_get(msgObj, "content") : nullptr;
+                if (cVal && yyjson_is_str(cVal)) {
+                    const char* cStr = yyjson_get_str(cVal);
+                    if (cStr) {
+                        std::string contentStr = cStr;
+                        size_t b64Pos = contentStr.find(";base64,");
+                        if (b64Pos != std::string::npos) {
+                            size_t startPos = b64Pos + 8;
+                            size_t endPos = contentStr.find_first_of(")\"'\r\n \t", startPos);
+                            std::string subB64 = (endPos == std::string::npos) ? contentStr.substr(startPos) : contentStr.substr(startPos, endPos - startPos);
+                            Base64ToBinary(subB64.c_str(), subB64.size(), aiImgBytes);
+                        }
+                    }
+                }
+            }
+        }
         yyjson_doc_free(doc);
     }
 
     if (aiImgBytes.empty()) {
         result.errorMessage = L"解析 AI 重绘结果图像数据为空";
-        m_isRunning.store(false);
-        if (callback) callback(result);
+        result.rawResponseBody = std::move(respBody);
+        finishTask(true);
         return;
     }
 
@@ -3003,15 +3249,14 @@ void AiActionManager::InpaintWorkerThread(
     uint32_t aiW = 0, aiH = 0, aiStride = 0;
     if (!DecodeMemoryToBgra(aiImgBytes.data(), aiImgBytes.size(), aiSubBgra, aiW, aiH, aiStride) || aiSubBgra.empty()) {
         result.errorMessage = L"解码 AI 返回的切片图像失败";
-        m_isRunning.store(false);
-        if (callback) callback(result);
+        finishTask(true);
         return;
     }
 
     std::vector<uint8_t> alignedSubBgra;
-    if ((int)aiW != sliceW || (int)aiH != sliceH) {
+    if (static_cast<int>(aiW) != sliceW || static_cast<int>(aiH) != sliceH) {
         alignedSubBgra.resize(static_cast<size_t>(sliceW) * sliceH * 4);
-        ResampleBgraExact(aiSubBgra.data(), aiW, aiH, aiStride,
+        ResampleBgraExact(aiSubBgra.data(), static_cast<int>(aiW), static_cast<int>(aiH), static_cast<int>(aiStride),
                           alignedSubBgra.data(), sliceW, sliceH, sliceW * 4);
     } else {
         alignedSubBgra = std::move(aiSubBgra);
@@ -3020,16 +3265,15 @@ void AiActionManager::InpaintWorkerThread(
     // 8. Mask-Guided Feathered Blend strictly onto the user's selection region
     std::vector<uint8_t> mergedBgra = std::move(origBgra);
     BlendMaskGuidedFeathered(
-        mergedBgra.data(), origW, origH, origStride,
+        mergedBgra.data(), static_cast<int>(origW), static_cast<int>(origH), static_cast<int>(origStride),
         alignedSubBgra.data(), sliceX0, sliceY0, sliceW, sliceH, sliceW * 4,
         selX0, selY0, selX1, selY1, 6);
 
     // 9. Encode full merged frame to PNG
     std::vector<uint8_t> finalMergedPng;
-    if (!EncodeToPngMemory(mergedBgra.data(), origW, origH, origStride, finalMergedPng)) {
+    if (!EncodeToPngMemory(mergedBgra.data(), static_cast<int>(origW), static_cast<int>(origH), static_cast<int>(origStride), finalMergedPng)) {
         result.errorMessage = L"合成最终图像失败";
-        m_isRunning.store(false);
-        if (callback) callback(result);
+        finishTask(true);
         return;
     }
 
@@ -3038,8 +3282,7 @@ void AiActionManager::InpaintWorkerThread(
     result.imageWidth = origW;
     result.imageHeight = origH;
 
-    m_isRunning.store(false);
-    if (callback) callback(result);
+    finishTask(true);
 }
 
 } // namespace QuickView::AI

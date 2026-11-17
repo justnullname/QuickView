@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "ImageExporter.h"
+#include "EditState.h"
 #include "ImageLoader.h"
 #include "ImageTypes.h"
 #include "AppContext.h"
@@ -343,7 +344,9 @@ HRESULT ImageExporter::CreateWICPipeline(const ExportOptions& options,
 
     // Check if in-memory source frame was supplied (e.g. animated frame or canvas buffer)
     if (options.SourceFrame && options.SourceFrame->pixels && options.SourceFrame->width > 0 && options.SourceFrame->height > 0) {
-        WICPixelFormatGUID pixelFormat = GUID_WICPixelFormat32bppBGRA;
+        WICPixelFormatGUID pixelFormat = (options.SourceFrame->format == PixelFormat::RGBA8888)
+            ? GUID_WICPixelFormat32bppRGBA
+            : GUID_WICPixelFormat32bppBGRA;
         UINT stride = options.SourceFrame->stride > 0 ? options.SourceFrame->stride : (options.SourceFrame->width * 4);
         UINT totalBytes = stride * options.SourceFrame->height;
         ComPtr<IWICBitmap> memBmp;
@@ -524,23 +527,31 @@ HRESULT ImageExporter::CreateWICPipeline(const ExportOptions& options,
         }
     }
 
-    // Apply Flip / Rotation Transforms before cropping if specified
+    // Apply Flip / Rotation Transforms before cropping if specified.
+    // ExportOptions uses Transform2D (FlipH first, then Rotation CW) + optional post-rotation FlipV,
+    // whereas WIC IWICBitmapFlipRotator applies Rotation before Flip.
     if (options.Rotation != 0 || options.FlipH || options.FlipV) {
-        ComPtr<IWICBitmapFlipRotator> flipRotator;
-        hr = factory->CreateBitmapFlipRotator(&flipRotator);
-        if (SUCCEEDED(hr)) {
-            WICBitmapTransformOptions transformOpt = WICBitmapTransformRotate0;
-            int rot = (options.Rotation % 360 + 360) % 360;
-            if (rot == 90) transformOpt = WICBitmapTransformRotate90;
-            else if (rot == 180) transformOpt = WICBitmapTransformRotate180;
-            else if (rot == 270) transformOpt = WICBitmapTransformRotate270;
+        int wicRot = 0;
+        bool wicFlipH = false;
+        bool wicFlipV = false;
+        Transform2D{ options.Rotation, options.FlipH }.ToRotateFirstParams(options.FlipV, wicRot, wicFlipH, wicFlipV);
 
-            if (options.FlipH) transformOpt = static_cast<WICBitmapTransformOptions>(transformOpt | WICBitmapTransformFlipHorizontal);
-            if (options.FlipV) transformOpt = static_cast<WICBitmapTransformOptions>(transformOpt | WICBitmapTransformFlipVertical);
+        if (wicRot != 0 || wicFlipH || wicFlipV) {
+            ComPtr<IWICBitmapFlipRotator> flipRotator;
+            hr = factory->CreateBitmapFlipRotator(&flipRotator);
+            if (SUCCEEDED(hr)) {
+                WICBitmapTransformOptions transformOpt = WICBitmapTransformRotate0;
+                if (wicRot == 90) transformOpt = WICBitmapTransformRotate90;
+                else if (wicRot == 180) transformOpt = WICBitmapTransformRotate180;
+                else if (wicRot == 270) transformOpt = WICBitmapTransformRotate270;
 
-            if (SUCCEEDED(flipRotator->Initialize(currentSource.Get(), transformOpt))) {
-                currentSource = flipRotator;
-                currentSource->GetSize(&origWidth, &origHeight);
+                if (wicFlipH) transformOpt = static_cast<WICBitmapTransformOptions>(transformOpt | WICBitmapTransformFlipHorizontal);
+                if (wicFlipV) transformOpt = static_cast<WICBitmapTransformOptions>(transformOpt | WICBitmapTransformFlipVertical);
+
+                if (SUCCEEDED(flipRotator->Initialize(currentSource.Get(), transformOpt))) {
+                    currentSource = flipRotator;
+                    currentSource->GetSize(&origWidth, &origHeight);
+                }
             }
         }
     }
@@ -1169,6 +1180,60 @@ std::expected<void, std::wstring> ImageExporter::CopyToClipboard(const ExportOpt
 
     CloseClipboard();
     return {};
+}
+
+HRESULT ImageExporter::RenderVisualBgraFrame(const ExportOptions& options,
+                                             std::vector<uint8_t>& outBgra,
+                                             uint32_t& outWidth,
+                                             uint32_t& outHeight,
+                                             uint32_t& outStride) {
+    outBgra.clear();
+    outWidth = outHeight = outStride = 0;
+
+    ComPtr<IWICBitmapSource> source;
+    ComPtr<IWICImagingFactory> factory;
+    ComPtr<IWICColorContext> colorCtx;
+    ComPtr<IWICBitmapFrameDecode> frameDecode;
+    HRESULT hr = CreateWICPipeline(options, source, factory, colorCtx, frameDecode);
+    if (FAILED(hr) || !source || !factory) {
+        return FAILED(hr) ? hr : E_FAIL;
+    }
+
+    UINT w = 0, h = 0;
+    hr = source->GetSize(&w, &h);
+    if (FAILED(hr) || w == 0 || h == 0) {
+        return FAILED(hr) ? hr : E_FAIL;
+    }
+
+    const uint64_t stride64 = static_cast<uint64_t>(w) * 4ull;
+    const uint64_t totalBytes64 = stride64 * static_cast<uint64_t>(h);
+    if (stride64 > (std::numeric_limits<UINT>::max)() || totalBytes64 > (std::numeric_limits<UINT>::max)()) {
+        return E_OUTOFMEMORY;
+    }
+
+    ComPtr<IWICFormatConverter> converter;
+    hr = factory->CreateFormatConverter(&converter);
+    if (FAILED(hr) || !converter) {
+        return FAILED(hr) ? hr : E_FAIL;
+    }
+
+    hr = converter->Initialize(source.Get(), GUID_WICPixelFormat32bppBGRA,
+                               WICBitmapDitherTypeNone, nullptr, 0.0f, WICBitmapPaletteTypeCustom);
+    if (FAILED(hr)) {
+        return hr;
+    }
+
+    outBgra.resize(static_cast<size_t>(totalBytes64));
+    hr = converter->CopyPixels(nullptr, static_cast<UINT>(stride64), static_cast<UINT>(totalBytes64), outBgra.data());
+    if (FAILED(hr)) {
+        outBgra.clear();
+        return hr;
+    }
+
+    outWidth = w;
+    outHeight = h;
+    outStride = static_cast<uint32_t>(stride64);
+    return S_OK;
 }
 
 } // namespace QuickView

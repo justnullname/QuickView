@@ -2,7 +2,6 @@
 #include "MappedFile.h"
 #include <algorithm>
 #include <chrono>
-#include <filesystem>
 
 namespace QuickView {
 
@@ -28,7 +27,8 @@ void BootPreloader::SetNotifyHwnd(HWND hwnd) {
         std::lock_guard lock(m_mutex);
         data = m_data;
     }
-    if (data && data->frameReady.load(std::memory_order_acquire) && hwnd) {
+    if (data && data->frameReady.load(std::memory_order_acquire) && hwnd &&
+        !data->notified.exchange(true, std::memory_order_acq_rel)) {
         PostMessageW(hwnd, WM_BOOT_FRAME_READY, 0, 0);
     }
 }
@@ -113,8 +113,24 @@ void BootPreloader::Start(const std::wstring& imagePath) {
         }
 
         // Notify that header info is ready for window metrics calculation
-        data->headerReady.store(true, std::memory_order_release);
+        {
+            std::lock_guard lock(m_mutex);
+            data->headerReady.store(true, std::memory_order_release);
+        }
         m_cvHeader.notify_all();
+
+        auto notifyFrameCompletion = [this, &data]() {
+            {
+                std::lock_guard lock(m_mutex);
+                data->frameReady.store(true, std::memory_order_release);
+            }
+            m_cvFrame.notify_all();
+
+            HWND hNotify = m_hwnd.load(std::memory_order_acquire);
+            if (hNotify && !data->notified.exchange(true, std::memory_order_acq_rel)) {
+                PostMessageW(hNotify, WM_BOOT_FRAME_READY, 0, 0);
+            }
+        };
 
         if (st.stop_requested()) return;
 
@@ -126,10 +142,10 @@ void BootPreloader::Start(const std::wstring& imagePath) {
         const bool pixelTrigger = (pixelCount > 50000000);
 
         if (sizeTrigger || pixelTrigger) {
-            // Leave Titan images to the multi-threaded pyramid tile scheduler
+            // Leave Titan images to the multi-threaded pyramid tile scheduler, still
+            // notifying UI so cold-start presentation never hangs waiting for WM_BOOT_FRAME_READY.
             data->isTitan.store(true, std::memory_order_release);
-            data->frameReady.store(true, std::memory_order_release);
-            m_cvFrame.notify_all();
+            notifyFrameCompletion();
             return;
         }
 
@@ -147,15 +163,11 @@ void BootPreloader::Start(const std::wstring& imagePath) {
             &st
         };
 
-        if (data->mmf && data->mmf->IsValid()) {
-            hr = loader.LoadToFrameFromMemory(data->mmf->data(), data->mmf->size(), frame.get(),
-                                             nullptr, 0, 0, &ldr, &meta, -1.0f, data->mmf);
-        }
-
-        if (FAILED(hr) && !st.stop_requested()) {
-            hr = loader.LoadToFrame(data->path.c_str(), frame.get(), nullptr, 0, 0, &ldr,
-                                   checkCancel, &meta);
-        }
+        // Prefer LoadToFrame with existing MMF so GainMap HDR, HDR headroom, and
+        // cooperative cancellation all stay intact during boot decode.
+        hr = loader.LoadToFrame(data->path.c_str(), frame.get(), nullptr, 0, 0, &ldr,
+                                checkCancel, &meta, true, false, -1.0f,
+                                QuickView::ColorPrimaries::SRGB, data->mmf);
 
         if (SUCCEEDED(hr) && frame->IsValid() && !st.stop_requested()) {
             if (frame->exifOrientation <= 1 && data->headerInfo.exifOrientation > 1) {
@@ -198,13 +210,7 @@ void BootPreloader::Start(const std::wstring& imagePath) {
             data->decodeSuccess = true;
         }
 
-        data->frameReady.store(true, std::memory_order_release);
-        m_cvFrame.notify_all();
-
-        HWND hNotify = m_hwnd.load(std::memory_order_acquire);
-        if (hNotify) {
-            PostMessageW(hNotify, WM_BOOT_FRAME_READY, 0, 0);
-        }
+        notifyFrameCompletion();
     });
 }
 
@@ -217,7 +223,8 @@ bool BootPreloader::GetHeader(CImageLoader::ImageHeaderInfo& outInfo, DWORD time
     if (!data) return false;
 
     auto checkInfo = [&]() -> bool {
-        if (data->headerInfo.width > 0 && data->headerInfo.height > 0) {
+        if (data->headerReady.load(std::memory_order_acquire) &&
+            data->headerInfo.width > 0 && data->headerInfo.height > 0) {
             outInfo = data->headerInfo;
             return true;
         }
@@ -279,7 +286,7 @@ std::shared_ptr<RawImageFrame> BootPreloader::TakeFrame(CImageLoader::ImageMetad
 bool BootPreloader::IsTitan() const {
     std::shared_ptr<BootPreloadData> data;
     {
-        std::lock_guard lock(const_cast<std::mutex&>(m_mutex));
+        std::lock_guard lock(m_mutex);
         data = m_data;
     }
     return data ? data->isTitan.load(std::memory_order_acquire) : false;
@@ -288,7 +295,7 @@ bool BootPreloader::IsTitan() const {
 bool BootPreloader::IsFrameReady() const {
     std::shared_ptr<BootPreloadData> data;
     {
-        std::lock_guard lock(const_cast<std::mutex&>(m_mutex));
+        std::lock_guard lock(m_mutex);
         data = m_data;
     }
     return data ? data->frameReady.load(std::memory_order_acquire) : false;
@@ -301,7 +308,7 @@ bool BootPreloader::IsActive() const {
 std::wstring BootPreloader::GetPath() const {
     std::shared_ptr<BootPreloadData> data;
     {
-        std::lock_guard lock(const_cast<std::mutex&>(m_mutex));
+        std::lock_guard lock(m_mutex);
         data = m_data;
     }
     return data ? data->path : std::wstring();

@@ -825,13 +825,13 @@ TEST(RatingMetadataTest, IsobmffRealAvifWithoutXmpInjectAndReadback) {
     // Initial check: no rating
     EXPECT_FALSE(RatingStore::ReadRatingFromFile(copyPath).has_value());
 
-    // 1. Inject 4 stars into a file without preexisting XMP
+    // 1. Inject 4 stars into a file without preexisting XMP (requires container rebuild)
     const auto status1 = WriteRatingToImage(copyPath, 4, /*allowTranscode=*/true);
-    EXPECT_EQ(status1, WriteStatus::WrittenInPlace);
+    EXPECT_EQ(status1, WriteStatus::WrittenTranscode);
     EXPECT_EQ(RatingStore::ReadRatingFromFile(copyPath), 4);
 
     // 2. In-place update the newly injected XMP to 5 stars
-    const auto status2 = WriteRatingToImage(copyPath, 5, /*allowTranscode=*/true);
+    const auto status2 = WriteRatingToImage(copyPath, 5, /*allowTranscode=*/false);
     EXPECT_EQ(status2, WriteStatus::WrittenInPlace);
     EXPECT_EQ(RatingStore::ReadRatingFromFile(copyPath), 5);
 
@@ -846,9 +846,9 @@ TEST(RatingMetadataTest, IsobmffRealAvifYuv444pExifInPlacePatch) {
     // Initial check: clean file has no rating
     EXPECT_FALSE(RatingStore::ReadRatingFromFile(copyPath).has_value());
 
-    // 1. In-place update Exif rating to 5 stars
+    // 1. Initial rating injects Exif container box via lossless rebuild
     const auto status1 = WriteRatingToImage(copyPath, 5, /*allowTranscode=*/true);
-    EXPECT_EQ(status1, WriteStatus::WrittenInPlace);
+    EXPECT_EQ(status1, WriteStatus::WrittenTranscode);
     EXPECT_EQ(RatingStore::ReadRatingFromFile(copyPath), 5);
 
     // 2. In-place update Exif rating to 3 stars
@@ -924,12 +924,15 @@ TEST(RatingMetadataTest, UserReportedCasesRegressionTest) {
     EXPECT_EQ(WriteRatingToImage(childTest, 4, true), WriteStatus::WrittenInPlace);
     EXPECT_EQ(RatingStore::ReadRatingFromFile(childTest), 4);
 
-    // 3. AVIF
+    // 3. AVIF (no initial Exif/XMP -> initial write rebuilds container, follow-up is in-place)
     const wchar_t* avifOrig = LR"(D:\Works\Personal\Coding\QuickView\Local-Files\test_img\avif\test_webp_lossy.avif)";
     const wchar_t* avifTest = L"test_avif_regression.avif";
     CopyFileW(avifOrig, avifTest, FALSE);
-    EXPECT_EQ(WriteRatingToImage(avifTest, 4, true), WriteStatus::WrittenInPlace);
+    EXPECT_EQ(WriteRatingToImage(avifTest, 4, false), WriteStatus::NeedsTranscode);
+    EXPECT_EQ(WriteRatingToImage(avifTest, 4, true), WriteStatus::WrittenTranscode);
     EXPECT_EQ(RatingStore::ReadRatingFromFile(avifTest), 4);
+    EXPECT_EQ(WriteRatingToImage(avifTest, 2, false), WriteStatus::WrittenInPlace);
+    EXPECT_EQ(RatingStore::ReadRatingFromFile(avifTest), 2);
 
     // 4. DJI Drone HEIC with multiple XMP items (primary item 39 vs telemetry items 77, 78, 79)
     const wchar_t* djiOrig = LR"(D:\Works\Personal\Coding\QuickView\Local-Files\test_img\Hdr\DJI_1_0927_D_110407.heic)";
@@ -1350,6 +1353,210 @@ TEST(RatingMetadataTest, ApngPreservesAnimationChunksByteForByte) {
 
         DeleteFileW(path);
     }
+}
+
+// --- Audit Workstream 4 Regression Tests ----------------------------------
+
+TEST(RatingMetadataTest, MaliciousIsobmffAndJxlOverflowSafety) {
+    // 1. JXL box with 64-bit size = 0xFFFFFFFFFFFFFFFF (would wrap pos + boxSize)
+    const std::vector<uint8_t> badJxl = {
+        0x00, 0x00, 0x00, 0x0C, 'J', 'X', 'L', ' ', 0x0D, 0x0A, 0x87, 0x0A,
+        0x00, 0x00, 0x00, 0x01, 'x', 'm', 'l', ' ',
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        '<', 'x', 'm', 'p', ':', 'R', 'a', 't', 'i', 'n', 'g', '>', '4'
+    };
+    EXPECT_FALSE(ParseJxlRating(badJxl).has_value());
+
+    // 2. ISOBMFF with huge 64-bit box size and malformed iloc extent wrapping offset
+    std::vector<uint8_t> badIso = {
+        0x00, 0x00, 0x00, 0x10, 'f', 't', 'y', 'p', 'a', 'v', 'i', 'f', 0, 0, 0, 0,
+        0x00, 0x00, 0x00, 0x01, 'm', 'e', 't', 'a',
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF
+    };
+    EXPECT_FALSE(ParseIsobmffRating(badIso).has_value());
+}
+
+TEST(RatingMetadataTest, XmpBoundariesElementAttrsXmlnsAndStrictPadding) {
+    // Ignores attribute inside prefix-concatenated name and element closing tag fallback
+    const std::string sneaky =
+        "<rdf:Description custom_xmp:Rating=\"1\">\n"
+        "  <xmp:Rating xml:space=\"preserve\">4</xmp:Rating>\n"
+        "</rdf:Description>\n";
+    EXPECT_EQ(ParseXmpRating(sneaky), 4);
+
+    // Update injects missing xmlns:xmp and replaces properly
+    const std::string bareDesc = "<rdf:Description rdf:about=\"\" dc:title=\"keep\"/>";
+    const auto updated = UpdateXmpRating(bareDesc, 5);
+    ASSERT_TRUE(updated.has_value());
+    EXPECT_NE(updated->find("xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\""), std::string::npos);
+    EXPECT_EQ(ParseXmpRating(*updated), 5);
+
+    // PatchXmpRatingInPlaceStrict refuses when property appears after trailing padding
+    const std::string trailingProp =
+        "<?xpacket begin=\"\"?>\n<rdf:Description rdf:about=\"\"/>\n    \n"
+        "<?xpacket end=\"w\"?> xmp:Rating=\"3\"";
+    EXPECT_FALSE(PatchXmpRatingInPlaceStrict(trailingProp, 0).has_value());
+    EXPECT_FALSE(PatchXmpRatingInPlaceStrict(trailingProp, 5).has_value());
+}
+
+TEST(RatingMetadataTest, WebpDirectReadsExifOnlyAndSyncsExifOnWrite) {
+    const std::wstring path = L"test_webp_exif_only_direct.webp";
+    DeleteFileW(path.c_str());
+
+    std::vector<uint8_t> webp = { 'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'E', 'B', 'P' };
+    // VP8X with ONLY EXIF flag (bit 3 = 0x08), no XMP flag (0x04)
+    AppendWebpChunk(webp, "VP8X", { 0x08, 0, 0, 0, 15, 0, 0, 15, 0, 0 });
+    AppendWebpChunk(webp, "VP8 ", { 0x10, 0x20, 0x30, 0x40, 0, 0, 0, 0, 0, 0 });
+    AppendWebpChunk(webp, "EXIF", MakeTiff(TAG_SIMPLE_RATING, TYPE_SHORT, 4, false));
+    FinalizeWebpSize(webp);
+    ASSERT_TRUE(WriteAllToTempFile(path, webp));
+
+    // ReadWebpRatingDirect (via ReadRatingFromFile) must read EXIF-only WebP
+    EXPECT_EQ(RatingStore::ReadRatingFromFile(path), 4);
+
+    // Updating rating to 5 and clearing to 0 must update EXIF chunk too (never shadowed by stale 4)
+    EXPECT_EQ(WriteRatingToImage(path, 5, true), WriteStatus::WrittenTranscode);
+    EXPECT_EQ(RatingStore::ReadRatingFromFile(path), 5);
+    EXPECT_EQ(WriteRatingToImage(path, 0, true), WriteStatus::WrittenTranscode);
+    const auto clearedRating = RatingStore::ReadRatingFromFile(path);
+    EXPECT_TRUE(!clearedRating.has_value() || *clearedRating == 0);
+
+    DeleteFileW(path.c_str());
+}
+
+TEST(RatingMetadataTest, StreamingIsobmffAndJxlAfterLargePayloadPlusMdatBeforeMeta) {
+    // 1. Construct ISOBMFF with >160KB 'mdat' BEFORE 'meta' (verifies both streaming reader
+    //    past 128KB prefix and WriteRatingToIsobmff when mdatPos < metaPos!)
+    const std::wstring isoPath = L"test_iso_mdat_before_meta.heic";
+    DeleteFileW(isoPath.c_str());
+
+    std::vector<uint8_t> iso;
+    auto pushU32 = [&](uint32_t v) {
+        iso.push_back((uint8_t)(v >> 24)); iso.push_back((uint8_t)(v >> 16));
+        iso.push_back((uint8_t)(v >> 8));  iso.push_back((uint8_t)v);
+    };
+    auto pushU16 = [&](uint16_t v) {
+        iso.push_back((uint8_t)(v >> 8)); iso.push_back((uint8_t)v);
+    };
+
+    // ftyp (16 bytes)
+    pushU32(16); iso.insert(iso.end(), { 'f', 't', 'y', 'p', 'h', 'e', 'i', 'c', 0, 0, 0, 0 });
+    // mdat > 160KB at offset 16 (BEFORE meta)
+    const size_t mdatPayloadLen = 170u * 1024u;
+    pushU32(static_cast<uint32_t>(8 + mdatPayloadLen));
+    iso.insert(iso.end(), { 'm', 'd', 'a', 't' });
+    iso.insert(iso.end(), mdatPayloadLen, 0xAB);
+
+    // Build minimal meta box (pitm + iinf + iloc)
+    std::vector<uint8_t> pitm = { 0, 0, 0, 14, 'p', 'i', 't', 'm', 0, 0, 0, 0, 0, 1 };
+    std::vector<uint8_t> infe1 = { 0, 0, 0, 21, 'i', 'n', 'f', 'e', 2, 0, 0, 0, 0, 1, 0, 0, 'h', 'v', 'c', '1', 0 };
+    std::vector<uint8_t> iinf;
+    iinf.insert(iinf.end(), { 0, 0, 0, 0, 'i', 'i', 'n', 'f', 0, 0, 0, 0, 0, 1 });
+    iinf.insert(iinf.end(), infe1.begin(), infe1.end());
+    uint32_t iinfSz = (uint32_t)iinf.size();
+    iinf[0] = (uint8_t)(iinfSz >> 24); iinf[1] = (uint8_t)(iinfSz >> 16);
+    iinf[2] = (uint8_t)(iinfSz >> 8);  iinf[3] = (uint8_t)iinfSz;
+
+    // iloc v0, offSize=4, lenSize=4, baseOffSize=0, itemCount=1, item 1 -> offset 24 (inside mdat), len 64
+    std::vector<uint8_t> iloc = {
+        0, 0, 0, 30, 'i', 'l', 'o', 'c', 0, 0, 0, 0,
+        0x44, 0x00, 0, 1,
+        0, 1, 0, 0, 0, 1,
+        0, 0, 0, 24,
+        0, 0, 0, 64
+    };
+
+    const uint32_t metaSz = (uint32_t)(12 + pitm.size() + iinf.size() + iloc.size());
+    pushU32(metaSz); iso.insert(iso.end(), { 'm', 'e', 't', 'a', 0, 0, 0, 0 });
+    iso.insert(iso.end(), pitm.begin(), pitm.end());
+    iso.insert(iso.end(), iinf.begin(), iinf.end());
+    iso.insert(iso.end(), iloc.begin(), iloc.end());
+
+    ASSERT_TRUE(WriteAllToTempFile(isoPath, iso));
+    EXPECT_EQ(WriteRatingToImage(isoPath, 5, true), WriteStatus::WrittenTranscode);
+    EXPECT_EQ(RatingStore::ReadRatingFromFile(isoPath), 5);
+    // Second write hits O(1) in-place update without rebuild
+    EXPECT_EQ(WriteRatingToImage(isoPath, 2, false), WriteStatus::WrittenInPlace);
+    EXPECT_EQ(RatingStore::ReadRatingFromFile(isoPath), 2);
+    DeleteFileW(isoPath.c_str());
+
+    // 2. Construct JXL with metadata AFTER >160KB jxlc payload
+    const std::wstring jxlPath = L"test_jxl_streaming_after_jxlc.jxl";
+    DeleteFileW(jxlPath.c_str());
+    std::vector<uint8_t> jxl = {
+        0x00, 0x00, 0x00, 0x0C, 'J', 'X', 'L', ' ', 0x0D, 0x0A, 0x87, 0x0A,
+        0x00, 0x00, 0x00, 0x14, 'f', 't', 'y', 'p', 'j', 'x', 'l', ' ', 0, 0, 0, 0, 'j', 'x', 'l', ' '
+    };
+    const uint32_t jxlcSz = 170u * 1024u + 8u;
+    jxl.push_back((uint8_t)(jxlcSz >> 24)); jxl.push_back((uint8_t)(jxlcSz >> 16));
+    jxl.push_back((uint8_t)(jxlcSz >> 8));  jxl.push_back((uint8_t)jxlcSz);
+    jxl.insert(jxl.end(), { 'j', 'x', 'l', 'c' });
+    jxl.insert(jxl.end(), 170u * 1024u, 0x55);
+    const std::string xmp = BuildMinimalXmp(3);
+    const uint32_t xmlSz = (uint32_t)(8 + xmp.size());
+    jxl.push_back((uint8_t)(xmlSz >> 24)); jxl.push_back((uint8_t)(xmlSz >> 16));
+    jxl.push_back((uint8_t)(xmlSz >> 8));  jxl.push_back((uint8_t)xmlSz);
+    jxl.insert(jxl.end(), { 'x', 'm', 'l', ' ' });
+    jxl.insert(jxl.end(), xmp.begin(), xmp.end());
+    ASSERT_TRUE(WriteAllToTempFile(jxlPath, jxl));
+
+    EXPECT_EQ(RatingStore::ReadRatingFromFile(jxlPath), 3);
+    DeleteFileW(jxlPath.c_str());
+}
+
+TEST(RatingMetadataTest, StandaloneReadOnlyRawWritabilityFollowsSidecar) {
+    const std::wstring rawPath = L"test_readonly_standalone.arw";
+    const std::wstring sidecarPath = L"test_readonly_standalone.xmp";
+    SetFileAttributesW(rawPath.c_str(), FILE_ATTRIBUTE_NORMAL);
+    SetFileAttributesW(sidecarPath.c_str(), FILE_ATTRIBUTE_NORMAL);
+    DeleteFileW(rawPath.c_str());
+    DeleteFileW(sidecarPath.c_str());
+
+    ASSERT_TRUE(WriteAllToTempFile(rawPath, { 1, 2, 3, 4 }));
+    ASSERT_TRUE(SetFileAttributesW(rawPath.c_str(), FILE_ATTRIBUTE_READONLY));
+
+    // Read-only RAW with no read-only sidecar must be writable (rates via sidecar)
+    EXPECT_EQ(RatingStore::GetWritability(rawPath, L""), RatingStore::Writability::Writable);
+
+    // If the sidecar itself is read-only, GetWritability must report ReadOnlyFile
+    ASSERT_TRUE(WriteAllToTempFile(sidecarPath, { '<', 'x', '/', '>' }));
+    ASSERT_TRUE(SetFileAttributesW(sidecarPath.c_str(), FILE_ATTRIBUTE_READONLY));
+    EXPECT_EQ(RatingStore::GetWritability(rawPath, L""), RatingStore::Writability::ReadOnlyFile);
+
+    SetFileAttributesW(sidecarPath.c_str(), FILE_ATTRIBUTE_NORMAL);
+    SetFileAttributesW(rawPath.c_str(), FILE_ATTRIBUTE_NORMAL);
+    DeleteFileW(sidecarPath.c_str());
+    DeleteFileW(rawPath.c_str());
+}
+
+TEST(RatingMetadataTest, PngRebuildPreservesExistingUnrelatedXmpProperties) {
+    const std::wstring path = L"test_png_preserve_xmp_props.png";
+    DeleteFileW(path.c_str());
+
+    std::vector<uint8_t> png = { 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n' };
+    AppendPngChunkWithCrc(png, "IHDR", std::vector<uint8_t>(13, 1));
+    const std::string unpaddedXmp =
+        "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">"
+        "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">"
+        "<rdf:Description rdf:about=\"\" dc:creator=\"Photographer\"/>"
+        "</rdf:RDF></x:xmpmeta>";
+    std::vector<uint8_t> itxtPayload;
+    const std::string_view kw = "XML:com.adobe.xmp";
+    itxtPayload.insert(itxtPayload.end(), kw.begin(), kw.end());
+    itxtPayload.insert(itxtPayload.end(), { 0, 0, 0, 0, 0 });
+    itxtPayload.insert(itxtPayload.end(), unpaddedXmp.begin(), unpaddedXmp.end());
+    AppendPngChunkWithCrc(png, "iTXt", itxtPayload);
+    AppendPngChunkWithCrc(png, "IDAT", { 9, 8, 7, 6 });
+    AppendPngChunkWithCrc(png, "IEND", {});
+    ASSERT_TRUE(WriteAllToTempFile(path, png));
+
+    EXPECT_EQ(WriteRatingToImage(path, 4, true), WriteStatus::WrittenTranscode);
+    EXPECT_EQ(RatingStore::ReadRatingFromFile(path), 4);
+    const auto rebuilt = ReadAllFromTempFile(path);
+    const std::string rebuiltStr(reinterpret_cast<const char*>(rebuilt.data()), rebuilt.size());
+    EXPECT_NE(rebuiltStr.find("dc:creator=\"Photographer\""), std::string::npos);
+
+    DeleteFileW(path.c_str());
 }
 
 

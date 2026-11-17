@@ -54,7 +54,7 @@ struct PrintStrings {
 };
 
 static PrintStrings GetPrintStrings() {
-    std::wstring loc = AppStrings::CurrentLocale ? AppStrings::CurrentLocale : L"en-us";
+    std::wstring loc = AppStrings::g.CurrentLocale ? AppStrings::g.CurrentLocale : L"en-us";
     std::transform(loc.begin(), loc.end(), loc.begin(), ::towlower);
     
     if (loc.find(L"zh") != std::wstring::npos) {
@@ -170,8 +170,10 @@ void PrintPreviewUI::Show(HWND hwnd, const std::wstring& imagePath, float imageW
     m_settings.imagePath = imagePath;
     m_settings.copies = 1;
     const auto& pane = GetPaneContext(PaneSlot::Primary);
-    m_settings.sourceWidthPx = (pane.metadata.HasSr && pane.metadata.SrWidth > 0) ? (float)pane.metadata.SrWidth : imageWidth;
-    m_settings.sourceHeightPx = (pane.metadata.HasSr && pane.metadata.SrHeight > 0) ? (float)pane.metadata.SrHeight : imageHeight;
+    // PrintManager::ExecutePrintJob always decodes the original file dimensions from disk,
+    // so keep print source layout dimensions tied to the base image size even when SR is cached.
+    m_settings.sourceWidthPx = imageWidth;
+    m_settings.sourceHeightPx = imageHeight;
     m_settings.imageDpiX = pane.metadata.DpiX > 0 ? pane.metadata.DpiX : 96.0;
     m_settings.imageDpiY = pane.metadata.DpiY > 0 ? pane.metadata.DpiY : 96.0;
     int exif = GetEffectiveExifOrientation(pane.view.ExifOrientation, pane.editState);
@@ -243,7 +245,7 @@ void PrintPreviewUI::DrawButton(ID2D1DeviceContext* ctx, const D2D1_RECT_F& rect
     static ComPtr<IDWriteTextFormat> fmt;
     if (!pDW) DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(pDW.GetAddressOf()));
     if (pDW && !fmt) {
-        pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f, AppStrings::CurrentLocale, &fmt);
+        pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f, AppStrings::g.CurrentLocale, &fmt);
     }
 
     GeekWidgets::DrawPillButton(ctx, rect, text, style, state, fmt.Get(), 1.0f, pal);
@@ -545,8 +547,12 @@ void PrintPreviewUI::Render(ID2D1DeviceContext* ctx, float winW, float winH) {
                     ComPtr<ID2D1Effect> grayscaleEffect;
                     if (SUCCEEDED(ctx->CreateEffect(CLSID_D2D1Grayscale, &grayscaleEffect))) {
                         grayscaleEffect->SetInput(0, pane.resource.bitmap.Get());
-                        D2D1_RECT_F srcRect = D2D1::RectF(0.0f, 0.0f, m_imageWidth, m_imageHeight);
-                        ctx->DrawImage(grayscaleEffect.Get(), nullptr, &srcRect);
+                        // Scale effect output from actual bitmap dimensions (may be SR-upscaled) into m_imageWidth x m_imageHeight.
+                        const D2D1_SIZE_F bmpSize = pane.resource.bitmap->GetSize();
+                        if (bmpSize.width > 0.0f && bmpSize.height > 0.0f) {
+                            ctx->SetTransform(D2D1::Matrix3x2F::Scale(m_imageWidth / bmpSize.width, m_imageHeight / bmpSize.height) * cellTransform * oldTransform);
+                        }
+                        ctx->DrawImage(grayscaleEffect.Get());
                     } else {
                         ctx->DrawBitmap(pane.resource.bitmap.Get(), D2D1::RectF(0, 0, m_imageWidth, m_imageHeight));
                     }
@@ -604,12 +610,12 @@ void PrintPreviewUI::Render(ID2D1DeviceContext* ctx, float winW, float winH) {
         ComPtr<IDWriteFactory> pDW;
         DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(pDW.GetAddressOf()));
         ComPtr<IDWriteTextFormat> fmtPage;
-        pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 36.0f, AppStrings::CurrentLocale, &fmtPage);
+        pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 36.0f, AppStrings::g.CurrentLocale, &fmtPage);
         fmtPage->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         fmtPage->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         
         ComPtr<IDWriteTextFormat> fmtCheck;
-        pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 20.0f, AppStrings::CurrentLocale, &fmtCheck);
+        pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 20.0f, AppStrings::g.CurrentLocale, &fmtCheck);
         fmtCheck->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         fmtCheck->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         
@@ -635,7 +641,7 @@ void PrintPreviewUI::Render(ID2D1DeviceContext* ctx, float winW, float winH) {
                 
                 m_posterCells.push_back({ pageIdx, cellRect });
 
-                bool isDisabled = m_settings.disabledPages.count(pageIdx) > 0;
+                bool isDisabled = m_settings.IsPageDisabled(pageIdx);
                 if (isDisabled) {
                     ctx->FillRectangle(cellRect, disabledBrush.Get());
                 } else {
@@ -668,7 +674,7 @@ void PrintPreviewUI::Render(ID2D1DeviceContext* ctx, float winW, float winH) {
         for (int c = 0; c < cols; ++c) {
             int pageIdx = r * cols + c;
             
-            bool isDisabled = m_settings.disabledPages.count(pageIdx) > 0;
+            bool isDisabled = m_settings.IsPageDisabled(pageIdx);
             if (isDisabled) continue;
 
             float cellLeft = paperRect.left + c * cellW;
@@ -693,10 +699,10 @@ void PrintPreviewUI::Render(ID2D1DeviceContext* ctx, float winW, float winH) {
     ComPtr<IDWriteFactory> pDW;
     DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(pDW.GetAddressOf()));
     ComPtr<IDWriteTextFormat> fmtHeader;
-    pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 14.0f, AppStrings::CurrentLocale, &fmtHeader);
+    pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 14.0f, AppStrings::g.CurrentLocale, &fmtHeader);
 
     ComPtr<IDWriteTextFormat> fmtCapsule;
-    pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 11.0f, AppStrings::CurrentLocale, &fmtCapsule);
+    pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 11.0f, AppStrings::g.CurrentLocale, &fmtCapsule);
 
     auto strs = GetPrintStrings();
 
@@ -728,7 +734,7 @@ void PrintPreviewUI::Render(ID2D1DeviceContext* ctx, float winW, float winH) {
     pal.white = D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
 
     ComPtr<IDWriteTextFormat> fmtBtn;
-    pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f, AppStrings::CurrentLocale, &fmtBtn);
+    pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f, AppStrings::g.CurrentLocale, &fmtBtn);
 
     // 3. Orientation Row (Portrait / Landscape) as Pill Segment Group
     D2D1_RECT_F orientRect = D2D1::RectF(cx, cy, cx + panelWidth, cy + 28);
@@ -800,7 +806,7 @@ void PrintPreviewUI::Render(ID2D1DeviceContext* ctx, float winW, float winH) {
         ctx->DrawRectangle(dropRect, borderBrush.Get(), 1.0f);
         
         ComPtr<IDWriteTextFormat> fmtList;
-        pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f, AppStrings::CurrentLocale, &fmtList);
+        pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f, AppStrings::g.CurrentLocale, &fmtList);
 
         for (size_t i = 0; i < m_printers.size(); ++i) {
             D2D1_RECT_F itemRect = D2D1::RectF(dropRect.left, dropRect.top + i * 26.0f, dropRect.right, dropRect.top + (i + 1) * 26.0f);
@@ -890,11 +896,7 @@ bool PrintPreviewUI::OnLButtonUp(float x, float y) {
     if (m_settings.printMultiPage) {
         for (const auto& cell : m_posterCells) {
             if (PointInRect(x, y, cell.rect)) {
-                if (m_settings.disabledPages.count(cell.pageIdx)) {
-                    m_settings.disabledPages.erase(cell.pageIdx);
-                } else {
-                    m_settings.disabledPages.insert(cell.pageIdx);
-                }
+                m_settings.ToggleDisabledPage(cell.pageIdx);
                 if (m_hwnd) InvalidateRect(m_hwnd, NULL, FALSE);
                 return true;
             }
@@ -906,7 +908,7 @@ bool PrintPreviewUI::OnLButtonUp(float x, float y) {
     } else if (PointInRect(x, y, m_ui.btnPrint)) {
         Hide();
         
-        g_osd.Show(m_hwnd, AppStrings::OSD_PrintJobStarted, false, false, D2D1::ColorF(D2D1::ColorF::White), OSDPosition::Bottom, 5000);
+        g_osd.Show(m_hwnd, AppStrings::g.OSD_PrintJobStarted, false, false, D2D1::ColorF(D2D1::ColorF::White), OSDPosition::Bottom, 5000);
 
         PrintManager::GetInstance().IncrementActiveJobs();
         QuickView::RunDetached([settings = m_settings, hwnd = m_hwnd]() {

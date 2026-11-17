@@ -14,7 +14,7 @@ struct GeometryCacheEntry {
     const GeekIcons::VectorIcon* icon = nullptr;
     ComPtr<ID2D1PathGeometry> geometry;
 };
-constexpr size_t MAX_GEOMETRY_CACHE = 64;
+constexpr size_t MAX_GEOMETRY_CACHE = 128;
 static ID2D1Factory* s_cachedFactory = nullptr;
 static std::array<GeometryCacheEntry, MAX_GEOMETRY_CACHE> s_geometryCache;
 static size_t s_geometryCount = 0;

@@ -9,10 +9,11 @@ static constexpr const char* CURRENT_MODULE = "ComputeEngine";
 
 namespace QuickView {
 
-HRESULT ComputeEngine::Initialize(ID3D11Device* pDevice) {
+HRESULT ComputeEngine::Initialize(ID3D11Device* pDevice, std::recursive_mutex* contextMutex) {
     if (!pDevice) return E_INVALIDARG;
     m_d3dDevice = pDevice;
     m_d3dDevice->GetImmediateContext(&m_d3dContext);
+    m_externalContextMutex = contextMutex;
     m_valid = true;
     return S_OK;
 }
@@ -73,7 +74,7 @@ HRESULT ComputeEngine::UploadAndConvert(const uint8_t* srcPixels, int width, int
         directDesc.Format = (srcFormat == PixelFormat::RGBA8888) ? DXGI_FORMAT_R8G8B8A8_UNORM : DXGI_FORMAT_B8G8R8A8_UNORM;
         directDesc.SampleDesc.Count = 1;
         directDesc.Usage = D3D11_USAGE_DEFAULT;
-        directDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+        directDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 
         D3D11_SUBRESOURCE_DATA initData = {};
         initData.pSysMem = srcPixels;
@@ -113,7 +114,8 @@ HRESULT ComputeEngine::UploadAndConvert(const uint8_t* srcPixels, int width, int
     hr = m_d3dDevice->CreateTexture2D(&dstDesc, nullptr, &pDst);
     if (FAILED(hr)) return hr;
 
-    // 3. Dispatch
+    // 3. Dispatch (serialized on immediate context)
+    std::lock_guard<std::recursive_mutex> ctxLock(ContextMutex());
     hr = EnsureComputeShader(m_csFormatConvert, Shaders::g_csFormatConvert, sizeof(Shaders::g_csFormatConvert), "FormatConvert");
     if (FAILED(hr)) return hr;
 
@@ -146,6 +148,7 @@ HRESULT ComputeEngine::GenerateMips(ID3D11Texture2D* pTexture) {
     pTexture->GetDesc(&desc);
     if (desc.MipLevels <= 1) return S_FALSE;
 
+    std::lock_guard<std::recursive_mutex> ctxLock(ContextMutex());
     HRESULT hr = EnsureComputeShader(m_csGenMips, Shaders::g_csGenerateMips, sizeof(Shaders::g_csGenerateMips), "GenerateMips");
     if (FAILED(hr)) return hr;
 
@@ -310,6 +313,7 @@ HRESULT ComputeEngine::DispatchGamutMaskLut(
         return E_INVALIDARG;
     }
 
+    std::lock_guard<std::recursive_mutex> ctxLock(ContextMutex());
     D3D11_TEXTURE2D_DESC srcDesc = {};
     srcTexture->GetDesc(&srcDesc);
 
@@ -437,6 +441,7 @@ HRESULT ComputeEngine::DispatchGamutMaskLut(
 
 HRESULT ComputeEngine::ToneMapHdrToSdr(const uint8_t* srcPixels, int width, int height, int stride, const ToneMapSettings& settings, ID3D11Texture2D** outTexture, PixelFormat srcFormat) {
     if (!m_valid || !srcPixels || width <= 0 || height <= 0 || !outTexture) return E_INVALIDARG;
+    std::lock_guard<std::recursive_mutex> ctxLock(ContextMutex());
 
     D3D11_TEXTURE2D_DESC srcDesc = {};
     srcDesc.Width = static_cast<UINT>(width);
@@ -522,6 +527,7 @@ HRESULT ComputeEngine::ToneMapHdrToSdr(const uint8_t* srcPixels, int width, int 
 
 HRESULT ComputeEngine::ToneMapHdrToHdr(const uint8_t* srcPixels, int width, int height, int stride, const ToneMapSettings& settings, ID3D11Texture2D** outTexture, PixelFormat srcFormat) {
     if (!m_valid || !srcPixels || width <= 0 || height <= 0 || !outTexture) return E_INVALIDARG;
+    std::lock_guard<std::recursive_mutex> ctxLock(ContextMutex());
 
     D3D11_TEXTURE2D_DESC srcDesc = {};
     srcDesc.Width = static_cast<UINT>(width);
@@ -679,6 +685,7 @@ HRESULT ComputeEngine::ToneMapHdrTextureToHdr(ID3D11Texture2D* srcTexture,
                                               const ToneMapSettings& settings,
                                               ID3D11Texture2D** outTexture) {
     if (!m_valid) return E_FAIL;
+    std::lock_guard<std::recursive_mutex> ctxLock(ContextMutex());
     HRESULT hr = EnsureComputeShader(m_csToneMapHdrToHdr, Shaders::g_csToneMapHdrToHdr, sizeof(Shaders::g_csToneMapHdrToHdr), "ToneMapHdrToHdr");
     if (FAILED(hr)) return hr;
     if (!m_toneMapConstantBuffer) {
@@ -701,6 +708,7 @@ HRESULT ComputeEngine::ToneMapHdrTextureToSdr(ID3D11Texture2D* srcTexture,
                                               const ToneMapSettings& settings,
                                               ID3D11Texture2D** outTexture) {
     if (!m_valid) return E_FAIL;
+    std::lock_guard<std::recursive_mutex> ctxLock(ContextMutex());
     HRESULT hr = EnsureComputeShader(m_csToneMapHdrToSdr, Shaders::g_csToneMapHdrToSdr, sizeof(Shaders::g_csToneMapHdrToSdr), "ToneMapHdrToSdr");
     if (FAILED(hr)) return hr;
     if (!m_toneMapConstantBuffer) {
@@ -807,6 +815,7 @@ HRESULT QuickView::ComputeEngine::ComposeGainMap(
     ID3D11Texture2D** outTexture)
 {
     if (!m_valid || !sdrTex || !gainTex || !outTexture) return E_INVALIDARG;
+    std::lock_guard<std::recursive_mutex> ctxLock(ContextMutex());
 
     D3D11_TEXTURE2D_DESC sdrDesc;
     sdrTex->GetDesc(&sdrDesc);
@@ -887,6 +896,7 @@ HRESULT QuickView::ComputeEngine::ExecuteFsr1Upscale(
     ID3D11Texture2D** outTexture)
 {
     if (!m_valid || !srcTexture || !outTexture || srcW == 0 || srcH == 0 || dstW == 0 || dstH == 0) return E_INVALIDARG;
+    std::lock_guard<std::recursive_mutex> ctxLock(ContextMutex());
 
     HRESULT hr = EnsureComputeShader(m_csFsrEasu, Shaders::g_csFsrEasu, sizeof(Shaders::g_csFsrEasu), "FSR_EASU");
     if (FAILED(hr)) return hr;

@@ -74,7 +74,7 @@ void DialogController::MarkDirty() {
     RequestRepaint(QuickView::PaintLayer::All);
 }
 
-void DialogController::Render(ID2D1DeviceContext* context) {
+void DialogController::Render(ID2D1DeviceContext* context, IDWriteFactory* dwriteFactory) {
     if (!m_context.Dialog.IsVisible || !context || !m_hwnd) return;
 
     RECT clientRect{};
@@ -149,17 +149,18 @@ void DialogController::Render(ID2D1DeviceContext* context) {
         fmtBtnCenter.Reset();
     }
 
-    if (!pDW) DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(pDW.GetAddressOf()));
-    if (pDW) {
+    if (!pDW && !dwriteFactory) DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(pDW.GetAddressOf()));
+    IDWriteFactory* activeDW = dwriteFactory ? dwriteFactory : pDW.Get();
+    if (activeDW) {
         if (!fmtTitle) {
-            pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 17.0f * g_uiScale, AppStrings::CurrentLocale, &fmtTitle);
+            activeDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 17.0f * g_uiScale, AppStrings::g.CurrentLocale, &fmtTitle);
             if (fmtTitle) fmtTitle->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         }
 
-        if (!fmtBody) pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f * g_uiScale, AppStrings::CurrentLocale, &fmtBody);
-        if (!fmtBtn) pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 13.0f * g_uiScale, AppStrings::CurrentLocale, &fmtBtn);
+        if (!fmtBody) activeDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f * g_uiScale, AppStrings::g.CurrentLocale, &fmtBody);
+        if (!fmtBtn) activeDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 13.0f * g_uiScale, AppStrings::g.CurrentLocale, &fmtBtn);
         if (!fmtBtnCenter) {
-             pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 13.0f * g_uiScale, AppStrings::CurrentLocale, &fmtBtnCenter);
+             activeDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 13.0f * g_uiScale, AppStrings::g.CurrentLocale, &fmtBtnCenter);
              if (fmtBtnCenter) {
                  fmtBtnCenter->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
                  fmtBtnCenter->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -221,7 +222,7 @@ void DialogController::Render(ID2D1DeviceContext* context) {
             D2D1_RECT_F hintRect = D2D1::RectF(layout.Input.left, layout.Input.bottom + 8.0f * g_uiScale, layout.Input.left + 260.0f * g_uiScale, layout.Input.bottom + 28.0f * g_uiScale);
             D2D1_COLOR_F hintClr = isLight ? D2D1::ColorF(0.5f, 0.5f, 0.55f, 1.0f) : D2D1::ColorF(0.55f, 0.55f, 0.6f, 1.0f);
             pBrush->SetColor(hintClr);
-            const wchar_t* hintStr = AppStrings::Dialog_MultiLineInputHint ? AppStrings::Dialog_MultiLineInputHint : L"[Ctrl+Enter] Submit / Save";
+            const wchar_t* hintStr = AppStrings::g.Dialog_MultiLineInputHint ? AppStrings::g.Dialog_MultiLineInputHint : L"[Ctrl+Enter] Submit / Save";
             context->DrawText(hintStr, (UINT32)wcslen(hintStr), fmtBody.Get(), hintRect, pBrush.Get());
         }
     }
@@ -246,7 +247,7 @@ void DialogController::Render(ID2D1DeviceContext* context) {
             m_context.Dialog.IsChoiceDropdownOpen,
             m_context.Dialog.IsChoiceHovered,
             false,
-            fmtBtn.Get(), 1.0f, comboPal);
+            fmtBtn.Get(), 1.0f, comboPal, activeDW);
     }
 
     // Quality Info
@@ -462,21 +463,16 @@ DialogResult DialogController::ShowDialog(HWND hwnd, const std::wstring& title, 
                         bool hasCheckbox, const std::wstring& checkboxText, const std::wstring& qualityText)
 {
     m_hwnd = hwnd;
+    DestroyDialogInputInternal(m_context.Dialog);
+    m_context.Dialog.ResetModeState();
     m_context.Dialog.IsVisible = true;
     m_context.Dialog.Title = title;
     m_context.Dialog.Message = messageContent;
     m_context.Dialog.QualityText = qualityText;
     m_context.Dialog.AccentColor = accentColor;
     m_context.Dialog.Buttons = buttons;
-    m_context.Dialog.SelectedButtonIndex = 0;
     m_context.Dialog.HasCheckbox = hasCheckbox;
     m_context.Dialog.CheckboxText = checkboxText;
-    m_context.Dialog.IsChecked = false;
-    
-    // Reset Input Mode for standard dialog
-    m_context.Dialog.HasInput = false;
-    m_context.Dialog.hEdit = nullptr;
-    m_context.Dialog.FinalResult = DialogResult::None;
     
     EnsureWindowSizeForDialog(hwnd);
     
@@ -501,6 +497,7 @@ DialogResult DialogController::ShowDialog(HWND hwnd, const std::wstring& title, 
     if (!IsCompareModeActive()) {
         AdjustWindowForOverlay(hwnd, true);
     }
+    m_context.Dialog.UseCustomCenter = false;
     return m_context.Dialog.FinalResult;
 }
 
@@ -722,8 +719,8 @@ std::optional<LRESULT> DialogController::OnLButtonDown(HWND hwnd, int x, int y) 
 
 std::wstring DialogController::ShowInputDialog(HWND hwnd, const std::wstring& title, const std::wstring& message, const std::wstring& initialText, const std::wstring& confirmButtonText, bool isMultiLine) 
 {
-    std::wstring okBtnText = confirmButtonText.empty() ? (AppStrings::Dialog_Button_OK ? AppStrings::Dialog_Button_OK : L"OK") : confirmButtonText;
-    std::wstring cancelBtnText = AppStrings::Dialog_Cancel ? AppStrings::Dialog_Cancel : L"Cancel";
+    std::wstring okBtnText = confirmButtonText.empty() ? (AppStrings::g.Dialog_Button_OK ? AppStrings::g.Dialog_Button_OK : L"OK") : confirmButtonText;
+    std::wstring cancelBtnText = AppStrings::g.Dialog_Cancel ? AppStrings::g.Dialog_Cancel : L"Cancel";
     std::vector<DialogButton> buttons = { { DialogResult::Yes, okBtnText.c_str(), true }, { DialogResult::None, cancelBtnText.c_str() } };
     DialogResult res = DialogResult::None;
     return ShowInputDialog(hwnd, title, message, initialText, buttons, res, isMultiLine);
@@ -732,18 +729,16 @@ std::wstring DialogController::ShowInputDialog(HWND hwnd, const std::wstring& ti
 std::wstring DialogController::ShowInputDialog(HWND hwnd, const std::wstring& title, const std::wstring& message, const std::wstring& initialText, const std::vector<DialogButton>& buttons, DialogResult& outResult, bool isMultiLine)
 {
     m_hwnd = hwnd;
+    DestroyDialogInputInternal(m_context.Dialog);
+    m_context.Dialog.ResetModeState();
     m_context.Dialog.IsVisible = true;
     m_context.Dialog.Title = title;
     m_context.Dialog.Message = message;
-    m_context.Dialog.QualityText.clear();
     m_context.Dialog.AccentColor = QuickView::UI::Theme::GetThemePalette().accentFill;
     m_context.Dialog.Buttons = buttons;
-    m_context.Dialog.SelectedButtonIndex = 0;
-    m_context.Dialog.HasCheckbox = false;
     m_context.Dialog.HasInput = true;
     m_context.Dialog.IsMultiLineInput = isMultiLine;
     m_context.Dialog.InputText = initialText;
-    m_context.Dialog.FinalResult = DialogResult::None;
     
     EnsureWindowSizeForDialog(hwnd);
     CreateDialogInputInternal(hwnd, m_context.Dialog);
@@ -764,6 +759,7 @@ std::wstring DialogController::ShowInputDialog(HWND hwnd, const std::wstring& ti
     if (!IsCompareModeActive()) {
         AdjustWindowForOverlay(hwnd, true);
     }
+    m_context.Dialog.UseCustomCenter = false;
     
     outResult = m_context.Dialog.FinalResult;
     if (outResult != DialogResult::None && outResult != DialogResult::Cancel) {
@@ -790,28 +786,22 @@ DialogResult DialogController::ShowChoiceDialog(
     bool isChecked2Default
 ) {
     m_hwnd = hwnd;
+    DestroyDialogInputInternal(m_context.Dialog);
+    m_context.Dialog.ResetModeState();
     m_context.Dialog.IsVisible = true;
     m_context.Dialog.Title = title;
     m_context.Dialog.Message = messageContent;
-    m_context.Dialog.QualityText.clear();
     m_context.Dialog.AccentColor = accentColor;
     m_context.Dialog.Buttons = buttons;
-    m_context.Dialog.SelectedButtonIndex = 0;
     m_context.Dialog.HasCheckbox = hasCheckbox;
     m_context.Dialog.CheckboxText = checkboxText;
     m_context.Dialog.IsChecked = isCheckedDefault;
     m_context.Dialog.HasCheckbox2 = hasCheckbox2;
     m_context.Dialog.Checkbox2Text = checkbox2Text;
     m_context.Dialog.IsChecked2 = isChecked2Default;
-    m_context.Dialog.HasInput = false;
     m_context.Dialog.HasChoice = true;
     m_context.Dialog.ChoiceOptions = options;
     m_context.Dialog.SelectedChoiceIndex = (inOutSelectedIndex >= 0 && inOutSelectedIndex < static_cast<int>(options.size())) ? inOutSelectedIndex : 0;
-    m_context.Dialog.IsChoiceDropdownOpen = false;
-    m_context.Dialog.HoverChoiceIndex = -1;
-    m_context.Dialog.IsChoiceHovered = false;
-    m_context.Dialog.hEdit = nullptr;
-    m_context.Dialog.FinalResult = DialogResult::None;
 
     EnsureWindowSizeForDialog(hwnd);
     RequestRepaint(QuickView::PaintLayer::Dynamic);
@@ -831,6 +821,7 @@ DialogResult DialogController::ShowChoiceDialog(
     }
 
     inOutSelectedIndex = m_context.Dialog.SelectedChoiceIndex;
+    m_context.Dialog.UseCustomCenter = false;
     return m_context.Dialog.FinalResult;
 }
 

@@ -96,7 +96,6 @@ public:
         int effectiveCmsMode = 1;
         bool enableSoftProofing = false;
         std::wstring softProofProfilePath;
-        mutable float outSrScale = 1.0f; // [QVX-SR] Output scaling density (1.0f or 2.0f)
     };
 
 
@@ -121,9 +120,9 @@ public:
 
     void SetAdvancedColorMode(bool enabled) { m_isAdvancedColor = enabled; }
     void SetDisplayColorState(const QuickView::DisplayColorState& state) {
+        std::lock_guard<std::mutex> lock(m_cacheMutex);
         if (state.gdiDeviceName != m_displayColorState.gdiDeviceName ||
             state.advancedColorActive != m_displayColorState.advancedColorActive) {
-            std::lock_guard<std::mutex> lock(m_cacheMutex);
             m_cachedMonitorColorContext.Reset();
             m_cachedDestDeviceName.clear();
             m_cachedMonitorProfilePath.clear();
@@ -131,7 +130,10 @@ public:
         }
         m_displayColorState = state;
     }
-    const QuickView::DisplayColorState& GetDisplayColorState() const { return m_displayColorState; }
+    QuickView::DisplayColorState GetDisplayColorState() const {
+        std::lock_guard<std::mutex> lock(m_cacheMutex);
+        return m_displayColorState;
+    }
 
     /// <summary>
     /// Create D2D bitmap from WIC bitmap
@@ -240,6 +242,8 @@ private:
     HRESULT LoadColorContextForPrimaries(QuickView::ColorPrimaries primaries,
                                          ID2D1ColorContext** outContext) const;
     bool ShouldUseHdrOutputForFrame(const QuickView::RawImageFrame& frame) const;
+    bool ShouldUseHdrOutputForFrameLocked(const QuickView::RawImageFrame& frame,
+                                          const QuickView::DisplayColorState& displayState) const;
 
     HWND m_hwnd = nullptr;
     bool m_isAdvancedColor = false;

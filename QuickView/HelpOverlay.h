@@ -58,7 +58,6 @@ private:
   ComPtr<ID2D1SolidColorBrush> m_brushBg;
   ComPtr<ID2D1SolidColorBrush> m_brushText;
   ComPtr<ID2D1SolidColorBrush> m_brushHeader;
-  ComPtr<ID2D1SolidColorBrush> m_brushKey;
   ComPtr<ID2D1SolidColorBrush> m_brushBorder;
   ComPtr<ID2D1SolidColorBrush> m_brushScrollBg;
   ComPtr<ID2D1SolidColorBrush> m_brushScrollThumb;
@@ -66,14 +65,11 @@ private:
 
   ComPtr<IDWriteFactory> m_dwriteFactory;
   ComPtr<IDWriteTextFormat> m_fmtHeader;
-  ComPtr<IDWriteTextFormat> m_fmtKey;
-  ComPtr<IDWriteTextFormat> m_fmtDesc;
   ComPtr<IDWriteTextFormat> m_fmtTip;
 
   // Layout
   const float WIDTH = 500.0f;
   const float MAX_HEIGHT = 600.0f;
-  const float ROW_HEIGHT = 28.0f;
   D2D1_RECT_F m_finalRect = {};
 
   // Geek Glass properties
