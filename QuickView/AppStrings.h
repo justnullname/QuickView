@@ -514,6 +514,9 @@ namespace AppStrings {
         const wchar_t* Settings_Button_InstalledUpToDate = nullptr;
         const wchar_t* Settings_Format_UpdateTo = nullptr;
         const wchar_t* Settings_Button_InstallPlugin = nullptr;
+        const wchar_t* Settings_Label_PluginUpdate = nullptr;
+        const wchar_t* Settings_Label_UninstallPlugin = nullptr;
+        const wchar_t* Settings_Button_UninstallPlugin = nullptr;
 
         // Super-Resolution OSD & Dialog
         const wchar_t* OSD_SrProcessing = nullptr;

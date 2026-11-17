@@ -89,6 +89,8 @@ public:
     PluginInstallState GetSrPluginInstallState() const;
     std::string GetInstalledPluginVersion() const;
     std::string GetTargetPluginVersion() const { return QVX_OFFICIAL_SR_PLUGIN_VERSION; }
+    static int ComparePluginVersions(std::string_view a, std::string_view b) noexcept;
+    static bool IsOfficialSrPluginMatch(std::string_view id, std::string_view fileName) noexcept;
 
     // --- Super-Resolution Plugin Control ---
     bool IsSrPluginEnabled() const;
@@ -161,8 +163,10 @@ public:
         return DownloadModel(targetRelativePath, downloadUrl, "", onProgress, userData);
     }
     bool DownloadModel(const std::wstring& targetRelativePath, const std::string& downloadUrl, const std::string& expectedSha256, DownloadProgressCallback onProgress = nullptr, void* userData = nullptr);
+    std::wstring GetWritablePluginsDirectory() const;
     std::wstring GetWritableModelsDirectory() const;
     void OpenModelsDirectory() const;
+    bool UninstallSrPlugin();
 
     // Fast Win32 Cryptographic SHA-256 calculation for download verification
     static std::string CalculateSHA256(const std::wstring& filePath);

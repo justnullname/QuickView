@@ -106,6 +106,104 @@ std::string PluginHost::CalculateSHA256(const std::wstring& filePath) {
     return hashStr;
 }
 
+static std::wstring GetExecutableDirectory() {
+    wchar_t exePath[MAX_PATH * 2]{};
+    DWORD len = GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
+    if (len == 0 || len >= std::size(exePath)) return {};
+    PathRemoveFileSpecW(exePath);
+    return std::wstring(exePath);
+}
+
+static std::wstring GetLocalAppDataRoot() {
+    std::wstring localAppData = SystemInfo::GetLocalAppDataDir();
+    if (!localAppData.empty()) {
+        return localAppData;
+    }
+    wchar_t tempPath[MAX_PATH * 2]{};
+    DWORD len = GetTempPathW(static_cast<DWORD>(std::size(tempPath)), tempPath);
+    if (len > 0 && len < std::size(tempPath)) {
+        std::wstring result(tempPath, len);
+        while (!result.empty() && (result.back() == L'\\' || result.back() == L'/')) {
+            result.pop_back();
+        }
+        return result;
+    }
+    return {};
+}
+
+static bool IsDirectoryWritable(const std::wstring& dirPath) {
+    if (dirPath.empty() || !SystemInfo::EnsureDirectoryRecursive(dirPath)) {
+        return false;
+    }
+    std::wstring probeFile = dirPath + L"\\.qv_write_probe_" + std::to_wstring(GetCurrentProcessId()) + L".tmp";
+    HANDLE hFile = CreateFileW(
+        probeFile.c_str(),
+        GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr,
+        CREATE_ALWAYS,
+        FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE,
+        nullptr
+    );
+    if (hFile == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    CloseHandle(hFile);
+    return true;
+}
+
+static std::wstring ToRelativeIfUnderExeDir(const std::wstring& fullPath, const std::wstring& exeDir) {
+    if (exeDir.empty() || fullPath.size() <= exeDir.size() + 1) {
+        return fullPath;
+    }
+    if (_wcsnicmp(fullPath.c_str(), exeDir.c_str(), exeDir.size()) == 0 &&
+        (fullPath[exeDir.size()] == L'\\' || fullPath[exeDir.size()] == L'/')) {
+        return fullPath.substr(exeDir.size() + 1);
+    }
+    return fullPath;
+}
+
+int PluginHost::ComparePluginVersions(std::string_view a, std::string_view b) noexcept {
+    auto trimLeading = [](std::string_view& s) {
+        while (!s.empty() && (s.front() == ' ' || s.front() == '\t' || s.front() == 'v' || s.front() == 'V')) {
+            s.remove_prefix(1);
+        }
+    };
+    trimLeading(a);
+    trimLeading(b);
+
+    auto nextPart = [](std::string_view& s) -> int {
+        if (s.empty()) return 0;
+        size_t dot = s.find('.');
+        std::string_view seg = (dot == std::string_view::npos) ? s : s.substr(0, dot);
+        int val = 0;
+        if (!seg.empty()) {
+            std::from_chars(seg.data(), seg.data() + seg.size(), val);
+        }
+        if (dot == std::string_view::npos) {
+            s = {};
+        } else {
+            s.remove_prefix(dot + 1);
+        }
+        return val;
+    };
+
+    while (!a.empty() || !b.empty()) {
+        int ia = nextPart(a);
+        int ib = nextPart(b);
+        if (ia != ib) {
+            return (ia > ib) ? 1 : -1;
+        }
+    }
+    return 0;
+}
+
+bool PluginHost::IsOfficialSrPluginMatch(std::string_view id, std::string_view fileName) noexcept {
+    return id == "com.quickview.sr.ncnn_vulkan" ||
+           id == "sr_ncnn_vulkan" ||
+           fileName.find("sr_ncnn_vulkan") != std::string_view::npos;
+}
+
 std::vector<RemotePluginItem> PluginHost::GetCachedRemoteManifest() const {
     std::lock_guard<std::recursive_mutex> lock(m_srMutex);
     if (!m_cachedManifest.empty()) {
@@ -125,13 +223,13 @@ std::vector<RemotePluginItem> PluginHost::GetCachedRemoteManifest() const {
     defaultList.push_back({
         "com.quickview.sr.ncnn_vulkan",
         "Real-ESRGAN NCNN Vulkan",
-        "0.1.0",
+        QVX_OFFICIAL_SR_PLUGIN_VERSION,
         "QuickView Core Team",
         "SuperResolution",
         "High-Performance In-Process Vulkan Compute Neural Super-Resolution Engine (0-Copy, 0 Disk I/O).",
         defaultPkgUrl,
         defaultPkgFile,
-        2600000,
+        48184000,
         "",
         "0.1.0"
     });
@@ -140,37 +238,48 @@ std::vector<RemotePluginItem> PluginHost::GetCachedRemoteManifest() const {
 
 std::wstring PluginHost::ResolveEffectiveSrPluginPath(std::wstring* pOutRelativeForIni) const {
     std::lock_guard<std::recursive_mutex> lock(m_srMutex);
-    wchar_t exePath[MAX_PATH];
-    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
-    PathRemoveFileSpecW(exePath);
+    const std::wstring exeDir = GetExecutableDirectory();
+    static constexpr const wchar_t* kDefaultRelPath = L"plugins\\sr\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx";
 
-    std::wstring configuredPath = m_srPluginPath;
-    if (configuredPath.empty()) {
-        configuredPath = L"plugins\\sr\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx";
-    }
+    auto fileExists = [](const std::wstring& path) -> bool {
+        if (path.empty()) return false;
+        DWORD attrs = GetFileAttributesW(path.c_str());
+        return (attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY));
+    };
 
-    // Candidate 1: Try configured path directly (if relative, anchor to exePath)
-    std::wstring absConfigured = configuredPath;
-    if (PathIsRelativeW(absConfigured.c_str())) {
-        wchar_t combined[MAX_PATH];
-        PathCombineW(combined, exePath, configuredPath.c_str());
-        absConfigured = combined;
-    }
-    DWORD attrs = GetFileAttributesW(absConfigured.c_str());
-    if (attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY)) {
-        if (pOutRelativeForIni) {
-            if (_wcsnicmp(absConfigured.c_str(), exePath, wcslen(exePath)) == 0) {
-                size_t offset = wcslen(exePath);
-                if (absConfigured[offset] == L'\\' || absConfigured[offset] == L'/') offset++;
-                *pOutRelativeForIni = absConfigured.substr(offset);
-            } else {
-                *pOutRelativeForIni = configuredPath;
+    // In packaged MSIX mode, always prefer the signed plugin bundled inside the immutable package directory.
+    if (SystemInfo::IsPackagedApp()) {
+        std::wstring pkgBuiltin = exeDir + L"\\" + kDefaultRelPath;
+        if (fileExists(pkgBuiltin)) {
+            if (_wcsicmp(m_srPluginPath.c_str(), kDefaultRelPath) != 0) {
+                m_srPluginPath = kDefaultRelPath;
+                m_installCacheValid = false;
             }
+            if (pOutRelativeForIni) {
+                *pOutRelativeForIni = kDefaultRelPath;
+            }
+            return pkgBuiltin;
+        }
+    }
+
+    std::wstring configuredPath = m_srPluginPath.empty() ? kDefaultRelPath : m_srPluginPath;
+
+    // Candidate 1: Try configured path directly (if relative, anchor to exeDir)
+    std::wstring absConfigured = configuredPath;
+    if (PathIsRelativeW(absConfigured.c_str()) && !exeDir.empty()) {
+        wchar_t combined[MAX_PATH * 2]{};
+        if (PathCombineW(combined, exeDir.c_str(), configuredPath.c_str())) {
+            absConfigured = combined;
+        }
+    }
+    if (fileExists(absConfigured)) {
+        if (pOutRelativeForIni) {
+            *pOutRelativeForIni = ToRelativeIfUnderExeDir(absConfigured, exeDir);
         }
         return absConfigured;
     }
 
-    // Candidate 2: Self-Healing Search in current application folder tree
+    // Candidate 2: Self-Healing Search in standard app, fallback LocalAppData, and legacy directories
     std::wstring fileName = configuredPath;
     size_t lastSlash = fileName.find_last_of(L"\\/");
     if (lastSlash != std::wstring::npos) {
@@ -179,29 +288,38 @@ std::wstring PluginHost::ResolveEffectiveSrPluginPath(std::wstring* pOutRelative
     if (fileName.empty()) fileName = L"sr_ncnn_vulkan.qvx";
 
     std::vector<std::wstring> probeLocations;
-    probeLocations.push_back(std::wstring(exePath) + L"\\plugins\\sr\\sr_ncnn_vulkan\\" + fileName);
-    probeLocations.push_back(std::wstring(exePath) + L"\\plugins\\sr_ncnn_vulkan\\" + fileName);
-    probeLocations.push_back(std::wstring(exePath) + L"\\plugins\\sr\\" + fileName);
-    probeLocations.push_back(std::wstring(exePath) + L"\\plugins\\" + fileName);
+    probeLocations.reserve(8);
+    if (!exeDir.empty()) {
+        probeLocations.push_back(exeDir + L"\\plugins\\sr\\sr_ncnn_vulkan\\" + fileName);
+        probeLocations.push_back(exeDir + L"\\plugins\\sr_ncnn_vulkan\\" + fileName);
+        probeLocations.push_back(exeDir + L"\\plugins\\sr\\" + fileName);
+        probeLocations.push_back(exeDir + L"\\plugins\\" + fileName);
+    }
+
+    const std::wstring localRoot = GetLocalAppDataRoot();
+    if (!localRoot.empty() && !SystemInfo::IsPackagedApp()) {
+        probeLocations.push_back(localRoot + L"\\QuickView\\plugins\\sr\\sr_ncnn_vulkan\\" + fileName);
+    }
 
     // If configured path referred to the official plugin, also probe standard official locations
     if (_wcsicmp(fileName.c_str(), L"sr_ncnn_vulkan.qvx") == 0 ||
         configuredPath.find(L"sr_ncnn_vulkan") != std::wstring::npos) {
-        probeLocations.push_back(std::wstring(exePath) + L"\\plugins\\sr\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx");
-        probeLocations.push_back(std::wstring(exePath) + L"\\plugins\\sr_ncnn_vulkan.qvx");
+        if (!exeDir.empty()) {
+            probeLocations.push_back(exeDir + L"\\plugins\\sr\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx");
+            probeLocations.push_back(exeDir + L"\\plugins\\sr_ncnn_vulkan.qvx");
+        }
+        if (!localRoot.empty() && !SystemInfo::IsPackagedApp()) {
+            probeLocations.push_back(localRoot + L"\\QuickView\\plugins\\sr\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx");
+        }
     }
 
     for (const auto& probe : probeLocations) {
-        DWORD probeAttrs = GetFileAttributesW(probe.c_str());
-        if (probeAttrs != INVALID_FILE_ATTRIBUTES && !(probeAttrs & FILE_ATTRIBUTE_DIRECTORY)) {
-            // Auto-heal active state under m_srMutex
-            size_t offset = wcslen(exePath);
-            if (probe[offset] == L'\\' || probe[offset] == L'/') offset++;
-            std::wstring relPath = probe.substr(offset);
-            m_srPluginPath = relPath;
+        if (fileExists(probe)) {
+            std::wstring iniPath = ToRelativeIfUnderExeDir(probe, exeDir);
+            m_srPluginPath = iniPath;
             m_installCacheValid = false;
             if (pOutRelativeForIni) {
-                *pOutRelativeForIni = relPath;
+                *pOutRelativeForIni = iniPath;
             }
             return probe;
         }
@@ -229,7 +347,8 @@ PluginInstallState PluginHost::GetSrPluginInstallState() const {
         std::string pluginId = m_srHeader->plugin_id ? m_srHeader->plugin_id : "";
         m_cachedResolvedPath = ResolveEffectiveSrPluginPath();
         m_cachedInstalledVersion = installedVer;
-        m_cachedInstallState = (pluginId == "com.quickview.sr.ncnn_vulkan" && installedVer != QVX_OFFICIAL_SR_PLUGIN_VERSION)
+        m_cachedInstallState = (pluginId == "com.quickview.sr.ncnn_vulkan" &&
+                                ComparePluginVersions(QVX_OFFICIAL_SR_PLUGIN_VERSION, installedVer) > 0)
             ? PluginInstallState::UpdateAvailable
             : PluginInstallState::Installed;
         m_installCacheValid = true;
@@ -272,7 +391,8 @@ PluginInstallState PluginHost::GetSrPluginInstallState() const {
 
     m_cachedResolvedPath = fullPath;
     m_cachedInstalledVersion = installedVer;
-    m_cachedInstallState = (pluginId == "com.quickview.sr.ncnn_vulkan" && installedVer != QVX_OFFICIAL_SR_PLUGIN_VERSION)
+    m_cachedInstallState = (pluginId == "com.quickview.sr.ncnn_vulkan" &&
+                            ComparePluginVersions(QVX_OFFICIAL_SR_PLUGIN_VERSION, installedVer) > 0)
         ? PluginInstallState::UpdateAvailable
         : PluginInstallState::Installed;
     m_installCacheValid = true;
@@ -468,15 +588,14 @@ std::vector<SrModelEntry> PluginHost::GetCurrentSrModels() const {
     uint32_t count = m_srVTable->get_model_count();
     result.reserve(count);
 
-    wchar_t exePath[MAX_PATH * 2]{};
-    GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
-    PathRemoveFileSpecW(exePath);
+    const std::wstring exeDir = GetExecutableDirectory();
     std::wstring writableModelsDir = GetWritableModelsDirectory();
-    std::wstring isolatedModelsDir = std::wstring(exePath) + L"\\plugins\\sr\\sr_ncnn_vulkan\\models";
-    std::wstring legacyModelsDir = std::wstring(exePath) + L"\\plugins\\models";
+    std::wstring localAppModelsDir = GetLocalAppDataRoot() + L"\\QuickView\\plugins\\sr\\sr_ncnn_vulkan\\models";
+    std::wstring isolatedModelsDir = exeDir.empty() ? std::wstring{} : (exeDir + L"\\plugins\\sr\\sr_ncnn_vulkan\\models");
+    std::wstring legacyModelsDir = exeDir.empty() ? std::wstring{} : (exeDir + L"\\plugins\\models");
 
     auto hasModelPair = [&](const std::wstring& modelStem) -> bool {
-        const std::wstring* dirs[] = { &writableModelsDir, &isolatedModelsDir, &legacyModelsDir };
+        const std::wstring* dirs[] = { &writableModelsDir, &localAppModelsDir, &isolatedModelsDir, &legacyModelsDir };
         for (const auto* d : dirs) {
             if (d->empty()) continue;
             DWORD binAttr = GetFileAttributesW((*d + L"\\" + modelStem + L".bin").c_str());
@@ -967,17 +1086,35 @@ void PluginHost::UnloadSrPlugin() {
 
 std::vector<PluginCandidate> PluginHost::ScanPluginsDirectory(const std::wstring& pluginsDir) {
     std::vector<PluginCandidate> candidates;
+    std::vector<std::wstring> seenFilesLower;
 
-    wchar_t exePath[MAX_PATH];
-    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
-    PathRemoveFileSpecW(exePath);
-
-    std::wstring rootDir = pluginsDir;
-    if (rootDir.empty()) {
-        rootDir = std::wstring(exePath) + L"\\plugins";
+    const std::wstring exeDir = GetExecutableDirectory();
+    std::vector<std::wstring> searchRoots;
+    if (!pluginsDir.empty()) {
+        searchRoots.push_back(pluginsDir);
+    } else {
+        if (!exeDir.empty()) {
+            searchRoots.push_back(exeDir + L"\\plugins");
+        }
+        if (!SystemInfo::IsPackagedApp()) {
+            const std::wstring localRoot = GetLocalAppDataRoot();
+            if (!localRoot.empty()) {
+                std::wstring localPlugins = localRoot + L"\\QuickView\\plugins";
+                if (searchRoots.empty() || _wcsicmp(localPlugins.c_str(), searchRoots[0].c_str()) != 0) {
+                    searchRoots.push_back(std::move(localPlugins));
+                }
+            }
+        }
     }
 
     auto probeFile = [&](const std::wstring& fullPath) {
+        std::wstring keyLower = fullPath;
+        std::transform(keyLower.begin(), keyLower.end(), keyLower.begin(), ::towlower);
+        for (const auto& seen : seenFilesLower) {
+            if (seen == keyLower) return;
+        }
+        seenFilesLower.push_back(std::move(keyLower));
+
         HMODULE hMod = LoadLibraryExW(fullPath.c_str(), nullptr, DONT_RESOLVE_DLL_REFERENCES | LOAD_LIBRARY_AS_DATAFILE);
         if (!hMod) return;
 
@@ -991,19 +1128,14 @@ std::vector<PluginCandidate> PluginHost::ScanPluginsDirectory(const std::wstring
             const QVX_PluginHeader* header = nullptr;
             if (pfnInit(&header) && header && header->abi_version == QVX_ABI_VERSION) {
                 PluginCandidate cand;
-                size_t exeLen = wcslen(exePath);
-                if (fullPath.rfind(exePath, 0) == 0 && fullPath.length() > exeLen + 1) {
-                    cand.filePath = fullPath.substr(exeLen + 1);
-                } else {
-                    cand.filePath = fullPath;
-                }
+                cand.filePath = ToRelativeIfUnderExeDir(fullPath, exeDir);
                 cand.pluginId = header->plugin_id ? header->plugin_id : "";
                 cand.pluginName = header->plugin_name ? header->plugin_name : "";
                 cand.versionStr = header->version_str ? header->version_str : "";
                 cand.supportedInterfaces = header->supported_interfaces;
                 {
                     std::lock_guard<std::recursive_mutex> lock(m_srMutex);
-                    cand.isLoaded = (cand.filePath == m_srPluginPath && m_hSrModule != nullptr);
+                    cand.isLoaded = (_wcsicmp(cand.filePath.c_str(), m_srPluginPath.c_str()) == 0 && m_hSrModule != nullptr);
                 }
                 candidates.push_back(std::move(cand));
             }
@@ -1036,8 +1168,38 @@ std::vector<PluginCandidate> PluginHost::ScanPluginsDirectory(const std::wstring
         FindClose(hFind);
     };
 
-    scanDirRecursive(scanDirRecursive, rootDir, 0);
-    return candidates;
+    for (const auto& rootDir : searchRoots) {
+        DWORD rootAttr = GetFileAttributesW(rootDir.c_str());
+        if (rootAttr != INVALID_FILE_ATTRIBUTES && (rootAttr & FILE_ATTRIBUTE_DIRECTORY)) {
+            scanDirRecursive(scanDirRecursive, rootDir, 0);
+        }
+    }
+
+    // Deduplicate entries sharing the same non-empty pluginId, preferring newer version then standard/loaded path.
+    std::vector<PluginCandidate> deduped;
+    deduped.reserve(candidates.size());
+    for (auto& cand : candidates) {
+        if (cand.pluginId.empty()) {
+            deduped.push_back(std::move(cand));
+            continue;
+        }
+        auto existing = std::find_if(deduped.begin(), deduped.end(), [&](const PluginCandidate& item) {
+            return item.pluginId == cand.pluginId;
+        });
+        if (existing == deduped.end()) {
+            deduped.push_back(std::move(cand));
+            continue;
+        }
+        const int verCmp = ComparePluginVersions(cand.versionStr, existing->versionStr);
+        const bool preferCand =
+            (verCmp > 0) ||
+            (verCmp == 0 && ((cand.isLoaded && !existing->isLoaded) ||
+                             (!existing->isLoaded && _wcsicmp(cand.filePath.c_str(), L"plugins\\sr\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx") == 0)));
+        if (preferCand) {
+            *existing = std::move(cand);
+        }
+    }
+    return deduped;
 }
 
 #ifdef _DEBUG
@@ -1326,26 +1488,92 @@ static bool WinHttpDownloadFile(
     return false;
 }
 
-std::wstring PluginHost::GetWritableModelsDirectory() const {
-    if (SystemInfo::IsPackagedApp()) {
-        std::wstring localAppData = SystemInfo::GetLocalAppDataDir();
-        if (localAppData.empty()) {
-            wchar_t tempPath[MAX_PATH * 2]{};
-            DWORD len = GetTempPathW(static_cast<DWORD>(std::size(tempPath)), tempPath);
-            if (len > 0 && len < std::size(tempPath)) {
-                localAppData.assign(tempPath, len);
-                while (!localAppData.empty() && (localAppData.back() == L'\\' || localAppData.back() == L'/')) {
-                    localAppData.pop_back();
-                }
-            }
-        }
-        return localAppData + L"\\QuickView\\plugins\\sr\\sr_ncnn_vulkan\\models";
+static void FlattenNestedPluginSubdir(const std::wstring& targetDir, const wchar_t* subdirName) {
+    if (targetDir.empty() || !subdirName || subdirName[0] == L'\0') return;
+    std::wstring nestedDir = targetDir + L"\\" + subdirName;
+    DWORD attr = GetFileAttributesW(nestedDir.c_str());
+    if (attr == INVALID_FILE_ATTRIBUTES || !(attr & FILE_ATTRIBUTE_DIRECTORY)) return;
+
+    std::wstring nestedQvx = nestedDir + L"\\sr_ncnn_vulkan.qvx";
+    std::wstring topQvx = targetDir + L"\\sr_ncnn_vulkan.qvx";
+    if (GetFileAttributesW(nestedQvx.c_str()) == INVALID_FILE_ATTRIBUTES ||
+        GetFileAttributesW(topQvx.c_str()) != INVALID_FILE_ATTRIBUTES) {
+        return;
     }
 
-    wchar_t exePath[MAX_PATH * 2]{};
-    GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
-    PathRemoveFileSpecW(exePath);
-    return std::wstring(exePath) + L"\\plugins\\sr\\sr_ncnn_vulkan\\models";
+    auto moveTree = [&](auto self, const std::wstring& src, const std::wstring& dst) -> void {
+        SystemInfo::EnsureDirectoryRecursive(dst);
+        WIN32_FIND_DATAW fd;
+        HANDLE hFind = FindFirstFileW((src + L"\\*").c_str(), &fd);
+        if (hFind == INVALID_HANDLE_VALUE) return;
+        do {
+            if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
+            std::wstring sPath = src + L"\\" + fd.cFileName;
+            std::wstring dPath = dst + L"\\" + fd.cFileName;
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+                self(self, sPath, dPath);
+                RemoveDirectoryW(sPath.c_str());
+            } else {
+                SetFileAttributesW(dPath.c_str(), FILE_ATTRIBUTE_NORMAL);
+                MoveFileExW(sPath.c_str(), dPath.c_str(), MOVEFILE_REPLACE_EXISTING);
+            }
+        } while (FindNextFileW(hFind, &fd));
+        FindClose(hFind);
+    };
+    moveTree(moveTree, nestedDir, targetDir);
+    RemoveDirectoryW(nestedDir.c_str());
+}
+
+static void RemoveDirectoryContentsSafe(const std::wstring& dirPath) {
+    DWORD attr = GetFileAttributesW(dirPath.c_str());
+    if (attr == INVALID_FILE_ATTRIBUTES || !(attr & FILE_ATTRIBUTE_DIRECTORY)) return;
+    WIN32_FIND_DATAW fd;
+    HANDLE hFind = FindFirstFileW((dirPath + L"\\*").c_str(), &fd);
+    if (hFind == INVALID_HANDLE_VALUE) return;
+    do {
+        if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
+        std::wstring itemPath = dirPath + L"\\" + fd.cFileName;
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            RemoveDirectoryContentsSafe(itemPath);
+            RemoveDirectoryW(itemPath.c_str());
+        } else {
+            SetFileAttributesW(itemPath.c_str(), FILE_ATTRIBUTE_NORMAL);
+            DeleteFileW(itemPath.c_str());
+        }
+    } while (FindNextFileW(hFind, &fd));
+    FindClose(hFind);
+    RemoveDirectoryW(dirPath.c_str());
+}
+
+std::wstring PluginHost::GetWritablePluginsDirectory() const {
+    if (SystemInfo::IsPackagedApp()) {
+        return {};
+    }
+    const std::wstring exeDir = GetExecutableDirectory();
+    if (!exeDir.empty()) {
+        std::wstring appPlugins = exeDir + L"\\plugins";
+        if (IsDirectoryWritable(appPlugins)) {
+            return appPlugins;
+        }
+    }
+    const std::wstring localRoot = GetLocalAppDataRoot();
+    if (!localRoot.empty()) {
+        std::wstring localPlugins = localRoot + L"\\QuickView\\plugins";
+        SystemInfo::EnsureDirectoryRecursive(localPlugins);
+        return localPlugins;
+    }
+    return {};
+}
+
+std::wstring PluginHost::GetWritableModelsDirectory() const {
+    if (SystemInfo::IsPackagedApp()) {
+        return GetLocalAppDataRoot() + L"\\QuickView\\plugins\\sr\\sr_ncnn_vulkan\\models";
+    }
+    std::wstring pluginsRoot = GetWritablePluginsDirectory();
+    if (pluginsRoot.empty()) {
+        return GetLocalAppDataRoot() + L"\\QuickView\\plugins\\sr\\sr_ncnn_vulkan\\models";
+    }
+    return pluginsRoot + L"\\sr\\sr_ncnn_vulkan\\models";
 }
 
 bool PluginHost::DownloadPlugin(const std::wstring& pluginName, const std::string& downloadUrl, const std::string& expectedSha256, DownloadProgressCallback onProgress, void* userData) {
@@ -1358,26 +1586,50 @@ bool PluginHost::DownloadPlugin(const std::wstring& pluginName, const std::strin
         return false;
     }
 
-    wchar_t exePath[MAX_PATH];
-    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
-    PathRemoveFileSpecW(exePath);
-
-    std::wstring destDir = std::wstring(exePath) + L"\\plugins";
-    SystemInfo::EnsureDirectoryRecursive(destDir);
+    const std::wstring exeDir = GetExecutableDirectory();
+    std::wstring pluginsRoot = GetWritablePluginsDirectory();
+    if (pluginsRoot.empty() || !SystemInfo::EnsureDirectoryRecursive(pluginsRoot)) {
+        if (onProgress) {
+            onProgress(0.0f, true, false, userData);
+        }
+        return false;
+    }
 
     std::string url = downloadUrl;
     if (url.empty()) {
         url = std::string("https://justnullname.github.io/QuickView/plugins/") + QuickView::WideToUtf8(pluginName);
     }
 
-    bool isZip = (url.find(".zip") != std::string::npos || pluginName.ends_with(L".zip"));
+    const bool isZip = (url.find(".zip") != std::string::npos || pluginName.ends_with(L".zip"));
+    const bool isOfficialSr = (pluginName.find(L"sr_ncnn_vulkan") != std::wstring::npos ||
+                               url.find("sr_ncnn_vulkan") != std::string::npos);
+    const std::wstring destDir = (isZip && isOfficialSr)
+        ? (pluginsRoot + L"\\sr\\sr_ncnn_vulkan")
+        : pluginsRoot;
+    SystemInfo::EnsureDirectoryRecursive(destDir);
+
     bool ok = false;
 
-    LogDownloadDebug("[QVX-Download] DownloadPlugin: plugin='%ls', url='%s', isZip=%d\n", pluginName.c_str(), url.c_str(), isZip ? 1 : 0);
+    LogDownloadDebug("[QVX-Download] DownloadPlugin: plugin='%ls', url='%s', isZip=%d, dest='%ls'\n",
+                     pluginName.c_str(), url.c_str(), isZip ? 1 : 0, destDir.c_str());
+
+    struct PluginDlStageCtx {
+        DownloadProgressCallback cb;
+        void* userData;
+    };
+    PluginDlStageCtx stageCtx{ onProgress, userData };
+    auto stageProgress = [](float progress, bool finished, [[maybe_unused]] bool success, void* u) {
+        auto* ctx = static_cast<PluginDlStageCtx*>(u);
+        if (ctx && ctx->cb && !finished) {
+            ctx->cb(progress * 0.9f, false, false, ctx->userData);
+        }
+    };
+    DownloadProgressCallback dlCb = onProgress ? stageProgress : nullptr;
+    void* dlCtx = onProgress ? &stageCtx : nullptr;
 
     if (isZip) {
-        std::wstring tempZipPath = destDir + L"\\temp_plugin_download.zip";
-        bool dlOk = WinHttpDownloadFile(url, tempZipPath, onProgress, userData);
+        std::wstring tempZipPath = pluginsRoot + L"\\temp_plugin_download.zip";
+        bool dlOk = WinHttpDownloadFile(url, tempZipPath, dlCb, dlCtx);
         if (dlOk) {
             if (!expectedSha256.empty()) {
                 std::string actualHash = CalculateSHA256(tempZipPath);
@@ -1388,13 +1640,39 @@ bool PluginHost::DownloadPlugin(const std::wstring& pluginName, const std::strin
                     return false;
                 }
             }
+            if (onProgress) {
+                onProgress(0.95f, false, false, userData);
+            }
+
+            // Unload active DLL cleanly BEFORE overwriting binaries on Windows.
+            UnloadSrPlugin();
+
+            if (isOfficialSr && !exeDir.empty()) {
+                const std::wstring targetQvx = destDir + L"\\sr_ncnn_vulkan.qvx";
+                const std::wstring legacyLocations[] = {
+                    exeDir + L"\\plugins\\sr_ncnn_vulkan.qvx",
+                    exeDir + L"\\plugins\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx",
+                    exeDir + L"\\plugins\\sr\\sr_ncnn_vulkan.qvx",
+                    exeDir + L"\\plugins\\sr\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx",
+                };
+                for (const auto& oldPath : legacyLocations) {
+                    if (_wcsicmp(oldPath.c_str(), targetQvx.c_str()) != 0) {
+                        SetFileAttributesW(oldPath.c_str(), FILE_ATTRIBUTE_NORMAL);
+                        DeleteFileW(oldPath.c_str());
+                    }
+                }
+            }
+
             ok = IArchive::ExtractZipToDirectory(tempZipPath, destDir);
             DeleteFileW(tempZipPath.c_str());
+            if (ok && isOfficialSr) {
+                FlattenNestedPluginSubdir(destDir, L"sr_ncnn_vulkan");
+            }
         }
     } else {
         std::wstring destFilePath = destDir + L"\\" + pluginName;
         std::wstring tempFilePath = destFilePath + L".tmp";
-        bool dlOk = WinHttpDownloadFile(url, tempFilePath, onProgress, userData);
+        bool dlOk = WinHttpDownloadFile(url, tempFilePath, dlCb, dlCtx);
         if (dlOk) {
             if (!expectedSha256.empty()) {
                 std::string actualHash = CalculateSHA256(tempFilePath);
@@ -1405,27 +1683,105 @@ bool PluginHost::DownloadPlugin(const std::wstring& pluginName, const std::strin
                     return false;
                 }
             }
+            UnloadSrPlugin();
             ok = (MoveFileExW(tempFilePath.c_str(), destFilePath.c_str(), MOVEFILE_REPLACE_EXISTING) != FALSE);
         }
     }
 
     if (ok) {
         std::lock_guard<std::recursive_mutex> lock(m_srMutex);
-        m_srPluginPath.clear();
-        std::wstring relForIni;
-        std::wstring effective = ResolveEffectiveSrPluginPath(&relForIni);
-        if (!effective.empty()) {
-            m_srPluginPath = relForIni;
+        const std::wstring preferredQvx = isOfficialSr ? (destDir + L"\\sr_ncnn_vulkan.qvx") : L"";
+        if (!preferredQvx.empty() && GetFileAttributesW(preferredQvx.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            m_srPluginPath = ToRelativeIfUnderExeDir(preferredQvx, exeDir);
         } else {
-            m_srPluginPath = L"plugins\\sr\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx";
+            m_srPluginPath.clear();
+            std::wstring relForIni;
+            std::wstring effective = ResolveEffectiveSrPluginPath(&relForIni);
+            m_srPluginPath = !effective.empty() ? relForIni : std::wstring(L"plugins\\sr\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx");
         }
         m_installCacheValid = false;
         m_modelsCacheValid = false;
-        UnloadSrPlugin();
         EnsureSrModuleLoaded();
+        GetSrPluginInstallState();
+    }
+    if (onProgress) {
+        onProgress(ok ? 1.0f : 0.0f, true, ok, userData);
     }
     LogDownloadDebug("[QVX-Download] DownloadPlugin finished: ok=%d\n", ok ? 1 : 0);
     return ok;
+}
+
+bool PluginHost::UninstallSrPlugin() {
+    if (SystemInfo::IsPackagedApp()) {
+        return false;
+    }
+
+    std::lock_guard<std::recursive_mutex> lock(m_srMutex);
+    const std::wstring exeDir = GetExecutableDirectory();
+    const std::wstring localRoot = GetLocalAppDataRoot();
+    const std::wstring activePath = ResolveEffectiveSrPluginPath();
+
+    bool isOfficialPlugin = false;
+    if (m_srHeader && m_srHeader->plugin_id) {
+        isOfficialPlugin = (std::string_view(m_srHeader->plugin_id) == "com.quickview.sr.ncnn_vulkan");
+    }
+    if (!isOfficialPlugin) {
+        std::wstring pathLower = activePath;
+        std::transform(pathLower.begin(), pathLower.end(), pathLower.begin(), ::towlower);
+        isOfficialPlugin = (pathLower.find(L"sr_ncnn_vulkan.qvx") != std::wstring::npos);
+    }
+
+    UnloadSrPlugin();
+
+    auto deleteFileSafe = [](const std::wstring& path) -> bool {
+        if (path.empty()) return true;
+        DWORD attrs = GetFileAttributesW(path.c_str());
+        if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY)) return true;
+        SetFileAttributesW(path.c_str(), FILE_ATTRIBUTE_NORMAL);
+        return (DeleteFileW(path.c_str()) != FALSE);
+    };
+
+    bool deletedAny = true;
+    if (!activePath.empty()) {
+        deletedAny = deleteFileSafe(activePath);
+    }
+
+    if (isOfficialPlugin) {
+        std::vector<std::wstring> officialRoots;
+        if (!exeDir.empty()) officialRoots.push_back(exeDir + L"\\plugins");
+        if (!localRoot.empty()) officialRoots.push_back(localRoot + L"\\QuickView\\plugins");
+
+        for (const auto& root : officialRoots) {
+            DWORD rootAttr = GetFileAttributesW(root.c_str());
+            if (rootAttr == INVALID_FILE_ATTRIBUTES || !(rootAttr & FILE_ATTRIBUTE_DIRECTORY)) continue;
+            if (!IsDirectoryWritable(root)) continue;
+            deletedAny &= deleteFileSafe(root + L"\\sr\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx");
+            deletedAny &= deleteFileSafe(root + L"\\sr\\sr_ncnn_vulkan\\README.md");
+            RemoveDirectoryContentsSafe(root + L"\\sr\\sr_ncnn_vulkan\\models");
+            RemoveDirectoryW((root + L"\\sr\\sr_ncnn_vulkan").c_str());
+
+            deletedAny &= deleteFileSafe(root + L"\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx");
+            deletedAny &= deleteFileSafe(root + L"\\sr_ncnn_vulkan\\README.md");
+            RemoveDirectoryContentsSafe(root + L"\\sr_ncnn_vulkan\\models");
+            RemoveDirectoryW((root + L"\\sr_ncnn_vulkan").c_str());
+
+            deletedAny &= deleteFileSafe(root + L"\\sr\\sr_ncnn_vulkan.qvx");
+            deletedAny &= deleteFileSafe(root + L"\\sr_ncnn_vulkan.qvx");
+            RemoveDirectoryW((root + L"\\sr").c_str());
+            RemoveDirectoryW(root.c_str());
+        }
+    }
+
+    m_enableSrPlugin.store(false, std::memory_order_relaxed);
+    m_srPluginPath = L"plugins\\sr\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx";
+    m_cachedInstalledVersion.clear();
+    m_cachedResolvedPath.clear();
+    m_cachedSrModels.clear();
+    m_cachedInstallState = PluginInstallState::NotInstalled;
+    m_installCacheValid = false;
+    m_modelsCacheValid = false;
+
+    return deletedAny;
 }
 
 static void FlattenModelDirectory(const std::wstring& fullModelsDir) {

@@ -437,16 +437,19 @@ if(EXISTS "${NCNN_DIR}/include/ncnn")
         "${NCNN_DIR}/lib/GenericCodeGen.lib"
     )
 
-    # Sync plugin models and manifest to build directory
+    # Sync plugin models, README, and manifest to build directory
     add_custom_command(TARGET sr_ncnn_vulkan POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/plugins/sr/sr_ncnn_vulkan/models"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_CURRENT_SOURCE_DIR}/plugins/sr/sr_ncnn_vulkan/models"
             "${CMAKE_BINARY_DIR}/plugins/sr/sr_ncnn_vulkan/models"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/plugins/sr/sr_ncnn_vulkan/README.md"
+            "${CMAKE_BINARY_DIR}/plugins/sr/sr_ncnn_vulkan/README.md"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/plugins/plugins_manifest.json"
             "${CMAKE_BINARY_DIR}/plugins/plugins_manifest.json"
-        COMMENT "Deploying isolated sr_ncnn_vulkan plugin assets & manifest..."
+        COMMENT "Deploying isolated sr_ncnn_vulkan plugin assets, README, & manifest..."
     )
 
     add_dependencies(QuickView sr_ncnn_vulkan)

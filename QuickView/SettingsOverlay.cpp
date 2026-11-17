@@ -3888,6 +3888,13 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
     const std::string& curVer = s_cachedCurVer;
 
     const bool isPackaged = SystemInfo::IsPackagedApp();
+    if (!isPackaged && m_activeTab == m_pluginsTabIdx && !pluginHost.IsFetchingManifest()) {
+        static bool s_autoManifestChecked = false;
+        if (!s_autoManifestChecked) {
+            s_autoManifestChecked = true;
+            pluginHost.TriggerManifestFetch();
+        }
+    }
     static int s_pluginViewMode = 0;
     static bool s_pluginViewModeInitialized = false;
     if (isPackaged) {
@@ -3898,6 +3905,65 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
             s_pluginViewMode = 1;
         }
     }
+
+    static auto s_startPluginPackageDownload = [](SettingsOverlay* overlay, const std::wstring& fileName, const std::string& downloadUrl, const std::string& sha256, bool isUpdate) {
+        {
+            std::lock_guard<std::mutex> lock(s_mktDlMutex);
+            MarketDownloadEntry* found = nullptr;
+            for (auto& e : s_mktDownloads) {
+                if (e.url == downloadUrl) { found = &e; break; }
+            }
+            if (!found) {
+                s_mktDownloads.push_back({ downloadUrl, true, 0.0f, isUpdate ? L"Updating (0%)..." : L"Connecting (0%)..." });
+            } else {
+                if (found->isDownloading) return;
+                found->isDownloading = true;
+                found->progress = 0.0f;
+                found->statusText = isUpdate ? L"Updating (0%)..." : L"Connecting (0%)...";
+            }
+        }
+
+        if (overlay) overlay->RequestRebuild();
+        extern void RequestRepaint(QuickView::PaintLayer layer);
+        RequestRepaint(QuickView::PaintLayer::Static);
+
+        QuickView::RunDetached([fileName, downloadUrl, sha256, isUpdate, overlay]() {
+            struct DlCbCtx { SettingsOverlay* ov; std::string url; bool isUpdate; };
+            auto* cbCtx = new DlCbCtx{ overlay, downloadUrl, isUpdate };
+            auto progressCb = [](float progress, bool finished, bool success, void* uData) {
+                auto* ctx = static_cast<DlCbCtx*>(uData);
+                if (!ctx) return;
+                {
+                    std::lock_guard<std::mutex> lock(s_mktDlMutex);
+                    for (auto it = s_mktDownloads.begin(); it != s_mktDownloads.end(); ++it) {
+                        if (it->url == ctx->url) {
+                            if (finished) {
+                                if (success) {
+                                    s_mktDownloads.erase(it);
+                                } else {
+                                    it->isDownloading = false;
+                                    it->progress = -1.0f;
+                                    it->statusText = ctx->isUpdate ? L"✗ Update Failed" : L"✗ Failed (Retry)";
+                                }
+                            } else {
+                                it->progress = (progress >= 0.0f) ? progress : 0.5f;
+                                const int percent = static_cast<int>(it->progress * 100.0f);
+                                it->statusText = (ctx->isUpdate ? L"Updating (" : L"Downloading (") + std::to_wstring(percent) + L"%)...";
+                            }
+                            break;
+                        }
+                    }
+                }
+                auto* payload = new PluginUiPayload{ ctx->ov, false, false };
+                PostSettingsUiEvent(SettingsUiEventKind::PluginProgress, payload);
+            };
+
+            const bool ok = QuickView::PluginHost::Instance().DownloadPlugin(fileName, downloadUrl, sha256, progressCb, cbCtx);
+            delete cbCtx;
+            auto* donePayload = new PluginUiPayload{ overlay, ok, ok && !isUpdate };
+            PostSettingsUiEvent(SettingsUiEventKind::PluginDone, donePayload);
+        });
+    };
 
     static bool s_srPluginEnabled = false;
     s_srPluginEnabled = pluginHost.IsSrPluginEnabled();
@@ -3928,6 +3994,55 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
         // VIEW 0: 已安装插件管理 (Installed Plugins - Blender Style Accordion)
         // ====================================================================
         if (installState != QuickView::PluginInstallState::NotInstalled) {
+            // Optional update banner in View 0 when local installed plugin is behind target/remote version
+            if (!isPackaged) {
+                const auto manifestItems = pluginHost.GetCachedRemoteManifest();
+                const QuickView::RemotePluginItem* matchedRemote = nullptr;
+                for (const auto& rp : manifestItems) {
+                    if (QuickView::PluginHost::IsOfficialSrPluginMatch(rp.id, rp.fileName)) {
+                        matchedRemote = &rp;
+                        break;
+                    }
+                }
+                std::string updateTargetVer = (installState == QuickView::PluginInstallState::UpdateAvailable)
+                    ? pluginHost.GetTargetPluginVersion()
+                    : std::string{};
+                if (matchedRemote && !matchedRemote->version.empty() && !curVer.empty() &&
+                    QuickView::PluginHost::ComparePluginVersions(matchedRemote->version, curVer) > 0) {
+                    if (updateTargetVer.empty() ||
+                        QuickView::PluginHost::ComparePluginVersions(matchedRemote->version, updateTargetVer) > 0) {
+                        updateTargetVer = matchedRemote->version;
+                    }
+                }
+                if (!updateTargetVer.empty() && matchedRemote) {
+                    static std::wstring s_v0UpdateFile;
+                    static std::string s_v0UpdateUrl;
+                    static std::string s_v0UpdateSha;
+                    s_v0UpdateFile = Utf8ToWide(matchedRemote->fileName);
+                    s_v0UpdateUrl = matchedRemote->downloadUrl;
+                    s_v0UpdateSha = matchedRemote->sha256;
+
+                    SettingsItem itemPluginUpdate = { AppStrings::g.Settings_Label_PluginUpdate, OptionType::ActionButton };
+                    const MarketDownloadEntry dlSnap = findMarketDl(s_v0UpdateUrl);
+                    if (dlSnap.isDownloading) {
+                        itemPluginUpdate.progress = dlSnap.progress;
+                        itemPluginUpdate.buttonText = dlSnap.statusText;
+                        itemPluginUpdate.isDisabled = true;
+                    } else if (!dlSnap.statusText.empty() && dlSnap.progress < 0.0f) {
+                        itemPluginUpdate.buttonText = dlSnap.statusText;
+                    } else {
+                        std::wstring wTargetVer = Utf8ToWide(updateTargetVer);
+                        wchar_t updBuf[128] = { 0 };
+                        swprintf_s(updBuf, AppStrings::g.Settings_Format_UpdateTo, wTargetVer.c_str());
+                        itemPluginUpdate.buttonText = updBuf;
+                    }
+                    itemPluginUpdate.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+                        s_startPluginPackageDownload(overlay, s_v0UpdateFile, s_v0UpdateUrl, s_v0UpdateSha, true);
+                    };
+                    tabPlugins.items.push_back(std::move(itemPluginUpdate));
+                }
+            }
+
             // 1. Data-Driven Dynamic Model Selector & Downloader pre-fetch
             static std::vector<std::wstring> s_modelDisplayNames;
             static std::vector<std::wstring> s_modelDescriptions;
@@ -4007,13 +4122,20 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
                         if (label.empty()) {
                             label = cand.filePath;
                         }
+                        if (!cand.versionStr.empty()) {
+                            label += L" (v" + Utf8ToWide(cand.versionStr) + L")";
+                        }
                         s_engineLabels.push_back(label);
                         s_enginePaths.push_back(cand.filePath);
                     }
                 }
 
                 if (s_engineLabels.empty()) {
-                    s_engineLabels.push_back(L"Real-ESRGAN NCNN Vulkan");
+                    std::wstring fallbackLabel = L"Real-ESRGAN NCNN Vulkan";
+                    if (!curVer.empty()) {
+                        fallbackLabel += L" (v" + Utf8ToWide(curVer) + L")";
+                    }
+                    s_engineLabels.push_back(std::move(fallbackLabel));
                     s_enginePaths.push_back(L"plugins\\sr\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx");
                 }
 
@@ -4469,6 +4591,39 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
                 QuickView::PluginHost::Instance().OpenModelsDirectory();
             };
             tabPlugins.items.push_back(std::move(itemOpenFolder));
+
+            if (!isPackaged) {
+                SettingsItem itemUninstall = { AppStrings::g.Settings_Label_UninstallPlugin, OptionType::ActionButton };
+                itemUninstall.buttonText = AppStrings::g.Settings_Button_UninstallPlugin;
+                itemUninstall.isDisabled = dlActive;
+                itemUninstall.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+                    if (s_srIsDownloading.load(std::memory_order_acquire)) return;
+                    {
+                        std::lock_guard<std::mutex> lock(s_mktDlMutex);
+                        for (const auto& e : s_mktDownloads) {
+                            if (e.isDownloading) return;
+                        }
+                        s_mktDownloads.clear();
+                    }
+                    if (QuickView::PluginHost::Instance().UninstallSrPlugin()) {
+                        s_srPluginEnabled = false;
+                        s_srDownloadText.clear();
+                        SaveConfig();
+                        if (overlay) {
+                            overlay->m_pluginsProbeValid = false;
+                            overlay->RequestRebuild();
+                        }
+                        extern void RequestRepaint(QuickView::PaintLayer layer);
+                        RequestRepaint(QuickView::PaintLayer::Static);
+                        extern HWND g_mainHwnd;
+                        extern void RefreshImageDisplay(HWND hwnd);
+                        if (IsWindow(g_mainHwnd)) {
+                            RefreshImageDisplay(g_mainHwnd);
+                        }
+                    }
+                };
+                tabPlugins.items.push_back(std::move(itemUninstall));
+            }
         } else {
             // Uninstalled guidance card in View 0
             SettingsItem itemEmptyHeader = { AppStrings::g.Settings_Header_SrComponent, OptionType::Header };
@@ -4551,75 +4706,19 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
             const size_t idx = static_cast<size_t>(*item->pIntVal);
             if (idx >= s_marketPluginSpecs.size()) return;
             const auto spec = s_marketPluginSpecs[idx];
-
-            {
-                std::lock_guard<std::mutex> lock(s_mktDlMutex);
-                MarketDownloadEntry* found = nullptr;
-                for (auto& e : s_mktDownloads) {
-                    if (e.url == spec.downloadUrl) { found = &e; break; }
-                }
-                if (!found) {
-                    s_mktDownloads.push_back({ spec.downloadUrl, true, 0.0f, spec.isUpdate ? L"Updating (0%)..." : L"Connecting (0%)..." });
-                } else {
-                    if (found->isDownloading) return;
-                    found->isDownloading = true;
-                    found->progress = 0.0f;
-                    found->statusText = spec.isUpdate ? L"Updating (0%)..." : L"Connecting (0%)...";
-                }
-            }
-
-            if (overlay) overlay->RequestRebuild();
-            extern void RequestRepaint(QuickView::PaintLayer layer);
-            RequestRepaint(QuickView::PaintLayer::Static);
-
-            QuickView::RunDetached([spec, overlay]() {
-                struct DlCbCtx { SettingsOverlay* ov; std::string url; bool isUpdate; };
-                auto* cbCtx = new DlCbCtx{ overlay, spec.downloadUrl, spec.isUpdate };
-                auto progressCb = [](float progress, bool finished, bool success, void* uData) {
-                    auto* ctx = static_cast<DlCbCtx*>(uData);
-                    if (!ctx) return;
-                    {
-                        std::lock_guard<std::mutex> lock(s_mktDlMutex);
-                        for (auto& e : s_mktDownloads) {
-                            if (e.url == ctx->url) {
-                                if (finished) {
-                                    e.isDownloading = false;
-                                    if (success) {
-                                        e.progress = 1.0f;
-                                        e.statusText = ctx->isUpdate ? L"✓ Updated" : L"✓ Ready";
-                                    } else {
-                                        e.progress = -1.0f;
-                                        e.statusText = ctx->isUpdate ? L"✗ Update Failed" : L"✗ Failed (Retry)";
-                                    }
-                                } else {
-                                    e.progress = (progress >= 0.0f) ? progress : 0.5f;
-                                    const int percent = static_cast<int>(e.progress * 100.0f);
-                                    e.statusText = (ctx->isUpdate ? L"Updating (" : L"Downloading (") + std::to_wstring(percent) + L"%)...";
-                                }
-                                break;
-                            }
-                        }
-                    }
-                    auto* payload = new PluginUiPayload{ ctx->ov, false, false };
-                    PostSettingsUiEvent(SettingsUiEventKind::PluginProgress, payload);
-                };
-
-                const bool ok = QuickView::PluginHost::Instance().DownloadPlugin(spec.fileName, spec.downloadUrl, spec.sha256, progressCb, cbCtx);
-                delete cbCtx;
-                auto* donePayload = new PluginUiPayload{ overlay, ok, ok && !spec.isUpdate };
-                PostSettingsUiEvent(SettingsUiEventKind::PluginDone, donePayload);
-            });
+            s_startPluginPackageDownload(overlay, spec.fileName, spec.downloadUrl, spec.sha256, spec.isUpdate);
         };
 
         if (!remotePlugins.empty()) {
             for (size_t rpIdx = 0; rpIdx < remotePlugins.size() && rpIdx < 64; ++rpIdx) {
                 const auto& rp = remotePlugins[rpIdx];
                 const std::wstring wFile = Utf8ToWide(rp.fileName);
-                const bool isMatchedPlugin =
-                    (rp.id == "sr_ncnn_vulkan" || rp.id.empty() || rp.fileName == "sr_ncnn_vulkan.qvx");
-                const auto entryInstallState = isMatchedPlugin ? installState : QuickView::PluginInstallState::NotInstalled;
-                const bool isUpdate = (entryInstallState == QuickView::PluginInstallState::UpdateAvailable) ||
-                                      (isMatchedPlugin && !curVer.empty() && curVer != rp.version && !rp.version.empty());
+                const bool isMatchedPlugin = QuickView::PluginHost::IsOfficialSrPluginMatch(rp.id, rp.fileName);
+                const bool isInstalledCurrent = isMatchedPlugin && (installState != QuickView::PluginInstallState::NotInstalled);
+                const bool hasNewerRemote = isInstalledCurrent && !curVer.empty() && !rp.version.empty() &&
+                                            QuickView::PluginHost::ComparePluginVersions(rp.version, curVer) > 0;
+                const bool isUpdate = isInstalledCurrent &&
+                                      ((installState == QuickView::PluginInstallState::UpdateAvailable) || hasNewerRemote);
 
                 s_marketPluginSpecs.push_back({ wFile, rp.downloadUrl, rp.sha256, isUpdate });
                 s_marketIndices[rpIdx] = static_cast<int>(rpIdx);
@@ -4639,7 +4738,7 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
                 SettingsItem itemMarketAction = { pkgBuf, OptionType::ActionButton };
                 itemMarketAction.pIntVal = &s_marketIndices[rpIdx];
 
-                if (entryInstallState == QuickView::PluginInstallState::Installed && (curVer == rp.version || rp.version.empty())) {
+                if (isInstalledCurrent && !isUpdate) {
                     itemMarketAction.buttonText = AppStrings::g.Settings_Button_InstalledUpToDate;
                     itemMarketAction.isDisabled = true;
                     itemMarketAction.isSuccess = true;
@@ -5337,8 +5436,10 @@ void SettingsOverlay::HandleUiEventMessage(WPARAM wParam, LPARAM lParam) {
         case SettingsUiEventKind::PluginDone: {
             std::unique_ptr<PluginUiPayload> payload(reinterpret_cast<PluginUiPayload*>(lParam));
             if (!payload) return;
-            if (payload->ok && payload->enableSrOnSuccess) {
-                QuickView::PluginHost::Instance().SetSrPluginEnabled(true);
+            if (payload->ok) {
+                if (payload->enableSrOnSuccess) {
+                    QuickView::PluginHost::Instance().SetSrPluginEnabled(true);
+                }
                 SaveConfig();
             }
             if (payload->ov) {

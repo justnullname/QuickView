@@ -386,6 +386,40 @@ TEST_F(PluginHostTests, EnsureDirectoryRecursiveAndModelsDir) {
     EXPECT_NE(modelsDir.find(L"models"), std::wstring::npos);
 }
 
+TEST_F(PluginHostTests, VersionComparisonAndManifestMatching) {
+    using QuickView::PluginHost;
+    EXPECT_GT(PluginHost::ComparePluginVersions("0.2.0", "0.1.0"), 0);
+    EXPECT_LT(PluginHost::ComparePluginVersions("0.1.0", "0.2.0"), 0);
+    EXPECT_EQ(PluginHost::ComparePluginVersions("v0.2.0", "0.2"), 0);
+    EXPECT_GT(PluginHost::ComparePluginVersions("1.0.0", "0.9.12"), 0);
+
+    EXPECT_TRUE(PluginHost::IsOfficialSrPluginMatch("com.quickview.sr.ncnn_vulkan", "sr_ncnn_vulkan_AMD64.zip"));
+    EXPECT_TRUE(PluginHost::IsOfficialSrPluginMatch("com.quickview.sr.ncnn_vulkan", "sr_ncnn_vulkan_ARM64.zip"));
+    EXPECT_TRUE(PluginHost::IsOfficialSrPluginMatch("sr_ncnn_vulkan", ""));
+    EXPECT_TRUE(PluginHost::IsOfficialSrPluginMatch("custom.id", "sr_ncnn_vulkan_AMD64.zip"));
+    EXPECT_FALSE(PluginHost::IsOfficialSrPluginMatch("com.other.plugin", "other_plugin.zip"));
+}
+
+TEST_F(PluginHostTests, InstalledPluginReportsTargetVersionAndDeduplicatedScan) {
+    auto& host = QuickView::PluginHost::Instance();
+    host.SetSrPluginPath(L"plugins\\sr\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx");
+    EXPECT_EQ(host.GetSrPluginInstallState(), QuickView::PluginInstallState::Installed);
+    EXPECT_EQ(host.GetInstalledPluginVersion(), QVX_OFFICIAL_SR_PLUGIN_VERSION);
+
+    std::wstring pluginsRoot = host.GetWritablePluginsDirectory();
+    EXPECT_FALSE(pluginsRoot.empty());
+
+    auto candidates = host.ScanPluginsDirectory();
+    int officialCount = 0;
+    for (const auto& c : candidates) {
+        if (c.pluginId == "com.quickview.sr.ncnn_vulkan") {
+            officialCount++;
+            EXPECT_EQ(c.versionStr, QVX_OFFICIAL_SR_PLUGIN_VERSION);
+        }
+    }
+    EXPECT_EQ(officialCount, 1);
+}
+
 
 
 
