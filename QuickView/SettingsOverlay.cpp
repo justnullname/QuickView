@@ -3166,9 +3166,12 @@ void SettingsOverlay::BuildControlTab(SettingsTab& tabControl) {
             AppStrings::g.Settings_Gesture_Preset_Browser
         }; AssignOptions(itemPreset, opts); }
         itemPreset.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+            if (overlay) overlay->ClearGestureEditState();
             g_config.LoadMouseGesturePreset(s_gesturePresetIdx);
             g_config.SyncMiddleClickHotkeyFromGestures();
             g_config.SyncLegacyHotkeysArray(g_hotkeys);
+            extern void ResetWheelPanMode();
+            ResetWheelPanMode();
             SaveMouseGesturesConfig();
             SaveHotkeysConfig();
             if (overlay) overlay->BuildMenu();
@@ -3179,9 +3182,12 @@ void SettingsOverlay::BuildControlTab(SettingsTab& tabControl) {
         itemReset.buttonText = AppStrings::g.Settings_Gesture_Reset;
         itemReset.isDestructive = true;
         itemReset.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+            if (overlay) overlay->ClearGestureEditState();
             g_config.ResetMouseGesturesToDefault();
             g_config.SyncMiddleClickHotkeyFromGestures();
             g_config.SyncLegacyHotkeysArray(g_hotkeys);
+            extern void ResetWheelPanMode();
+            ResetWheelPanMode();
             s_gesturePresetIdx = 0;
             SaveMouseGesturesConfig();
             SaveHotkeysConfig();
@@ -3203,11 +3209,22 @@ void SettingsOverlay::BuildControlTab(SettingsTab& tabControl) {
         itemAdd.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
             MouseGestureRule candidate{ 0, 0, (uint8_t)MouseTrigger::LeftDrag, (int)MouseActionTarget::None };
             bool foundUnused = false;
-            for (uint8_t m = 0; m <= 3 && !foundUnused; ++m) {
+            constexpr uint8_t maxMod = static_cast<uint8_t>(MouseModifier::Count);
+            auto tryCandidate = [&](uint8_t m1, uint8_t m2, int t) -> bool {
+                MouseTrigger trig = static_cast<MouseTrigger>(t);
+                if (trig == MouseTrigger::RightHoldWheel) return false;
+                if (m1 != 0 && !IsMouseModifierTriggerCompatible(m1, trig)) return false;
+                if (m2 != 0 && !IsMouseModifierTriggerCompatible(m2, trig)) return false;
+                MouseGestureRule probe{ m1, m2, static_cast<uint8_t>(t), (int)MouseActionTarget::None };
+                if (!g_config.HasMouseGesture(probe.GetModifiers(), trig)) {
+                    candidate = probe;
+                    return true;
+                }
+                return false;
+            };
+            for (uint8_t m = 0; m < maxMod && !foundUnused; ++m) {
                 for (int t = 0; t < (int)MouseTrigger::Count; ++t) {
-                    MouseGestureRule probe{ m, 0, static_cast<uint8_t>(t), (int)MouseActionTarget::None };
-                    if (!g_config.HasMouseGesture(probe.GetModifiers(), static_cast<MouseTrigger>(t))) {
-                        candidate = probe;
+                    if (tryCandidate(m, 0, t)) {
                         foundUnused = true;
                         break;
                     }
@@ -3215,12 +3232,10 @@ void SettingsOverlay::BuildControlTab(SettingsTab& tabControl) {
             }
             if (!foundUnused) {
                 // Check two-modifier combinations as fallback
-                for (uint8_t m1 = 1; m1 <= 3 && !foundUnused; ++m1) {
-                    for (uint8_t m2 = m1 + 1; m2 <= 3 && !foundUnused; ++m2) {
+                for (uint8_t m1 = 1; m1 < maxMod && !foundUnused; ++m1) {
+                    for (uint8_t m2 = m1 + 1; m2 < maxMod && !foundUnused; ++m2) {
                         for (int t = 0; t < (int)MouseTrigger::Count; ++t) {
-                            MouseGestureRule probe{ m1, m2, static_cast<uint8_t>(t), (int)MouseActionTarget::None };
-                            if (!g_config.HasMouseGesture(probe.GetModifiers(), static_cast<MouseTrigger>(t))) {
-                                candidate = probe;
+                            if (tryCandidate(m1, m2, t)) {
                                 foundUnused = true;
                                 break;
                             }
@@ -3403,7 +3418,8 @@ void SettingsOverlay::BuildKeysTab(SettingsTab& tabKeys) {
     };
     static constexpr HotkeyAction kZoomActions[] = {
         HotkeyAction::ZoomIn, HotkeyAction::ZoomInFine, HotkeyAction::ZoomOut, HotkeyAction::ZoomOutFine,
-        HotkeyAction::Zoom100, HotkeyAction::ZoomFit, HotkeyAction::ZoomFitWindow, HotkeyAction::ZoomFill, HotkeyAction::Loupe
+        HotkeyAction::Zoom100, HotkeyAction::ZoomFit, HotkeyAction::ZoomFitWindow, HotkeyAction::ZoomFill, HotkeyAction::Loupe,
+        HotkeyAction::ToggleWheelSwapMode, HotkeyAction::ToggleWheelPanMode
     };
     static constexpr HotkeyAction kTransformActions[] = {
         HotkeyAction::RotateCW, HotkeyAction::RotateCCW, HotkeyAction::FlipH, HotkeyAction::FlipV
@@ -5354,6 +5370,148 @@ void SettingsOverlay::CloseGestureDropdown() {
     m_gestureDropdownScrollOffset = 0;
 }
 
+void SettingsOverlay::ClearGestureEditState() noexcept {
+    m_editingGestureIdx = -1;
+    m_editingGestureOriginalRule = {};
+    m_editingGestureHasConflict = false;
+}
+
+int SettingsOverlay::FindConflictingGestureIndex(int rowIdx) const noexcept {
+    if (rowIdx < 0 || rowIdx >= static_cast<int>(g_config.MouseGestures.size())) return -1;
+    uint8_t targetMods = 0;
+    uint8_t targetTrig = 0;
+    g_config.MouseGestures[rowIdx].GetCanonicalKey(targetMods, targetTrig);
+    for (int i = 0; i < static_cast<int>(g_config.MouseGestures.size()); ++i) {
+        if (i == rowIdx) continue;
+        uint8_t otherMods = 0;
+        uint8_t otherTrig = 0;
+        g_config.MouseGestures[i].GetCanonicalKey(otherMods, otherTrig);
+        if (otherTrig == targetTrig && otherMods == targetMods) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+bool SettingsOverlay::IsGestureRowConflicting(int rowIdx) const noexcept {
+    if (!m_editingGestureHasConflict || m_editingGestureIdx < 0 ||
+        m_editingGestureIdx >= static_cast<int>(g_config.MouseGestures.size()) ||
+        rowIdx < 0 || rowIdx >= static_cast<int>(g_config.MouseGestures.size())) {
+        return false;
+    }
+    if (rowIdx == m_editingGestureIdx) return true;
+    uint8_t editMods = 0, editTrig = 0;
+    uint8_t rowMods = 0, rowTrig = 0;
+    g_config.MouseGestures[m_editingGestureIdx].GetCanonicalKey(editMods, editTrig);
+    g_config.MouseGestures[rowIdx].GetCanonicalKey(rowMods, rowTrig);
+    return (editTrig == rowTrig && editMods == rowMods);
+}
+
+bool SettingsOverlay::IsClickInsideGestureEditRow(int rowIdx, float x, float y) const noexcept {
+    if (rowIdx < 0 || m_activeTab < 0 || m_activeTab >= static_cast<int>(m_tabs.size())) return false;
+    for (const auto& item : m_tabs[m_activeTab].items) {
+        if (item.type == OptionType::MouseGestureRow && item.gestureIndex == rowIdx && item.optionRects.size() == 5) {
+            // Columns 0..3 are editable dropdown pills; column 4 is delete button
+            for (int c = 0; c < 4; ++c) {
+                const auto& r = item.optionRects[c];
+                if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+    return false;
+}
+
+void SettingsOverlay::ResolvePendingGestureConflict(bool allowDialog) {
+    if (m_resolvingGestureConflict || m_editingGestureIdx < 0) return;
+    if (m_editingGestureIdx >= static_cast<int>(g_config.MouseGestures.size())) {
+        ClearGestureEditState();
+        return;
+    }
+
+    int conflictIdx = FindConflictingGestureIndex(m_editingGestureIdx);
+    if (conflictIdx < 0) {
+        ClearGestureEditState();
+        g_config.SyncMiddleClickHotkeyFromGestures();
+        g_config.SyncLegacyHotkeysArray(g_hotkeys);
+        SaveMouseGesturesConfig();
+        SaveHotkeysConfig();
+        return;
+    }
+
+    if (!allowDialog || !AppContext::GetInstance().DialogCtrl) {
+        g_config.MouseGestures[m_editingGestureIdx] = m_editingGestureOriginalRule;
+        ClearGestureEditState();
+        return;
+    }
+
+    struct ResolveGuard {
+        bool& flag;
+        ~ResolveGuard() { flag = false; }
+    } guard{ m_resolvingGestureConflict };
+    m_resolvingGestureConflict = true;
+
+    CloseGestureDropdown();
+    if (m_hwnd && GetCapture() == m_hwnd) {
+        ReleaseCapture();
+    }
+
+    const auto& editedRule = g_config.MouseGestures[m_editingGestureIdx];
+    const auto& conflictRule = g_config.MouseGestures[conflictIdx];
+
+    std::wstring gestureDesc;
+    if (editedRule.mod1 != 0) gestureDesc += AppStrings::GetMouseModifierName(editedRule.mod1) + L" + ";
+    if (editedRule.mod2 != 0) gestureDesc += AppStrings::GetMouseModifierName(editedRule.mod2) + L" + ";
+    gestureDesc += AppStrings::GetMouseTriggerName(static_cast<MouseTrigger>(editedRule.trigger));
+
+    std::wstring occupiedActionName = AppStrings::GetMouseActionTargetName(static_cast<MouseActionTarget>(conflictRule.action));
+    std::wstring promptFmt = AppStrings::GetGestureConflictPrompt();
+    wchar_t contentBuf[512] = {};
+    _snwprintf_s(contentBuf, _countof(contentBuf), _TRUNCATE, promptFmt.c_str(), gestureDesc.c_str(), occupiedActionName.c_str());
+
+    std::vector<DialogButton> buttons = {
+        { DialogResult::Yes, AppStrings::g.Dialog_ButtonContinue, true },
+        { DialogResult::Cancel, AppStrings::g.Dialog_Cancel }
+    };
+
+    DialogResult result = AppContext::GetInstance().DialogCtrl->ShowDialog(
+        m_hwnd,
+        AppStrings::GetGestureConflictTitle(),
+        contentBuf,
+        QuickView::UI::Theme::GetThemePalette().accentFill,
+        buttons
+    );
+
+    if (result == DialogResult::Yes) {
+        uint8_t targetMods = 0, targetTrig = 0;
+        g_config.MouseGestures[m_editingGestureIdx].GetCanonicalKey(targetMods, targetTrig);
+        for (int i = static_cast<int>(g_config.MouseGestures.size()) - 1; i >= 0; --i) {
+            if (i == m_editingGestureIdx) continue;
+            uint8_t otherMods = 0, otherTrig = 0;
+            g_config.MouseGestures[i].GetCanonicalKey(otherMods, otherTrig);
+            if (otherTrig == targetTrig && otherMods == targetMods) {
+                g_config.MouseGestures.erase(g_config.MouseGestures.begin() + i);
+                if (i < m_editingGestureIdx) --m_editingGestureIdx;
+                m_pendingRebuild = true;
+            }
+        }
+        ClearGestureEditState();
+        g_config.SyncMiddleClickHotkeyFromGestures();
+        g_config.SyncLegacyHotkeysArray(g_hotkeys);
+        SaveMouseGesturesConfig();
+        SaveHotkeysConfig();
+    } else {
+        g_config.MouseGestures[m_editingGestureIdx] = m_editingGestureOriginalRule;
+        ClearGestureEditState();
+    }
+
+    if (m_hwnd) {
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+    }
+}
+
 void SettingsOverlay::CancelSliderInputState() {
     StopCaretTimer();
     m_pFocusedSlider = nullptr;
@@ -5586,6 +5744,14 @@ void SettingsOverlay::SwitchTab(int delta) {
     m_comboHoverIdx = -1;
     m_comboScrollOffset = 0;
     CloseGestureDropdown();
+    if (m_editingGestureHasConflict) {
+        ResolvePendingGestureConflict(true);
+        if (m_pendingRebuild.exchange(false, std::memory_order_acq_rel)) {
+            BuildMenu();
+        }
+    } else {
+        ClearGestureEditState();
+    }
     m_pActiveSlider = nullptr;
     m_pHoverItem = nullptr;
     m_pHoverTooltipItem = nullptr;
@@ -5667,6 +5833,11 @@ void SettingsOverlay::EnsureFocusedItemVisible() {
 
 void SettingsOverlay::SetVisible(bool visible) {
     if (!visible) {
+        if (m_visible && m_editingGestureHasConflict && !m_resolvingGestureConflict) {
+            ResolvePendingGestureConflict(true);
+        } else {
+            ClearGestureEditState();
+        }
         if (m_pFocusedSlider) CommitInput();
         ResetHotkeyCapture(false);
     }
@@ -7386,9 +7557,24 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
 
                     bool isDropdownOpen = (m_activeGestureDropdown.gestureIndex == item.gestureIndex);
                     bool isRowHover = ptIn(item.interactRect);
-                    bool isEditing = isRowHover || isDropdownOpen;
+                    bool isConflict = IsGestureRowConflicting(item.gestureIndex);
+                    bool isEditing = isRowHover || isDropdownOpen || isConflict;
 
                     using namespace QuickView::UI;
+
+                    if (isConflict && m_brushError) {
+                        D2D1_RECT_F alertRect = D2D1::RectF(
+                            controlX - 4.0f * s, top - 2.0f * s,
+                            controlX + controlW - padRight + 2.0f * s, bot + 2.0f * s
+                        );
+                        D2D1_ROUNDED_RECT alertRR = D2D1::RoundedRect(alertRect, 6.0f * s, 6.0f * s);
+                        float origErrOp = m_brushError->GetOpacity();
+                        m_brushError->SetOpacity(0.10f);
+                        pRT->FillRoundedRectangle(alertRR, m_brushError.Get());
+                        m_brushError->SetOpacity(0.92f);
+                        pRT->DrawRoundedRectangle(alertRR, m_brushError.Get(), 1.5f * s);
+                        m_brushError->SetOpacity(origErrOp);
+                    }
 
                     if (!isEditing) {
                         // 1. Idle Natural Language View: "[Ctrl + 左键拖拽] ➔ 框选剪裁"
@@ -7453,6 +7639,16 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                         GeekWidgets::DrawPillComboBox(pRT, rCol1, mod2Text, isCol1Open, isCol1Hover, false, m_textFormatItem.Get(), s, ToWidgetPalette(palette), m_dwriteFactory.Get());
                         GeekWidgets::DrawPillComboBox(pRT, rCol2, trText, isCol2Open, isCol2Hover, false, m_textFormatItem.Get(), s, ToWidgetPalette(palette), m_dwriteFactory.Get());
                         GeekWidgets::DrawPillComboBox(pRT, rCol3, actText, isCol3Open, isCol3Hover, false, m_textFormatItem.Get(), s, ToWidgetPalette(palette), m_dwriteFactory.Get());
+
+                        if (isConflict && m_brushError) {
+                            const float origErrOp = m_brushError->GetOpacity();
+                            m_brushError->SetOpacity(0.92f);
+                            const float rr = 6.0f * s;
+                            pRT->DrawRoundedRectangle(D2D1::RoundedRect(rCol0, rr, rr), m_brushError.Get(), 1.5f * s);
+                            pRT->DrawRoundedRectangle(D2D1::RoundedRect(rCol1, rr, rr), m_brushError.Get(), 1.5f * s);
+                            pRT->DrawRoundedRectangle(D2D1::RoundedRect(rCol2, rr, rr), m_brushError.Get(), 1.5f * s);
+                            m_brushError->SetOpacity(origErrOp);
+                        }
 
                         // Delete Button (×)
                         GeekWidgets::DrawPillButton(pRT, rDel, L"\u2715", ButtonStyle::Destructive, isDelHover ? ButtonState::Hovered : ButtonState::Normal, m_textFormatItem.Get(), s, ToWidgetPalette(palette));
@@ -8851,6 +9047,20 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
             int idx = m_gestureDropdownScrollOffset + relIdx;
             if (idx >= 0 && idx < count && m_activeGestureDropdown.gestureIndex < (int)g_config.MouseGestures.size()) {
                 int rowIdx = m_activeGestureDropdown.gestureIndex;
+                if (m_editingGestureIdx != rowIdx) {
+                    if (m_editingGestureHasConflict) {
+                        CloseGestureDropdown();
+                        ResolvePendingGestureConflict(true);
+                        if (m_pendingRebuild.exchange(false, std::memory_order_acq_rel)) {
+                            BuildMenu();
+                        }
+                        return SettingsAction::RepaintAll;
+                    }
+                    m_editingGestureIdx = rowIdx;
+                    m_editingGestureOriginalRule = g_config.MouseGestures[rowIdx];
+                    m_editingGestureHasConflict = false;
+                }
+
                 auto& rule = g_config.MouseGestures[rowIdx];
                 int actualVal = (idx < (int)m_activeGestureDropdown.optionValues.size()) ? m_activeGestureDropdown.optionValues[idx] : idx;
                 if (m_activeGestureDropdown.column == 0) {
@@ -8861,34 +9071,63 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
                     if (rule.mod2 != 0 && rule.mod2 == rule.mod1) rule.mod1 = 0;
                 } else if (m_activeGestureDropdown.column == 2) {
                     rule.trigger = (uint8_t)actualVal;
+                    if (!IsMouseTriggerActionCompatible(static_cast<MouseTrigger>(rule.trigger), static_cast<MouseActionTarget>(rule.action))) {
+                        rule.action = static_cast<int>(MouseActionTarget::None);
+                    }
                 } else if (m_activeGestureDropdown.column == 3) {
                     rule.action = actualVal;
                 }
 
-                // Deduplicate conflicting rules sharing the same (modifiers, trigger)
-                if (m_activeGestureDropdown.column <= 2) {
-                    uint8_t newMods = rule.GetModifiers();
-                    uint8_t newTrig = rule.trigger;
-                    for (int i = (int)g_config.MouseGestures.size() - 1; i >= 0; --i) {
-                        if (i != rowIdx && g_config.MouseGestures[i].trigger == newTrig && g_config.MouseGestures[i].GetModifiers() == newMods) {
-                            g_config.MouseGestures.erase(g_config.MouseGestures.begin() + i);
-                            if (i < rowIdx) --rowIdx;
-                            m_pendingRebuild = true;
-                        }
-                    }
+                // Check for duplicate (modifiers, trigger) conflict without silently deleting other rules
+                if (FindConflictingGestureIndex(rowIdx) >= 0) {
+                    m_editingGestureHasConflict = true;
+                } else {
+                    m_editingGestureHasConflict = false;
+                    m_editingGestureOriginalRule = g_config.MouseGestures[rowIdx];
+                    g_config.SyncMiddleClickHotkeyFromGestures();
+                    g_config.SyncLegacyHotkeysArray(g_hotkeys);
+                    SaveMouseGesturesConfig();
+                    SaveHotkeysConfig();
                 }
 
-                g_config.SyncMiddleClickHotkeyFromGestures();
-                g_config.SyncLegacyHotkeysArray(g_hotkeys);
-                SaveMouseGesturesConfig();
-                SaveHotkeysConfig();
                 CloseGestureDropdown();
                 return SettingsAction::RepaintAll;
             }
         }
         // Clicked anchor or outside gesture dropdown: close it
         CloseGestureDropdown();
+        if (m_editingGestureHasConflict && !IsClickInsideGestureEditRow(m_editingGestureIdx, x, y)) {
+            ResolvePendingGestureConflict(true);
+            if (m_pendingRebuild.exchange(false, std::memory_order_acq_rel)) {
+                BuildMenu();
+            }
+        }
         return SettingsAction::RepaintAll;
+    }
+
+    // Resolve any pending gesture conflict when the user clicks outside the conflicting edit row
+    if (m_editingGestureHasConflict && m_editingGestureIdx >= 0) {
+        bool insideEditRowControls = IsClickInsideGestureEditRow(m_editingGestureIdx, x, y);
+        bool insideEditRowDeleteBtn = false;
+        if (!insideEditRowControls && m_activeTab >= 0 && m_activeTab < static_cast<int>(m_tabs.size())) {
+            for (const auto& item : m_tabs[m_activeTab].items) {
+                if (item.type == OptionType::MouseGestureRow && item.gestureIndex == m_editingGestureIdx && item.optionRects.size() == 5) {
+                    const auto& delRect = item.optionRects[4];
+                    if (x >= delRect.left && x <= delRect.right && y >= delRect.top && y <= delRect.bottom) {
+                        insideEditRowDeleteBtn = true;
+                    }
+                    break;
+                }
+            }
+        }
+        if (!insideEditRowControls && !insideEditRowDeleteBtn) {
+            const size_t prevCount = g_config.MouseGestures.size();
+            ResolvePendingGestureConflict(true);
+            if (m_pendingRebuild.exchange(false, std::memory_order_acq_rel) || g_config.MouseGestures.size() != prevCount) {
+                BuildMenu();
+                return SettingsAction::RepaintAll;
+            }
+        }
     }
 
     // Active Combo Processing (Exclusive Modal Priority: Process BEFORE HUD boundary check!)
@@ -9269,6 +9508,11 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
 
                 if (ptInRect(rects[4])) {
                     // Delete Button (×)
+                    if (m_editingGestureIdx == rowIdx) {
+                        ClearGestureEditState();
+                    } else if (m_editingGestureIdx > rowIdx) {
+                        --m_editingGestureIdx;
+                    }
                     g_config.MouseGestures.erase(g_config.MouseGestures.begin() + rowIdx);
                     g_config.SyncMiddleClickHotkeyFromGestures();
                     g_config.SyncLegacyHotkeysArray(g_hotkeys);
@@ -9292,9 +9536,12 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
                     if (col == 0 || col == 1) {
                         uint8_t otherMod = (col == 0) ? r.mod2 : r.mod1;
                         int curVal = (col == 0) ? r.mod1 : r.mod2;
+                        MouseTrigger curTrig = static_cast<MouseTrigger>(r.trigger);
                         int selOptionIdx = 0;
-                        for (uint8_t m = 0; m <= 3; ++m) {
+                        constexpr uint8_t maxMod = static_cast<uint8_t>(MouseModifier::Count);
+                        for (uint8_t m = 0; m < maxMod; ++m) {
                             if (m != 0 && m == otherMod) continue; // Exclude modifier already in use by the other column
+                            if (m != 0 && m != curVal && !IsMouseModifierTriggerCompatible(m, curTrig)) continue;
                             if (m == curVal) {
                                 selOptionIdx = (int)m_activeGestureDropdown.options.size();
                             }
@@ -9303,17 +9550,38 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
                         }
                         m_activeGestureDropdown.selectedIdx = selOptionIdx;
                     } else if (col == 2) {
+                        int selOptionIdx = 0;
                         for (int t = 0; t < (int)MouseTrigger::Count; ++t) {
-                            m_activeGestureDropdown.options.push_back(AppStrings::GetMouseTriggerName((MouseTrigger)t));
+                            MouseTrigger trig = static_cast<MouseTrigger>(t);
+                            // Hide legacy RightHoldWheel unless the row itself currently holds it
+                            if (trig == MouseTrigger::RightHoldWheel && r.trigger != static_cast<uint8_t>(MouseTrigger::RightHoldWheel)) {
+                                continue;
+                            }
+                            if (t != r.trigger && (!IsMouseModifierTriggerCompatible(r.mod1, trig) || !IsMouseModifierTriggerCompatible(r.mod2, trig))) {
+                                continue;
+                            }
+                            if (t == r.trigger) {
+                                selOptionIdx = (int)m_activeGestureDropdown.options.size();
+                            }
+                            m_activeGestureDropdown.options.push_back(AppStrings::GetMouseTriggerName(trig));
                             m_activeGestureDropdown.optionValues.push_back(t);
                         }
-                        m_activeGestureDropdown.selectedIdx = r.trigger;
+                        m_activeGestureDropdown.selectedIdx = selOptionIdx;
                     } else if (col == 3) {
+                        int selOptionIdx = 0;
+                        const MouseTrigger curTrig = static_cast<MouseTrigger>(r.trigger);
                         for (int a = 0; a < (int)MouseActionTarget::Count; ++a) {
-                            m_activeGestureDropdown.options.push_back(AppStrings::GetMouseActionTargetName((MouseActionTarget)a));
+                            const MouseActionTarget act = static_cast<MouseActionTarget>(a);
+                            if (a != r.action && !IsMouseTriggerActionCompatible(curTrig, act)) {
+                                continue;
+                            }
+                            if (a == r.action) {
+                                selOptionIdx = (int)m_activeGestureDropdown.options.size();
+                            }
+                            m_activeGestureDropdown.options.push_back(AppStrings::GetMouseActionTargetName(act));
                             m_activeGestureDropdown.optionValues.push_back(a);
                         }
-                        m_activeGestureDropdown.selectedIdx = r.action;
+                        m_activeGestureDropdown.selectedIdx = selOptionIdx;
                     }
                 };
 
@@ -9495,6 +9763,14 @@ void SettingsOverlay::SetItemStatus(const std::wstring& label, const std::wstrin
 
 void SettingsOverlay::OpenTab(int index) {
     if (index >= 0 && index < (int)m_tabs.size()) {
+        if (m_visible && m_editingGestureHasConflict) {
+            ResolvePendingGestureConflict(true);
+            if (m_pendingRebuild.exchange(false, std::memory_order_acq_rel)) {
+                BuildMenu();
+            }
+        } else {
+            ClearGestureEditState();
+        }
         ResetHotkeyCapture(false);
         m_pActiveCombo = nullptr;
         m_comboHoverIdx = -1;
@@ -9848,7 +10124,9 @@ D2D1_RECT_F SettingsOverlay::GetGestureDropdownRect() const {
     const float s = m_uiScale;
     const auto& anchor = m_activeGestureDropdown.anchorRect;
     const float anchorW = anchor.right - anchor.left;
-    const float dropW = (m_activeGestureDropdown.column <= 1) ? (std::max)(anchorW, 120.0f * s) : (std::max)(anchorW, 200.0f * s);
+    const float dropW = (m_activeGestureDropdown.column <= 1) ? (std::max)(anchorW, 155.0f * s)
+                      : (m_activeGestureDropdown.column == 2) ? (std::max)(anchorW, 210.0f * s)
+                                                              : (std::max)(anchorW, 290.0f * s);
     return ComputeDropdownPopupRect(anchor, dropW, static_cast<int>(m_activeGestureDropdown.options.size()));
 }
 

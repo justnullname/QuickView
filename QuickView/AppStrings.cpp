@@ -6488,6 +6488,34 @@ std::wstring GetHotkeyActionName(HotkeyAction action) {
         raw = PickLang({ L"Pan Right (Fast)", L"向右平移 (加速)", L"向右平移 (加速)", L"右にパン (高速)", L"Быстрый сдвиг вправо", L"Nach rechts verschieben (schnell)", L"Pan hacia la derecha (rápido)", L"Déplacer vers la droite (rapide)" });
         break;
     }
+    case HotkeyAction::ToggleWheelSwapMode: {
+        needsCleaning = false;
+        raw = PickLang({
+            L"Wheel Mode 1 (Swap Main & Horizontal Wheel)",
+            L"滚轮模式一 (互换主滚轮和水平滚轮功能)",
+            L"滾輪模式一 (互換主滾輪與水平滾輪功能)",
+            L"ホイールモード1 (縦・横ホイール機能入替)",
+            L"Режим колесика 1 (обмен осн. и гориз. колесика)",
+            L"Rad-Modus 1 (Haupt- & Horizontalrad tauschen)",
+            L"Modo rueda 1 (Intercambiar rueda principal y horizontal)",
+            L"Mode molette 1 (Échanger molette principale et horizontale)"
+        });
+        break;
+    }
+    case HotkeyAction::ToggleWheelPanMode: {
+        needsCleaning = false;
+        raw = PickLang({
+            L"Wheel Mode 2 (Toggle Pan & Default Wheel)",
+            L"滚轮模式二 (平移图片和默认滚轮动作间切换)",
+            L"滾輪模式二 (平移圖片與預設滾輪動作間切換)",
+            L"ホイールモード2 (パンと既定動作を切替)",
+            L"Режим колесика 2 (сдвиг / по умолчанию)",
+            L"Rad-Modus 2 (Bildverschiebung / Standard)",
+            L"Modo rueda 2 (Alternar desplazamiento y acción predeterminada)",
+            L"Mode molette 2 (Basculer déplacement / action par défaut)"
+        });
+        break;
+    }
     case HotkeyAction::Undo:
         raw = AppStrings::g.Context_Undo;
         break;
@@ -6503,10 +6531,15 @@ std::wstring GetHotkeyActionName(HotkeyAction action) {
 
 
 std::wstring GetMouseModifierName(uint8_t mod) {
-    switch (mod) {
-    case 1: return L"Ctrl";
-    case 2: return L"Shift";
-    case 3: return L"Alt";
+    switch (static_cast<MouseModifier>(mod)) {
+    case MouseModifier::Ctrl:         return L"Ctrl";
+    case MouseModifier::Shift:        return L"Shift";
+    case MouseModifier::Alt:          return L"Alt";
+    case MouseModifier::HoldLeft:     return PickLang({ L"Hold Left", L"按住左键", L"按住左鍵", L"左押し", L"Удерж. ЛКМ", L"Links halten", L"Mantener izq.", L"Maint. gauche" });
+    case MouseModifier::HoldRight:    return PickLang({ L"Hold Right", L"按住右键", L"按住右鍵", L"右押し", L"Удерж. ПКМ", L"Rechts halten", L"Mantener der.", L"Maint. droit" });
+    case MouseModifier::HoldMiddle:   return PickLang({ L"Hold Middle", L"按住中键", L"按住中鍵", L"中押し", L"Удерж. СКМ", L"Mitte halten", L"Mantener cen.", L"Maint. milieu" });
+    case MouseModifier::HoldXButton1: return PickLang({ L"Hold Back (M4)", L"按住后退键", L"按住後退鍵", L"戻る押し", L"Удерж. Назад", L"Zurück halten", L"Mant. atrás", L"Maint. préc." });
+    case MouseModifier::HoldXButton2: return PickLang({ L"Hold Forward (M5)", L"按住前进键", L"按住前進鍵", L"進む押し", L"Удерж. Вперед", L"Vor halten", L"Mant. adel.", L"Maint. suiv." });
     default: {
         return PickLang({ L"None", L"无", L"無", L"なし", L"Нет", L"Keine", L"Ninguno", L"Aucun" });
     }
@@ -6547,6 +6580,18 @@ std::wstring GetMouseTriggerName(::MouseTrigger trigger) {
     }
     case MouseTrigger::RightHoldWheel: {
         return PickLang({ L"Right-Hold + Wheel", L"按住右键 + 滚轮", L"按住右鍵 + 滾輪", L"右ボタンドラッグ + ホイール", L"Удерживая ПКМ + колесико", L"Rechts halten + Rad", L"Mantener der. + rueda", L"Maintenir droit + molette" });
+    }
+    case MouseTrigger::LeftClick: {
+        return PickLang({ L"Left Click", L"左键单击", L"左鍵按一下", L"左クリック", L"Клик ЛКМ", L"Linksklick", L"Clic izquierdo", L"Clic gauche" });
+    }
+    case MouseTrigger::XButton1Drag: {
+        return PickLang({ L"Back Button Drag", L"后退键拖拽", L"後退鍵拖曳", L"戻るボタンドラッグ", L"Перетаскивание (Назад)", L"Zurück-Taste ziehen", L"Arrastrar botón atrás", L"Glisser bouton préc." });
+    }
+    case MouseTrigger::XButton2Drag: {
+        return PickLang({ L"Forward Button Drag", L"前进键拖拽", L"前進鍵拖曳", L"進むボタンドラッグ", L"Перетаскивание (Вперед)", L"Vor-Taste ziehen", L"Arrastrar botón adel.", L"Glisser bouton suiv." });
+    }
+    case MouseTrigger::LeftRightChord: {
+        return PickLang({ L"Left + Right Click", L"同时按住左键 + 右键", L"同時按住左鍵 + 右鍵", L"左 + 右同時押し", L"ЛКМ + ПКМ вместе", L"Links + Rechts gleichzeitig", L"Clic izq. + der.", L"Gauche + Droit simultanés" });
     }
     default: return L"Unknown Trigger";
     }
@@ -6614,8 +6659,99 @@ std::wstring GetMouseActionTargetName(::MouseActionTarget action) {
     case MouseActionTarget::ShowInExplorer:   return GetHotkeyActionName(HotkeyAction::ShowInExplorer);
     case MouseActionTarget::EnterCropMode:    return GetHotkeyActionName(HotkeyAction::EnterCropMode);
     case MouseActionTarget::Loupe:            return GetHotkeyActionName(HotkeyAction::Loupe);
+    case MouseActionTarget::ToggleWheelSwapMode: return GetHotkeyActionName(HotkeyAction::ToggleWheelSwapMode);
+    case MouseActionTarget::ToggleWheelPanMode:  return GetHotkeyActionName(HotkeyAction::ToggleWheelPanMode);
+    case MouseActionTarget::PanVertical: {
+        return PickLang({
+            L"Pan Image Vertically",
+            L"垂直平移图片",
+            L"垂直平移圖片",
+            L"画像を垂直パン",
+            L"Вертикальный сдвиг",
+            L"Bild vertikal verschieben",
+            L"Desplazar verticalmente",
+            L"Déplacer verticalement"
+        });
+    }
+    case MouseActionTarget::PanHorizontal: {
+        return PickLang({
+            L"Pan Image Horizontally",
+            L"水平平移图片",
+            L"水平平移圖片",
+            L"画像を水平パン",
+            L"Горизонтальный сдвиг",
+            L"Bild horizontal verschieben",
+            L"Desplazar horizontalmente",
+            L"Déplacer horizontalement"
+        });
+    }
     default: return L"Action";
     }
+}
+
+std::wstring GetGestureConflictTitle() {
+    return std::wstring(PickLang({
+        L"Gesture Conflict",
+        L"手势冲突",
+        L"手勢衝突",
+        L"ジェスチャーの競合",
+        L"Конфликт жестов",
+        L"Gestenkonflikt",
+        L"Conflicto de gestos",
+        L"Conflit de geste"
+    }));
+}
+
+std::wstring GetGestureConflictPrompt() {
+    return std::wstring(PickLang({
+        L"\"%s\" is already bound to \"%s\". Continuing will clear its previous gesture binding.",
+        L"“%s”已绑定到“%s”。继续将清除原有手势绑定。",
+        L"「%s」已綁定至「%s」。繼續將清除原有手勢綁定。",
+        L"「%s」はすでに「%s」に割り当てられています。続行すると以前の割り当てが解除されます。",
+        L"«%s» уже назначен для «%s». Продолжение удалит старую привязку.",
+        L"„%s“ ist bereits „%s“ zugewiesen. Fortfahren löscht die bisherige Zuweisung.",
+        L"«%s» ya está asignado a «%s». Si continúa, se borrará la asignación anterior.",
+        L"« %s » est déjà assigné à « %s ». Continuer effacera l'ancienne assignation."
+    }));
+}
+
+std::wstring GetOsdWheelMode1SwappedFmt() {
+    return std::wstring(PickLang({
+        L"Main Wheel: %s  |  Horizontal Wheel: %s",
+        L"主滚轮：%s  |  水平滚轮：%s",
+        L"主滾輪：%s  |  水平滾輪：%s",
+        L"縦ホイール：%s  |  横ホイール：%s",
+        L"Осн. колесо: %s  |  Гориз. колесо: %s",
+        L"Hauptrad: %s  |  Horizontalrad: %s",
+        L"Rueda principal: %s  |  Rueda horizontal: %s",
+        L"Molette princ. : %s  |  Molette horiz. : %s"
+    }));
+}
+
+std::wstring GetOsdWheelMode2PanText() {
+    return std::wstring(PickLang({
+        L"Wheel: Pan Image (Main: Vertical | Horizontal/Shift: Horizontal)",
+        L"滚轮：平移图片（主滚轮上下 | 水平/Shift+滚轮左右）",
+        L"滾輪：平移圖片（主滾輪上下 | 水平/Shift+滾輪左右）",
+        L"ホイール：画像パン（縦：上下 | 横・Shift：左右）",
+        L"Колесико: панорамирование (верт. / гориз.)",
+        L"Mausrad: Bild verschieben (Vertikal / Horizontal)",
+        L"Rueda: Desplazar imagen (Vertical / Horizontal)",
+        L"Molette : Déplacer l'image (Vertical / Horizontal)"
+    }));
+}
+
+std::wstring GetOsdWheelMode2DefaultFmt() {
+    return std::wstring(PickLang({
+        L"Wheel: Default (Main: %s | Horizontal: %s)",
+        L"滚轮：默认动作（主滚轮：%s | 水平滚轮：%s）",
+        L"滾輪：預設動作（主滾輪：%s | 水平滾輪：%s）",
+        L"ホイール：既定動作（縦：%s | 横：%s）",
+        L"Колесико: по умолчанию (осн.: %s | гориз.: %s)",
+        L"Mausrad: Standard (Haupt: %s | Horizontal: %s)",
+        L"Rueda: Predeterminado (Princ.: %s | Horiz.: %s)",
+        L"Molette : Défaut (Princ. : %s | Horiz. : %s)"
+    }));
 }
 
 }

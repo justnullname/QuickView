@@ -408,7 +408,9 @@ std::array<HotkeyBinding, static_cast<size_t>(HotkeyAction::Count)> g_hotkeys = 
     HotkeyBinding{ HotkeyAction::PanUpFast, KeyCombo{ VK_UP, 3 }, KeyCombo{ VK_UP, 3 } },
     HotkeyBinding{ HotkeyAction::PanDownFast, KeyCombo{ VK_DOWN, 3 }, KeyCombo{ VK_DOWN, 3 } },
     HotkeyBinding{ HotkeyAction::PanLeftFast, KeyCombo{ VK_LEFT, 3 }, KeyCombo{ VK_LEFT, 3 } },
-    HotkeyBinding{ HotkeyAction::PanRightFast, KeyCombo{ VK_RIGHT, 3 }, KeyCombo{ VK_RIGHT, 3 } }
+    HotkeyBinding{ HotkeyAction::PanRightFast, KeyCombo{ VK_RIGHT, 3 }, KeyCombo{ VK_RIGHT, 3 } },
+    HotkeyBinding{ HotkeyAction::ToggleWheelSwapMode, KeyCombo{ 0, 0 }, KeyCombo{ 0, 0 } },
+    HotkeyBinding{ HotkeyAction::ToggleWheelPanMode, KeyCombo{ 0, 0 }, KeyCombo{ 0, 0 } }
 };
 RuntimeConfig g_runtime;
 UndoManager g_undoManager;
@@ -5884,6 +5886,7 @@ void LoadConfig() {
                 }
             }
         }
+        g_config.NormalizeMouseGestures();
     } else {
         g_config.MouseGestures = GetDefaultMouseGestures();
         auto mapLegacyDrag = [](MouseAction a) -> MouseActionTarget {
@@ -5903,7 +5906,11 @@ void LoadConfig() {
         if (!g_config.RightButtonDragZoom) {
             g_config.SetMouseGesture(0, 0, MouseTrigger::RightDrag, MouseActionTarget::None);
         }
-        if (g_config.DoubleClickMode == 3) {
+        if (g_config.DoubleClickMode == 1) {
+            g_config.SetMouseGesture(0, 0, MouseTrigger::LeftDblClick, MouseActionTarget::ToggleWheelSwapMode);
+        } else if (g_config.DoubleClickMode == 2) {
+            g_config.SetMouseGesture(0, 0, MouseTrigger::LeftDblClick, MouseActionTarget::ToggleWheelPanMode);
+        } else if (g_config.DoubleClickMode == 3) {
             g_config.SetMouseGesture(0, 0, MouseTrigger::LeftDblClick, MouseActionTarget::None);
         }
         if (g_config.MiddleClickAction == MouseAction::None) {
@@ -11044,16 +11051,128 @@ static void ExecuteSmartZoom(HWND hwnd, POINT pt) {
 
 static void ShowContextMenuAtClientPt(HWND hwnd, POINT ptClient);
 
-static uint8_t GetCurrentMouseModifiers() {
+static bool g_wheelPanModeActive = false;
+
+void ResetWheelPanMode() {
+    g_wheelPanModeActive = false;
+}
+
+static uint8_t GetCurrentMouseModifiers(uint16_t excludeVk = 0) {
     uint8_t mods = 0;
     if (GetKeyState(VK_CONTROL) & 0x8000) mods |= MouseModMask::Ctrl;
     if (GetKeyState(VK_SHIFT) & 0x8000)   mods |= MouseModMask::Shift;
     if (GetKeyState(VK_MENU) & 0x8000)    mods |= MouseModMask::Alt;
+
+    if (excludeVk != VK_LBUTTON && (GetKeyState(VK_LBUTTON) & 0x8000)) mods |= MouseModMask::HoldLeft;
+    if (excludeVk != VK_RBUTTON && (GetKeyState(VK_RBUTTON) & 0x8000)) mods |= MouseModMask::HoldRight;
+    if (excludeVk != VK_MBUTTON && (GetKeyState(VK_MBUTTON) & 0x8000)) mods |= MouseModMask::HoldMiddle;
+
+    const uint16_t physX1 = g_config.InvertXButton ? VK_XBUTTON2 : VK_XBUTTON1;
+    const uint16_t physX2 = g_config.InvertXButton ? VK_XBUTTON1 : VK_XBUTTON2;
+    if (excludeVk != VK_XBUTTON1 && (GetKeyState(physX1) & 0x8000)) mods |= MouseModMask::HoldX1;
+    if (excludeVk != VK_XBUTTON2 && (GetKeyState(physX2) & 0x8000)) mods |= MouseModMask::HoldX2;
     return mods;
 }
 
+static void PerformWheelPan(HWND hwnd, float delta, bool isHorizontal) {
+    const float panStep = g_config.PanStepNormal;
+    const float offset = delta * panStep;
+    const float dx = isHorizontal ? offset : 0.0f;
+    const float dy = isHorizontal ? 0.0f : offset;
+
+    if (IsCompareModeActive()) {
+        if (AppContext::GetInstance().Compare.activePane == ComparePane::Left) {
+            GetPaneContext(PaneSlot::Left).view.PanX += dx;
+            GetPaneContext(PaneSlot::Left).view.PanY += dy;
+            if (AppContext::GetInstance().Compare.syncPan) {
+                GetPaneContext(PaneSlot::Primary).view.PanX += dx;
+                GetPaneContext(PaneSlot::Primary).view.PanY += dy;
+            }
+        } else {
+            GetPaneContext(PaneSlot::Primary).view.PanX += dx;
+            GetPaneContext(PaneSlot::Primary).view.PanY += dy;
+            if (AppContext::GetInstance().Compare.syncPan) {
+                GetPaneContext(PaneSlot::Left).view.PanX += dx;
+                GetPaneContext(PaneSlot::Left).view.PanY += dy;
+            }
+        }
+        MarkCompareDirty();
+        RequestRepaint(PaintLayer::Image | PaintLayer::Static);
+    } else if (GetPaneContext(PaneSlot::Primary).resource) {
+        GetPaneContext(PaneSlot::Primary).view.PanX += dx;
+        GetPaneContext(PaneSlot::Primary).view.PanY += dy;
+        RECT rc;
+        GetClientRect(hwnd, &rc);
+        SyncDCompState(hwnd, static_cast<float>(rc.right), static_cast<float>(rc.bottom));
+        NotifyBorderGlowInteraction(hwnd);
+        RequestRepaint(PaintLayer::Dynamic | PaintLayer::Static);
+        RefreshSvgSurfaceAfterZoom(hwnd);
+    }
+}
+
+static void ExecuteToggleWheelSwapMode(HWND hwnd) {
+    const MouseActionTarget vAct = g_config.GetMouseGestureAction(MouseModMask::None, MouseTrigger::VerticalWheel);
+    const MouseActionTarget hAct = g_config.GetMouseGestureAction(MouseModMask::None, MouseTrigger::HorizontalWheel);
+    if (vAct == MouseActionTarget::None && hAct == MouseActionTarget::None) return;
+
+    g_config.SetMouseGesture(0, 0, MouseTrigger::VerticalWheel, hAct);
+    g_config.SetMouseGesture(0, 0, MouseTrigger::HorizontalWheel, vAct);
+
+    // Keep Shift+VerticalWheel synced when it matches the swapped thumb wheel action
+    const MouseActionTarget shiftVAct = g_config.GetMouseGestureAction(MouseModMask::Shift, MouseTrigger::VerticalWheel);
+    if (shiftVAct == hAct) {
+        g_config.SetMouseGesture(static_cast<uint8_t>(MouseModifier::Shift), 0, MouseTrigger::VerticalWheel, vAct);
+    }
+
+    SaveMouseGesturesConfig();
+    if (g_settingsOverlay.IsVisible()) {
+        g_settingsOverlay.RequestRebuild();
+    }
+
+    const std::wstring vName = AppStrings::GetMouseActionTargetName(hAct);
+    const std::wstring hName = AppStrings::GetMouseActionTargetName(vAct);
+    const std::wstring fmt = AppStrings::GetOsdWheelMode1SwappedFmt();
+    wchar_t osdBuf[256] = {};
+    _snwprintf_s(osdBuf, _countof(osdBuf), _TRUNCATE, fmt.c_str(), vName.c_str(), hName.c_str());
+    g_osd.Show(hwnd, osdBuf, false);
+}
+
+static void ExecuteToggleWheelPanMode(HWND hwnd) {
+    g_wheelPanModeActive = !g_wheelPanModeActive;
+    if (g_wheelPanModeActive) {
+        const std::wstring panText = AppStrings::GetOsdWheelMode2PanText();
+        g_osd.Show(hwnd, panText.c_str(), false);
+    } else {
+        const MouseActionTarget vAct = g_config.GetMouseGestureAction(MouseModMask::None, MouseTrigger::VerticalWheel);
+        const MouseActionTarget hAct = g_config.GetMouseGestureAction(MouseModMask::None, MouseTrigger::HorizontalWheel);
+        const std::wstring vName = AppStrings::GetMouseActionTargetName(vAct);
+        const std::wstring hName = AppStrings::GetMouseActionTargetName(hAct);
+        const std::wstring fmt = AppStrings::GetOsdWheelMode2DefaultFmt();
+        wchar_t osdBuf[256] = {};
+        _snwprintf_s(osdBuf, _countof(osdBuf), _TRUNCATE, fmt.c_str(), vName.c_str(), hName.c_str());
+        g_osd.Show(hwnd, osdBuf, false);
+    }
+}
+
+static bool PreparePrimaryCropReEditIfNeeded(HWND hwnd);
+
 static bool ExecuteMouseActionTarget(HWND hwnd, MouseActionTarget action, POINT pt) {
     switch (action) {
+    case MouseActionTarget::PanImage:
+        GetPaneContext(PaneSlot::Primary).view.PanX = 0.0f;
+        GetPaneContext(PaneSlot::Primary).view.PanY = 0.0f;
+        if (IsCompareModeActive()) {
+            GetPaneContext(PaneSlot::Left).view.PanX = 0.0f;
+            GetPaneContext(PaneSlot::Left).view.PanY = 0.0f;
+            MarkCompareDirty();
+        }
+        if (g_compEngine && g_compEngine->IsInitialized()) {
+            RECT rc{};
+            GetClientRect(hwnd, &rc);
+            SyncDCompState(hwnd, static_cast<float>(rc.right), static_cast<float>(rc.bottom));
+        }
+        RequestRepaint(PaintLayer::Dynamic | PaintLayer::Static);
+        return true;
     case MouseActionTarget::ExitApp:
         PostMessage(hwnd, WM_CLOSE, 0, 0);
         return true;
@@ -11064,6 +11183,7 @@ static bool ExecuteMouseActionTarget(HWND hwnd, MouseActionTarget action, POINT 
     case MouseActionTarget::SmartZoom:
         ExecuteSmartZoom(hwnd, pt);
         return true;
+    case MouseActionTarget::Navigate:
     case MouseActionTarget::NavNext:
         Navigate(hwnd, 1);
         return true;
@@ -11145,6 +11265,12 @@ static bool ExecuteMouseActionTarget(HWND hwnd, MouseActionTarget action, POINT 
     case MouseActionTarget::Loupe:
         HandleHotkeyAction(hwnd, HotkeyAction::Loupe);
         return true;
+    case MouseActionTarget::ToggleWheelSwapMode:
+        ExecuteToggleWheelSwapMode(hwnd);
+        return true;
+    case MouseActionTarget::ToggleWheelPanMode:
+        ExecuteToggleWheelPanMode(hwnd);
+        return true;
     default:
         return false;
     }
@@ -11159,7 +11285,69 @@ struct CustomMouseDragState {
     DWORD startTime = 0;
 };
 static CustomMouseDragState g_customMouseDrag;
-static bool g_rightHoldWheelConsumed = false;
+static uint8_t g_mouseHoldConsumedMask = 0;
+
+static void CancelPendingButtonDragForHold(HWND hwnd, uint8_t holdMask) {
+    if (holdMask == 0) return;
+    auto& view = GetPaneContext(PaneSlot::Primary).view;
+    bool canceledCapture = false;
+
+    if (g_customMouseDrag.isPending || g_customMouseDrag.isDragging) {
+        const uint32_t tb = g_customMouseDrag.triggerBtn;
+        const bool matchLeft = (tb == VK_LBUTTON) && (holdMask & MouseModMask::HoldLeft);
+        const bool matchRight = (tb == VK_RBUTTON) && (holdMask & MouseModMask::HoldRight);
+        const bool matchMiddle = (tb == VK_MBUTTON) && (holdMask & MouseModMask::HoldMiddle);
+        const bool matchX1 = (tb == VK_XBUTTON1) && (holdMask & MouseModMask::HoldX1);
+        const bool matchX2 = (tb == VK_XBUTTON2) && (holdMask & MouseModMask::HoldX2);
+        if (matchLeft || matchRight || matchMiddle || matchX1 || matchX2) {
+            if (g_customMouseDrag.isDragging && g_customMouseDrag.action == MouseActionTarget::PanImage) {
+                view.IsDragging = false;
+                view.IsInteracting = false;
+                SetCursor(g_currentCursor ? g_currentCursor : LoadCursor(nullptr, IDC_ARROW));
+            }
+            g_customMouseDrag = {};
+            canceledCapture = true;
+        }
+    }
+
+    if (holdMask & MouseModMask::HoldRight) {
+        if (view.IsRightButtonDown || view.IsRightButtonDragZoom) {
+            view.IsRightButtonDown = false;
+            view.IsRightButtonDragZoom = false;
+            view.RightDragZoomStartScreenPos = { 0, 0 };
+            view.RightDragZoomStartTotalScale = 1.0f;
+            g_hasRightDragZoomStartViews = false;
+            canceledCapture = true;
+        }
+    }
+    if (holdMask & (MouseModMask::HoldLeft | MouseModMask::HoldMiddle)) {
+        if (view.IsDragging || view.IsMiddleDragWindow || view.IsPendingFullscreenExitDrag) {
+            view.IsDragging = false;
+            view.IsInteracting = false;
+            view.IsMiddleDragWindow = false;
+            view.IsPendingFullscreenExitDrag = false;
+            SetCursor(g_currentCursor ? g_currentCursor : LoadCursor(nullptr, IDC_ARROW));
+            canceledCapture = true;
+        }
+    }
+
+    if (canceledCapture && GetCapture() == hwnd) {
+        ReleaseCapture();
+    }
+}
+
+static bool CheckAndTriggerLeftRightChord(HWND hwnd, POINT pt) {
+    // Strip HoldLeft/HoldRight so keyboard & side-button modifiers still apply cleanly
+    uint8_t mods = GetCurrentMouseModifiers(0) & ~(MouseModMask::HoldLeft | MouseModMask::HoldRight);
+    MouseActionTarget chordAct = g_config.GetMouseGestureAction(mods, MouseTrigger::LeftRightChord);
+    if (chordAct == MouseActionTarget::None) return false;
+
+    const uint8_t consumedBits = MouseModMask::HoldLeft | MouseModMask::HoldRight | (mods & MouseModMask::HoldAnyMouseButton);
+    g_mouseHoldConsumedMask |= consumedBits;
+    CancelPendingButtonDragForHold(hwnd, consumedBits);
+    ExecuteMouseActionTarget(hwnd, chordAct, pt);
+    return true;
+}
 
 static void ApplyViewportLoupeZoom(HWND hwnd, POINT cursorClient, float targetLoupeZoom, float prevWheelLoupeZoom, bool isInitialActivation) {
     auto& app = AppContext::GetInstance();
@@ -11298,6 +11486,9 @@ void SaveHotkeysConfig() {
 static void FinishCustomMouseDrag(HWND hwnd, MouseActionTarget act) {
     if (act == MouseActionTarget::Loupe) {
         DeactivateLoupe();
+    } else if (act == MouseActionTarget::WindowDrag) {
+        GetPaneContext(PaneSlot::Primary).view.IsMiddleDragWindow = false;
+        GetPaneContext(PaneSlot::Primary).view.IsPendingFullscreenExitDrag = false;
     } else if (act == MouseActionTarget::PanImage) {
         GetPaneContext(PaneSlot::Primary).view.IsDragging = false;
         GetPaneContext(PaneSlot::Primary).view.IsInteracting = false;
@@ -13675,7 +13866,7 @@ SKIP_EDGE_NAV:;
           // WM_TIMER 997 will refresh if animation is active
 
           // Custom mouse drag detection for gestures
-          if (g_customMouseDrag.isPending) {
+          if (g_customMouseDrag.isPending && g_customMouseDrag.action != MouseActionTarget::None) {
               const int dx = abs(pt.x - g_customMouseDrag.startPt.x);
               const int dy = abs(pt.y - g_customMouseDrag.startPt.y);
               if (dx >= 4 || dy >= 4) {
@@ -13693,8 +13884,15 @@ SKIP_EDGE_NAV:;
                       }
                   } else if (g_customMouseDrag.action == MouseActionTarget::WindowDrag) {
                       if (g_isFullScreen) {
-                          GetPaneContext(PaneSlot::Primary).view.IsPendingFullscreenExitDrag = true;
-                          GetPaneContext(PaneSlot::Primary).view.DragStartPos = pt;
+                          if (g_customMouseDrag.triggerBtn == VK_LBUTTON) {
+                              GetPaneContext(PaneSlot::Primary).view.IsPendingFullscreenExitDrag = true;
+                              GetPaneContext(PaneSlot::Primary).view.DragStartPos = g_customMouseDrag.startPt;
+                          } else {
+                              if (GetCapture() == hwnd) {
+                                  ReleaseCapture();
+                              }
+                          }
+                          g_customMouseDrag = {};
                       } else if (g_customMouseDrag.triggerBtn == VK_LBUTTON) {
                           ReleaseCapture();
                           g_customMouseDrag = {};
@@ -13708,7 +13906,6 @@ SKIP_EDGE_NAV:;
                           GetPaneContext(PaneSlot::Primary).view.WindowDragStart = { rc.left, rc.top };
                           GetPaneContext(PaneSlot::Primary).view.CursorDragStart = cursorPos;
                           GetPaneContext(PaneSlot::Primary).view.IsMiddleDragWindow = true;
-                          g_customMouseDrag = {};
                       }
                   } else if (g_customMouseDrag.action == MouseActionTarget::Zoom) {
                       if (GetPaneContext(PaneSlot::Primary).resource) {
@@ -13732,19 +13929,25 @@ SKIP_EDGE_NAV:;
                           }
                       }
                   } else if (g_customMouseDrag.action == MouseActionTarget::CropRegionDrag) {
+                      PreparePrimaryCropReEditIfNeeded(hwnd);
                       float imgX = 0.0f, imgY = 0.0f;
                       if (ScreenToImageSpace(hwnd, g_customMouseDrag.startPt.x, g_customMouseDrag.startPt.y, imgX, imgY, PaneSlot::Primary)) {
                           auto& pane = GetPaneContext(PaneSlot::Primary);
                           if (pane.metadata.Width > 0 && pane.metadata.Height > 0) {
-                              if (pane.editState.HasCrop) {
-                                  pane.editState.HasCrop = false;
-                                  RenderImageToDComp(hwnd, pane.resource, false);
-                                  ScreenToImageSpace(hwnd, g_customMouseDrag.startPt.x, g_customMouseDrag.startPt.y, imgX, imgY, PaneSlot::Primary);
-                              }
+                              const bool restoresPrior = g_cropState.RestoresPriorEditCrop;
+                              const float priorL = g_cropState.PriorEditCropLeft;
+                              const float priorT = g_cropState.PriorEditCropTop;
+                              const float priorR = g_cropState.PriorEditCropRight;
+                              const float priorB = g_cropState.PriorEditCropBottom;
                               g_cropState.Reset();
+                              g_cropState.RestoresPriorEditCrop = restoresPrior;
+                              g_cropState.PriorEditCropLeft = priorL;
+                              g_cropState.PriorEditCropTop = priorT;
+                              g_cropState.PriorEditCropRight = priorR;
+                              g_cropState.PriorEditCropBottom = priorB;
                               g_cropState.IsActive = true;
                               g_cropState.IsDragging = true;
-                              g_cropState.ActiveHandle = 5;
+                              g_cropState.ActiveHandle = 9;
                               g_cropState.DragStartMousePos = g_customMouseDrag.startPt;
                               const D2D1_SIZE_F orientedSize = GetVisualImageSize();
                               const int clampedX = static_cast<int>(std::lround(std::clamp(imgX, 0.0f, orientedSize.width)));
@@ -14100,9 +14303,14 @@ SKIP_EDGE_NAV:;
             return 0; // Completely block double-click on ANY UI layer, overlay, floating bar, control or hotspot
         }
 
-        uint8_t currentMods = GetCurrentMouseModifiers();
+        uint8_t currentMods = GetCurrentMouseModifiers(VK_LBUTTON);
         MouseActionTarget dblAct = g_config.GetMouseGestureAction(currentMods, MouseTrigger::LeftDblClick);
         if (dblAct != MouseActionTarget::None) {
+            if (currentMods & MouseModMask::HoldAnyMouseButton) {
+                const uint8_t held = currentMods & MouseModMask::HoldAnyMouseButton;
+                g_mouseHoldConsumedMask |= held;
+                CancelPendingButtonDragForHold(hwnd, held);
+            }
             ExecuteMouseActionTarget(hwnd, dblAct, pt);
         }
         return 0;
@@ -14119,11 +14327,7 @@ SKIP_EDGE_NAV:;
         float winH = (float)(rcClient.bottom - rcClient.top);
         GetPaneContext(PaneSlot::Primary).view.IsRightButtonDown = false;
         GetPaneContext(PaneSlot::Primary).view.IsRightButtonDragZoom = false;
-        g_rightHoldWheelConsumed = false;
-
-        uint8_t currentMods = GetCurrentMouseModifiers();
-        MouseActionTarget rightDragAct = g_config.GetMouseGestureAction(currentMods, MouseTrigger::RightDrag);
-        bool allowRightDragZoom = (rightDragAct == MouseActionTarget::Zoom);
+        g_mouseHoldConsumedMask &= ~MouseModMask::HoldRight;
 
         const bool onBlockedOverlay =
             !GetPaneContext(PaneSlot::Primary).resource ||
@@ -14134,6 +14338,16 @@ SKIP_EDGE_NAV:;
             QuickView::PrintPreviewUI::GetInstance().IsVisible() ||
             QuickView::ExportPanel::GetInstance().IsVisible() ||
             QuickView::UI::AiActionOverlay::Instance().IsVisible();
+
+        if (!onBlockedOverlay && (GetKeyState(VK_LBUTTON) & 0x8000) != 0) {
+            if (CheckAndTriggerLeftRightChord(hwnd, pt)) {
+                return 0;
+            }
+        }
+
+        uint8_t currentMods = GetCurrentMouseModifiers(VK_RBUTTON);
+        MouseActionTarget rightDragAct = g_config.GetMouseGestureAction(currentMods, MouseTrigger::RightDrag);
+        bool allowRightDragZoom = (rightDragAct == MouseActionTarget::Zoom);
 
         const bool canStartRightDragZoom =
             allowRightDragZoom &&
@@ -14205,6 +14419,8 @@ SKIP_EDGE_NAV:;
             return 0;
         }
 
+        g_mouseHoldConsumedMask &= ~MouseModMask::HoldMiddle;
+
         POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
         // Record start position/time for click vs drag detection
         GetPaneContext(PaneSlot::Primary).view.LastMousePos = pt;
@@ -14215,7 +14431,7 @@ SKIP_EDGE_NAV:;
             AppContext::GetInstance().Compare.activePane = AppContext::GetInstance().CompareCtrl->HitTest(hwnd, pt);
         }
         
-        uint8_t currentMods = GetCurrentMouseModifiers();
+        uint8_t currentMods = GetCurrentMouseModifiers(VK_MBUTTON);
         MouseActionTarget gestureDragAct = g_config.GetMouseGestureAction(currentMods, MouseTrigger::MiddleDrag);
 
         if (gestureDragAct == MouseActionTarget::WindowDrag) {
@@ -14252,6 +14468,8 @@ SKIP_EDGE_NAV:;
             g_customMouseDrag.startTime = GetTickCount();
             SetCapture(hwnd);
             return 0;
+        } else if (g_config.HasAnyActiveMouseModMask(MouseModMask::HoldMiddle)) {
+            SetCapture(hwnd);
         }
         return 0;
     }
@@ -14263,6 +14481,7 @@ SKIP_EDGE_NAV:;
             ReleaseCapture();
 
             if (wasDragging) {
+                g_mouseHoldConsumedMask &= ~MouseModMask::HoldMiddle;
                 FinishCustomMouseDrag(hwnd, act);
                 return 0;
             }
@@ -14280,9 +14499,28 @@ SKIP_EDGE_NAV:;
             return 0;
         }
 
+        if ((g_mouseHoldConsumedMask & MouseModMask::HoldMiddle) != 0) {
+            g_mouseHoldConsumedMask &= ~MouseModMask::HoldMiddle;
+            GetPaneContext(PaneSlot::Primary).view.IsMiddleDragWindow = false;
+            GetPaneContext(PaneSlot::Primary).view.IsDragging = false;
+            GetPaneContext(PaneSlot::Primary).view.IsInteracting = false;
+            if (GetCapture() == hwnd) {
+                ReleaseCapture();
+            }
+            return 0;
+        }
+        if (GetCapture() == hwnd) {
+            ReleaseCapture();
+        }
+
         auto dispatchMiddleClick = [&](POINT clientPt) -> bool {
-            uint8_t currentMods = GetCurrentMouseModifiers();
+            uint8_t currentMods = GetCurrentMouseModifiers(VK_MBUTTON);
             const MouseActionTarget gestureClickAct = g_config.GetMouseGestureAction(currentMods, MouseTrigger::MiddleClick);
+            if (gestureClickAct != MouseActionTarget::None && (currentMods & MouseModMask::HoldAnyMouseButton)) {
+                const uint8_t held = currentMods & MouseModMask::HoldAnyMouseButton;
+                g_mouseHoldConsumedMask |= held;
+                CancelPendingButtonDragForHold(hwnd, held);
+            }
             if (gestureClickAct == MouseActionTarget::PanImage) {
                 // Reset pan to center
                 GetPaneContext(PaneSlot::Primary).view.PanX = 0;
@@ -14371,18 +14609,91 @@ SKIP_EDGE_NAV:;
             return TRUE;
         }
 
-        uint8_t currentMods = GetCurrentMouseModifiers();
+        const uint8_t holdBit = (button == XBUTTON1) ? MouseModMask::HoldX1 : MouseModMask::HoldX2;
+        g_mouseHoldConsumedMask &= ~holdBit;
+
+        POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
+        uint8_t currentMods = GetCurrentMouseModifiers(vk);
+        MouseTrigger dragTrig = (button == XBUTTON1) ? MouseTrigger::XButton1Drag : MouseTrigger::XButton2Drag;
+        MouseActionTarget dragAct = g_config.GetMouseGestureAction(currentMods, dragTrig);
+        const bool needsDeferredClick = (dragAct != MouseActionTarget::None) || g_config.HasAnyActiveMouseModMask(holdBit);
+
+        if (needsDeferredClick) {
+            g_customMouseDrag.isPending = true;
+            g_customMouseDrag.isDragging = false;
+            g_customMouseDrag.triggerBtn = vk;
+            g_customMouseDrag.action = dragAct;
+            g_customMouseDrag.startPt = pt;
+            g_customMouseDrag.startTime = GetTickCount();
+            SetCapture(hwnd);
+            return TRUE;
+        }
+
         MouseTrigger trig = (button == XBUTTON1) ? MouseTrigger::XButton1Click : MouseTrigger::XButton2Click;
         const MouseActionTarget gestureAct = g_config.GetMouseGestureAction(currentMods, trig);
         if (gestureAct != MouseActionTarget::None) {
-            POINT pt;
-            GetCursorPos(&pt);
-            ScreenToClient(hwnd, &pt);
+            if (currentMods & MouseModMask::HoldAnyMouseButton) {
+                const uint8_t held = currentMods & MouseModMask::HoldAnyMouseButton;
+                g_mouseHoldConsumedMask |= held;
+                CancelPendingButtonDragForHold(hwnd, held);
+            }
             ExecuteMouseActionTarget(hwnd, gestureAct, pt);
             return TRUE;
         }
 
         TryTriggerCustomMouseHotkey(hwnd, vk, true);
+        return TRUE;
+    }
+
+    case WM_XBUTTONUP: {
+        int button = GET_XBUTTON_WPARAM(wParam);
+        if (g_config.InvertXButton) {
+            button = (button == XBUTTON1) ? XBUTTON2 : XBUTTON1;
+        }
+        uint16_t vk = (button == XBUTTON1) ? VK_XBUTTON1 : VK_XBUTTON2;
+        const uint8_t holdBit = (button == XBUTTON1) ? MouseModMask::HoldX1 : MouseModMask::HoldX2;
+
+        if (g_settingsOverlay.IsVisible()) {
+            return TRUE;
+        }
+
+        bool wasPendingDeferred = false;
+        if (g_customMouseDrag.triggerBtn == vk) {
+            wasPendingDeferred = g_customMouseDrag.isPending;
+            const bool wasDragging = g_customMouseDrag.isDragging;
+            const MouseActionTarget act = g_customMouseDrag.action;
+            g_customMouseDrag = {};
+            if (GetCapture() == hwnd) {
+                ReleaseCapture();
+            }
+            if (wasDragging) {
+                g_mouseHoldConsumedMask &= ~holdBit;
+                FinishCustomMouseDrag(hwnd, act);
+                return TRUE;
+            }
+        }
+
+        if ((g_mouseHoldConsumedMask & holdBit) != 0) {
+            g_mouseHoldConsumedMask &= ~holdBit;
+            return TRUE;
+        }
+
+        if (wasPendingDeferred) {
+            POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
+            uint8_t currentMods = GetCurrentMouseModifiers(vk);
+            MouseTrigger trig = (button == XBUTTON1) ? MouseTrigger::XButton1Click : MouseTrigger::XButton2Click;
+            const MouseActionTarget gestureAct = g_config.GetMouseGestureAction(currentMods, trig);
+            if (gestureAct != MouseActionTarget::None) {
+                if (currentMods & MouseModMask::HoldAnyMouseButton) {
+                    const uint8_t held = currentMods & MouseModMask::HoldAnyMouseButton;
+                    g_mouseHoldConsumedMask |= held;
+                    CancelPendingButtonDragForHold(hwnd, held);
+                }
+                ExecuteMouseActionTarget(hwnd, gestureAct, pt);
+                return TRUE;
+            }
+            TryTriggerCustomMouseHotkey(hwnd, vk, true);
+        }
         return TRUE;
     }
 
@@ -14742,13 +15053,19 @@ SKIP_EDGE_NAV:;
         GetPaneContext(PaneSlot::Primary).view.DragStartPos = pt;
         GetPaneContext(PaneSlot::Primary).view.DragStartTime = GetTickCount();
         
+        g_mouseHoldConsumedMask &= ~MouseModMask::HoldLeft;
+
+        if ((GetKeyState(VK_RBUTTON) & 0x8000) != 0 && CheckAndTriggerLeftRightChord(hwnd, pt)) {
+            return 0;
+        }
+
         // If in Edge Zone, skip WindowDrag and let LBUTTONUP handle nav
         if (inEdgeZone) {
             SetCapture(hwnd); // Capture so we receive LBUTTONUP
             return 0;
         }
         
-        uint8_t currentMods = GetCurrentMouseModifiers();
+        uint8_t currentMods = GetCurrentMouseModifiers(VK_LBUTTON);
         MouseActionTarget gestureLeftDrag = g_config.GetMouseGestureAction(currentMods, MouseTrigger::LeftDrag);
         
         if (g_cropState.IsActive) {
@@ -14956,17 +15273,14 @@ SKIP_EDGE_NAV:;
                 }
             }
         } else if (gestureLeftDrag == MouseActionTarget::WindowDrag) {
-            // [Requirement] Exit fullscreen on drag
-            if (g_isFullScreen) {
-                GetPaneContext(PaneSlot::Primary).view.IsPendingFullscreenExitDrag = true;
-                GetPaneContext(PaneSlot::Primary).view.DragStartPos = pt;
-                SetCapture(hwnd);
-                return 0;
-            }
-            
-            // Use HTCAPTION for smooth system window dragging (Left Button only)
-            ReleaseCapture();
-            SendMessage(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+            // Delay HTCAPTION until 4px drag threshold so HoldLeft + Wheel / Left+Right chord can fire cleanly
+            g_customMouseDrag.isPending = true;
+            g_customMouseDrag.isDragging = false;
+            g_customMouseDrag.triggerBtn = VK_LBUTTON;
+            g_customMouseDrag.action = MouseActionTarget::WindowDrag;
+            g_customMouseDrag.startPt = pt;
+            g_customMouseDrag.startTime = GetTickCount();
+            SetCapture(hwnd);
             return 0;
         } else if (gestureLeftDrag == MouseActionTarget::PanImage) {
             bool allowPan = CanPan(hwnd);
@@ -15003,11 +15317,20 @@ SKIP_EDGE_NAV:;
             ReleaseCapture();
 
             if (wasDragging) {
+                g_mouseHoldConsumedMask &= ~MouseModMask::HoldLeft;
                 FinishCustomMouseDrag(hwnd, act);
                 return 0;
             }
             // If wasPending, mouse released before moving beyond drag threshold (pure click)
             // Capture was released above, allow normal click processing to continue
+        }
+
+        if ((g_mouseHoldConsumedMask & MouseModMask::HoldLeft) != 0) {
+            g_mouseHoldConsumedMask &= ~MouseModMask::HoldLeft;
+            if (GetCapture() == hwnd) {
+                ReleaseCapture();
+            }
+            return 0;
         }
 
         if (QuickView::UI::AiActionOverlay::Instance().IsVisible()) {
@@ -15471,9 +15794,25 @@ SKIP_EDGE_NAV:;
         }
         GetPaneContext(PaneSlot::Primary).view.IsInteracting = false;  // End interaction mode
 
+        {
+            const uint8_t currentMods = GetCurrentMouseModifiers(VK_LBUTTON);
+            if (currentMods != 0) {
+                const MouseActionTarget leftClickAct = g_config.GetMouseGestureAction(currentMods, MouseTrigger::LeftClick);
+                if (leftClickAct != MouseActionTarget::None) {
+                    if (currentMods & MouseModMask::HoldAnyMouseButton) {
+                        const uint8_t held = currentMods & MouseModMask::HoldAnyMouseButton;
+                        g_mouseHoldConsumedMask |= held;
+                        CancelPendingButtonDragForHold(hwnd, held);
+                    }
+                    ExecuteMouseActionTarget(hwnd, leftClickAct, pt);
+                    return 0;
+                }
+            }
+        }
+
         // Edge Navigation Click
         RECT rc; GetClientRect(hwnd, &rc);
-        if (g_config.EdgeNavClick && (!g_gallery.IsVisible() || (g_gallery.GetMode() != GalleryMode::FullGrid && !g_gallery.HitTestArea(pt.x, pt.y, (float)(rc.right - rc.left), (float)(rc.bottom - rc.top)))) && !g_settingsOverlay.IsVisible() && !g_helpOverlay.IsVisible() && !AppContext::GetInstance().Dialog.IsVisible && !AppContext::GetInstance().Compare.draggingDivider && !GetPaneContext(PaneSlot::Primary).view.IsDragging) {
+        if (g_config.EdgeNavClick && GetCurrentMouseModifiers(VK_LBUTTON) == 0 && (!g_gallery.IsVisible() || (g_gallery.GetMode() != GalleryMode::FullGrid && !g_gallery.HitTestArea(pt.x, pt.y, (float)(rc.right - rc.left), (float)(rc.bottom - rc.top)))) && !g_settingsOverlay.IsVisible() && !g_helpOverlay.IsVisible() && !AppContext::GetInstance().Dialog.IsVisible && !AppContext::GetInstance().Compare.draggingDivider && !GetPaneContext(PaneSlot::Primary).view.IsDragging) {
             // [Fix] Block edge nav if clicking on Info UI / HUD
             if (g_uiRenderer) {
                 auto hit = g_uiRenderer->HitTest((float)pt.x, (float)pt.y);
@@ -15504,6 +15843,20 @@ SKIP_EDGE_NAV:;
                 }
             }
         }
+
+        {
+            const uint8_t currentMods = GetCurrentMouseModifiers(VK_LBUTTON);
+            const MouseActionTarget leftClickAct = g_config.GetMouseGestureAction(currentMods, MouseTrigger::LeftClick);
+            if (leftClickAct != MouseActionTarget::None) {
+                if (currentMods & MouseModMask::HoldAnyMouseButton) {
+                    const uint8_t held = currentMods & MouseModMask::HoldAnyMouseButton;
+                    g_mouseHoldConsumedMask |= held;
+                    CancelPendingButtonDragForHold(hwnd, held);
+                }
+                ExecuteMouseActionTarget(hwnd, leftClickAct, pt);
+                return 0;
+            }
+        }
         
         RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic);
         return 0;
@@ -15517,9 +15870,34 @@ SKIP_EDGE_NAV:;
         float delta = GET_WHEEL_DELTA_WPARAM(wParam) / 120.0f;
         if (g_config.InvertWheel) delta = -delta;
 
-        uint8_t currentMods = GetCurrentMouseModifiers();
-        MouseActionTarget gestureHWheel = g_config.GetMouseGestureAction(currentMods, MouseTrigger::HorizontalWheel);
-        if (gestureHWheel == MouseActionTarget::Zoom) {
+        uint8_t currentMods = GetCurrentMouseModifiers(0);
+        MouseActionTarget gestureHWheel = MouseActionTarget::None;
+        if (g_wheelPanModeActive && currentMods == MouseModMask::None) {
+            gestureHWheel = MouseActionTarget::PanImage;
+        } else {
+            gestureHWheel = g_config.GetMouseGestureAction(currentMods, MouseTrigger::HorizontalWheel);
+        }
+        if (gestureHWheel == MouseActionTarget::None) {
+            return 0;
+        }
+        if (currentMods & MouseModMask::HoldAnyMouseButton) {
+            const uint8_t held = currentMods & MouseModMask::HoldAnyMouseButton;
+            g_mouseHoldConsumedMask |= held;
+            CancelPendingButtonDragForHold(hwnd, held);
+        }
+
+        if (gestureHWheel == MouseActionTarget::PanImage || gestureHWheel == MouseActionTarget::PanHorizontal) {
+            PerformWheelPan(hwnd, delta, true);
+        } else if (gestureHWheel == MouseActionTarget::PanVertical) {
+            PerformWheelPan(hwnd, delta, false);
+        } else if (gestureHWheel == MouseActionTarget::AdjustZoomSpeedWheel) {
+            g_config.WheelZoomSpeed += (delta > 0) ? 5.0f : -5.0f;
+            g_config.WheelZoomSpeed = std::max(5.0f, std::min(50.0f, g_config.WheelZoomSpeed));
+            wchar_t speedBuf[64];
+            swprintf_s(speedBuf, L"%s%.0f%%", AppStrings::g.OSD_WheelZoomSpeed, g_config.WheelZoomSpeed);
+            g_osd.Show(hwnd, speedBuf, false);
+        } else if (gestureHWheel == MouseActionTarget::Zoom || gestureHWheel == MouseActionTarget::LockWindowZoomWheel) {
+            const bool isLockZoom = (gestureHWheel == MouseActionTarget::LockWindowZoomWheel);
             POINT ptScreen{};
             GetCursorPos(&ptScreen);
             POINT ptClient = ptScreen;
@@ -15532,7 +15910,7 @@ SKIP_EDGE_NAV:;
                 float newTotalScale = CalculateTargetZoom(hwnd, delta, false);
                 GetPaneContext(PaneSlot::Primary).view.IsInteracting = true;
                 SetTimer(hwnd, IDT_INTERACTION, 150, nullptr);
-                PerformSmartZoom(hwnd, newTotalScale, &ptScreen, false, true);
+                PerformSmartZoom(hwnd, newTotalScale, &ptScreen, isLockZoom, true);
             }
         } else if (gestureHWheel == MouseActionTarget::Navigate) {
             int direction = (delta > 0.0f) ? 1 : -1;
@@ -15540,7 +15918,7 @@ SKIP_EDGE_NAV:;
             if (delta != 0.0f && CheckUnsavedChanges(hwnd, pending)) {
                 Navigate(hwnd, direction);
             }
-        } else if (gestureHWheel != MouseActionTarget::None) {
+        } else {
             POINT pt;
             GetCursorPos(&pt);
             ScreenToClient(hwnd, &pt);
@@ -15634,66 +16012,39 @@ SKIP_EDGE_NAV:;
         ScreenToClient(hwnd, &ptClient);
         MinimapHitResult miniHit = HitTestMinimaps(ptClient);
         if (miniHit.minimapIdx != -1 && !isCtrl && !isAlt) {
-            float panStep = g_config.PanStepNormal;
-            if (isShift) {
-                // Shift + Wheel over minimap = Horizontal Pan
-                float dx = delta * panStep;
-                if (IsCompareModeActive()) {
-                    if (AppContext::GetInstance().Compare.activePane == ComparePane::Left) {
-                        GetPaneContext(PaneSlot::Left).view.PanX += dx;
-                        if (AppContext::GetInstance().Compare.syncPan) GetPaneContext(PaneSlot::Primary).view.PanX += dx;
-                    } else {
-                        GetPaneContext(PaneSlot::Primary).view.PanX += dx;
-                        if (AppContext::GetInstance().Compare.syncPan) GetPaneContext(PaneSlot::Left).view.PanX += dx;
-                    }
-                    MarkCompareDirty();
-                    RequestRepaint(PaintLayer::Image | PaintLayer::Static);
-                } else if (GetPaneContext(PaneSlot::Primary).resource) {
-                    GetPaneContext(PaneSlot::Primary).view.PanX += dx;
-                    RECT rc; GetClientRect(hwnd, &rc);
-                    SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
-                    NotifyBorderGlowInteraction(hwnd);
-                    RequestRepaint(PaintLayer::Dynamic | PaintLayer::Static);
-                    RefreshSvgSurfaceAfterZoom(hwnd);
-                }
-            } else {
-                // Vertical Pan over minimap
-                float dy = delta * panStep;
-                if (IsCompareModeActive()) {
-                    if (AppContext::GetInstance().Compare.activePane == ComparePane::Left) {
-                        GetPaneContext(PaneSlot::Left).view.PanY += dy;
-                        if (AppContext::GetInstance().Compare.syncPan) GetPaneContext(PaneSlot::Primary).view.PanY += dy;
-                    } else {
-                        GetPaneContext(PaneSlot::Primary).view.PanY += dy;
-                        if (AppContext::GetInstance().Compare.syncPan) GetPaneContext(PaneSlot::Left).view.PanY += dy;
-                    }
-                    MarkCompareDirty();
-                    RequestRepaint(PaintLayer::Image | PaintLayer::Static);
-                } else if (GetPaneContext(PaneSlot::Primary).resource) {
-                    GetPaneContext(PaneSlot::Primary).view.PanY += dy;
-                    RECT rc; GetClientRect(hwnd, &rc);
-                    SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
-                    NotifyBorderGlowInteraction(hwnd);
-                    RequestRepaint(PaintLayer::Dynamic | PaintLayer::Static);
-                    RefreshSvgSurfaceAfterZoom(hwnd);
-                }
-            }
+            PerformWheelPan(hwnd, delta, isShift);
             return 0;
         }
 
-        uint8_t currentMods = GetCurrentMouseModifiers();
+        uint8_t currentMods = GetCurrentMouseModifiers(0);
         MouseActionTarget wheelAct = MouseActionTarget::None;
-        if ((GetKeyState(VK_RBUTTON) & 0x8000) != 0) {
-            MouseActionTarget rhAct = g_config.GetMouseGestureAction(currentMods, MouseTrigger::RightHoldWheel);
-            if (rhAct == MouseActionTarget::None) {
-                return 0;
-            }
-            g_rightHoldWheelConsumed = true;
-            wheelAct = rhAct;
+        if (g_wheelPanModeActive && (currentMods == MouseModMask::None || currentMods == MouseModMask::Shift)) {
+            wheelAct = MouseActionTarget::PanImage;
         } else {
             wheelAct = g_config.GetMouseGestureAction(currentMods, MouseTrigger::VerticalWheel);
+            if (wheelAct == MouseActionTarget::None && (currentMods & MouseModMask::HoldRight)) {
+                wheelAct = g_config.GetMouseGestureAction(currentMods & ~MouseModMask::HoldRight, MouseTrigger::RightHoldWheel);
+            }
         }
         if (wheelAct == MouseActionTarget::None) {
+            return 0;
+        }
+        if (currentMods & MouseModMask::HoldAnyMouseButton) {
+            const uint8_t held = currentMods & MouseModMask::HoldAnyMouseButton;
+            g_mouseHoldConsumedMask |= held;
+            CancelPendingButtonDragForHold(hwnd, held);
+        }
+
+        if (wheelAct == MouseActionTarget::PanImage) {
+            PerformWheelPan(hwnd, delta, (currentMods & MouseModMask::Shift) != 0);
+            return 0;
+        }
+        if (wheelAct == MouseActionTarget::PanVertical) {
+            PerformWheelPan(hwnd, delta, false);
+            return 0;
+        }
+        if (wheelAct == MouseActionTarget::PanHorizontal) {
+            PerformWheelPan(hwnd, delta, true);
             return 0;
         }
 
@@ -16278,22 +16629,27 @@ SKIP_EDGE_NAV:;
             GetPaneContext(PaneSlot::Primary).view.RightDragZoomStartCompareSecondaryZoom = 1.0f;
             g_hasRightDragZoomStartViews = false;
             if (wasRightDragZoom) {
-                g_rightHoldWheelConsumed = false;
+                g_mouseHoldConsumedMask &= ~MouseModMask::HoldRight;
                 return 0;
             }
         }
 
-        if (g_rightHoldWheelConsumed) {
-            g_rightHoldWheelConsumed = false;
+        if ((g_mouseHoldConsumedMask & MouseModMask::HoldRight) != 0) {
+            g_mouseHoldConsumedMask &= ~MouseModMask::HoldRight;
             return 0;
         }
 
         POINT ptClient = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
 
-        uint8_t currentMods = GetCurrentMouseModifiers();
+        uint8_t currentMods = GetCurrentMouseModifiers(VK_RBUTTON);
         const auto* rClickRule = g_config.FindMouseGesture(currentMods, MouseTrigger::RightClick);
         if (rClickRule) {
             MouseActionTarget rightClickAct = static_cast<MouseActionTarget>(rClickRule->action);
+            if (rightClickAct != MouseActionTarget::None && (currentMods & MouseModMask::HoldAnyMouseButton)) {
+                const uint8_t held = currentMods & MouseModMask::HoldAnyMouseButton;
+                g_mouseHoldConsumedMask |= held;
+                CancelPendingButtonDragForHold(hwnd, held);
+            }
             if (rightClickAct != MouseActionTarget::ContextMenu && rightClickAct != MouseActionTarget::None) {
                 ExecuteMouseActionTarget(hwnd, rightClickAct, ptClient);
                 return 0;
@@ -20684,6 +21040,14 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
         }
         return true;
     }
+
+    case HotkeyAction::ToggleWheelSwapMode:
+        ExecuteToggleWheelSwapMode(hwnd);
+        return true;
+
+    case HotkeyAction::ToggleWheelPanMode:
+        ExecuteToggleWheelPanMode(hwnd);
+        return true;
 
     default:
         break;

@@ -392,6 +392,18 @@ private:
     int m_gestureDropdownHoverIdx = -1;
     int m_gestureDropdownScrollOffset = 0;
 
+    // Deferred conflict resolution & red-border highlight state for MouseGestureRow
+    int m_editingGestureIdx = -1;
+    MouseGestureRule m_editingGestureOriginalRule = {};
+    bool m_editingGestureHasConflict = false;
+    bool m_resolvingGestureConflict = false;
+
+    int FindConflictingGestureIndex(int rowIdx) const noexcept;
+    bool IsGestureRowConflicting(int rowIdx) const noexcept;
+    bool IsClickInsideGestureEditRow(int rowIdx, float x, float y) const noexcept;
+    void ResolvePendingGestureConflict(bool allowDialog = true);
+    void ClearGestureEditState() noexcept;
+
     void CloseGestureDropdown();
     D2D1_RECT_F ComputeDropdownPopupRect(const D2D1_RECT_F& anchorRect, float dropW, int count) const;
     void DrawDropdownPopup(ID2D1DeviceContext* pRT, const D2D1_RECT_F& dropRect, int count,

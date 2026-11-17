@@ -215,14 +215,26 @@ enum class MouseModifier : uint8_t {
     None = 0,
     Ctrl = 1,
     Shift = 2,
-    Alt = 3
+    Alt = 3,
+    HoldLeft = 4,
+    HoldRight = 5,
+    HoldMiddle = 6,
+    HoldXButton1 = 7,
+    HoldXButton2 = 8,
+    Count
 };
 
 namespace MouseModMask {
-    constexpr uint8_t None  = 0;
-    constexpr uint8_t Ctrl  = 1;
-    constexpr uint8_t Shift = 2;
-    constexpr uint8_t Alt   = 4;
+    constexpr uint8_t None       = 0;
+    constexpr uint8_t Ctrl       = 1 << 0; // 1
+    constexpr uint8_t Shift      = 1 << 1; // 2
+    constexpr uint8_t Alt        = 1 << 2; // 4
+    constexpr uint8_t HoldLeft   = 1 << 3; // 8
+    constexpr uint8_t HoldRight  = 1 << 4; // 16
+    constexpr uint8_t HoldMiddle = 1 << 5; // 32
+    constexpr uint8_t HoldX1     = 1 << 6; // 64
+    constexpr uint8_t HoldX2     = 1 << 7; // 128
+    constexpr uint8_t HoldAnyMouseButton = HoldLeft | HoldRight | HoldMiddle | HoldX1 | HoldX2;
 }
 
 enum class MouseTrigger : uint8_t {
@@ -236,7 +248,11 @@ enum class MouseTrigger : uint8_t {
     XButton2Click,   // Mouse Forward (Button 5)
     VerticalWheel,   // Standard Wheel
     HorizontalWheel, // Tilt / Thumb Wheel
-    RightHoldWheel,  // Wheel while holding Right Button
+    RightHoldWheel,  // Legacy compatibility -> normalized to HoldRight + VerticalWheel
+    LeftClick,       // Left single click (used with modifiers, e.g., HoldRight + LeftClick)
+    XButton1Drag,    // Mouse Back button drag
+    XButton2Drag,    // Mouse Forward button drag
+    LeftRightChord,  // Simultaneous Left + Right button press
     Count
 };
 
@@ -284,41 +300,158 @@ enum class MouseActionTarget : int {
     ShowInExplorer,      // Reveal in Explorer
     EnterCropMode,       // Enter Crop Mode
     Loupe,               // Magnifier Loupe
+    ToggleWheelSwapMode, // Wheel Mode 1: Swap main & thumb wheel actions
+    ToggleWheelPanMode,  // Wheel Mode 2: Toggle wheel pan mode
+    PanVertical,         // Vertical pan image (wheel triggers)
+    PanHorizontal,       // Horizontal pan image (wheel triggers)
     Count
 };
 
+// Check whether a modifier and a mouse trigger can physically coexist without self-conflict
+inline bool IsMouseModifierTriggerCompatible(uint8_t mod, MouseTrigger trig) noexcept {
+    switch (static_cast<MouseModifier>(mod)) {
+    case MouseModifier::HoldLeft:
+        return trig != MouseTrigger::LeftDrag &&
+               trig != MouseTrigger::LeftDblClick &&
+               trig != MouseTrigger::LeftClick &&
+               trig != MouseTrigger::LeftRightChord;
+    case MouseModifier::HoldRight:
+        return trig != MouseTrigger::RightDrag &&
+               trig != MouseTrigger::RightClick &&
+               trig != MouseTrigger::LeftRightChord &&
+               trig != MouseTrigger::RightHoldWheel;
+    case MouseModifier::HoldMiddle:
+        return trig != MouseTrigger::MiddleDrag &&
+               trig != MouseTrigger::MiddleClick;
+    case MouseModifier::HoldXButton1:
+        return trig != MouseTrigger::XButton1Drag &&
+               trig != MouseTrigger::XButton1Click;
+    case MouseModifier::HoldXButton2:
+        return trig != MouseTrigger::XButton2Drag &&
+               trig != MouseTrigger::XButton2Click;
+    default:
+        return true;
+    }
+}
+
+// Matrix guard: determines whether a MouseActionTarget can be meaningfully executed by a MouseTrigger
+inline bool IsMouseTriggerActionCompatible(MouseTrigger trig, MouseActionTarget act) noexcept {
+    if (act == MouseActionTarget::None) return true;
+
+    const bool isDrag = (trig == MouseTrigger::LeftDrag ||
+                         trig == MouseTrigger::MiddleDrag ||
+                         trig == MouseTrigger::RightDrag ||
+                         trig == MouseTrigger::XButton1Drag ||
+                         trig == MouseTrigger::XButton2Drag);
+    const bool isWheel = (trig == MouseTrigger::VerticalWheel ||
+                          trig == MouseTrigger::HorizontalWheel ||
+                          trig == MouseTrigger::RightHoldWheel);
+
+    if (isDrag) {
+        switch (act) {
+        case MouseActionTarget::WindowDrag:
+        case MouseActionTarget::PanImage:
+        case MouseActionTarget::Zoom:
+        case MouseActionTarget::CropRegionDrag:
+        case MouseActionTarget::Loupe:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    if (isWheel) {
+        switch (act) {
+        case MouseActionTarget::PanImage:
+        case MouseActionTarget::PanVertical:
+        case MouseActionTarget::PanHorizontal:
+        case MouseActionTarget::Zoom:
+        case MouseActionTarget::LockWindowZoomWheel:
+        case MouseActionTarget::AdjustZoomSpeedWheel:
+        case MouseActionTarget::Navigate:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    // Click / DoubleClick / Chord triggers
+    switch (act) {
+    case MouseActionTarget::WindowDrag:
+    case MouseActionTarget::PanImage:
+    case MouseActionTarget::PanVertical:
+    case MouseActionTarget::PanHorizontal:
+    case MouseActionTarget::Zoom:
+    case MouseActionTarget::Navigate:
+    case MouseActionTarget::LockWindowZoomWheel:
+    case MouseActionTarget::AdjustZoomSpeedWheel:
+    case MouseActionTarget::CropRegionDrag:
+    case MouseActionTarget::Loupe:
+        return false;
+    default:
+        return true;
+    }
+}
+
 struct MouseGestureRule {
-    uint8_t mod1 = 0;    // 0=None, 1=Ctrl, 2=Shift, 3=Alt
-    uint8_t mod2 = 0;    // 0=None, 1=Ctrl, 2=Shift, 3=Alt
+    uint8_t mod1 = 0;    // MouseModifier
+    uint8_t mod2 = 0;    // MouseModifier
     uint8_t trigger = 0; // MouseTrigger
     int action = 0;      // MouseActionTarget
 
     bool operator==(const MouseGestureRule& other) const noexcept = default;
 
+    static constexpr uint8_t ModifierToMask(uint8_t v) noexcept {
+        switch (static_cast<MouseModifier>(v)) {
+            case MouseModifier::Ctrl:         return MouseModMask::Ctrl;
+            case MouseModifier::Shift:        return MouseModMask::Shift;
+            case MouseModifier::Alt:          return MouseModMask::Alt;
+            case MouseModifier::HoldLeft:     return MouseModMask::HoldLeft;
+            case MouseModifier::HoldRight:    return MouseModMask::HoldRight;
+            case MouseModifier::HoldMiddle:   return MouseModMask::HoldMiddle;
+            case MouseModifier::HoldXButton1: return MouseModMask::HoldX1;
+            case MouseModifier::HoldXButton2: return MouseModMask::HoldX2;
+            default:                          return MouseModMask::None;
+        }
+    }
+
     uint8_t GetModifiers() const noexcept {
-        uint8_t m = 0;
-        auto mapMod = [](uint8_t v) -> uint8_t {
-            if (v == static_cast<uint8_t>(MouseModifier::Ctrl)) return MouseModMask::Ctrl;
-            if (v == static_cast<uint8_t>(MouseModifier::Shift)) return MouseModMask::Shift;
-            if (v == static_cast<uint8_t>(MouseModifier::Alt)) return MouseModMask::Alt;
-            return MouseModMask::None;
-        };
-        m |= mapMod(mod1);
-        m |= mapMod(mod2);
-        return m;
+        return ModifierToMask(mod1) | ModifierToMask(mod2);
+    }
+
+    // Canonical identity for conflict comparison (treats legacy RightHoldWheel as HoldRight + VerticalWheel)
+    void GetCanonicalKey(uint8_t& outMods, uint8_t& outTrigger) const noexcept {
+        outMods = GetModifiers();
+        outTrigger = trigger;
+        if (trigger == static_cast<uint8_t>(MouseTrigger::RightHoldWheel)) {
+            outMods |= MouseModMask::HoldRight;
+            outTrigger = static_cast<uint8_t>(MouseTrigger::VerticalWheel);
+        }
     }
 
     static void ModifiersToMods(uint8_t mask, uint8_t& m1, uint8_t& m2) noexcept {
-        m1 = 0; m2 = 0;
-        if (mask & MouseModMask::Ctrl) {
-            m1 = static_cast<uint8_t>(MouseModifier::Ctrl);
-            if (mask & MouseModMask::Shift) m2 = static_cast<uint8_t>(MouseModifier::Shift);
-            else if (mask & MouseModMask::Alt) m2 = static_cast<uint8_t>(MouseModifier::Alt);
-        } else if (mask & MouseModMask::Shift) {
-            m1 = static_cast<uint8_t>(MouseModifier::Shift);
-            if (mask & MouseModMask::Alt) m2 = static_cast<uint8_t>(MouseModifier::Alt);
-        } else if (mask & MouseModMask::Alt) {
-            m1 = static_cast<uint8_t>(MouseModifier::Alt);
+        m1 = 0;
+        m2 = 0;
+        static constexpr std::pair<uint8_t, MouseModifier> kModOrder[] = {
+            { MouseModMask::Ctrl,       MouseModifier::Ctrl },
+            { MouseModMask::Shift,      MouseModifier::Shift },
+            { MouseModMask::Alt,        MouseModifier::Alt },
+            { MouseModMask::HoldLeft,   MouseModifier::HoldLeft },
+            { MouseModMask::HoldRight,  MouseModifier::HoldRight },
+            { MouseModMask::HoldMiddle, MouseModifier::HoldMiddle },
+            { MouseModMask::HoldX1,     MouseModifier::HoldXButton1 },
+            { MouseModMask::HoldX2,     MouseModifier::HoldXButton2 },
+        };
+        for (const auto& [bit, mod] : kModOrder) {
+            if ((mask & bit) != 0) {
+                uint8_t val = static_cast<uint8_t>(mod);
+                if (m1 == 0) {
+                    m1 = val;
+                } else if (m2 == 0) {
+                    m2 = val;
+                    break;
+                }
+            }
         }
     }
 };
@@ -487,6 +620,8 @@ enum class HotkeyAction : uint8_t {
     PanDownFast,
     PanLeftFast,
     PanRightFast,
+    ToggleWheelSwapMode,
+    ToggleWheelPanMode,
     Count              // Sentinel
 };
 
@@ -562,6 +697,8 @@ inline std::wstring_view HotkeyActionToString(HotkeyAction action) noexcept {
         case HotkeyAction::PanDownFast: return L"PanDownFast";
         case HotkeyAction::PanLeftFast: return L"PanLeftFast";
         case HotkeyAction::PanRightFast: return L"PanRightFast";
+        case HotkeyAction::ToggleWheelSwapMode: return L"ToggleWheelSwapMode";
+        case HotkeyAction::ToggleWheelPanMode: return L"ToggleWheelPanMode";
         default: return L"None";
     }
 }
@@ -635,6 +772,8 @@ inline HotkeyAction StringToHotkeyAction(std::wstring_view sv) noexcept {
     if (sv == L"PanDownFast") return HotkeyAction::PanDownFast;
     if (sv == L"PanLeftFast") return HotkeyAction::PanLeftFast;
     if (sv == L"PanRightFast") return HotkeyAction::PanRightFast;
+    if (sv == L"ToggleWheelSwapMode") return HotkeyAction::ToggleWheelSwapMode;
+    if (sv == L"ToggleWheelPanMode") return HotkeyAction::ToggleWheelPanMode;
     return HotkeyAction::None;
 }
 
@@ -1090,8 +1229,17 @@ struct AppConfig {
     std::vector<MouseGestureRule> MouseGestures = GetDefaultMouseGestures();
 
     const MouseGestureRule* FindMouseGesture(uint8_t modifiers, MouseTrigger trigger) const noexcept {
+        uint8_t targetTrig = static_cast<uint8_t>(trigger);
+        uint8_t targetMods = modifiers;
+        if (trigger == MouseTrigger::RightHoldWheel) {
+            targetMods |= MouseModMask::HoldRight;
+            targetTrig = static_cast<uint8_t>(MouseTrigger::VerticalWheel);
+        }
         for (const auto& rule : MouseGestures) {
-            if (rule.trigger == (uint8_t)trigger && rule.GetModifiers() == modifiers) {
+            uint8_t rMods = 0;
+            uint8_t rTrig = 0;
+            rule.GetCanonicalKey(rMods, rTrig);
+            if (rTrig == targetTrig && rMods == targetMods) {
                 return &rule;
             }
         }
@@ -1101,6 +1249,46 @@ struct AppConfig {
     MouseActionTarget GetMouseGestureAction(uint8_t modifiers, MouseTrigger trigger) const noexcept {
         const auto* rule = FindMouseGesture(modifiers, trigger);
         return rule ? static_cast<MouseActionTarget>(rule->action) : MouseActionTarget::None;
+    }
+
+    bool HasAnyActiveMouseModMask(uint8_t modMask) const noexcept {
+        for (const auto& rule : MouseGestures) {
+            if (rule.action == static_cast<int>(MouseActionTarget::None)) continue;
+            uint8_t rMods = 0;
+            uint8_t rTrig = 0;
+            rule.GetCanonicalKey(rMods, rTrig);
+            if ((rMods & modMask) != 0) return true;
+        }
+        return false;
+    }
+
+    bool HasActiveMouseTrigger(MouseTrigger trigger) const noexcept {
+        uint8_t targetTrig = static_cast<uint8_t>(trigger);
+        for (const auto& rule : MouseGestures) {
+            if (rule.action == static_cast<int>(MouseActionTarget::None)) continue;
+            uint8_t rMods = 0;
+            uint8_t rTrig = 0;
+            rule.GetCanonicalKey(rMods, rTrig);
+            if (rTrig == targetTrig) return true;
+        }
+        return false;
+    }
+
+    void NormalizeMouseGestures() {
+        for (auto& rule : MouseGestures) {
+            if (rule.trigger == static_cast<uint8_t>(MouseTrigger::RightHoldWheel)) {
+                uint8_t holdR = static_cast<uint8_t>(MouseModifier::HoldRight);
+                if (rule.mod1 == 0) {
+                    rule.mod1 = holdR;
+                    rule.trigger = static_cast<uint8_t>(MouseTrigger::VerticalWheel);
+                } else if (rule.mod2 == 0) {
+                    rule.mod2 = holdR;
+                    rule.trigger = static_cast<uint8_t>(MouseTrigger::VerticalWheel);
+                } else if (rule.mod1 == holdR || rule.mod2 == holdR) {
+                    rule.trigger = static_cast<uint8_t>(MouseTrigger::VerticalWheel);
+                }
+            }
+        }
     }
 
     std::vector<MouseGestureRule> GetGesturesForAction(MouseActionTarget act) const {
@@ -1113,9 +1301,14 @@ struct AppConfig {
 
     void SetMouseGesture(uint8_t mod1, uint8_t mod2, MouseTrigger trigger, MouseActionTarget action) {
         MouseGestureRule newRule{ mod1, mod2, static_cast<uint8_t>(trigger), static_cast<int>(action) };
-        uint8_t mods = newRule.GetModifiers();
+        uint8_t newMods = 0;
+        uint8_t newTrig = 0;
+        newRule.GetCanonicalKey(newMods, newTrig);
         for (auto& r : MouseGestures) {
-            if (r.trigger == static_cast<uint8_t>(trigger) && r.GetModifiers() == mods) {
+            uint8_t rMods = 0;
+            uint8_t rTrig = 0;
+            r.GetCanonicalKey(rMods, rTrig);
+            if (rTrig == newTrig && rMods == newMods) {
                 r = newRule;
                 return;
             }

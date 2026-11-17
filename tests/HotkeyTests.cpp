@@ -353,5 +353,111 @@ TEST(HotkeyRulesTest, DefaultRatingRulesContainMainAndNumpadDigits) {
     }
 }
 
+TEST(MouseGestureTest, OrthogonalHoldModifiersAndWheelModes) {
+    AppConfig config;
+    config.SetMouseGesture(
+        static_cast<uint8_t>(MouseModifier::HoldLeft), 0,
+        MouseTrigger::VerticalWheel, MouseActionTarget::PanImage);
+    config.SetMouseGesture(
+        static_cast<uint8_t>(MouseModifier::HoldXButton2), static_cast<uint8_t>(MouseModifier::Ctrl),
+        MouseTrigger::VerticalWheel, MouseActionTarget::Zoom);
+    config.SetMouseGesture(
+        0, 0, MouseTrigger::LeftRightChord, MouseActionTarget::ToggleWheelPanMode);
+    config.SetMouseGesture(
+        0, 0, MouseTrigger::XButton1Drag, MouseActionTarget::PanImage);
+    config.SetMouseGesture(
+        static_cast<uint8_t>(MouseModifier::Shift), 0,
+        MouseTrigger::LeftDblClick, MouseActionTarget::ToggleWheelSwapMode);
+
+    EXPECT_EQ(config.GetMouseGestureAction(MouseModMask::HoldLeft, MouseTrigger::VerticalWheel),
+              MouseActionTarget::PanImage);
+    EXPECT_EQ(config.GetMouseGestureAction(MouseModMask::HoldX2 | MouseModMask::Ctrl, MouseTrigger::VerticalWheel),
+              MouseActionTarget::Zoom);
+    EXPECT_EQ(config.GetMouseGestureAction(MouseModMask::None, MouseTrigger::LeftRightChord),
+              MouseActionTarget::ToggleWheelPanMode);
+    EXPECT_EQ(config.GetMouseGestureAction(MouseModMask::None, MouseTrigger::XButton1Drag),
+              MouseActionTarget::PanImage);
+    EXPECT_EQ(config.GetMouseGestureAction(MouseModMask::Shift, MouseTrigger::LeftDblClick),
+              MouseActionTarget::ToggleWheelSwapMode);
+
+    EXPECT_TRUE(config.HasAnyActiveMouseModMask(MouseModMask::HoldLeft));
+    EXPECT_TRUE(config.HasAnyActiveMouseModMask(MouseModMask::HoldX2));
+    EXPECT_FALSE(config.HasAnyActiveMouseModMask(MouseModMask::HoldMiddle));
+}
+
+TEST(MouseGestureTest, LegacyRightHoldWheelNormalizationAndSelfCompatibility) {
+    AppConfig config;
+    config.MouseGestures.clear();
+    config.MouseGestures.push_back({ 0, 0, static_cast<uint8_t>(MouseTrigger::RightHoldWheel), static_cast<int>(MouseActionTarget::Navigate) });
+
+    // Before normalization, canonical lookup must still resolve HoldRight + VerticalWheel
+    EXPECT_EQ(config.GetMouseGestureAction(MouseModMask::HoldRight, MouseTrigger::VerticalWheel),
+              MouseActionTarget::Navigate);
+
+    config.NormalizeMouseGestures();
+    ASSERT_EQ(config.MouseGestures.size(), 1u);
+    EXPECT_EQ(config.MouseGestures[0].mod1, static_cast<uint8_t>(MouseModifier::HoldRight));
+    EXPECT_EQ(config.MouseGestures[0].trigger, static_cast<uint8_t>(MouseTrigger::VerticalWheel));
+    EXPECT_EQ(config.GetMouseGestureAction(MouseModMask::HoldRight, MouseTrigger::VerticalWheel),
+              MouseActionTarget::Navigate);
+
+    // Self-incompatible combinations must be rejected
+    EXPECT_FALSE(IsMouseModifierTriggerCompatible(static_cast<uint8_t>(MouseModifier::HoldLeft), MouseTrigger::LeftDrag));
+    EXPECT_FALSE(IsMouseModifierTriggerCompatible(static_cast<uint8_t>(MouseModifier::HoldLeft), MouseTrigger::LeftRightChord));
+    EXPECT_TRUE(IsMouseModifierTriggerCompatible(static_cast<uint8_t>(MouseModifier::HoldLeft), MouseTrigger::VerticalWheel));
+    EXPECT_TRUE(IsMouseModifierTriggerCompatible(static_cast<uint8_t>(MouseModifier::HoldLeft), MouseTrigger::RightClick));
+    EXPECT_FALSE(IsMouseModifierTriggerCompatible(static_cast<uint8_t>(MouseModifier::HoldXButton1), MouseTrigger::XButton1Click));
+    EXPECT_TRUE(IsMouseModifierTriggerCompatible(static_cast<uint8_t>(MouseModifier::HoldXButton1), MouseTrigger::VerticalWheel));
+}
+
+TEST(MouseGestureTest, TriggerActionCompatibilityMatrix) {
+    // Drag triggers: support continuous spatial/hold actions; reject discrete/wheel-only actions
+    for (MouseTrigger dragTrig : { MouseTrigger::LeftDrag, MouseTrigger::MiddleDrag, MouseTrigger::RightDrag,
+                                    MouseTrigger::XButton1Drag, MouseTrigger::XButton2Drag }) {
+        EXPECT_TRUE(IsMouseTriggerActionCompatible(dragTrig, MouseActionTarget::WindowDrag));
+        EXPECT_TRUE(IsMouseTriggerActionCompatible(dragTrig, MouseActionTarget::PanImage));
+        EXPECT_TRUE(IsMouseTriggerActionCompatible(dragTrig, MouseActionTarget::Zoom));
+        EXPECT_TRUE(IsMouseTriggerActionCompatible(dragTrig, MouseActionTarget::CropRegionDrag));
+        EXPECT_TRUE(IsMouseTriggerActionCompatible(dragTrig, MouseActionTarget::Loupe));
+        EXPECT_FALSE(IsMouseTriggerActionCompatible(dragTrig, MouseActionTarget::PanVertical));
+        EXPECT_FALSE(IsMouseTriggerActionCompatible(dragTrig, MouseActionTarget::PanHorizontal));
+        EXPECT_FALSE(IsMouseTriggerActionCompatible(dragTrig, MouseActionTarget::ContextMenu));
+        EXPECT_FALSE(IsMouseTriggerActionCompatible(dragTrig, MouseActionTarget::AdjustZoomSpeedWheel));
+    }
+
+    // Wheel triggers: support PanImage, PanVertical, PanHorizontal, Zoom, LockWindowZoomWheel, AdjustZoomSpeedWheel, Navigate; reject WindowDrag/Loupe/Click actions
+    for (MouseTrigger wheelTrig : { MouseTrigger::VerticalWheel, MouseTrigger::HorizontalWheel }) {
+        EXPECT_FALSE(IsMouseTriggerActionCompatible(wheelTrig, MouseActionTarget::WindowDrag));
+        EXPECT_TRUE(IsMouseTriggerActionCompatible(wheelTrig, MouseActionTarget::PanImage));
+        EXPECT_TRUE(IsMouseTriggerActionCompatible(wheelTrig, MouseActionTarget::PanVertical));
+        EXPECT_TRUE(IsMouseTriggerActionCompatible(wheelTrig, MouseActionTarget::PanHorizontal));
+        EXPECT_TRUE(IsMouseTriggerActionCompatible(wheelTrig, MouseActionTarget::Zoom));
+        EXPECT_TRUE(IsMouseTriggerActionCompatible(wheelTrig, MouseActionTarget::LockWindowZoomWheel));
+        EXPECT_TRUE(IsMouseTriggerActionCompatible(wheelTrig, MouseActionTarget::AdjustZoomSpeedWheel));
+        EXPECT_TRUE(IsMouseTriggerActionCompatible(wheelTrig, MouseActionTarget::Navigate));
+        EXPECT_FALSE(IsMouseTriggerActionCompatible(wheelTrig, MouseActionTarget::Loupe));
+        EXPECT_FALSE(IsMouseTriggerActionCompatible(wheelTrig, MouseActionTarget::ContextMenu));
+        EXPECT_FALSE(IsMouseTriggerActionCompatible(wheelTrig, MouseActionTarget::CropRegionDrag));
+    }
+
+    // Click / Chord triggers: support discrete commands and wheel-mode toggles; reject Drag/Wheel-only actions and Loupe
+    for (MouseTrigger clickTrig : { MouseTrigger::LeftClick, MouseTrigger::LeftDblClick, MouseTrigger::MiddleClick,
+                                     MouseTrigger::RightClick, MouseTrigger::XButton1Click, MouseTrigger::XButton2Click,
+                                     MouseTrigger::LeftRightChord }) {
+        EXPECT_TRUE(IsMouseTriggerActionCompatible(clickTrig, MouseActionTarget::SmartZoom));
+        EXPECT_TRUE(IsMouseTriggerActionCompatible(clickTrig, MouseActionTarget::ContextMenu));
+        EXPECT_TRUE(IsMouseTriggerActionCompatible(clickTrig, MouseActionTarget::ToggleWheelSwapMode));
+        EXPECT_TRUE(IsMouseTriggerActionCompatible(clickTrig, MouseActionTarget::ToggleWheelPanMode));
+        EXPECT_FALSE(IsMouseTriggerActionCompatible(clickTrig, MouseActionTarget::WindowDrag));
+        EXPECT_FALSE(IsMouseTriggerActionCompatible(clickTrig, MouseActionTarget::PanVertical));
+        EXPECT_FALSE(IsMouseTriggerActionCompatible(clickTrig, MouseActionTarget::PanHorizontal));
+        EXPECT_FALSE(IsMouseTriggerActionCompatible(clickTrig, MouseActionTarget::Zoom));
+        EXPECT_FALSE(IsMouseTriggerActionCompatible(clickTrig, MouseActionTarget::CropRegionDrag));
+        EXPECT_FALSE(IsMouseTriggerActionCompatible(clickTrig, MouseActionTarget::Loupe));
+    }
+}
+
+
+
 
 

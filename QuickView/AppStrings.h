@@ -891,9 +891,14 @@ namespace AppStrings {
     // Hotkey Action Name resolver
     std::wstring GetHotkeyActionName(::HotkeyAction action);
 
-    // Mouse Gesture Name resolver
+    // Mouse Gesture Name & Dialog resolver
     std::wstring GetMouseModifierName(uint8_t mod);
     std::wstring GetMouseTriggerName(::MouseTrigger trigger);
     std::wstring GetMouseActionTargetName(::MouseActionTarget action);
+    std::wstring GetGestureConflictTitle();
+    std::wstring GetGestureConflictPrompt();
+    std::wstring GetOsdWheelMode1SwappedFmt();
+    std::wstring GetOsdWheelMode2PanText();
+    std::wstring GetOsdWheelMode2DefaultFmt();
 }
 
