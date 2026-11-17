@@ -306,7 +306,13 @@ void GalleryOverlay::Update(float deltaTime, HWND hwnd) {
     if (g_config.GalleryTriggerMode == 1 && m_hoveringHotspot && m_mode == GalleryMode::Hidden) {
         m_hoverDelayTimer += deltaTime;
         if (m_hoverDelayTimer >= g_config.GalleryDwellTime) { // Configurable dwell time
-            Open(m_selectedIndex >= 0 ? m_selectedIndex : 0, GalleryMode::Filmstrip);
+            int initialIdx = (m_selectedIndex >= 0)
+                ? m_selectedIndex
+                : ((m_pNav && m_pNav->Index() >= 0) ? m_pNav->Index() : 0);
+            Open(initialIdx, GalleryMode::Filmstrip);
+            if (hwnd) {
+                SetTimer(hwnd, 998, 16, nullptr);
+            }
             m_hoverDelayTimer = 0.0f;
             m_hoveringHotspot = false;
         }

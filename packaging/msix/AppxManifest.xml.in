@@ -12,7 +12,7 @@
     ProcessorArchitecture="@ARCH@" />
 
   <Properties>
-    <DisplayName>QuickView</DisplayName>
+    <DisplayName>QuickView - Fast File Viewer</DisplayName>
     <PublisherDisplayName>Vivor Loong</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>

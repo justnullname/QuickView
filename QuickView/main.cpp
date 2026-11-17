@@ -13456,10 +13456,21 @@ case WM_DESTROY: {
                   } else if (g_config.GalleryTriggerMode == 0) {
                       if (inGalleryTriggerZone) {
                           SaveOverlayWindowState(hwnd);
+                          EnsureBootHydrated(hwnd);
                           EnsureThumbMgrInitialized(hwnd);
-                          g_gallery.Open(GetPaneContext(PaneSlot::Primary).navigator.Index(), GalleryMode::Filmstrip);
+                          auto& nav = GetPaneContext(PaneSlot::Primary).navigator;
+                          nav.EnsureMaterialized();
+                          g_gallery.Open((std::max)(nav.Index(), 0), GalleryMode::Filmstrip);
+                          SetTimer(hwnd, 998, 16, nullptr);
                       }
                   } else if (g_config.GalleryTriggerMode == 1) {
+                      if (inGalleryTriggerZone) {
+                          EnsureBootHydrated(hwnd);
+                          EnsureThumbMgrInitialized(hwnd);
+                          if (!g_gallery.IsHoveringHotspot()) {
+                              RequestRepaint(PaintLayer::Dynamic);
+                          }
+                      }
                       g_gallery.SetHoveringHotspot(inGalleryTriggerZone);
                   }
               } else {
@@ -14532,14 +14543,19 @@ SKIP_EDGE_NAV:;
             return 0;
         }
         
-        // Click Hotspot to trigger Gallery (Trigger Mode 2)
-        if (!g_imagePath.empty() && !g_gallery.IsVisible() && !g_settingsOverlay.IsVisible() && !g_helpOverlay.IsVisible() && g_config.GalleryTriggerMode == 2) {
+        // Click Hotspot to trigger Gallery (Trigger Mode 1 or 2)
+        if (!g_imagePath.empty() && !g_gallery.IsVisible() && !g_settingsOverlay.IsVisible() && !g_helpOverlay.IsVisible() &&
+            (g_config.GalleryTriggerMode == 1 || g_config.GalleryTriggerMode == 2)) {
             if (!g_uiRenderer || !g_uiRenderer->IsMouseOverInfoPanel(pt)) {
                 RECT rcWnd; GetClientRect(hwnd, &rcWnd);
                 if (IsInTopHotspot(pt, (float)(rcWnd.right - rcWnd.left), (float)(rcWnd.bottom - rcWnd.top))) {
                     SaveOverlayWindowState(hwnd);
+                    EnsureBootHydrated(hwnd);
                     EnsureThumbMgrInitialized(hwnd);
-                    g_gallery.Open(GetPaneContext(PaneSlot::Primary).navigator.Index(), GalleryMode::Filmstrip);
+                    auto& nav = GetPaneContext(PaneSlot::Primary).navigator;
+                    nav.EnsureMaterialized();
+                    g_gallery.Open((std::max)(nav.Index(), 0), GalleryMode::Filmstrip);
+                    SetTimer(hwnd, 998, 16, nullptr);
                     RequestRepaint(PaintLayer::All);
                     return 0;
                 }

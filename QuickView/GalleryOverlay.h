@@ -48,6 +48,7 @@ public:
   void SetMode(GalleryMode mode);
 
   void SetMouseInGallery(bool inGallery);
+  bool IsHoveringHotspot() const { return m_hoveringHotspot; }
   void SetHoveringHotspot(bool hovering) {
     if (m_suppressHoverUntilMouseLeave && hovering) return;
     m_hoveringHotspot = hovering;
