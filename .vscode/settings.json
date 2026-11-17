@@ -17,7 +17,6 @@
     "*.qvtheme": "json",
     "*.rc": "rc"
   },
-  "editor.formatOnSave": true,
   "C_Cpp.errorSquiggles": "enabled",
   "C_Cpp.intelliSenseEngine": "default",
   "C_Cpp.vcpkg.enabled": true

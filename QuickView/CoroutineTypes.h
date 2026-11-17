@@ -17,11 +17,13 @@ struct FireAndForget {
     };
 };
 
+#include "AsyncJob.h"
+
 // Awaitable to switch to a background thread
 struct ResumeBackground {
     bool await_ready() const { return false; }
     void await_suspend(std::coroutine_handle<> h) {
-        std::thread([h]() { h.resume(); }).detach();
+        QuickView::PostThreadPool([h]() { h.resume(); });
     }
     void await_resume() {}
 };

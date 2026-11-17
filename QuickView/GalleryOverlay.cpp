@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "AppStrings.h"
 #include "GalleryOverlay.h"
+#include "RatingStore.h"
 #include "Toolbar.h"
 #include "ThumbnailManager.h"
 #include "ImageTypes.h"
@@ -8,6 +9,7 @@
 #include "EditState.h"
 #include "GeekContextMenu.h"
 #include "UIRenderer.h"
+#include "ThemePalette.h"
 #include <algorithm>
 #include <cmath>
 
@@ -16,6 +18,7 @@ extern AppConfig g_config;
 extern HWND g_mainHwnd;
 extern bool IsLightThemeActive();
 extern float g_uiScale;
+extern RatingStore g_ratingStore;
 extern Toolbar g_toolbar;
 extern RuntimeConfig g_runtime;
 extern std::wstring& g_imagePath;
@@ -314,11 +317,12 @@ void GalleryOverlay::Update(float deltaTime, HWND hwnd) {
         repaintNeeded = true;
     }
     
-    // 6c. Hover Expand logic (Mode 0 & 1)
-    if ((g_config.GalleryTriggerMode == 0 || g_config.GalleryTriggerMode == 1) && 
+    // 6c. Hover Expand logic (when GalleryExpandOnClickOnly is false and not disabled)
+    if (!g_config.GalleryExpandOnClickOnly && g_config.GalleryTriggerMode != 3 && 
         m_mode == GalleryMode::Filmstrip && m_bottomHintHover && m_gridProgress < 0.01f) {
         m_expandHoverTimer += deltaTime;
-        if (m_expandHoverTimer >= g_config.GalleryDwellTime) { // Configurable dwell time for expand hotspot
+        const float dwellTime = (g_config.GalleryDwellTime > 0.01f) ? g_config.GalleryDwellTime : 0.25f;
+        if (m_expandHoverTimer >= dwellTime) { // Configurable dwell time for expand hotspot
             SetMode(GalleryMode::FullGrid);
             m_expandHoverTimer = 0.0f;
         }
@@ -463,7 +467,7 @@ bool GalleryOverlay::HitTestArea(int x, int y, float winW, float winH) const {
 void GalleryOverlay::CreateDeviceResources(ID2D1RenderTarget* pDC) {
     if (!pDC) return;
     if (!m_brushBg) pDC->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 1.0f), &m_brushBg);
-    if (!m_brushSelection) pDC->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::DodgerBlue), &m_brushSelection);
+    if (!m_brushSelection) pDC->CreateSolidColorBrush(QuickView::UI::Theme::GetThemePalette().accentFill, &m_brushSelection);
     if (!m_brushText) pDC->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &m_brushText);
     if (!m_brushOverlay) pDC->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.5f), &m_brushOverlay);
 }
@@ -613,15 +617,16 @@ void GalleryOverlay::Render(ID2D1DeviceContext *pDC, const D2D1_SIZE_F &size,
         }
     }
 
-    if (!m_brushSelection) pDC->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::DodgerBlue), &m_brushSelection);
+    const auto& tp = QuickView::UI::Theme::GetThemePalette();
+    if (!m_brushSelection) pDC->CreateSolidColorBrush(tp.accentFill, &m_brushSelection);
     if (!m_brushText) pDC->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &m_brushText);
     if (!m_brushOverlay) pDC->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.5f), &m_brushOverlay);
 
-    bool isLightForText = IsLightThemeActive();
+    bool isLightForText = tp.isLight;
     D2D1_COLOR_F txtClr = isLightForText ? D2D1::ColorF(0.12f, 0.12f, 0.15f, 1.0f) : D2D1::ColorF(D2D1::ColorF::White);
-    D2D1_COLOR_F accClr = isLightForText ? D2D1::ColorF(0.0f, 0.45f, 0.9f, 1.0f) : D2D1::ColorF(D2D1::ColorF::DodgerBlue);
-    
-    m_brushSelection->SetColor(accClr);
+    D2D1_COLOR_F accClr = tp.accentText;
+
+    m_brushSelection->SetColor(tp.accentFill);
     m_brushText->SetColor(txtClr);
     
     // 2. Text Format Initialization
@@ -637,10 +642,10 @@ void GalleryOverlay::Render(ID2D1DeviceContext *pDC, const D2D1_SIZE_F &size,
         DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(m_dwriteFactory.GetAddressOf()));
     }
     if (m_dwriteFactory && !m_textFormat) {
-        m_dwriteFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_MEDIUM, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f * g_uiScale, AppStrings::CurrentLocale, &m_textFormat);
-        m_dwriteFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 10.0f * g_uiScale, AppStrings::CurrentLocale, &m_textFormatStats);
-        m_dwriteFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 20.0f * g_uiScale, AppStrings::CurrentLocale, &m_textFormatOSD);
-        m_dwriteFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 9.0f * g_uiScale, AppStrings::CurrentLocale, &m_textFormatBadge);
+        m_dwriteFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_MEDIUM, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f * g_uiScale, AppStrings::g.CurrentLocale, &m_textFormat);
+        m_dwriteFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 10.0f * g_uiScale, AppStrings::g.CurrentLocale, &m_textFormatStats);
+        m_dwriteFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 20.0f * g_uiScale, AppStrings::g.CurrentLocale, &m_textFormatOSD);
+        m_dwriteFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 9.0f * g_uiScale, AppStrings::g.CurrentLocale, &m_textFormatBadge);
         if (m_textFormatBadge) {
             m_textFormatBadge->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
             m_textFormatBadge->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -705,6 +710,9 @@ void GalleryOverlay::Render(ID2D1DeviceContext *pDC, const D2D1_SIZE_F &size,
     D2D1_RECT_F thumbsClip = D2D1::RectF(currentLeftMargin - 6.0f * scale, 0.0f, size.width - currentLeftMargin + 6.0f * scale, galleryH);
     pDC->PushAxisAlignedClip(thumbsClip, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     
+    const D2D1_COLOR_F starAccentColor = QuickView::UI::Theme::ClampCustomAccentText(
+        tp.isLight ? tp.accentFill : tp.accentText, false);
+
     // Single item draw lambda to keep Z-Order multipass loops clean and hyper-efficient
     auto drawItem = [&](int i) {
         D2D1_RECT_F cellRect = GetItemRect(i, size.width);
@@ -740,17 +748,12 @@ void GalleryOverlay::Render(ID2D1DeviceContext *pDC, const D2D1_SIZE_F &size,
         }
         
 
-        // Selection border (rounded, DodgerBlue/Accent, single crisp ring)
-        if (i == m_selectedIndex) {
-            float borderOffset = 1.5f * scale;
-            float borderRadius = 6.5f * scale;
-            float borderWidth = 2.0f * scale;
-            m_brushSelection->SetOpacity(1.0f * m_transitionProgress);
-            pDC->DrawRoundedRectangle(
-                D2D1::RoundedRect(D2D1::RectF(cellRect.left - borderOffset, cellRect.top - borderOffset, cellRect.right + borderOffset, cellRect.bottom + borderOffset), borderRadius, borderRadius),
-                m_brushSelection.Get(), borderWidth);
-            m_brushSelection->SetOpacity(1.0f);
-        }
+        // Pixel-align thumbnail bounding box and compute concentric geometry
+        cellRect.left = std::round(cellRect.left);
+        cellRect.top = std::round(cellRect.top);
+        cellRect.right = std::round(cellRect.right);
+        cellRect.bottom = std::round(cellRect.bottom);
+        const float thumbCornerRadius = std::round(6.0f * scale);
         
         // Draw thumbnail
         ImageID imgId = m_pNav->GetImageID(i);
@@ -758,7 +761,7 @@ void GalleryOverlay::Render(ID2D1DeviceContext *pDC, const D2D1_SIZE_F &size,
         auto bmp = m_pThumbMgr->GetThumbnail(imgId, path.c_str(), pDC);
         
         if (bmp) {
-            // Use BitmapBrush to draw with elegant 6px rounded corners
+            // Use BitmapBrush to draw with elegant rounded corners
             ComPtr<ID2D1BitmapBrush> bmpBrush;
             HRESULT hr = pDC->CreateBitmapBrush(bmp.Get(), &bmpBrush);
             if (SUCCEEDED(hr) && bmpBrush) {
@@ -774,51 +777,105 @@ void GalleryOverlay::Render(ID2D1DeviceContext *pDC, const D2D1_SIZE_F &size,
                                           D2D1::Matrix3x2F::Translation(cellRect.left - src.left * scaleX, cellRect.top - src.top * scaleY);
                 bmpBrush->SetTransform(trans);
                 
-                pDC->FillRoundedRectangle(D2D1::RoundedRect(cellRect, 6.0f * scale, 6.0f * scale), bmpBrush.Get());
+                pDC->FillRoundedRectangle(D2D1::RoundedRect(cellRect, thumbCornerRadius, thumbCornerRadius), bmpBrush.Get());
             } else if (m_brushBg) {
                 // Fallback to placeholder box if CreateBitmapBrush fails
                 D2D1_COLOR_F phBase = isLight ? D2D1::ColorF(0.85f, 0.85f, 0.85f, 1.0f) : D2D1::ColorF(0.2f, 0.2f, 0.2f, 1.0f);
                 phBase.a *= m_transitionProgress;
                 m_brushBg->SetColor(phBase);
                 m_brushBg->SetOpacity(1.0f);
-                pDC->FillRoundedRectangle(D2D1::RoundedRect(cellRect, 6.0f * scale, 6.0f * scale), m_brushBg.Get());
+                pDC->FillRoundedRectangle(D2D1::RoundedRect(cellRect, thumbCornerRadius, thumbCornerRadius), m_brushBg.Get());
             }
         } else {
-            // Draw placeholder box (matching 6px rounded corners)
+            // Draw placeholder box (matching rounded corners)
             if (m_brushBg) {
                 D2D1_COLOR_F phBase = isLight ? D2D1::ColorF(0.85f, 0.85f, 0.85f, 1.0f) : D2D1::ColorF(0.2f, 0.2f, 0.2f, 1.0f);
                 phBase.a *= m_transitionProgress;
                 
                 m_brushBg->SetColor(phBase);
                 m_brushBg->SetOpacity(1.0f);
-                pDC->FillRoundedRectangle(D2D1::RoundedRect(cellRect, 6.0f * scale, 6.0f * scale), m_brushBg.Get());
+                pDC->FillRoundedRectangle(D2D1::RoundedRect(cellRect, thumbCornerRadius, thumbCornerRadius), m_brushBg.Get());
             }
-            
+
             // Queue request only if NOT actively columns-zooming (performance LOD)
             if (!m_isZooming) {
                 int prio = std::abs(i - centerIdx);
                 m_pThumbMgr->QueueRequest(imgId, path.c_str(), prio);
             }
         }
+
+        // Selection border (drawn on top of thumbnail, perfectly concentric with zero gap, sharp 2px/4px)
+        if (i == m_selectedIndex) {
+            const float borderWidth = (scale >= 1.5f) ? 4.0f : 2.0f;
+            const float borderOffset = borderWidth * 0.5f;
+            const float borderRadius = thumbCornerRadius + borderOffset;
+            m_brushSelection->SetOpacity(1.0f * m_transitionProgress);
+            pDC->DrawRoundedRectangle(
+                D2D1::RoundedRect(D2D1::RectF(cellRect.left - borderOffset, cellRect.top - borderOffset, cellRect.right + borderOffset, cellRect.bottom + borderOffset), borderRadius, borderRadius),
+                m_brushSelection.Get(), borderWidth);
+            m_brushSelection->SetOpacity(1.0f);
+        }
+        // [Ratings] Filled stars in the opposite corner from the RAW badge.
+        // The read is queued lazily, riding the same visibility pass as the
+        // thumbnails; an unrated photo gets no chip, so a folder nobody has
+        // rated stays exactly as quiet as before.
+        {
+            std::optional<QuickView::Rating::Resolved> rating;
+            if (m_isZooming) {
+                rating = g_ratingStore.TryGet(imgId);
+            } else {
+                const FileNavigator::PairedRaw* ratingRaw = m_pNav->GetPairedRaw(imgId);
+                rating = g_ratingStore.TryGetOrQueueRead(
+                    imgId, path,
+                    ratingRaw ? std::wstring_view(ratingRaw->path) : std::wstring_view{});
+            }
+            if (rating && rating->stars > 0 && m_brushBg && m_brushText && m_textFormatBadge) {
+                static constexpr std::wstring_view SOLID_STARS[] = {
+                    L"", L"\u2605", L"\u2605\u2605", L"\u2605\u2605\u2605", L"\u2605\u2605\u2605\u2605", L"\u2605\u2605\u2605\u2605\u2605"
+                };
+                const int starCount = std::clamp(rating->stars, 1, 5);
+                const std::wstring_view stars = SOLID_STARS[starCount];
+
+                const float bw = (8.0f + 7.5f * (float)stars.length()) * g_uiScale;
+                const float bh = 15.0f * g_uiScale;
+                const float bm = 5.0f * g_uiScale;
+                const float br = 3.5f * g_uiScale;
+                D2D1_RECT_F badge = D2D1::RectF(cellRect.left + bm, cellRect.bottom - bm - bh,
+                                                cellRect.left + bm + bw, cellRect.bottom - bm);
+                m_brushBg->SetColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.55f));
+                m_brushBg->SetOpacity(m_transitionProgress);
+                pDC->FillRoundedRectangle(D2D1::RoundedRect(badge, br, br), m_brushBg.Get());
+
+                D2D1_COLOR_F prevStarTxt = m_brushText->GetColor();
+                m_brushText->SetColor(starAccentColor);
+                m_brushText->SetOpacity(m_transitionProgress * 0.95f);
+                pDC->DrawText(stars.data(), (UINT32)stars.length(), m_textFormatBadge.Get(), badge, m_brushText.Get());
+                m_brushText->SetColor(prevStarTxt);
+                m_brushText->SetOpacity(1.0f);
+            }
+        }
+
         // [RAW+JPEG Pairing] "+CR3"-style badge: this item carries a hidden
         // RAW. Theme-independent dark chip so it reads on any photo content.
-        if (const FileNavigator::PairedRaw* pairedRaw = m_pNav->GetPairedRaw(imgId)) {
-            const std::wstring badgeText = FileNavigator::PairedRawLabel(*pairedRaw);
-            const float bw = (8.0f + 6.5f * (float)badgeText.length()) * g_uiScale;
-            const float bh = 15.0f * g_uiScale;
-            const float bm = 5.0f * g_uiScale;
-            const float br = 3.5f * g_uiScale;
-            D2D1_RECT_F badge = D2D1::RectF(cellRect.right - bm - bw, cellRect.top + bm, cellRect.right - bm, cellRect.top + bm + bh);
-            m_brushBg->SetColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.55f));
-            m_brushBg->SetOpacity(m_transitionProgress);
-            pDC->FillRoundedRectangle(D2D1::RoundedRect(badge, br, br), m_brushBg.Get());
+        if (m_brushBg && m_brushText && m_textFormatBadge) {
+            if (const FileNavigator::PairedRaw* pairedRaw = m_pNav->GetPairedRaw(imgId)) {
+                const std::wstring badgeText = FileNavigator::PairedRawLabel(*pairedRaw);
+                const float bw = (8.0f + 6.5f * (float)badgeText.length()) * g_uiScale;
+                const float bh = 15.0f * g_uiScale;
+                const float bm = 5.0f * g_uiScale;
+                const float br = 3.5f * g_uiScale;
+                D2D1_RECT_F badge = D2D1::RectF(cellRect.right - bm - bw, cellRect.top + bm, cellRect.right - bm, cellRect.top + bm + bh);
+                m_brushBg->SetColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.55f));
+                m_brushBg->SetOpacity(m_transitionProgress);
+                pDC->FillRoundedRectangle(D2D1::RoundedRect(badge, br, br), m_brushBg.Get());
 
-            D2D1_COLOR_F prevBadgeTxt = m_brushText->GetColor();
-            m_brushText->SetColor(D2D1::ColorF(D2D1::ColorF::White));
-            m_brushText->SetOpacity(m_transitionProgress * 0.95f);
-            pDC->DrawText(badgeText.c_str(), (UINT32)badgeText.length(), m_textFormatBadge.Get(), badge, m_brushText.Get());
-            m_brushText->SetColor(prevBadgeTxt);
-            m_brushText->SetOpacity(1.0f);
+                D2D1_COLOR_F prevBadgeTxt = m_brushText->GetColor();
+                m_brushText->SetColor(D2D1::ColorF(D2D1::ColorF::White));
+                m_brushText->SetOpacity(m_transitionProgress * 0.95f);
+                pDC->DrawText(badgeText.c_str(), (UINT32)badgeText.length(), m_textFormatBadge.Get(), badge, m_brushText.Get());
+                m_brushText->SetColor(prevBadgeTxt);
+                m_brushText->SetOpacity(1.0f);
+            }
         }
     };
     
@@ -1872,12 +1929,15 @@ void GalleryOverlay::SetMouseInGallery(bool inGallery) {
 
 void GalleryOverlay::CommitSelectionState() {
     if (m_mode == GalleryMode::FullGrid) {
-        if (m_isPinned || g_config.GalleryKeepVisibleOnThumbnailClick) {
+        // In FullGrid mode, committing a thumbnail selection means the user wants to view the image
+        // in full canvas, so directly dismiss the gallery unless pinned to filmstrip.
+        if (m_isPinned) {
             SetMode(GalleryMode::Filmstrip);
         } else {
             Close(true);
         }
     } else if (!m_isPinned && !g_config.GalleryKeepVisibleOnThumbnailClick) {
+        // Keep-visible semantics only apply to Filmstrip mode.
         Close(true);
     }
 }

@@ -6,6 +6,7 @@
 #include "GeekGlass.h"
 #include "CompositionEngine.h"
 #include "GeekIconRenderer.h"
+#include "ThemePalette.h"
 #include <d2d1_1.h>
 #include <cmath>
 
@@ -130,7 +131,7 @@ void GeekContextMenu::ShowMenu(HWND parent, int sx, int sy,
                                 std::vector<ActionButton> actions,
                                 std::vector<GeekMenuItem> items,
                                 bool isTouch,
-                                std::vector<std::unique_ptr<std::wstring>> stringCache) {
+                                LinearWideStringPool stringCache) {
     DismissAll();
     EnsureClassRegistered();
 
@@ -402,6 +403,16 @@ LRESULT GeekContextMenu::HandleMsg(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (wp == VK_ESCAPE) { DismissAll(0); return 0; }
         break;
     case WM_MOUSEWHEEL: {
+        POINT pt;
+        GetCursorPos(&pt);
+        if (m_childMenu && m_childMenu->m_hwnd) {
+            RECT childRc;
+            GetWindowRect(m_childMenu->m_hwnd, &childRc);
+            if (PtInRect(&childRc, pt)) {
+                return m_childMenu->HandleMsg(m_childMenu->m_hwnd, msg, wp, lp);
+            }
+        }
+
         if (m_totalBodyH <= m_maxBodyH) return 0;
         CloseSubmenu();
         short delta = static_cast<short>(HIWORD(wp));
@@ -556,19 +567,14 @@ void GeekContextMenu::CreateResources() {
     m_d2dContext->CreateSolidColorBrush(
         L ? D2D1::ColorF(0, 0, 0, 0.12f) : D2D1::ColorF(1, 1, 1, 0.10f), &m_sepBrush);
 
-    D2D1_COLOR_F accentClr, textClr;
-    if (g_config.ThemeMode == 3) {
-        accentClr = D2D1::ColorF(g_config.ThemeCustomAccentR, g_config.ThemeCustomAccentG, g_config.ThemeCustomAccentB);
-        textClr   = D2D1::ColorF(g_config.ThemeCustomTextR, g_config.ThemeCustomTextG, g_config.ThemeCustomTextB);
-    } else {
-        accentClr = L ? PRESET_LIGHT.accentColor : PRESET_DARK.accentColor;
-        textClr   = L ? PRESET_LIGHT.textColor : PRESET_DARK.textColor;
-    }
+    const auto& tp = QuickView::UI::Theme::GetThemePalette();
+    D2D1_COLOR_F accentClr = tp.accentText;
+    D2D1_COLOR_F textClr = tp.text;
 
     m_d2dContext->CreateSolidColorBrush(accentClr, &m_accentBrush);
     m_d2dContext->CreateSolidColorBrush(textClr, &m_textBrush);
 
-    D2D1_COLOR_F hoverClr = accentClr;
+    D2D1_COLOR_F hoverClr = tp.accentFill;
     hoverClr.a = L ? 0.12f : 0.15f;
     m_d2dContext->CreateSolidColorBrush(hoverClr, &m_hoverBrush);
 
@@ -648,11 +654,32 @@ void GeekContextMenu::CalculateLayout() {
     GetMonitorInfoW(hMon, &mi);
     float waH = static_cast<float>(mi.rcWork.bottom - mi.rcWork.top) / m_scale;
 
-    m_maxBodyH = (waH * 0.85f) - m_actionRowH - MENU_PAD * 2.0f;
+    // Use full work area height with safety margin for root menu.
+    // For cascading submenus, cap height gracefully so large item lists (like soft proofing profiles)
+    // remain scrollable instead of stretching across the entire monitor.
+    const float bottomPad = m_actions.empty() ? 16.0f : MENU_PAD;
+    const float nonBodyH = m_bodyStartY + bottomPad;
+    constexpr float SCREEN_MARGIN = 8.0f;
+    float maxAvailableTotalH = std::max(100.0f, waH - SCREEN_MARGIN * 2.0f);
+    if (m_parentMenu != nullptr) {
+        constexpr float MAX_SUBMENU_ITEMS = 16.0f;
+        float submenuMaxH = itemH * MAX_SUBMENU_ITEMS + nonBodyH;
+        float screenCapH = waH * 0.70f;
+        maxAvailableTotalH = (std::min)(maxAvailableTotalH, (std::min)(submenuMaxH, screenCapH));
+    }
+    const float calculatedMaxBodyH = std::max(0.0f, maxAvailableTotalH - nonBodyH);
 
-    float maxScroll = std::max(0.0f, m_totalBodyH - m_maxBodyH);
-    if (m_scrollOffset > maxScroll) m_scrollOffset = maxScroll;
-    if (m_scrollOffset < 0) m_scrollOffset = 0;
+    // Provide 4.0 DIP slack to avoid subpixel rounding triggering scroll on high-DPI displays.
+    constexpr float TOLERANCE_SLACK = 4.0f;
+    if (m_totalBodyH <= calculatedMaxBodyH + TOLERANCE_SLACK) {
+        m_maxBodyH = m_totalBodyH;
+        m_scrollOffset = 0.0f;
+    } else {
+        m_maxBodyH = calculatedMaxBodyH;
+        float maxScroll = std::max(0.0f, m_totalBodyH - m_maxBodyH);
+        if (m_scrollOffset > maxScroll) m_scrollOffset = maxScroll;
+        if (m_scrollOffset < 0.0f) m_scrollOffset = 0.0f;
+    }
 }
 
 SIZE GeekContextMenu::GetWindowSize() const {
@@ -1160,3 +1187,4 @@ void GeekContextMenu::RenderAndUI() {
 }
 
 } // namespace QuickView::UI::Menu
+

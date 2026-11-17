@@ -45,6 +45,8 @@ public:
 
     // Call this when file list changes completely
     void ClearCache();
+    // Evict a single entry from both L1 and L2 caches upon file deletion
+    void Evict(size_t imageId);
 
     // Preload range (Virtualization hints)
     // priorityCenter: index that viewer is looking at

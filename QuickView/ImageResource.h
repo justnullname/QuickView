@@ -39,7 +39,14 @@ struct ImageResource {
     ComPtr<IDCompositionVisual2> webViewVisual;
     float svgW = 0.0f;
     float svgH = 0.0f;
-    std::wstring webviewHtml;   // [DComp] Pre-built HTML for WebView2 navigation
+    float srScale = 1.0f;          // [QVX-SR] Super-resolution texture density ratio (e.g. 2.0f or 4.0f)
+    float currentSrLevel = 1.0f;   // [QVX-SR] Cached SR level (1.0f, 2.0f, 4.0f)
+    ComPtr<ID2D1Bitmap> baseNormalBitmap; // [QVX-SR] Original 1.0x native frame bitmap
+    ComPtr<ID2D1Bitmap> promotedSrBitmap; // [QVX-SR] Cached full-frame promoted SR bitmap (2x or 4x)
+    ComPtr<ID3D11Texture2D> promotedSrTexture; // [QVX-SR] Cached raw D3D11 promoted SR texture for export/processing
+    float promotedSrScale = 1.0f;          // [QVX-SR] Scale factor of promotedSrBitmap
+    std::string promotedModelId;           // [QVX-SR] Model ID used to generate promotedSrBitmap
+    std::wstring webviewHtml;      // [DComp] Pre-built HTML for WebView2 navigation
 
     QuickView::GpuBlendOp blendOp = QuickView::GpuBlendOp::None;
     QuickView::GpuShaderPayload shaderPayload = {};
@@ -50,12 +57,19 @@ struct ImageResource {
 
     void Reset() {
         bitmap.Reset();
+        baseNormalBitmap.Reset();
+        promotedSrBitmap.Reset();
+        promotedSrTexture.Reset();
+        promotedSrScale = 1.0f;
+        promotedModelId.clear();
         svgDoc.Reset();
         webViewVisual.Reset();
         isSvg = false;
         isWebView = false;
         svgW = 0.0f;
         svgH = 0.0f;
+        srScale = 1.0f;
+        currentSrLevel = 1.0f;
         webviewHtml.clear();
         blendOp = QuickView::GpuBlendOp::None;
         shaderPayload = {};
@@ -73,11 +87,19 @@ struct ImageResource {
     ImageResource Clone() const {
         ImageResource cloned;
         cloned.bitmap = bitmap;
+        cloned.baseNormalBitmap = baseNormalBitmap;
+        cloned.promotedSrBitmap = promotedSrBitmap;
+        cloned.promotedSrTexture = promotedSrTexture;
+        cloned.promotedSrScale = promotedSrScale;
+        cloned.promotedModelId = promotedModelId;
         cloned.svgDoc = svgDoc;
         cloned.isSvg = isSvg;
         cloned.isWebView = isWebView;
+        cloned.webViewVisual = webViewVisual;
         cloned.svgW = svgW;
         cloned.svgH = svgH;
+        cloned.srScale = srScale;
+        cloned.currentSrLevel = currentSrLevel;
         cloned.webviewHtml = webviewHtml;
         cloned.blendOp = blendOp;
         cloned.shaderPayload = shaderPayload;
@@ -97,6 +119,10 @@ struct ImageResource {
 
     operator bool() const {
         return (isSvg && svgDoc) || isWebView || bitmap;
+    }
+
+    bool IsAnimated() const {
+        return animator != nullptr && animator->IsAnimated();
     }
 };
 

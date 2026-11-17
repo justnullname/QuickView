@@ -9,6 +9,7 @@
 #include "GalleryOverlay.h"
 #include "SettingsOverlay.h"
 #include "HelpOverlay.h"
+#include "ThemePalette.h"
 
 using QuickView::UI::GeekIconRenderer;
 
@@ -47,6 +48,7 @@ Toolbar::Toolbar() {
       {ToolbarButtonID::CompareZoomOut, Icons::ZoomOut, {}, true, false},
       {ToolbarButtonID::CompareSyncZoom, Icons::Link, {}, true, true},
       {ToolbarButtonID::CompareSyncPan, Icons::Pan, {}, true, true},
+      {ToolbarButtonID::CompareSave, Icons::Save, {}, true, false},
       {ToolbarButtonID::CompareExit, Icons::ExitToolbar, {}, true, false},
       // Animation mode buttons (hidden in normal mode)
       {ToolbarButtonID::AnimPrevFrame, Icons::SkipBack, {}, true, false},
@@ -90,8 +92,8 @@ void Toolbar::CreateResources(ID2D1RenderTarget *pRT) {
                                &m_brushBg); // Master placeholder
     pRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f),
                                &m_brushIcon);
-    pRT->CreateSolidColorBrush(D2D1::ColorF(0.4f, 0.6f, 1.0f, 1.0f),
-                               &m_brushIconActive); // Blue for active
+    pRT->CreateSolidColorBrush(QuickView::UI::Theme::GetThemePalette().accentText,
+                               &m_brushIconActive); // Active accent color
     pRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.3f),
                                &m_brushIconDisabled);
     pRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.3f, 0.3f, 1.0f),
@@ -102,6 +104,8 @@ void Toolbar::CreateResources(ID2D1RenderTarget *pRT) {
                                &m_brushGreen); // Green for Apply/Confirm
     pRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.3f, 0.3f, 1.0f),
                                &m_brushRed);   // Red for Cancel/Close
+    pRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f),
+                               &m_brushWork);  // Reusable working brush
 
     // Font
     DWriteCreateFactory(
@@ -118,7 +122,7 @@ void Toolbar::CreateResources(ID2D1RenderTarget *pRT) {
   m_textFormatUI.Reset();
   m_dwriteFactory->CreateTextFormat(
       L"Segoe UI", NULL, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-      DWRITE_FONT_STRETCH_NORMAL, 11.5f * m_uiScale, AppStrings::CurrentLocale,
+      DWRITE_FONT_STRETCH_NORMAL, 11.5f * m_uiScale, AppStrings::g.CurrentLocale,
       &m_textFormatUI);
   if (m_textFormatUI) {
     m_textFormatUI->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
@@ -152,6 +156,7 @@ void Toolbar::UpdateLayout(float winW, float winH) {
     case ToolbarButtonID::CompareSyncZoom:
     case ToolbarButtonID::CompareSyncPan:
     case ToolbarButtonID::CompareRawToggle:
+    case ToolbarButtonID::CompareSave:
     case ToolbarButtonID::CompareExit:
       return true;
     default:
@@ -224,6 +229,7 @@ void Toolbar::UpdateLayout(float winW, float winH) {
       {ToolbarButtonID::CompareSyncPan},
       {ToolbarButtonID::CompareSyncZoom},
       {ToolbarButtonID::CompareLayout},
+      {ToolbarButtonID::CompareSave},
       {ToolbarButtonID::CompareExit},  // Core
   };
   static constexpr ResponsiveHideGroup kAnimHideOrder[] = {
@@ -352,6 +358,17 @@ void Toolbar::UpdateLayout(float winW, float winH) {
     if (m_compareMode) {
       if (!isCompareButton(btn.id) && !isAlwaysVisible(btn.id)) return false;
       if (btn.id == ToolbarButtonID::CompareRawToggle && !btn.isWarning) return false;
+      if (btn.id == ToolbarButtonID::CompareSave) {
+        auto& primaryPane = GetPaneContext(PaneSlot::Primary);
+        auto& leftPane = GetPaneContext(PaneSlot::Left);
+        bool hasCrop = primaryPane.editState.HasCrop || leftPane.editState.HasCrop || g_cropState.IsActive;
+        bool hasSr = (primaryPane.metadata.HasSr && primaryPane.metadata.SrScale > 1.0f) ||
+                     (primaryPane.resource.promotedSrBitmap != nullptr) ||
+                     (primaryPane.resource.currentSrLevel > 1.001f) ||
+                     (leftPane.metadata.HasSr && leftPane.metadata.SrScale > 1.0f);
+        bool isDirty = primaryPane.editState.IsDirty || leftPane.editState.IsDirty;
+        return hasCrop || hasSr || isDirty;
+      }
       return true;
     }
 
@@ -522,94 +539,96 @@ void Toolbar::UpdateLayout(float winW, float winH) {
 const wchar_t *GetTooltipText(const ToolbarButton &btn) {
   switch (btn.id) {
   case ToolbarButtonID::SlideshowImmersiveToggle:
-    return AppStrings::Toolbar_Tooltip_SlideshowImmersiveToggle;
+    return AppStrings::g.Toolbar_Tooltip_SlideshowImmersiveToggle;
   case ToolbarButtonID::SlideshowExit:
-    return AppStrings::Toolbar_Tooltip_SlideshowExit;
+    return AppStrings::g.Toolbar_Tooltip_SlideshowExit;
   case ToolbarButtonID::Prev:
-    return AppStrings::Toolbar_Tooltip_Prev;
+    return AppStrings::g.Toolbar_Tooltip_Prev;
   case ToolbarButtonID::Next:
-    return AppStrings::Toolbar_Tooltip_Next;
+    return AppStrings::g.Toolbar_Tooltip_Next;
   case ToolbarButtonID::RotateL:
-    return AppStrings::Toolbar_Tooltip_RotateL;
+    return AppStrings::g.Toolbar_Tooltip_RotateL;
   case ToolbarButtonID::RotateR:
-    return AppStrings::Toolbar_Tooltip_RotateR;
+    return AppStrings::g.Toolbar_Tooltip_RotateR;
   case ToolbarButtonID::FlipH:
-    return AppStrings::Toolbar_Tooltip_FlipH;
+    return AppStrings::g.Toolbar_Tooltip_FlipH;
   case ToolbarButtonID::LockSize:
-    return btn.isToggled ? AppStrings::Toolbar_Tooltip_Unlock
-                         : AppStrings::Toolbar_Tooltip_Lock;
+    return btn.isToggled ? AppStrings::g.Toolbar_Tooltip_Unlock
+                         : AppStrings::g.Toolbar_Tooltip_Lock;
   case ToolbarButtonID::Gallery:
-    return AppStrings::Toolbar_Tooltip_Gallery;
+    return AppStrings::g.Toolbar_Tooltip_Gallery;
   case ToolbarButtonID::Exif:
-    return AppStrings::Toolbar_Tooltip_Info;
+    return AppStrings::g.Toolbar_Tooltip_Info;
   case ToolbarButtonID::RawToggle:
     // [RAW+JPEG Pairing] On a paired item the button switches the displayed
     // file rather than the decode quality
     if (btn.isPaired)
-      return btn.isToggled ? AppStrings::Toolbar_Tooltip_RawPairBack
-                           : AppStrings::Toolbar_Tooltip_RawPairView;
-    return btn.isToggled ? AppStrings::Toolbar_Tooltip_RawFull
-                         : AppStrings::Toolbar_Tooltip_RawPreview;
+      return btn.isToggled ? AppStrings::g.Toolbar_Tooltip_RawPairBack
+                           : AppStrings::g.Toolbar_Tooltip_RawPairView;
+    return btn.isToggled ? AppStrings::g.Toolbar_Tooltip_RawFull
+                         : AppStrings::g.Toolbar_Tooltip_RawPreview;
   case ToolbarButtonID::CompareRawToggle:
     if (!btn.isEnabled) return nullptr;
-    return btn.isToggled ? AppStrings::Toolbar_Tooltip_RawFull
-                         : AppStrings::Toolbar_Tooltip_RawPreview;
+    return btn.isToggled ? AppStrings::g.Toolbar_Tooltip_RawFull
+                         : AppStrings::g.Toolbar_Tooltip_RawPreview;
   case ToolbarButtonID::FixExtension:
-    return AppStrings::Toolbar_Tooltip_FixExtension;
+    return AppStrings::g.Toolbar_Tooltip_FixExtension;
   case ToolbarButtonID::GamutWarning:
-    return AppStrings::Toolbar_Tooltip_GamutWarning;
+    return AppStrings::g.Toolbar_Tooltip_GamutWarning;
   case ToolbarButtonID::Pin:
-    return btn.isToggled ? AppStrings::Toolbar_Tooltip_Unpin
-                         : AppStrings::Toolbar_Tooltip_Pin;
+    return btn.isToggled ? AppStrings::g.Toolbar_Tooltip_Unpin
+                         : AppStrings::g.Toolbar_Tooltip_Pin;
   case ToolbarButtonID::CompareToggle:
     if (g_navigator.GetArchive() != nullptr) {
-      return btn.isToggled ? AppStrings::Toolbar_Tooltip_SinglePage : AppStrings::Toolbar_Tooltip_DualPage;
+      return btn.isToggled ? AppStrings::g.Toolbar_Tooltip_SinglePage : AppStrings::g.Toolbar_Tooltip_DualPage;
     }
-    return btn.isToggled ? AppStrings::Toolbar_Tooltip_NormalMode : AppStrings::Toolbar_Tooltip_CompareMode;
+    return btn.isToggled ? AppStrings::g.Toolbar_Tooltip_NormalMode : AppStrings::g.Toolbar_Tooltip_CompareMode;
   case ToolbarButtonID::CompareOpen:
-    return AppStrings::Toolbar_Tooltip_CompareOpen;
+    return AppStrings::g.Toolbar_Tooltip_CompareOpen;
   case ToolbarButtonID::CompareSwap:
-    return AppStrings::Toolbar_Tooltip_CompareSwap;
+    return AppStrings::g.Toolbar_Tooltip_CompareSwap;
   case ToolbarButtonID::CompareLayout:
-    return AppStrings::Toolbar_Tooltip_CompareLayout;
+    return AppStrings::g.Toolbar_Tooltip_CompareLayout;
   case ToolbarButtonID::CompareInfo:
-    return AppStrings::Toolbar_Tooltip_CompareInfo;
+    return AppStrings::g.Toolbar_Tooltip_CompareInfo;
   case ToolbarButtonID::CompareDelete:
-    return AppStrings::Toolbar_Tooltip_CompareDelete;
+    return AppStrings::g.Toolbar_Tooltip_CompareDelete;
   case ToolbarButtonID::CompareZoomIn:
-    return AppStrings::Toolbar_Tooltip_CompareZoomIn;
+    return AppStrings::g.Toolbar_Tooltip_CompareZoomIn;
   case ToolbarButtonID::CompareZoomOut:
-    return AppStrings::Toolbar_Tooltip_CompareZoomOut;
+    return AppStrings::g.Toolbar_Tooltip_CompareZoomOut;
   case ToolbarButtonID::CompareSyncZoom:
-    return btn.isToggled ? AppStrings::Toolbar_Tooltip_CompareSyncZoomOn : AppStrings::Toolbar_Tooltip_CompareSyncZoomOff;
+    return btn.isToggled ? AppStrings::g.Toolbar_Tooltip_CompareSyncZoomOn : AppStrings::g.Toolbar_Tooltip_CompareSyncZoomOff;
   case ToolbarButtonID::CompareSyncPan:
-    return btn.isToggled ? AppStrings::Toolbar_Tooltip_CompareSyncPanOn : AppStrings::Toolbar_Tooltip_CompareSyncPanOff;
+    return btn.isToggled ? AppStrings::g.Toolbar_Tooltip_CompareSyncPanOn : AppStrings::g.Toolbar_Tooltip_CompareSyncPanOff;
+  case ToolbarButtonID::CompareSave:
+    return AppStrings::g.Toolbar_Tooltip_CompareSave;
   case ToolbarButtonID::CompareExit:
-    return AppStrings::Toolbar_Tooltip_CompareExit;
+    return AppStrings::g.Toolbar_Tooltip_CompareExit;
   case ToolbarButtonID::AnimPlayPause:
-    return btn.isToggled ? AppStrings::Toolbar_Tooltip_AnimPause : AppStrings::Toolbar_Tooltip_AnimPlay;
+    return btn.isToggled ? AppStrings::g.Toolbar_Tooltip_AnimPause : AppStrings::g.Toolbar_Tooltip_AnimPlay;
   case ToolbarButtonID::AnimPrevFrame:
-    return AppStrings::Toolbar_Tooltip_AnimPrev;
+    return AppStrings::g.Toolbar_Tooltip_AnimPrev;
   case ToolbarButtonID::AnimNextFrame:
-    return AppStrings::Toolbar_Tooltip_AnimNext;
+    return AppStrings::g.Toolbar_Tooltip_AnimNext;
   case ToolbarButtonID::AnimDirtyRect:
-    return btn.isToggled ? AppStrings::Toolbar_Tooltip_AnimDirtyOn : AppStrings::Toolbar_Tooltip_AnimDirtyOff;
+    return btn.isToggled ? AppStrings::g.Toolbar_Tooltip_AnimDirtyOn : AppStrings::g.Toolbar_Tooltip_AnimDirtyOff;
   case ToolbarButtonID::OverlayAlphaUp:
-    return AppStrings::Toolbar_Tooltip_OverlayAlphaUp;
+    return AppStrings::g.Toolbar_Tooltip_OverlayAlphaUp;
   case ToolbarButtonID::OverlayAlphaDown:
-    return AppStrings::Toolbar_Tooltip_OverlayAlphaDown;
+    return AppStrings::g.Toolbar_Tooltip_OverlayAlphaDown;
   case ToolbarButtonID::OverlayPassthrough:
-    return btn.isToggled ? AppStrings::Toolbar_Tooltip_OverlayPassthroughOff : AppStrings::Toolbar_Tooltip_OverlayPassthroughOn;
+    return btn.isToggled ? AppStrings::g.Toolbar_Tooltip_OverlayPassthroughOff : AppStrings::g.Toolbar_Tooltip_OverlayPassthroughOn;
   case ToolbarButtonID::OverlayExit:
-    return AppStrings::Toolbar_Tooltip_OverlayExit;
+    return AppStrings::g.Toolbar_Tooltip_OverlayExit;
   case ToolbarButtonID::CropCopy:
-    return AppStrings::Toolbar_Tooltip_CropCopy;
+    return AppStrings::g.Toolbar_Tooltip_CropCopy;
   case ToolbarButtonID::CropSave:
-    return AppStrings::Toolbar_Tooltip_CropSave;
+    return AppStrings::g.Toolbar_Tooltip_CropSave;
   case ToolbarButtonID::CropApply:
-    return AppStrings::Toolbar_Tooltip_CropApply;
+    return AppStrings::g.Toolbar_Tooltip_CropApply;
   case ToolbarButtonID::CropCancel:
-    return AppStrings::Toolbar_Tooltip_CropCancel;
+    return AppStrings::g.Toolbar_Tooltip_CropCancel;
   default:
     return nullptr;
   }
@@ -630,17 +649,11 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
 
   CreateResources(pRT);
 
-  bool isLight = IsLightThemeActive();
+  const auto& tp = QuickView::UI::Theme::GetThemePalette();
+  bool isLight = tp.isLight;
   m_brushBg->SetColor(isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 1.0f) : D2D1::ColorF(0.08f, 0.08f, 0.10f, 1.0f));
   m_brushIcon->SetColor(isLight ? D2D1::ColorF(D2D1::ColorF::Black) : D2D1::ColorF(D2D1::ColorF::White));
-  
-  D2D1_COLOR_F accentClr;
-  if (g_config.ThemeMode == 3) {
-      accentClr = D2D1::ColorF(g_config.ThemeCustomAccentR, g_config.ThemeCustomAccentG, g_config.ThemeCustomAccentB, 1.0f);
-  } else {
-      accentClr = isLight ? D2D1::ColorF(0.0f, 0.478f, 1.0f, 1.0f) : D2D1::ColorF(0.35f, 0.65f, 1.0f, 1.0f);
-  }
-  m_brushIconActive->SetColor(accentClr);
+  m_brushIconActive->SetColor(tp.accentText);
   m_brushIconDisabled->SetColor(isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.3f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.3f));
   m_brushWarning->SetColor(D2D1::ColorF(1.0f, 0.3f, 0.3f, 1.0f));
   m_brushHover->SetColor(isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.05f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f));
@@ -728,27 +741,28 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
       D2D1_RECT_F trackRect = D2D1::RectF(barLeft, barY - halfH, barRight, barY + halfH);
       
       // Track (subtle)
-      ComPtr<ID2D1SolidColorBrush> trackBr;
-      pRT->CreateSolidColorBrush(D2D1::ColorF(0.3f, 0.3f, 0.4f, 0.3f), &trackBr);
-      pRT->FillRoundedRectangle(D2D1::RoundedRect(trackRect, cornerRadius, cornerRadius), trackBr.Get());
+      m_brushWork->SetColor(D2D1::ColorF(0.3f, 0.3f, 0.4f, 0.3f));
+      pRT->FillRoundedRectangle(D2D1::RoundedRect(trackRect, cornerRadius, cornerRadius), m_brushWork.Get());
       
-      // Fill (accent blue)
+      // Fill (theme accent when playing, caution orange when paused)
       if (fillW > 0.5f) {
         D2D1_COLOR_F accentColor = m_animPlaying
-          ? D2D1::ColorF(0.25f, 0.56f, 1.0f, 0.8f) // Blue when playing
-          : D2D1::ColorF(1.0f, 0.72f, 0.18f, 0.85f); // Orange when paused
-        ComPtr<ID2D1SolidColorBrush> fillBr;
-        pRT->CreateSolidColorBrush(accentColor, &fillBr);
+          ? D2D1::ColorF(tp.accentFill.r, tp.accentFill.g, tp.accentFill.b, 0.88f)
+          : D2D1::ColorF(1.0f, 0.72f, 0.18f, 0.85f); // Caution orange when paused
+        m_brushWork->SetColor(accentColor);
         
         D2D1_RECT_F fillRect = D2D1::RectF(barLeft, barY - halfH, barLeft + fillW, barY + halfH);
-        pRT->FillRoundedRectangle(D2D1::RoundedRect(fillRect, cornerRadius, cornerRadius), fillBr.Get());
+        pRT->FillRoundedRectangle(D2D1::RoundedRect(fillRect, cornerRadius, cornerRadius), m_brushWork.Get());
         
         // Playhead dot
         float dotRadius = m_animProgressHover ? 4.0f * m_uiScale : 3.0f * m_uiScale;
         D2D1_ELLIPSE dot = D2D1::Ellipse(D2D1::Point2F(barLeft + fillW, barY), dotRadius, dotRadius);
-        ComPtr<ID2D1SolidColorBrush> dotBr;
-        pRT->CreateSolidColorBrush(D2D1::ColorF(m_animProgressHover ? 1.0f : 0.3f, 0.65f, 1.0f, 0.95f), &dotBr);
-        pRT->FillEllipse(dot, dotBr.Get());
+        D2D1_COLOR_F dotColor = m_animPlaying
+          ? (m_animProgressHover ? tp.accentText : D2D1::ColorF(tp.accentFill.r, tp.accentFill.g, tp.accentFill.b, 0.95f))
+          : D2D1::ColorF(1.0f, 0.72f, 0.18f, 0.95f);
+        dotColor.a = 0.95f;
+        m_brushWork->SetColor(dotColor);
+        pRT->FillEllipse(dot, m_brushWork.Get());
       }
       
       // Frame Index Text (Show on hover)
@@ -782,19 +796,16 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
                 D2D1_COLOR_F tipBgBase = isLight 
                     ? D2D1::ColorF(1.0f, 1.0f, 1.0f, g_config.GlassOsdOpacity / 100.0f)
                     : D2D1::ColorF(0.15f, 0.15f, 0.15f, g_config.GlassOsdOpacity / 100.0f);
-                ComPtr<ID2D1SolidColorBrush> tipBg;
-                pRT->CreateSolidColorBrush(tipBgBase, &tipBg);
-                pRT->FillRoundedRectangle(D2D1::RoundedRect(pillRect, 4.0f * m_uiScale, 4.0f * m_uiScale), tipBg.Get());
+                m_brushWork->SetColor(tipBgBase);
+                pRT->FillRoundedRectangle(D2D1::RoundedRect(pillRect, 4.0f * m_uiScale, 4.0f * m_uiScale), m_brushWork.Get());
                 
                 // Text color
                 D2D1_COLOR_F textColor = m_animPlaying
-                  ? D2D1::ColorF(0.25f, 0.56f, 1.0f, 0.9f) // Match active bar
-                  : D2D1::ColorF(1.0f, 0.72f, 0.18f, 0.9f); // Match paused bar
+                  ? D2D1::ColorF(tp.accentText.r, tp.accentText.g, tp.accentText.b, 0.95f) // Match active bar
+                  : D2D1::ColorF(1.0f, 0.72f, 0.18f, 0.95f); // Match paused bar
                   
-                ComPtr<ID2D1SolidColorBrush> textBr;
-                pRT->CreateSolidColorBrush(textColor, &textBr);
-                
-                pRT->DrawText(frameTxt, (UINT32)wcslen(frameTxt), m_textFormatUI.Get(), pillRect, textBr.Get());
+                m_brushWork->SetColor(textColor);
+                pRT->DrawText(frameTxt, (UINT32)wcslen(frameTxt), m_textFormatUI.Get(), pillRect, m_brushWork.Get());
             }
         }
       }
@@ -992,7 +1003,7 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
   }
 
   if (!activeTip && (m_animMode || m_slideshowMode) && m_animSpeedHover) {
-    activeTip = AppStrings::Toolbar_Tooltip_AnimSpeed;
+    activeTip = AppStrings::g.Toolbar_Tooltip_AnimSpeed;
     activeRect = m_animSpeedRect;
   }
 
@@ -1006,7 +1017,7 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
       m_dwriteFactory->CreateTextFormat(
           L"Segoe UI", NULL, DWRITE_FONT_WEIGHT_NORMAL,
           DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-          12.0f * m_uiScale, AppStrings::CurrentLocale, &tooltipFormat);
+          12.0f * m_uiScale, AppStrings::g.CurrentLocale, &tooltipFormat);
       if (tooltipFormat) {
         tooltipFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         tooltipFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);

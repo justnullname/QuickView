@@ -58,6 +58,16 @@ namespace QuickView {
         MappedFile(const MappedFile&) = delete;
         MappedFile& operator=(const MappedFile&) = delete;
 
+        /// Create an in-memory MappedFile copy when only a raw buffer is available (e.g., archive VFS).
+        static std::shared_ptr<MappedFile> FromMemory(const uint8_t* data, size_t size) {
+            if (!data || size == 0) return nullptr;
+            auto mf = std::shared_ptr<MappedFile>(new MappedFile());
+            mf->m_buffer.assign(data, data + size);
+            mf->m_ptr = mf->m_buffer.data();
+            mf->m_size = size;
+            return mf;
+        }
+
         bool IsValid() const { return m_ptr != nullptr; }
         const uint8_t* data() const { return m_ptr; }
         size_t size() const { return m_size; }
@@ -94,6 +104,7 @@ namespace QuickView {
         }
         
     private:
+        MappedFile() = default;
         HANDLE m_hFile = INVALID_HANDLE_VALUE;
         HANDLE m_hMap = nullptr;
         const uint8_t* m_ptr = nullptr;

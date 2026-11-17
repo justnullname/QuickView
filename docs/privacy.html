@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QuickView - Privacy Policy / 隐私政策</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f6f8fa;
+      --card: #ffffff;
+      --text: #1f2328;
+      --muted: #59636e;
+      --border: #d0d7de;
+      --accent: #0969da;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0d1117;
+        --card: #161b22;
+        --text: #e6edf3;
+        --muted: #8b949e;
+        --border: #30363d;
+        --accent: #58a6ff;
+      }
+    }
+    body {
+      margin: 0;
+      padding: 32px 16px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Microsoft YaHei", sans-serif;
+      line-height: 1.65;
+    }
+    .container {
+      max-width: 820px;
+      margin: 0 auto;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 32px 36px;
+      box-sizing: border-box;
+    }
+    h1 {
+      margin-top: 0;
+      font-size: 1.75rem;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 12px;
+    }
+    h2 {
+      margin-top: 28px;
+      font-size: 1.2rem;
+    }
+    p, li {
+      font-size: 0.96rem;
+    }
+    .meta {
+      color: var(--muted);
+      font-size: 0.9rem;
+      margin-bottom: 24px;
+    }
+    hr {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 36px 0;
+    }
+    a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <h1>QuickView Privacy Policy</h1>
+    <p class="meta">Publisher: Vivor Loong &middot; Store ID: 9N1D85F032CC &middot; Last Updated: 2026-11-16</p>
+
+    <h2>1. Overview &amp; Local-First Processing</h2>
+    <p>
+      QuickView ("the Application") is a local, high-performance image viewer for Windows.
+      QuickView does <strong>not</strong> collect, store, sell, or transmit personal information, usage telemetry, analytics, or advertising identifiers.
+      All image decoding, rendering, color management, metadata inspection, and rating/editing operations are performed strictly on your local device.
+    </p>
+
+    <h2>2. File System &amp; Local Configuration</h2>
+    <ul>
+      <li>QuickView only reads and writes files or folders that you explicitly open, edit, export, or delete.</li>
+      <li>Application preferences, custom themes, and configuration files (such as <code>QuickView.ini</code> and <code>ai_actions.json</code>) are stored locally in your user AppData / package container storage.</li>
+    </ul>
+
+    <h2>3. Optional Network Features (User-Initiated Only)</h2>
+    <ul>
+      <li><strong>Super-Resolution Model Weights:</strong> When you explicitly click to download optional neural network weights (<code>.bin</code> / <code>.param</code> data files) in Settings, QuickView fetches those public read-only model files from our GitHub Pages CDN and stores them locally under your AppData folder.</li>
+      <li><strong>AI Command Palette (BYOK):</strong> AI features are strictly opt-in. If you choose to configure your own third-party API key (encrypted locally via Windows DPAPI) and manually invoke an AI action, the selected image region and prompt are sent directly from your device to the third-party AI provider endpoint you configured. Your data is governed by that provider's privacy policy. QuickView operates no intermediate proxy server.</li>
+      <li><strong>Application Updates (Microsoft Store):</strong> The Microsoft Store edition receives updates exclusively through the Microsoft Store infrastructure and never contacts third-party update servers.</li>
+    </ul>
+
+    <h2>4. Contact &amp; Support</h2>
+    <p>
+      If you have any questions about this privacy policy, please open an issue at:
+      <a href="https://github.com/justnullname/QuickView/issues" target="_blank" rel="noopener noreferrer">https://github.com/justnullname/QuickView/issues</a>.
+    </p>
+
+    <hr />
+
+    <h1>QuickView 隐私政策</h1>
+    <p class="meta">发布者：Vivor Loong &middot; Store ID：9N1D85F032CC &middot; 更新日期：2026-11-16</p>
+
+    <h2>1. 总则与本地优先原则</h2>
+    <p>
+      QuickView（以下简称“本应用”）是一款面向 Windows 平台的本地高性能图像查看器。
+      本应用<strong>不会</strong>收集、存储、出售或向开发者服务器传输任何个人身份信息、使用遥测数据、行为分析或广告标识符。
+      所有图像解码、渲染、色彩管理、元数据查看以及星级/编辑操作均完全在您的本地设备上完成。
+    </p>
+
+    <h2>2. 文件系统与本地配置存储</h2>
+    <ul>
+      <li>本应用仅访问您主动打开、浏览、编辑、导出或删除的本地文件及目录。</li>
+      <li>应用偏好设置、主题配置与快捷命令配置（如 <code>QuickView.ini</code> 与 <code>ai_actions.json</code>）均仅保存在您本机的应用隔离数据目录中。</li>
+    </ul>
+
+    <h2>3. 可选联网功能（仅由用户主动触发）</h2>
+    <ul>
+      <li><strong>超分辨率模型权重下载：</strong>当您在设置中主动点击下载可选的神经网络模型权重（<code>.bin</code> / <code>.param</code> 纯数据文件）时，本应用会从 GitHub Pages 静态分发节点下载公开模型文件并保存至本地 AppData 目录。</li>
+      <li><strong>AI 命令面板（自带 API Key）：</strong>AI 功能默认关闭且需您主动配置自己的第三方 API Key（使用 Windows DPAPI 在本地加密存储）。仅当您手动触发 AI 操作时，当前图像与提示词会由您的设备直接发送至您所配置的第三方 AI 服务接口，并受该服务商隐私条款约束；开发者不设任何中转服务器。</li>
+      <li><strong>应用更新（Microsoft Store）：</strong>Microsoft Store 版本的应用更新完全由 Microsoft Store 系统托管，不会向第三方更新服务器发起检查或下载。</li>
+    </ul>
+
+    <h2>4. 联系方式</h2>
+    <p>
+      如对本隐私政策有任何疑问，请通过 GitHub Issues 与我们联系：
+      <a href="https://github.com/justnullname/QuickView/issues" target="_blank" rel="noopener noreferrer">https://github.com/justnullname/QuickView/issues</a>。
+    </p>
+  </main>
+</body>
+</html>

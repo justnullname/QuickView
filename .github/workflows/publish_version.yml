@@ -23,23 +23,46 @@ jobs:
           VERSION=${TAG_NAME#v}
           DATE=$(date +'%Y-%m-%d')
           
-          mkdir -p public
+          mkdir -p public/models
+          mkdir -p public/plugins
+          if [ -f "docs/privacy.html" ]; then
+            cp docs/privacy.html public/privacy.html
+          fi
+          if [ -f "plugins/plugins_manifest.json" ]; then
+            cp plugins/plugins_manifest.json public/
+            cp plugins/plugins_manifest.json public/plugins/
+          fi
+          
+          # Package independent SR models to public/models/*.zip for CDN download
+          if [ -d "plugins/sr/sr_ncnn_vulkan/models" ]; then
+            echo "Packaging independent SR models for GitHub Pages CDN..."
+            for param_file in plugins/sr/sr_ncnn_vulkan/models/*.param; do
+              if [ -f "$param_file" ]; then
+                base_name=$(basename "$param_file" .param)
+                bin_file="plugins/sr/sr_ncnn_vulkan/models/${base_name}.bin"
+                if [ -f "$bin_file" ]; then
+                  zip -j -9 "public/models/${base_name}.zip" "$param_file" "$bin_file"
+                  echo "Created public/models/${base_name}.zip"
+                fi
+              fi
+            done
+          fi
           
           # 1. Get all assets in JSON
           ASSETS=$(gh release view "$TAG_NAME" --json assets -q '.assets')
           
-          # 2. Identify ARM64 portable asset (.zip only, exclude installer .exe)
-          URL_ARM64=$(echo "$ASSETS" | jq -r 'map(select(.name | ascii_downcase | (contains("arm64") and test("\\.zip$")))) | .[0].url // ""')
-          NAME_ARM64=$(echo "$ASSETS" | jq -r 'map(select(.name | ascii_downcase | (contains("arm64") and test("\\.zip$")))) | .[0].name // ""')
+          # 2. Identify ARM64 portable asset (QuickView .zip only, exclude installer .exe and plugins)
+          URL_ARM64=$(echo "$ASSETS" | jq -r 'map(select(.name | ascii_downcase | (contains("quickview") and contains("arm64") and test("\\.zip$")))) | .[0].url // ""')
+          NAME_ARM64=$(echo "$ASSETS" | jq -r 'map(select(.name | ascii_downcase | (contains("quickview") and contains("arm64") and test("\\.zip$")))) | .[0].name // ""')
           
-          # 3. Identify X64 portable asset (.zip only, exclude installer .exe)
-          URL_X64=$(echo "$ASSETS" | jq -r 'map(select(.name | ascii_downcase | ((contains("x64") or contains("amd64")) and test("\\.zip$")))) | .[0].url // ""')
-          NAME_X64=$(echo "$ASSETS" | jq -r 'map(select(.name | ascii_downcase | ((contains("x64") or contains("amd64")) and test("\\.zip$")))) | .[0].name // ""')
+          # 3. Identify X64/AMD64 portable asset (QuickView .zip only, exclude installer .exe and plugins)
+          URL_X64=$(echo "$ASSETS" | jq -r 'map(select(.name | ascii_downcase | (contains("quickview") and (contains("x64") or contains("amd64")) and test("\\.zip$")))) | .[0].url // ""')
+          NAME_X64=$(echo "$ASSETS" | jq -r 'map(select(.name | ascii_downcase | (contains("quickview") and (contains("x64") or contains("amd64")) and test("\\.zip$")))) | .[0].name // ""')
           
-          # Fallback: if no explicit x64 .zip found, take the first .zip that isn't ARM64
+          # Fallback: if no explicit x64 .zip found, take the first QuickView .zip that isn't ARM64
           if [ -z "$URL_X64" ]; then
-             URL_X64=$(echo "$ASSETS" | jq -r 'map(select((.name | ascii_downcase | contains("arm64") | not) and (.name | ascii_downcase | test("\\.zip$")))) | .[0].url // ""')
-             NAME_X64=$(echo "$ASSETS" | jq -r 'map(select((.name | ascii_downcase | contains("arm64") | not) and (.name | ascii_downcase | test("\\.zip$")))) | .[0].name // ""')
+             URL_X64=$(echo "$ASSETS" | jq -r 'map(select((.name | ascii_downcase | (contains("quickview") and (contains("arm64") | not) and test("\\.zip$"))))) | .[0].url // ""')
+             NAME_X64=$(echo "$ASSETS" | jq -r 'map(select((.name | ascii_downcase | (contains("quickview") and (contains("arm64") | not) and test("\\.zip$"))))) | .[0].name // ""')
           fi
           
           SHA_X64=""
@@ -56,6 +79,15 @@ jobs:
              gh release download "$TAG_NAME" -p "$NAME_ARM64" -O arm64_pkg
              SHA_ARM64=$(sha256sum arm64_pkg | awk '{print $1}')
           fi
+          
+          # Sync plugin zip packages from Release to public/plugins/
+          for p_arch in "AMD64" "ARM64"; do
+            P_NAME=$(echo "$ASSETS" | jq -r --arg a "$p_arch" 'map(select(.name | ascii_downcase | (contains("sr_ncnn_vulkan") and contains($a | ascii_downcase) and test("\\.zip$")))) | .[0].name // ""')
+            if [ -n "$P_NAME" ] && [ "$P_NAME" != "null" ]; then
+              echo "Syncing plugin package $P_NAME to public/plugins/..."
+              gh release download "$TAG_NAME" -p "$P_NAME" -O "public/plugins/${P_NAME}" || true
+            fi
+          done
           
           # Fallback URL for legacy clients (pointing to X64)
           URL=$URL_X64

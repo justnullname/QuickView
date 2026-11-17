@@ -3,7 +3,6 @@
 #include <string>
 #include <cwchar>
 #include <vector>
-#include <map>
 #include <unordered_map>
 #include <functional>
 #include <type_traits>
@@ -19,6 +18,7 @@ namespace GeekIcons {
 }
 #include "OSDState.h"
 #include "GeekGlass.h"
+#include "ThemePalette.h"
 #include <dwrite.h>
 
 // ============================================================================
@@ -43,16 +43,16 @@ enum class TruncateMode {
 struct InfoRow {
     const wchar_t* icon = nullptr; // Emoji icon (e.g., L"📄")
     const wchar_t* label = nullptr; // Label (e.g., L"File")
-    std::wstring valueMain = L"";  // Main value (e.g., "f/1.6")
-    std::wstring valueSub = L"";   // Secondary value in gray (e.g., "(1,138,997 B)")
-    std::wstring fullText = L"";   // Full text for tooltip
+    std::wstring valueMain{};      // Main value (e.g., "f/1.6")
+    std::wstring valueSub{};       // Secondary value in gray (e.g., "(1,138,997 B)")
+    std::wstring fullText{};       // Full text for tooltip
 
     TruncateMode mode = TruncateMode::EndEllipsis;
     bool isClickable = false;
 
     // Runtime (calculated during layout)
     D2D1_RECT_F hitRect = {};
-    std::wstring displayText = L""; // Truncated display text
+    std::wstring displayText{};    // Truncated display text
     bool isTruncated = false;
 };
 // ============================================================================
@@ -112,6 +112,11 @@ public:
         m_glassCache.clear();
         
         m_bgCommandList.Reset();
+        m_borderGlowBrush.Reset();
+        m_borderGlowCachedDc = nullptr;
+        for (auto& g : m_borderGlowGeos) g.Reset();
+        m_borderGlowCachedMask = 0;
+        m_roundStrokeStyle.Reset();
     }
     
     // ===== Layered Rendering Control =====
@@ -155,7 +160,7 @@ public:
     D2D1_RECT_F GetPanelCloseRect() const { return m_panelCloseRect; }
     
     // ===== UI State Updates =====
-    void SetOSD(const std::wstring& text, float opacity, D2D1_COLOR_F color = D2D1::ColorF(D2D1::ColorF::White), OSDPosition pos = OSDPosition::Bottom);
+    void SetOSD(const std::wstring& text, float opacity, D2D1_COLOR_F color = D2D1::ColorF(D2D1::ColorF::White), OSDPosition pos = OSDPosition::Bottom, float progress = -1.0f);
     void SetCompareOSD(const std::wstring& left, const std::wstring& right, float opacity, D2D1_COLOR_F color = D2D1::ColorF(D2D1::ColorF::White));
     void SetDebugHUDVisible(bool visible) { m_showDebugHUD = visible; MarkDynamicDirty(); }
     void SetTileGridVisible(bool visible) { m_showTileGrid = visible; MarkDynamicDirty(); }
@@ -166,6 +171,17 @@ public:
     void SetRuntimeConfig(const RuntimeConfig& cfg) { m_runtime = cfg; MarkStaticDirty(); }
     void SetWindowControlHover(int hoverIndex) { m_winCtrlHover = hoverIndex; MarkStaticDirty(); }
     void SetControlsVisible(bool visible) { m_showControls = visible; MarkStaticDirty(); }
+    void TriggerBorderGlow() noexcept {
+        m_borderGlowActive = true;
+        m_borderGlowLastTriggerMs = ::GetTickCount64();
+        MarkDynamicDirty();
+    }
+    bool TickBorderGlow() noexcept {
+        if (!m_borderGlowActive) return false;
+        (void)ComputeBorderGlowAlpha();
+        return true;
+    }
+    bool IsBorderGlowActive() const noexcept { return m_borderGlowActive; }
     void SetPinActive(bool active) { m_pinActive = active; MarkStaticDirty(); }
     void SetFullscreenState(bool isFullscreen) { m_isFullscreen = isFullscreen; }
     void SetUIScale(float scale);
@@ -203,7 +219,7 @@ private:
         D2D1_COLOR_F hoverFill = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f);
         D2D1_COLOR_F capsuleFill = D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.18f);
         D2D1_COLOR_F capsuleStroke = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.14f);
-        D2D1_COLOR_F accent = D2D1::ColorF(0.2f, 0.6f, 1.0f, 1.0f);
+        D2D1_COLOR_F accent = QuickView::UI::Theme::GetThemePalette().accentText;
         D2D1_COLOR_F success = D2D1::ColorF(0.2f, 0.9f, 0.4f, 1.0f);
         D2D1_COLOR_F warning = D2D1::ColorF(1.0f, 0.85f, 0.0f, 1.0f);
         D2D1_COLOR_F danger = D2D1::ColorF(1.0f, 0.3f, 0.3f, 1.0f);
@@ -246,7 +262,8 @@ private:
     // [Loupe] press-and-hold magnifier overlay (shows the region at actual pixels)
     void DrawLoupe(ID2D1DeviceContext* dc, HWND hwnd);
     void DrawWindowControls(ID2D1DeviceContext* dc, HWND hwnd);
-    void DrawBorderIndicators(ID2D1DeviceContext* dc);
+    void DrawBorderIndicators(ID2D1DeviceContext* dc, HWND hwnd);
+    float ComputeBorderGlowAlpha() noexcept;
     void DrawNavigator(ID2D1DeviceContext* dc);
     void DrawDebugHUD(ID2D1DeviceContext* dc);
     void EnsureTextFormats();
@@ -323,6 +340,7 @@ private:
     float m_osdOpacity = 0.0f;
     D2D1_COLOR_F m_osdColor = D2D1::ColorF(D2D1::ColorF::White);
     OSDPosition m_osdPos = OSDPosition::Bottom;
+    float m_osdProgress = -1.0f;
     
     // Debug HUD V4 State
     bool m_showDebugHUD = false;
@@ -370,6 +388,22 @@ private:
     float m_decodeDisplayedProgress = 0.0f;
     bool m_decodeWasActive = false;
     DWORD m_decodeFinishTime = 0;
+    bool m_borderGlowActive = false;
+    uint64_t m_borderGlowLastTriggerMs = 0;
+    ComPtr<ID2D1LinearGradientBrush> m_borderGlowBrush;
+    ID2D1DeviceContext* m_borderGlowCachedDc = nullptr;
+    D2D1_COLOR_F m_borderGlowCachedColor = { -1.0f, -1.0f, -1.0f, -1.0f };
+    ComPtr<ID2D1PathGeometry> m_borderGlowGeos[4];
+    float m_borderGlowCachedL = 0.0f;
+    float m_borderGlowCachedT = 0.0f;
+    float m_borderGlowCachedR = 0.0f;
+    float m_borderGlowCachedB = 0.0f;
+    float m_borderGlowCachedDepth = 0.0f;
+    uint8_t m_borderGlowCachedMask = 0;
+    ComPtr<ID2D1StrokeStyle> m_roundStrokeStyle;
+    bool m_marqueeStaticActive = false;
+    bool m_marqueeDynamicActive = false;
+    bool m_marqueeTimerActive = false;
     void DrawDecodingStatus(ID2D1DeviceContext* dc, HWND hwnd);
     void DrawWelcomeScreen(ID2D1DeviceContext* dc);
     void DrawWelcomeButton(ID2D1DeviceContext* dc, const D2D1_RECT_F& r, const wchar_t* text, const GeekIcons::VectorIcon& icon, int hoverState);

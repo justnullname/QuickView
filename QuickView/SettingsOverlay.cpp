@@ -1,19 +1,21 @@
 #include "CompareController.h"
 #include "StringUtils.h"
+#include "AsyncJob.h"
 #include "SettingsOverlay.h"
 #include "SettingsSliderMath.h"
 #include "ThemeSystem.h"
+#include "ThemePalette.h"
 #include "HelpOverlay.h"
 #include "GalleryOverlay.h"
 #include "AppStrings.h"
 #include "ImageEngine.h"
+#include "Plugin/PluginHost.h"
 #include "DialogController.h"
 #include "OSDState.h"
 #include <algorithm>
 #include <cmath>
 #include <Shlobj.h>
 #include <commdlg.h>
-#include <functional>
 #include "UpdateManager.h"
 #include <vector>
 #include <shellapi.h>
@@ -23,6 +25,8 @@
 #include "GeekGlass.h"
 #include "GeekIconRenderer.h"
 #include "GeekWidgets.h"
+#include "AiActionTypes.h"
+#include "AiActionManager.h" 
 
 // Windows headers
 #pragma comment(lib, "version.lib")
@@ -35,9 +39,14 @@ extern ImageEngine* g_pImageEngine;
 extern AppConfig g_config;
 extern RuntimeConfig g_runtime;
 extern std::wstring& g_imagePath;
+
+int SettingsOverlay::s_controlSubTab = 0;
+int SettingsOverlay::s_gesturePresetIdx = 0;
 extern FileNavigator& g_navigator;
 extern Toolbar g_toolbar; // [Fix] Allow Settings to update toolbar state directly
 extern HelpOverlay g_helpOverlay;
+extern OSDState g_osd;
+extern HWND g_mainHwnd;
 
 namespace {
 
@@ -51,6 +60,8 @@ struct SettingsThemePalette {
     D2D1_COLOR_F text;
     D2D1_COLOR_F textDim;
     D2D1_COLOR_F accent;
+    D2D1_COLOR_F accentText;
+    D2D1_COLOR_F onAccentText;
     D2D1_COLOR_F controlBg;
     D2D1_COLOR_F border;
     D2D1_COLOR_F success;
@@ -60,6 +71,7 @@ struct SettingsThemePalette {
     D2D1_COLOR_F disabledFill;
     D2D1_COLOR_F subtleTint;
     D2D1_COLOR_F shadow;
+    D2D1_COLOR_F tooltipBg;
 
     constexpr operator QuickView::UI::WidgetPalette() const noexcept {
         return {
@@ -74,6 +86,7 @@ struct SettingsThemePalette {
             .hoverTint = hoverTint,
             .panelBg = panelBg,
             .shadow = shadow,
+            .onAccentText = onAccentText,
         };
     }
 };
@@ -83,149 +96,28 @@ inline QuickView::UI::WidgetPalette ToWidgetPalette(const SettingsThemePalette& 
 }
 
 SettingsThemePalette GetSettingsThemePalette() {
-    if (g_config.ThemeMode == 3) {
-        D2D1_COLOR_F accent = D2D1::ColorF(g_config.ThemeCustomAccentR, g_config.ThemeCustomAccentG, g_config.ThemeCustomAccentB);
-        D2D1_COLOR_F text = D2D1::ColorF(g_config.ThemeCustomTextR, g_config.ThemeCustomTextG, g_config.ThemeCustomTextB);
-        
-        float textBrightness = (text.r * 299.0f + text.g * 587.0f + text.b * 114.0f) / 1000.0f;
-        bool isLightText = textBrightness > 0.5f;
-
-        D2D1_COLOR_F textDim = text;
-        textDim.a = 0.75f;
-
-        if (isLightText) {
-            return {
-                D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.4f),
-                text,
-                textDim,
-                accent,
-                D2D1::ColorF(0.25f, 0.25f, 0.25f, 0.70f),
-                D2D1::ColorF(0.3f, 0.3f, 0.3f),
-                D2D1::ColorF(0.1f, 0.8f, 0.1f),
-                D2D1::ColorF(0.8f, 0.1f, 0.1f),
-                D2D1::ColorF(0.08f, 0.08f, 0.10f, g_config.GlassModalsOpacity / 100.0f),
-                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f),
-                D2D1::ColorF(0.3f, 0.3f, 0.3f, 0.5f),
-                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f),
-                D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.20f),
-            };
-        } else {
-            return {
-                D2D1::ColorF(0.94f, 0.96f, 0.99f, 0.52f),
-                text,
-                textDim,
-                accent,
-                D2D1::ColorF(0.92f, 0.94f, 0.97f, 0.70f),
-                D2D1::ColorF(0.80f, 0.84f, 0.89f),
-                D2D1::ColorF(0.11f, 0.62f, 0.23f),
-                D2D1::ColorF(0.79f, 0.19f, 0.16f),
-                D2D1::ColorF(0.985f, 0.99f, 1.0f, g_config.GlassModalsOpacity / 100.0f),
-                D2D1::ColorF(0.0f, 0.18f, 0.42f, 0.10f),
-                D2D1::ColorF(0.85f, 0.88f, 0.92f, 0.65f),
-                D2D1::ColorF(0.06f, 0.08f, 0.12f, 0.06f),
-                D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f),
-            };
-        }
-    }
-
-    if (IsLightThemeActive()) {
-        return {
-            D2D1::ColorF(0.94f, 0.96f, 0.99f, 0.52f),
-            D2D1::ColorF(0.10f, 0.12f, 0.15f),
-            D2D1::ColorF(0.35f, 0.40f, 0.48f),
-            D2D1::ColorF(0.02f, 0.43f, 0.78f),
-            D2D1::ColorF(0.92f, 0.94f, 0.97f, 0.70f),
-            D2D1::ColorF(0.80f, 0.84f, 0.89f),
-            D2D1::ColorF(0.11f, 0.62f, 0.23f),
-            D2D1::ColorF(0.79f, 0.19f, 0.16f),
-            D2D1::ColorF(0.985f, 0.99f, 1.0f, g_config.GlassModalsOpacity / 100.0f),
-            D2D1::ColorF(0.0f, 0.18f, 0.42f, 0.10f),
-            D2D1::ColorF(0.85f, 0.88f, 0.92f, 0.65f),
-            D2D1::ColorF(0.06f, 0.08f, 0.12f, 0.06f),
-            D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f),
-        };
-    }
-
+    const auto& tp = QuickView::UI::Theme::GetThemePalette();
     return {
-        D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.4f),
-        D2D1::ColorF(1.0f, 1.0f, 1.0f),
-        D2D1::ColorF(0.75f, 0.75f, 0.75f),
-        D2D1::ColorF(0.0f, 0.47f, 0.84f),
-        D2D1::ColorF(0.25f, 0.25f, 0.25f, 0.70f),
-        D2D1::ColorF(0.3f, 0.3f, 0.3f),
-        D2D1::ColorF(0.1f, 0.8f, 0.1f),
-        D2D1::ColorF(0.8f, 0.1f, 0.1f),
-        D2D1::ColorF(0.08f, 0.08f, 0.10f, g_config.GlassModalsOpacity / 100.0f),
-        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f),
-        D2D1::ColorF(0.3f, 0.3f, 0.3f, 0.5f),
-        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f),
-        D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.20f),
+        .dimmer = tp.dimmer,
+        .text = tp.text,
+        .textDim = tp.textDim,
+        .accent = tp.accentFill,
+        .accentText = tp.accentText,
+        .onAccentText = tp.onAccentText,
+        .controlBg = tp.controlBg,
+        .border = tp.border,
+        .success = tp.success,
+        .error = tp.error,
+        .panelBg = D2D1::ColorF(tp.panelBg.r, tp.panelBg.g, tp.panelBg.b, g_config.GlassModalsOpacity / 100.0f),
+        .hoverTint = tp.hoverTint,
+        .disabledFill = tp.disabledFill,
+        .subtleTint = tp.subtleTint,
+        .shadow = tp.shadow,
+        .tooltipBg = tp.tooltipBg,
     };
 }
 
-/*
-AppStrings::Language GetResolvedSettingsLanguage() {
-    if (g_config.Language != (int)AppStrings::Language::Auto) {
-        return static_cast<AppStrings::Language>(g_config.Language);
-    }
-
-    const LANGID id = GetUserDefaultUILanguage();
-    switch (PRIMARYLANGID(id)) {
-        case LANG_CHINESE:
-            return AppStrings::Language::ChineseSimplified;
-        case LANG_JAPANESE:
-            return AppStrings::Language::Japanese;
-        case LANG_RUSSIAN:
-            return AppStrings::Language::Russian;
-        case LANG_GERMAN:
-            return AppStrings::Language::German;
-        case LANG_SPANISH:
-            return AppStrings::Language::Spanish;
-        default:
-            return AppStrings::Language::English;
-    }
-}
-*/
-
-/*
-const wchar_t* GetThemeSettingLabel() {
-    switch (GetResolvedSettingsLanguage()) {
-        case AppStrings::Language::ChineseSimplified: return L"主题";
-        case AppStrings::Language::ChineseTraditional: return L"主題";
-        case AppStrings::Language::Japanese: return L"テーマ";
-        case AppStrings::Language::Russian: return L"Тема";
-        case AppStrings::Language::German: return L"Design";
-        case AppStrings::Language::Spanish: return L"Tema";
-        default: return L"Theme";
-    }
-}
-
-const wchar_t* GetDarkThemeLabel() {
-    switch (GetResolvedSettingsLanguage()) {
-        case AppStrings::Language::ChineseSimplified: return L"深色";
-        case AppStrings::Language::ChineseTraditional: return L"深色";
-        case AppStrings::Language::Japanese: return L"ダーク";
-        case AppStrings::Language::Russian: return L"Темная";
-        case AppStrings::Language::German: return L"Dunkel";
-        case AppStrings::Language::Spanish: return L"Oscuro";
-        default: return L"Dark";
-    }
-}
-
-const wchar_t* GetLightThemeLabel() {
-    switch (GetResolvedSettingsLanguage()) {
-        case AppStrings::Language::ChineseSimplified: return L"浅色";
-        case AppStrings::Language::ChineseTraditional: return L"淺色";
-        case AppStrings::Language::Japanese: return L"ライト";
-        case AppStrings::Language::Russian: return L"Светлая";
-        case AppStrings::Language::German: return L"Hell";
-        case AppStrings::Language::Spanish: return L"Claro";
-        default: return L"Light";
-    }
-}
-*/
-}
-
+} // namespace
 
 std::wstring SettingsOverlay::GetAppVersion() {
     wchar_t fileName[MAX_PATH];
@@ -274,26 +166,9 @@ std::wstring SettingsOverlay::GetRealWindowsVersion() {
     return L"Windows (Unknown)"; 
 }
 
-void SettingsOverlay::AutoSwitchToCustom(bool save) {
-    if (g_config.ThemeMode != 3) {
-        // [UX Fix] If moving from a fixed preset (Dark/Light), capture its current tint 
-        // into custom slots to prevent the UI from jumping to Dark base (system default)
-        // when ThemeMode becomes 3 (Custom).
-        if (g_config.GlassTintProfile == 0) {
-            bool currentlyLight = IsLightThemeActive();
-            auto& base = currentlyLight ? PRESET_LIGHT : PRESET_DARK;
-            g_config.GlassCustomTintR = base.tintColor.r;
-            g_config.GlassCustomTintG = base.tintColor.g;
-            g_config.GlassCustomTintB = base.tintColor.b;
-            g_config.GlassTintProfile = 1; // Lock the current visual base
-        }
-        
-        g_config.ThemeMode = 3;
-        // Defer layout change (adding new rows) until mouse release if currently dragging
-        if (!m_pActiveSlider) m_pendingRebuild = true;
-        else m_needsLayoutRebuild = true;
-    }
+void SettingsOverlay::OnGlassMaterialChanged(bool save) {
     g_config.EnforceGlassSafetyLimits();
+    QuickView::UI::Theme::RefreshThemePalette(g_config);
     if (save) SaveConfig();
     if (m_hwnd) InvalidateRect(m_hwnd, NULL, FALSE);
 }
@@ -351,235 +226,263 @@ std::wstring GetSystemInfo() {
     SYSTEM_INFO si; GetNativeSystemInfo(&si);
     if (si.wProcessorArchitecture == PROCESSOR_ARCHITECTURE_ARM64) arch = L"ARM64";
 
-    // 3. SIMD (via Highway runtime dispatch)
     const char* hwTarget = ImageLoaderSimd::GetActiveTargetName();
-    int len = MultiByteToWideChar(CP_UTF8, 0, hwTarget, -1, nullptr, 0);
-    std::wstring targetW(len > 0 ? len - 1 : 0, L'\0');
-    if (len > 0) MultiByteToWideChar(CP_UTF8, 0, hwTarget, -1, targetW.data(), len);
+    std::wstring targetW = QuickView::Utf8ToWide(hwTarget ? hwTarget : "");
     std::wstring simd = L"SIMD: Highway " + targetW + L" [Active]";
 
     return osVer + L" | " + arch + L" | " + simd;
 }
 
-// Read registered EXE path from registry
-static std::wstring ReadRegisteredExePath() {
-    HKEY hKey;
-    std::wstring result;
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, 
-        L"Software\\Classes\\QuickView.Image\\shell\\open\\command",
-        0, KEY_READ, &hKey) == ERROR_SUCCESS) {
-        wchar_t buffer[MAX_PATH * 2] = {0};
-        DWORD bufSize = sizeof(buffer);
-        if (RegGetValueW(hKey, NULL, NULL, RRF_RT_REG_SZ, NULL, buffer, &bufSize) == ERROR_SUCCESS) {
-            result = buffer;
-            // Extract path from "\"path\" \"%1\"" format
-            if (result.size() > 2 && result[0] == L'"') {
-                size_t endQuote = result.find(L'"', 1);
-                if (endQuote != std::wstring::npos) {
-                    result = result.substr(1, endQuote - 1);
-                }
-            }
-        }
-        RegCloseKey(hKey);
-    }
-    return result;
+QuickView::FileAssocOptions SettingsOverlay::BuildCurrentAssocOptions() {
+    QuickView::FileAssocOptions opts;
+    opts.selectedExtsCsv = g_config.FileAssocExts;
+    opts.iconStyle = static_cast<QuickView::AssocIconStyle>(g_config.FileAssocIconStyle);
+    opts.enableContextMenu = g_config.FileAssocContextMenu;
+    opts.contextMenuLabel = AppStrings::g.Context_OpenWithQuickView ? AppStrings::g.Context_OpenWithQuickView : L"Open with QuickView";
+    return opts;
 }
 
-// Helper to check if registry value already match to avoid redundant writes (AV protection)
-static bool IsRegistryValueMatch(HKEY hRoot, const wchar_t* subKey, const wchar_t* valueName, const std::wstring& expected) {
-    HKEY hKey;
-    if (RegOpenKeyExW(hRoot, subKey, 0, KEY_READ, &hKey) != ERROR_SUCCESS) return false;
-    
-    wchar_t data[MAX_PATH];
-    DWORD dataSize = sizeof(data);
-    DWORD type = 0;
-    bool match = false;
-    if (RegQueryValueExW(hKey, valueName, NULL, &type, (BYTE*)data, &dataSize) == ERROR_SUCCESS) {
-        if (type == REG_SZ) {
-            match = (expected == data);
-        }
-    }
-    RegCloseKey(hKey);
-    return match;
-}
-
-static LONG SafeRegSetString(HKEY hRoot, const wchar_t* subKey, const wchar_t* valueName, const std::wstring& value) {
-    if (IsRegistryValueMatch(hRoot, subKey, valueName, value)) return ERROR_SUCCESS;
-    
-    HKEY hKey;
-    LONG r = RegCreateKeyExW(hRoot, subKey, 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL);
-    if (r == ERROR_SUCCESS) {
-        r = RegSetValueExW(hKey, valueName, 0, REG_SZ, (BYTE*)value.c_str(), (DWORD)(value.size() + 1) * 2);
-        RegCloseKey(hKey);
-    }
-    return r;
-}
-
-// Register file associations (silent, no MessageBox)
+// Register file associations (silent, delta-synced via FileAssociationManager)
 bool SettingsOverlay::RegisterAssociations() {
-    wchar_t exePath[MAX_PATH];
-    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
-    std::wstring exePathStr = exePath;
+    const std::wstring exePathStr = QuickView::GetCurrentExecutablePath();
+    if (exePathStr.empty()) return false;
 
-    HKEY hKey;
-    LONG r;
-    
-    // 1. Register ProgID command
-    std::wstring cmd = L"\"" + exePathStr + L"\" \"%1\"";
-    SafeRegSetString(HKEY_CURRENT_USER, L"Software\\Classes\\QuickView.Image\\shell\\open\\command", NULL, cmd);
-    
-    // 2. Register DefaultIcon
-    std::wstring icon = exePathStr + L",0";
-    SafeRegSetString(HKEY_CURRENT_USER, L"Software\\Classes\\QuickView.Image\\DefaultIcon", NULL, icon);
-    
-    // 3. Register FriendlyTypeName
-    SafeRegSetString(HKEY_CURRENT_USER, L"Software\\Classes\\QuickView.Image", L"FriendlyTypeName", L"QuickView Image Viewer");
-    
-    // 4. Register specific ProgIDs and OpenWith
-    for (const auto& ext : QuickView::SUPPORTED_EXTENSIONS) {
-        std::wstring extStr(ext);
-        std::wstring baseExt = (extStr.size() > 1) ? extStr.substr(1) : extStr;
-        
-        // Generate ProgID: QuickView.EXT (e.g. QuickView.jpg)
-        std::wstring progId = L"QuickView" + extStr;
-        
-        // Generate Description: "EXT File" (e.g. "JPG File")
-        std::wstring desc = baseExt;
-        std::transform(desc.begin(), desc.end(), desc.begin(), ::towupper);
-        desc += L" File";
-
-        // Create ProgID Key
-        SafeRegSetString(HKEY_CURRENT_USER, (L"Software\\Classes\\" + progId).c_str(), L"FriendlyTypeName", desc);
-        
-        // Command
-        std::wstring cmd = L"\"" + exePathStr + L"\" \"%1\"";
-        SafeRegSetString(HKEY_CURRENT_USER, (L"Software\\Classes\\" + progId + L"\\shell\\open\\command").c_str(), NULL, cmd);
-        
-        // Icon
-        std::wstring icon = exePathStr + L",0";
-        SafeRegSetString(HKEY_CURRENT_USER, (L"Software\\Classes\\" + progId + L"\\DefaultIcon").c_str(), NULL, icon);
-
-        // Add to OpenWithProgids
-        std::wstring keyPath = L"Software\\Classes\\" + extStr + L"\\OpenWithProgids";
-        r = RegCreateKeyExW(HKEY_CURRENT_USER, keyPath.c_str(), 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL);
-        if (r == ERROR_SUCCESS) {
-            // Use Empty String ("") instead of NULL for safety
-            RegSetValueExW(hKey, progId.c_str(), 0, REG_SZ, (const BYTE*)L"", sizeof(wchar_t));
-            RegCloseKey(hKey);
-        }
+    const QuickView::FileAssocOptions opts = BuildCurrentAssocOptions();
+    if (!QuickView::SyncFileAssociations(opts, exePathStr)) {
+        return false;
     }
-    
-    // 5. Register in Applications
-    SafeRegSetString(HKEY_CURRENT_USER, L"Software\\Classes\\Applications\\QuickView.exe", L"FriendlyAppName", L"QuickView");
-    
-    // 5b. Register SupportedTypes
-    if (RegCreateKeyExW(HKEY_CURRENT_USER, 
-        L"Software\\Classes\\Applications\\QuickView.exe\\SupportedTypes",
-        0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
-        
-        for (const auto& ext : QuickView::SUPPORTED_EXTENSIONS) {
-            std::wstring extStr(ext);
-            // [Small AV Optimization] Only write if not already there
-            DWORD type;
-            if (RegQueryValueExW(hKey, extStr.c_str(), NULL, &type, NULL, NULL) != ERROR_SUCCESS) {
-                RegSetValueExW(hKey, extStr.c_str(), 0, REG_SZ, (const BYTE*)L"", sizeof(wchar_t));
-            }
-        }
-        RegCloseKey(hKey);
-    }
-
-    std::wstring applicationsCmd = L"\"" + exePathStr + L"\" \"%1\"";
-    SafeRegSetString(HKEY_CURRENT_USER, L"Software\\Classes\\Applications\\QuickView.exe\\shell\\open\\command", NULL, applicationsCmd);
-    
-    // 6. Register Capabilities
-    SafeRegSetString(HKEY_CURRENT_USER, L"Software\\QuickView\\Capabilities", L"ApplicationDescription", L"QuickView Image Viewer");
-    SafeRegSetString(HKEY_CURRENT_USER, L"Software\\QuickView\\Capabilities", L"ApplicationName", L"QuickView");
-    
-    std::wstring capKey = L"Software\\QuickView\\Capabilities\\FileAssociations";
-    if (RegCreateKeyExW(HKEY_CURRENT_USER, capKey.c_str(), 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
-        for (const auto& ext : QuickView::SUPPORTED_EXTENSIONS) {
-            std::wstring extStr(ext);
-            std::wstring progId = L"QuickView" + extStr;
-            RegSetValueExW(hKey, extStr.c_str(), 0, REG_SZ, (const BYTE*)progId.c_str(), (DWORD)(progId.size() + 1) * sizeof(wchar_t));
-        }
-        RegCloseKey(hKey);
-    }
-    
-    // 7. Register to RegisteredApplications
-    SafeRegSetString(HKEY_CURRENT_USER, L"Software\\RegisteredApplications", L"QuickView", L"Software\\QuickView\\Capabilities");
-
-    // 8. Refresh Shell
-    SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, NULL, NULL);
 
     // [The Golden Path] Persistence Update
     g_config.LastRegisteredVersion = SettingsOverlay::GetAppVersion();
     g_config.LastRegisteredPath = exePathStr;
-    
+    g_config.LastRegisteredAssocHash = QuickView::FormatAssocOptionsHash(QuickView::ComputeAssocOptionsHash(opts));
+
     extern void SaveConfig();
     SaveConfig();
 
     return true;
 }
 
-// Unregister file associations (for portable mode - clean registry)
+// Unregister file associations (for portable mode / uninstall - clean registry)
 void SettingsOverlay::UnregisterAssociations() {
-    // Delete ProgID: QuickView.Image
-    RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\Classes\\QuickView.Image");
-    
-    // Delete Applications entry
-    RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\Classes\\Applications\\QuickView.exe");
+    QuickView::UnregisterAllAssociations();
 
     // Clear Golden Path persistence to avoid false skips if user re-installs later
     g_config.LastRegisteredVersion.clear();
     g_config.LastRegisteredPath.clear();
+    g_config.LastRegisteredAssocHash.clear();
     extern void SaveConfig();
     SaveConfig();
-    
-    // Delete per-extension ProgIDs and OpenWithProgids entries
-    for (const auto& ext : QuickView::SUPPORTED_EXTENSIONS) {
-        std::wstring extStr(ext);
-        std::wstring progId = L"QuickView" + extStr;
-        
-        // Delete ProgID key (e.g. QuickView.jpg)
-        RegDeleteTreeW(HKEY_CURRENT_USER, (L"Software\\Classes\\" + progId).c_str());
-        
-        // Remove from OpenWithProgids - both QuickView.ext AND QuickView.Image
-        HKEY hKey;
-        std::wstring keyPath = L"Software\\Classes\\" + extStr + L"\\OpenWithProgids";
-        if (RegOpenKeyExW(HKEY_CURRENT_USER, keyPath.c_str(), 0, KEY_WRITE, &hKey) == ERROR_SUCCESS) {
-            RegDeleteValueW(hKey, progId.c_str());           // Remove QuickView.jpg
-            RegDeleteValueW(hKey, L"QuickView.Image");       // Remove QuickView.Image
-            RegCloseKey(hKey);
-        }
-    }
-    
-    // Delete Capabilities
-    RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\QuickView\\Capabilities");
-    
-    // Delete from RegisteredApplications
-    HKEY hRegApp;
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\RegisteredApplications", 0, KEY_WRITE, &hRegApp) == ERROR_SUCCESS) {
-        RegDeleteValueW(hRegApp, L"QuickView");
-        RegCloseKey(hRegApp);
-    }
-
-    // Refresh Shell
-    SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, NULL, NULL);
 }
 
-// Manual repair (silent, no MessageBox)
+// Manual repair check (strictly checks quoted "%1" command, icon style, and context menu parity)
 bool SettingsOverlay::IsRegistrationNeeded() {
-    wchar_t currentExe[MAX_PATH];
-    GetModuleFileNameW(nullptr, currentExe, MAX_PATH);
-    std::wstring regPath = ReadRegisteredExePath();
-    // Check if SupportedTypes exists. If not, we need to register.
-    HKEY hKeyTest;
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\Applications\\QuickView.exe\\SupportedTypes", 0, KEY_READ, &hKeyTest) != ERROR_SUCCESS) {
-        return true; 
-    }
-    RegCloseKey(hKeyTest);
+    const std::wstring exePathStr = QuickView::GetCurrentExecutablePath();
+    const QuickView::FileAssocOptions opts = BuildCurrentAssocOptions();
+    return QuickView::IsFileAssociationSyncNeeded(opts, exePathStr);
+}
 
-    return regPath.empty() || (_wcsicmp(regPath.c_str(), currentExe) != 0);
+namespace {
+
+static const wchar_t* const* GetCategoryTitlePtr(QuickView::AssocExtCategory cat) {
+    switch (cat) {
+        case QuickView::AssocExtCategory::Standard:    return &AppStrings::g.Settings_Label_FileAssocCatStandard;
+        case QuickView::AssocExtCategory::WebModern:   return &AppStrings::g.Settings_Label_FileAssocCatModern;
+        case QuickView::AssocExtCategory::ProLegacy:   return &AppStrings::g.Settings_Label_FileAssocCatPro;
+        case QuickView::AssocExtCategory::CameraRaw:   return &AppStrings::g.Settings_Label_FileAssocCatRaw;
+        case QuickView::AssocExtCategory::ExtendedRaw: return &AppStrings::g.Settings_Label_FileAssocCatExtRaw;
+        case QuickView::AssocExtCategory::Archive:     return &AppStrings::g.Settings_Label_FileAssocCatArchive;
+        default:                                       return &AppStrings::g.Settings_Label_FileAssocCatStandard;
+    }
+}
+
+static bool TagOptionMatches(const SettingsItem& item, std::wstring_view a, std::wstring_view b) {
+    return item.tagCloudIgnoreCase ? QuickView::ExtEqualsIgnoreCase(a, b) : (a == b);
+}
+
+static float MeasureTagPillTextWidth(IDWriteFactory* dwriteFactory, IDWriteTextFormat* textFormat,
+                                     std::wstring_view displayText, float badgeH, float scale) {
+    float textW = 0.0f;
+    if (dwriteFactory && textFormat) {
+        ComPtr<IDWriteTextLayout> layout;
+        if (SUCCEEDED(dwriteFactory->CreateTextLayout(
+                displayText.data(), static_cast<UINT32>(displayText.size()),
+                textFormat, 2000.0f, badgeH, &layout))) {
+            DWRITE_TEXT_METRICS metrics = {};
+            if (SUCCEEDED(layout->GetMetrics(&metrics))) {
+                textW = ceilf(metrics.widthIncludingTrailingWhitespace);
+            }
+        }
+    }
+    if (textW <= 0.0f) {
+        textW = static_cast<float>(displayText.size()) * 8.0f * scale;
+    }
+    return textW;
+}
+
+static uint8_t FileAssocTagStatusProbe(SettingsOverlay* overlay, std::wstring_view ext) {
+    return overlay ? overlay->QueryCachedExtState(ext) : 0;
+}
+
+} // namespace
+
+uint8_t SettingsOverlay::QueryCachedExtState(std::wstring_view ext) const {
+    if (!m_assocProbeValid) return 0;
+    const auto allExts = QuickView::ALL_ASSOCIABLE_EXTENSIONS;
+    const size_t count = (std::min)(allExts.size(), m_assocProbe.states.size());
+    for (size_t i = 0; i < count; ++i) {
+        if (QuickView::ExtEqualsIgnoreCase(allExts[i], ext)) {
+            return static_cast<uint8_t>(m_assocProbe.states[i]);
+        }
+    }
+    return 0;
+}
+
+void SettingsOverlay::RefreshFileAssocProbe() {
+    const std::wstring exePathStr = g_config.PortableMode ? L"" : QuickView::GetCurrentExecutablePath();
+    m_assocProbe = QuickView::ProbeFileAssociations(g_config.FileAssocExts, exePathStr);
+    m_assocProbeValid = true;
+
+    for (size_t ci = 0; ci < static_cast<size_t>(QuickView::AssocExtCategory::Count); ++ci) {
+        const auto cat = static_cast<QuickView::AssocExtCategory>(ci);
+        const auto exts = QuickView::GetExtensionsByCategory(cat);
+        const int selCount = QuickView::CountCategoryInCsv(g_config.FileAssocExts, cat);
+        m_assocCatToggles[ci] = (!exts.empty() && selCount == static_cast<int>(exts.size()));
+    }
+
+    wchar_t summaryBuf[256] = {};
+    const wchar_t* fmt = AppStrings::g.Settings_Status_AssocSummaryFormat
+        ? AppStrings::g.Settings_Status_AssocSummaryFormat
+        : L"%d selected \u00b7 %d system default \u00b7 %d Open With only";
+    swprintf_s(summaryBuf, fmt, m_assocProbe.selectedCount, m_assocProbe.defaultCount, m_assocProbe.openWithOnlyCount);
+    m_assocSummaryText = summaryBuf;
+}
+
+const SettingsOverlay::TagCloudCacheEntry& SettingsOverlay::EnsureTagCloudLayoutCache(const SettingsItem& item, float contentW, float s) const {
+    const float topGap = 10.0f * s;
+    const float headerH = 20.0f * s;
+    const float badgeH = 26.0f * s;
+    const float badgePadX = 12.0f * s;
+    const float badgeGapX = 6.0f * s;
+    const float badgeGapY = 8.0f * s;
+    const float dotReserve = (item.tagStatusFn != nullptr) ? (10.0f * s) : 0.0f;
+    const float initialRelY = topGap + (!item.label.empty() ? (headerH + 6.0f * s) : (2.0f * s));
+
+    TagCloudCacheEntry* entry = nullptr;
+    for (auto& existing : m_tagCloudCache) {
+        if (existing.item == &item) {
+            entry = &existing;
+            break;
+        }
+    }
+    if (!entry) {
+        m_tagCloudCache.push_back(TagCloudCacheEntry{});
+        entry = &m_tagCloudCache.back();
+        entry->item = &item;
+    }
+
+    const std::wstring currentStr = item.pStrVal ? *item.pStrVal : L"";
+    const bool cacheHit =
+        fabsf(entry->scale - s) < 0.001f &&
+        fabsf(entry->contentW - contentW) < 0.5f &&
+        entry->activeStr == currentStr &&
+        entry->pills.size() == item.options.size();
+    if (cacheHit) return *entry;
+
+    entry->scale = s;
+    entry->contentW = contentW;
+    entry->activeStr = currentStr;
+    entry->pills.clear();
+    entry->pills.reserve(item.options.size());
+
+    if (item.options.empty()) {
+        entry->totalH = initialRelY + 16.0f * s;
+        return *entry;
+    }
+
+    float badgeX = 0.0f;
+    float badgeY = initialRelY;
+    const std::vector<std::wstring> activeItems = SplitString(currentStr, L',');
+
+    for (const auto& opt : item.options) {
+        int activeIndex = 0;
+        bool isActive = false;
+        for (size_t ai = 0; ai < activeItems.size(); ++ai) {
+            if (TagOptionMatches(item, activeItems[ai], opt)) {
+                isActive = true;
+                activeIndex = static_cast<int>(ai + 1);
+                break;
+            }
+        }
+
+        std::wstring_view optName = opt;
+        if (opt == L"Size" && item.tagCloudNoLimit) optName = L"Size & Zoom";
+
+        std::wstring displayText(optName);
+        if (isActive && !item.tagCloudNoSort) {
+            displayText = std::to_wstring(activeIndex) + L". " + std::wstring(optName);
+        }
+
+        const float textW = MeasureTagPillTextWidth(m_dwriteFactory.Get(), m_textFormatItem.Get(), displayText, badgeH, s);
+        float badgeW = textW + badgePadX * 2.0f + dotReserve;
+        if (badgeW > contentW) badgeW = contentW;
+
+        if (badgeX > 0.5f && badgeX + badgeW > contentW + 0.5f) {
+            badgeX = 0.0f;
+            badgeY += badgeH + badgeGapY;
+        }
+
+        entry->pills.push_back({ std::move(displayText), activeIndex, isActive, badgeX, badgeY, badgeW });
+        badgeX += badgeW + badgeGapX;
+    }
+
+    entry->totalH = badgeY + badgeH + 16.0f * s;
+    return *entry;
+}
+
+float SettingsOverlay::MeasureTagCloudHeight(const SettingsItem& item, float contentW, float s) const {
+    const auto& tagCache = EnsureTagCloudLayoutCache(item, contentW, s);
+    float totalH = tagCache.totalH;
+    if (!item.statusText.empty()) {
+        if (item.statusSetTime == 0 || (GetTickCount() - item.statusSetTime <= 3000)) {
+            totalH += 18.0f * s;
+        }
+    }
+    return totalH;
+}
+
+void SettingsOverlay::ToggleTagCloudOption(SettingsItem& item, int idx) {
+    if (idx < 0 || idx >= static_cast<int>(item.options.size()) || !item.pStrVal) return;
+
+    const std::wstring_view clickedOpt = item.options[idx];
+    if (item.tagCloudIgnoreCase) {
+        const bool currentlyActive = QuickView::IsExtensionInCsv(*item.pStrVal, clickedOpt);
+        *item.pStrVal = QuickView::ToggleExtensionInCsv(*item.pStrVal, clickedOpt, !currentlyActive);
+    } else {
+        std::vector<std::wstring> activeItems = SplitString(*item.pStrVal, L',');
+        auto it = std::find(activeItems.begin(), activeItems.end(), clickedOpt);
+        if (it != activeItems.end()) {
+            activeItems.erase(it);
+        } else {
+            if (item.tagCloudNoLimit || static_cast<int>(activeItems.size()) < kInfoPanelLiteMaxItems) {
+                activeItems.push_back(std::wstring(clickedOpt));
+            } else {
+                item.statusText = L"Limit reached (max 8 items)";
+                item.statusColor = D2D1::ColorF(1.0f, 0.35f, 0.35f, 1.0f);
+                item.statusSetTime = GetTickCount();
+            }
+        }
+
+        std::wstring newStr;
+        for (size_t i = 0; i < activeItems.size(); ++i) {
+            if (i > 0) newStr += L",";
+            newStr += activeItems[i];
+        }
+        *item.pStrVal = std::move(newStr);
+    }
+
+    if (item.onChange) item.onChange(this, &item);
+    SaveConfig();
 }
 
 SettingsOverlay::SettingsOverlay() {
@@ -701,11 +604,11 @@ void SettingsOverlay::RenderUpdateToast(ID2D1DeviceContext* pRT, float /*hudX*/,
     D2D1_RECT_F titleR = D2D1::RectF(l.bg.left + 20, l.bg.top + 15, l.bg.right - 30, l.bg.top + 45);
     m_textFormatHeader->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
     m_textFormatHeader->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-    pRT->DrawText(AppStrings::Dialog_UpdateTitle, (UINT32)wcslen(AppStrings::Dialog_UpdateTitle), m_textFormatHeader.Get(), titleR, m_brushText.Get());
+    pRT->DrawText(AppStrings::g.Dialog_UpdateTitle, (UINT32)wcslen(AppStrings::g.Dialog_UpdateTitle), m_textFormatHeader.Get(), titleR, m_brushText.Get());
 
     // 4. Version Subheader
     wchar_t verBuf[128];
-    swprintf_s(verBuf, AppStrings::Dialog_UpdateContent, m_updateVersion.c_str());
+    swprintf_s(verBuf, AppStrings::g.Dialog_UpdateContent, m_updateVersion.c_str());
     D2D1_RECT_F verR = D2D1::RectF(l.bg.left + 20, l.bg.top + 45, l.bg.right - 20, l.bg.top + 65);
     pRT->DrawText(verBuf, (UINT32)wcslen(verBuf), m_textFormatItem.Get(), verR, m_brushSuccess.Get());
     
@@ -715,11 +618,11 @@ void SettingsOverlay::RenderUpdateToast(ID2D1DeviceContext* pRT, float /*hudX*/,
     // 5. Built with Love Message
     float loveY = l.bg.top + 75.0f; 
     D2D1_RECT_F loveTitleR = D2D1::RectF(l.bg.left + 20, loveY, l.bg.right - 20, loveY + 25.0f);
-    pRT->DrawText(AppStrings::Dialog_Update_LoveTitle, (UINT32)wcslen(AppStrings::Dialog_Update_LoveTitle), m_textFormatItem.Get(), loveTitleR, m_brushAccent.Get());
+    pRT->DrawText(AppStrings::g.Dialog_Update_LoveTitle, (UINT32)wcslen(AppStrings::g.Dialog_Update_LoveTitle), m_textFormatItem.Get(), loveTitleR, m_brushAccentText.Get());
     
     // Give the message more breathing room (increase height allocation)
     D2D1_RECT_F loveMsgR = D2D1::RectF(l.bg.left + 20, loveY + 30.0f, l.bg.right - 20, loveY + 125.0f);
-    pRT->DrawText(AppStrings::Dialog_Update_LoveMessage, (UINT32)wcslen(AppStrings::Dialog_Update_LoveMessage), m_textFormatItem.Get(), loveMsgR, m_brushTextDim.Get());
+    pRT->DrawText(AppStrings::g.Dialog_Update_LoveMessage, (UINT32)wcslen(AppStrings::g.Dialog_Update_LoveMessage), m_textFormatItem.Get(), loveMsgR, m_brushTextDim.Get());
 
     // Separator line
     pRT->DrawLine(D2D1::Point2F(l.bg.left + 20, loveMsgR.bottom + 5), D2D1::Point2F(l.bg.right - 20, loveMsgR.bottom + 5), m_brushBorder.Get(), 1.0f);
@@ -727,7 +630,7 @@ void SettingsOverlay::RenderUpdateToast(ID2D1DeviceContext* pRT, float /*hudX*/,
     // 6. Changelog Header
     float logY = loveMsgR.bottom + 10.0f;
     D2D1_RECT_F logHeaderR = D2D1::RectF(l.bg.left + 20, logY, l.bg.right - 20, logY + 20.0f);
-    pRT->DrawText(AppStrings::Dialog_UpdateLogHeader, (UINT32)wcslen(AppStrings::Dialog_UpdateLogHeader), m_textFormatItem.Get(), logHeaderR, m_brushText.Get());
+    pRT->DrawText(AppStrings::g.Dialog_UpdateLogHeader, (UINT32)wcslen(AppStrings::g.Dialog_UpdateLogHeader), m_textFormatItem.Get(), logHeaderR, m_brushText.Get());
 
     // 7. Changelog Body
     // Increase Log Height by starting higher (logY adjusted) and ending near buttons
@@ -805,16 +708,19 @@ void SettingsOverlay::RenderUpdateToast(ID2D1DeviceContext* pRT, float /*hudX*/,
         } else {
             m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
             m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            pRT->DrawText(text, (UINT32)wcslen(text), m_textFormatItem.Get(), r, m_brushText.Get());
+            ID2D1SolidColorBrush* btnTextBrush = (hover && baseBrush.Get() == m_brushAccent.Get() && m_brushOnAccent)
+                ? m_brushOnAccent.Get()
+                : m_brushText.Get();
+            pRT->DrawText(text, (UINT32)wcslen(text), m_textFormatItem.Get(), r, btnTextBrush);
         }
         
         m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
         m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
     };
 
-    drawBtn(l.btnRestart, AppStrings::Dialog_ButtonUpdate, 0, m_brushAccent);
-    drawBtn(l.btnLater, AppStrings::Dialog_ButtonLater, 1, m_brushControlBg);
-    drawBtn(l.btnStar, AppStrings::Dialog_ButtonStar, 3, m_brushSuccess, true);
+    drawBtn(l.btnRestart, AppStrings::g.Dialog_ButtonUpdate, 0, m_brushAccent);
+    drawBtn(l.btnLater, AppStrings::g.Dialog_ButtonLater, 1, m_brushControlBg);
+    drawBtn(l.btnStar, AppStrings::g.Dialog_ButtonStar, 3, m_brushSuccess, true);
 
     // Close X
     bool closeHover = (m_toastHoverBtn == 2);
@@ -850,11 +756,15 @@ void SettingsOverlay::CreateResources(ID2D1DeviceContext* pRT) {
         pRT->CreateSolidColorBrush(palette.text, &m_brushText);
         pRT->CreateSolidColorBrush(palette.textDim, &m_brushTextDim);
         pRT->CreateSolidColorBrush(palette.accent, &m_brushAccent);
+        pRT->CreateSolidColorBrush(palette.accentText, &m_brushAccentText);
+        pRT->CreateSolidColorBrush(palette.onAccentText, &m_brushOnAccent);
         pRT->CreateSolidColorBrush(palette.controlBg, &m_brushControlBg);
         pRT->CreateSolidColorBrush(palette.border, &m_brushBorder);
         pRT->CreateSolidColorBrush(palette.success, &m_brushSuccess);
         pRT->CreateSolidColorBrush(palette.error, &m_brushError);
         pRT->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &m_brushWhite);
+        pRT->CreateSolidColorBrush(palette.tooltipBg, &m_brushTooltipBg);
+        pRT->CreateSolidColorBrush(palette.shadow, &m_brushShadow);
     }
 
     if (m_brushBg) {
@@ -862,10 +772,14 @@ void SettingsOverlay::CreateResources(ID2D1DeviceContext* pRT) {
         m_brushText->SetColor(palette.text);
         m_brushTextDim->SetColor(palette.textDim);
         m_brushAccent->SetColor(palette.accent);
+        if (m_brushAccentText) m_brushAccentText->SetColor(palette.accentText);
+        if (m_brushOnAccent) m_brushOnAccent->SetColor(palette.onAccentText);
         m_brushControlBg->SetColor(palette.controlBg);
         m_brushBorder->SetColor(palette.border);
         m_brushSuccess->SetColor(palette.success);
         m_brushError->SetColor(palette.error);
+        if (m_brushTooltipBg) m_brushTooltipBg->SetColor(palette.tooltipBg);
+        if (m_brushShadow) m_brushShadow->SetColor(palette.shadow);
     }
 
     // Get System Message Font (e.g. Microsoft YaHei UI on CN, Segoe UI on EN)
@@ -889,15 +803,21 @@ void SettingsOverlay::CreateResources(ID2D1DeviceContext* pRT) {
         DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(m_dwriteFactory.GetAddressOf()));
     }
 
-    if (!m_textFormatHeader || !m_textFormatItem || !m_textFormatBadge || !m_textFormatStepper) {
+    if (!m_textFormatHeader || !m_textFormatItem || !m_textFormatBadge || !m_textFormatStepper || !m_textFormatItemBold) {
         float scaledHeader = fontSizeHeader * m_uiScale;
         float scaledItem = fontSizeItem * m_uiScale;
         float scaledBadge = 7.5f * m_uiScale; // Micro font size for NEW badge
         float scaledStepper = 15.5f * m_uiScale; // Enhanced size for ⊖ / ⊕ icons
-        m_dwriteFactory->CreateTextFormat(fontFace, nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, scaledHeader, AppStrings::CurrentLocale, &m_textFormatHeader);
-        m_dwriteFactory->CreateTextFormat(fontFace, nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, scaledItem, AppStrings::CurrentLocale, &m_textFormatItem);
-        m_dwriteFactory->CreateTextFormat(fontFace, nullptr, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, scaledBadge, AppStrings::CurrentLocale, &m_textFormatBadge);
-        m_dwriteFactory->CreateTextFormat(fontFace, nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, scaledStepper, AppStrings::CurrentLocale, &m_textFormatStepper);
+        m_dwriteFactory->CreateTextFormat(fontFace, nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, scaledHeader, AppStrings::g.CurrentLocale, &m_textFormatHeader);
+        m_dwriteFactory->CreateTextFormat(fontFace, nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, scaledItem, AppStrings::g.CurrentLocale, &m_textFormatItem);
+        m_dwriteFactory->CreateTextFormat(fontFace, nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, scaledItem, AppStrings::g.CurrentLocale, &m_textFormatItemBold);
+        m_dwriteFactory->CreateTextFormat(fontFace, nullptr, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, scaledBadge, AppStrings::g.CurrentLocale, &m_textFormatBadge);
+        m_dwriteFactory->CreateTextFormat(fontFace, nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, scaledStepper, AppStrings::g.CurrentLocale, &m_textFormatStepper);
+    }
+
+    if (m_textFormatItemBold) {
+        m_textFormatItemBold->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        m_textFormatItemBold->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
     }
 
     if (m_textFormatItem) {
@@ -938,22 +858,6 @@ static LinkRects GetLinkButtonRects(const D2D1_RECT_F& itemRect, float s = 1.0f)
     return r;
 }
 
-/*
-static D2D1_RECT_F GetUpdateButtonRect(const D2D1_RECT_F& cardRect) {
-    float w = 120.0f;
-    float h = 32.0f;
-    return D2D1::RectF(cardRect.right - w - 16, cardRect.top + 16, cardRect.right - 16, cardRect.top + 16 + h);
-}
-*/
-/*
-static D2D1_RECT_F GetUpdateButtonRect(const D2D1_RECT_F& cardRect) {
-    // Full Width Button inside the "Action Row"
-    // We treat cardRect as the container row
-    // Mockup: Blue Button is wide.
-    return cardRect; // The item itself IS the button now
-}
-*/
-
 #include "EditState.h"
 
 extern AppConfig g_config;
@@ -964,41 +868,1356 @@ int* BindEnum(T* ptr) { return reinterpret_cast<int*>(ptr); }
 
 
 
+
+// ============================================================================
+// AI Actions & Model Profiles Tab Builder
+// ============================================================================
+namespace {
+    static inline bool IsSimplifiedChinese() {
+        return g_config.Language == (int)AppStrings::Language::ChineseSimplified ||
+               (g_config.Language == (int)AppStrings::Language::Auto && PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_CHINESE);
+    }
+
+    struct ProviderPreset {
+        std::wstring name;
+        const wchar_t* const* localizedLabel;
+        QuickView::AI::ApiProtocol protocol;
+        std::string defaultUrl;
+    };
+    static const ProviderPreset s_providerPresets[] = {
+        { L"Google Gemini",           nullptr, QuickView::AI::ApiProtocol::GeminiNative,         "https://generativelanguage.googleapis.com/v1beta/" },
+        { L"OpenAI (ChatGPT)",        nullptr, QuickView::AI::ApiProtocol::OpenAiChat,           "https://api.openai.com/v1/" },
+        { L"OpenAI (DALL-E 3)",       nullptr, QuickView::AI::ApiProtocol::OpenAiImagesGenerate, "https://api.openai.com/v1/" },
+        { L"Anthropic Claude",        nullptr, QuickView::AI::ApiProtocol::OpenAiChat,           "https://api.anthropic.com/v1/" },
+        { L"xAI Grok",                nullptr, QuickView::AI::ApiProtocol::OpenAiChat,           "https://api.x.ai/v1/" },
+        { L"SiliconFlow",             nullptr, QuickView::AI::ApiProtocol::OpenAiImagesGenerate, "https://api.siliconflow.cn/v1/" },
+        { L"Alibaba Cloud DashScope", nullptr, QuickView::AI::ApiProtocol::OpenAiChat,           "https://dashscope.aliyuncs.com/compatible-mode/v1/" },
+        { L"Local ComfyUI",           &AppStrings::g.Settings_Option_AiLocalComfyUI, QuickView::AI::ApiProtocol::ComfyUI,          "http://127.0.0.1:8188/" },
+        { L"Local SD WebUI / Forge",  &AppStrings::g.Settings_Option_AiLocalSdWebUI, QuickView::AI::ApiProtocol::StabilityInpaint, "http://127.0.0.1:7860/" },
+        { L"Custom Endpoint",         &AppStrings::g.Settings_Option_AiCustomEndpoint, QuickView::AI::ApiProtocol::OpenAiChat,      "" }
+    };
+
+    static inline int ProtocolToUiIndex(QuickView::AI::ApiProtocol p) {
+        switch (p) {
+            case QuickView::AI::ApiProtocol::GeminiNative: return 0;
+            case QuickView::AI::ApiProtocol::OpenAiChat: return 1;
+            case QuickView::AI::ApiProtocol::OpenAiImagesGenerate: return 2;
+            case QuickView::AI::ApiProtocol::OpenAiImagesEdit: return 3;
+            case QuickView::AI::ApiProtocol::StabilityInpaint: return 4;
+            case QuickView::AI::ApiProtocol::ComfyUI: return 5;
+            case QuickView::AI::ApiProtocol::CustomJsonPost: return 6;
+            default: return 1;
+        }
+    }
+
+    static inline QuickView::AI::ApiProtocol UiIndexToProtocol(int idx) {
+        switch (idx) {
+            case 0: return QuickView::AI::ApiProtocol::GeminiNative;
+            case 1: return QuickView::AI::ApiProtocol::OpenAiChat;
+            case 2: return QuickView::AI::ApiProtocol::OpenAiImagesGenerate;
+            case 3: return QuickView::AI::ApiProtocol::OpenAiImagesEdit;
+            case 4: return QuickView::AI::ApiProtocol::StabilityInpaint;
+            case 5: return QuickView::AI::ApiProtocol::ComfyUI;
+            case 6: return QuickView::AI::ApiProtocol::CustomJsonPost;
+            default: return QuickView::AI::ApiProtocol::OpenAiChat;
+        }
+    }
+
+    struct AiUiState {
+        std::vector<std::wstring> profileUrls;
+        std::vector<std::wstring> profileKeys;
+        std::vector<std::wstring> profileModels;
+        std::vector<int> profileProviderIndices;
+        std::vector<int> profileProtocolIndices;
+        std::vector<int> profileMaxResIndices;
+        std::vector<bool> profileExpanded;
+        std::vector<std::vector<std::wstring>> profileHybridModelOptions;
+        std::vector<std::vector<std::wstring_view>> profileHybridModelOptionViews;
+        std::vector<int> profileHybridModelSelection;
+        std::vector<std::string> fetchingProfileIds; // Accessed on UI thread only
+
+        std::vector<std::wstring> profileMaskedKeys;
+
+        std::vector<std::wstring> actionNames;
+        std::vector<std::wstring> actionPrompts;
+        std::vector<std::wstring> actionNegativePrompts;
+        std::vector<int> actionProfileIndices;
+        std::vector<std::vector<std::wstring>> actionProfileOptionStrings;
+        std::vector<std::vector<std::wstring_view>> actionProfileOptionViews;
+        std::vector<int> actionScopeIndices;
+        std::vector<bool> actionExpanded;
+
+        bool optionsInitialized = false;
+        int cachedLang = -1;
+        bool syncedOnce = false;
+        std::vector<std::wstring_view> providerOptions;
+        std::vector<std::wstring_view> protocolOptions;
+        std::vector<std::wstring_view> maxResOptions;
+        std::vector<std::wstring_view> scopeOptions;
+        std::vector<int> profileTimeoutIndices;
+        std::vector<int> actionDenoiseIndices;
+        std::vector<int> actionStepsIndices;
+        std::vector<int> actionCfgIndices;
+        std::vector<int> actionAspectIndices;
+        std::vector<int> actionResolutionIndices;
+        std::vector<std::wstring_view> timeoutOptions;
+        std::vector<std::wstring_view> denoiseOptions;
+        std::vector<std::wstring_view> stepsOptions;
+        std::vector<std::wstring_view> cfgOptions;
+        std::vector<std::wstring_view> aspectRatioOptions;
+        std::vector<std::wstring_view> resolutionOptions;
+    };
+    static AiUiState s_aiUi;
+
+    static bool IsProfileFetching(const std::string& profileId) {
+        return std::find(s_aiUi.fetchingProfileIds.begin(), s_aiUi.fetchingProfileIds.end(), profileId) != s_aiUi.fetchingProfileIds.end();
+    }
+
+    static void SetProfileFetching(const std::string& profileId, bool fetching) {
+        auto it = std::find(s_aiUi.fetchingProfileIds.begin(), s_aiUi.fetchingProfileIds.end(), profileId);
+        if (fetching) {
+            if (it == s_aiUi.fetchingProfileIds.end()) {
+                s_aiUi.fetchingProfileIds.push_back(profileId);
+            }
+        } else if (it != s_aiUi.fetchingProfileIds.end()) {
+            s_aiUi.fetchingProfileIds.erase(it);
+        }
+    }
+
+    using QuickView::WideToUtf8;
+    using QuickView::Utf8ToWide;
+
+    enum class SettingsUiEventKind : WPARAM {
+        AiFetchModels = 0,
+        AiTestConn = 1,
+        PluginProgress = 2,
+        PluginDone = 3
+    };
+
+    struct AiFetchModelsPayload {
+        SettingsOverlay* ov = nullptr;
+        std::string profileId;
+        bool success = false;
+        std::vector<std::string> models;
+        std::wstring errMsg;
+    };
+
+    struct AiTestConnPayload {
+        bool success = false;
+        int statusCode = 0;
+        int latencyMs = 0;
+        std::wstring message;
+    };
+
+    struct PluginUiPayload {
+        SettingsOverlay* ov = nullptr;
+        bool ok = false;
+        bool enableSrOnSuccess = false;
+    };
+
+    struct FetchModelsSettingsCtx {
+        std::string profileId;
+        SettingsOverlay* ov = nullptr;
+    };
+
+    static void PostSettingsUiEvent(SettingsUiEventKind kind, void* payload) {
+        if (!IsWindow(::g_mainHwnd) ||
+            !PostMessageW(::g_mainHwnd, SettingsOverlay::WM_SETTINGS_UI_EVENT, static_cast<WPARAM>(kind), reinterpret_cast<LPARAM>(payload))) {
+            switch (kind) {
+                case SettingsUiEventKind::AiFetchModels:
+                    delete static_cast<AiFetchModelsPayload*>(payload);
+                    break;
+                case SettingsUiEventKind::AiTestConn:
+                    delete static_cast<AiTestConnPayload*>(payload);
+                    break;
+                case SettingsUiEventKind::PluginProgress:
+                case SettingsUiEventKind::PluginDone:
+                    delete static_cast<PluginUiPayload*>(payload);
+                    break;
+            }
+        }
+    }
+
+    static void OnFetchModelsOverlayComplete(void* u, bool success, const std::vector<std::string>& models, const std::wstring& errMsg) {
+        auto* p = static_cast<FetchModelsSettingsCtx*>(u);
+        if (!p) return;
+        auto* payload = new AiFetchModelsPayload{ p->ov, p->profileId, success, models, errMsg };
+        PostSettingsUiEvent(SettingsUiEventKind::AiFetchModels, payload);
+    }
+
+    static void CleanFetchModelsSettingsCtx(void* u) {
+        delete static_cast<FetchModelsSettingsCtx*>(u);
+    }
+
+    static void AddLabelItem(SettingsTab& tab, std::wstring_view label, OptionType type) {
+        SettingsItem item;
+        item.label.assign(label);
+        item.type = type;
+        tab.items.push_back(std::move(item));
+    }
+
+    static void AddLabelItem(SettingsTab& tab, const wchar_t* label, OptionType type) {
+        AddLabelItem(tab, std::wstring_view(label ? label : L""), type);
+    }
+
+    static void AddInfoLabel(SettingsTab& tab, std::wstring_view label) {
+        AddLabelItem(tab, label, OptionType::InfoLabel);
+    }
+
+    static void AddInfoLabel(SettingsTab& tab, const wchar_t* label) {
+        AddLabelItem(tab, label, OptionType::InfoLabel);
+    }
+
+    static void AddHeader(SettingsTab& tab, std::wstring_view label) {
+        AddLabelItem(tab, label, OptionType::Header);
+    }
+
+    static void AddHeader(SettingsTab& tab, const wchar_t* label) {
+        AddLabelItem(tab, label, OptionType::Header);
+    }
+
+    static void AddSeparator(SettingsTab& tab, const wchar_t* label = L"") {
+        AddLabelItem(tab, label, OptionType::Separator);
+    }
+
+    static void AddSimpleToggle(SettingsTab& tab, const wchar_t* label, bool* pBool) {
+        SettingsItem item;
+        item.label = label ? label : L"";
+        item.type = OptionType::Toggle;
+        item.pBoolVal = pBool;
+        tab.items.push_back(std::move(item));
+    }
+
+    static void AssignOptions(SettingsItem& item, std::span<const std::wstring_view> opts) {
+        item.options.assign(opts.begin(), opts.end());
+    }
+
+    static std::string GenerateUniqueCustomId(const char* prefix, auto existsPred) {
+        static std::atomic<uint64_t> s_seq{ 1 };
+        const uint64_t tickBase = static_cast<uint64_t>(GetTickCount64());
+        for (;;) {
+            const uint64_t seq = s_seq.fetch_add(1, std::memory_order_relaxed);
+            std::string id = std::string(prefix) + std::to_string(tickBase) + "_" + std::to_string(seq);
+            if (!existsPred(id)) return id;
+        }
+    }
+
+    static std::wstring FormatMaskedKey(const std::wstring& plain) {
+        if (plain.empty()) return L"";
+        if (plain.length() <= 8) {
+            return std::wstring(plain.length(), L'•');
+        }
+        std::wstring prefix = plain.substr(0, 4);
+        std::wstring suffix = plain.substr(plain.length() - 4);
+        return prefix + L"••••••••" + suffix;
+    }
+
+    static void EnsureAiLocalizedOptions() {
+        if (s_aiUi.optionsInitialized && s_aiUi.cachedLang == g_config.Language) {
+            return;
+        }
+        s_aiUi.optionsInitialized = true;
+        s_aiUi.cachedLang = g_config.Language;
+
+        s_aiUi.providerOptions.clear();
+        s_aiUi.providerOptions.reserve(std::size(s_providerPresets));
+        for (const auto& preset : s_providerPresets) {
+            const wchar_t* lbl = (preset.localizedLabel && *preset.localizedLabel) ? *preset.localizedLabel : preset.name.c_str();
+            s_aiUi.providerOptions.push_back(lbl);
+        }
+
+        s_aiUi.protocolOptions = {
+            L"Google Gemini REST (models/...:generateContent)",
+            L"OpenAI Chat Completions (/chat/completions)",
+            L"OpenAI Images Generation (/images/generations)",
+            L"OpenAI Images Edit (/images/edits)",
+            L"Local SD WebUI / Forge (/sdapi/v1/img2img)",
+            L"Local ComfyUI (/prompt)",
+            L"Universal JSON POST (Custom)"
+        };
+
+        s_aiUi.maxResOptions = {
+            AppStrings::g.Settings_Option_AiRes4K ? AppStrings::g.Settings_Option_AiRes4K : L"4K / Original (4096px)",
+            AppStrings::g.Settings_Option_AiRes2K ? AppStrings::g.Settings_Option_AiRes2K : L"2K QHD (2048px)",
+            AppStrings::g.Settings_Option_AiRes1K ? AppStrings::g.Settings_Option_AiRes1K : L"1K Standard (1024px)",
+            AppStrings::g.Settings_Option_AiResOriginal ? AppStrings::g.Settings_Option_AiResOriginal : L"Unrestricted (Native)"
+        };
+
+        const bool isZh = IsSimplifiedChinese();
+        s_aiUi.scopeOptions = isZh ? std::vector<std::wstring_view>{
+            AppStrings::g.Settings_Option_AiScopeForceFull ? AppStrings::g.Settings_Option_AiScopeForceFull : L"全图处理",
+            AppStrings::g.Settings_Option_AiScopeCropBlend ? AppStrings::g.Settings_Option_AiScopeCropBlend : L"选区修补融合"
+        } : std::vector<std::wstring_view>{
+            AppStrings::g.Settings_Option_AiScopeForceFull ? AppStrings::g.Settings_Option_AiScopeForceFull : L"Full Image",
+            AppStrings::g.Settings_Option_AiScopeCropBlend ? AppStrings::g.Settings_Option_AiScopeCropBlend : L"Inpaint & Blend"
+        };
+
+        s_aiUi.timeoutOptions = isZh ? std::vector<std::wstring_view>{
+            L"30 秒",
+            L"60 秒",
+            L"120 秒 (2 分钟)",
+            L"300 秒 (5 分钟)",
+            L"600 秒 (10 分钟)",
+            L"无限制 (本地推荐)"
+        } : std::vector<std::wstring_view>{
+            L"30 Seconds",
+            L"60 Seconds (1 Min)",
+            L"120 Seconds (2 Mins)",
+            L"300 Seconds (5 Mins)",
+            L"600 Seconds (10 Mins)",
+            L"Unrestricted (Local)"
+        };
+
+        s_aiUi.denoiseOptions = isZh ? std::vector<std::wstring_view>{
+            L"0.30 (极弱微调)",
+            L"0.35 (平衡推荐)",
+            L"0.40 (适度重塑)",
+            L"0.50 (半重绘)",
+            L"0.70 (深度重绘)"
+        } : std::vector<std::wstring_view>{
+            L"0.30 (Subtle)",
+            L"0.35 (Recommended)",
+            L"0.40 (Moderate)",
+            L"0.50 (Medium)",
+            L"0.70 (Strong Inpaint)"
+        };
+
+        s_aiUi.stepsOptions = isZh ? std::vector<std::wstring_view>{
+            L"15 步 (极速)",
+            L"20 步 (快速)",
+            L"25 步 (标准推荐)",
+            L"30 步 (高品质)",
+            L"40 步 (精细)",
+            L"50 步 (极致细节)"
+        } : std::vector<std::wstring_view>{
+            L"15 Steps (Fast)",
+            L"20 Steps (Quick)",
+            L"25 Steps (Recommended)",
+            L"30 Steps (High Quality)",
+            L"40 Steps (Ultra)",
+            L"50 Steps (Maximum)"
+        };
+
+        s_aiUi.cfgOptions = isZh ? std::vector<std::wstring_view>{
+            L"4.0 (弱引导)",
+            L"5.5 (柔和平衡)",
+            L"7.0 (标准推荐)",
+            L"8.5 (强约束)",
+            L"10.0 (严苛遵循)"
+        } : std::vector<std::wstring_view>{
+            L"4.0 (Subtle)",
+            L"5.5 (Soft)",
+            L"7.0 (Recommended)",
+            L"8.5 (Strong)",
+            L"10.0 (Strict)"
+        };
+
+        s_aiUi.aspectRatioOptions = isZh ? std::vector<std::wstring_view>{
+            L"自适应 (匹配原图)",
+            L"1:1 (正方形)",
+            L"16:9 (横屏宽幅)",
+            L"9:16 (竖屏壁纸)",
+            L"4:3 (标准横屏)",
+            L"3:4 (标准竖屏)"
+        } : std::vector<std::wstring_view>{
+            L"Auto (Match Source)",
+            L"1:1 (Square)",
+            L"16:9 (Landscape)",
+            L"9:16 (Portrait)",
+            L"4:3 (Standard 4:3)",
+            L"3:4 (Vertical 3:4)"
+        };
+
+        s_aiUi.resolutionOptions = isZh ? std::vector<std::wstring_view>{
+            L"1K 标准 (1024px)",
+            L"2K 高清 (2048px - 推荐)",
+            L"4K 超清 (4096px)"
+        } : std::vector<std::wstring_view>{
+            L"1K Standard (1024px)",
+            L"2K HD (2048px - Recommended)",
+            L"4K Ultra HD (4096px)"
+        };
+    }
+
+    void SyncFromAiManager() {
+        EnsureAiLocalizedOptions();
+        s_aiUi.syncedOnce = true;
+
+        auto& mgr = QuickView::AI::AiActionManager::Instance();
+        auto& profiles = mgr.GetProfiles();
+        auto& actions = mgr.GetActions();
+
+        if (profiles.empty()) {
+            QuickView::AI::ModelProfile defP;
+            defP.id = "primary_profile";
+            defP.displayName = L"Google Gemini";
+            defP.protocol = QuickView::AI::ApiProtocol::GeminiNative;
+            defP.baseUrl = "https://generativelanguage.googleapis.com/v1beta/";
+            defP.defaultModel = "";
+            defP.maxResolution = QuickView::AI::MaxResolution::Original_4K;
+            defP.timeoutSeconds = 600;
+            profiles.push_back(defP);
+            mgr.SetDefaultProfileId(defP.id);
+            mgr.SaveConfig();
+        }
+
+        s_aiUi.profileUrls.resize(profiles.size());
+        s_aiUi.profileKeys.resize(profiles.size());
+        s_aiUi.profileMaskedKeys.resize(profiles.size());
+        s_aiUi.profileModels.resize(profiles.size());
+        s_aiUi.profileProviderIndices.resize(profiles.size(), 0);
+        s_aiUi.profileProtocolIndices.resize(profiles.size(), 0);
+        s_aiUi.profileMaxResIndices.resize(profiles.size(), 0);
+        s_aiUi.profileTimeoutIndices.resize(profiles.size(), 4);
+        s_aiUi.profileHybridModelOptions.resize(profiles.size());
+        s_aiUi.profileHybridModelOptionViews.resize(profiles.size());
+        s_aiUi.profileHybridModelSelection.resize(profiles.size(), 0);
+        if (s_aiUi.profileExpanded.size() != profiles.size()) {
+            s_aiUi.profileExpanded.assign(profiles.size(), false);
+        }
+
+        for (size_t i = 0; i < profiles.size(); ++i) {
+            auto& p = profiles[i];
+
+            int provIdx = static_cast<int>(std::size(s_providerPresets)) - 1; // Custom default
+            for (size_t k = 0; k < std::size(s_providerPresets); ++k) {
+                if (p.displayName == s_providerPresets[k].name) {
+                    provIdx = static_cast<int>(k);
+                    break;
+                }
+            }
+            s_aiUi.profileProviderIndices[i] = provIdx;
+            s_aiUi.profileProtocolIndices[i] = ProtocolToUiIndex(p.protocol);
+
+            s_aiUi.profileUrls[i] = Utf8ToWide(p.baseUrl);
+
+            std::string plainKey = QuickView::AI::AiActionManager::DecryptApiKey(p.encryptedApiKey);
+            s_aiUi.profileKeys[i] = Utf8ToWide(plainKey);
+            s_aiUi.profileMaskedKeys[i] = FormatMaskedKey(s_aiUi.profileKeys[i]);
+
+            s_aiUi.profileModels[i] = Utf8ToWide(p.defaultModel);
+
+            // Hybrid Model Combobox Options (Auto-fetch + Pick from list or Custom Input)
+            s_aiUi.profileHybridModelOptions[i].clear();
+            s_aiUi.profileHybridModelOptionViews[i].clear();
+
+            std::wstring customOpt = AppStrings::g.Settings_AiModelCustom ? AppStrings::g.Settings_AiModelCustom : L"✎ Custom Model Identifier...";
+            if (!p.defaultModel.empty()) {
+                customOpt += L" [" + Utf8ToWide(p.defaultModel) + L"]";
+            }
+            s_aiUi.profileHybridModelOptions[i].push_back(customOpt);
+
+            int hybridSel = 0; // Default to Option 0 (Custom / Current model)
+            if (p.fetchedModels.empty()) {
+                std::wstring fetchOpt = IsProfileFetching(p.id) ? 
+                    (AppStrings::g.Settings_AiModelFetching ? AppStrings::g.Settings_AiModelFetching : L"⏳ Fetching available models...") : 
+                    (AppStrings::g.Settings_AiModelFetchAuto ? AppStrings::g.Settings_AiModelFetchAuto : L"↻ Fetch models from endpoint...");
+                s_aiUi.profileHybridModelOptions[i].push_back(fetchOpt);
+            } else {
+                for (size_t mi = 0; mi < p.fetchedModels.size(); ++mi) {
+                    const auto& mName = p.fetchedModels[mi];
+                    std::wstring wName = Utf8ToWide(mName);
+                    if (mName == p.defaultModel) {
+                        hybridSel = static_cast<int>(mi + 1);
+                    }
+                    s_aiUi.profileHybridModelOptions[i].push_back(std::move(wName));
+                }
+            }
+
+            s_aiUi.profileHybridModelSelection[i] = hybridSel;
+            for (const auto& optStr : s_aiUi.profileHybridModelOptions[i]) {
+                s_aiUi.profileHybridModelOptionViews[i].push_back(optStr);
+            }
+
+            if (p.maxResolution == QuickView::AI::MaxResolution::Original_4K) s_aiUi.profileMaxResIndices[i] = 0;
+            else if (p.maxResolution == QuickView::AI::MaxResolution::FHD_2K) s_aiUi.profileMaxResIndices[i] = 1;
+            else if (p.maxResolution == QuickView::AI::MaxResolution::Standard_1K) s_aiUi.profileMaxResIndices[i] = 2;
+            else s_aiUi.profileMaxResIndices[i] = 3;
+
+            int timeoutIdx = 4; // 600s (10 min) default
+            if (p.timeoutSeconds == 30) timeoutIdx = 0;
+            else if (p.timeoutSeconds == 60) timeoutIdx = 1;
+            else if (p.timeoutSeconds == 120) timeoutIdx = 2;
+            else if (p.timeoutSeconds == 300) timeoutIdx = 3;
+            else if (p.timeoutSeconds == 600) timeoutIdx = 4;
+            else if (p.timeoutSeconds <= 0) timeoutIdx = 5; // 无限制
+            else {
+                if (p.timeoutSeconds < 45) timeoutIdx = 0;
+                else if (p.timeoutSeconds < 90) timeoutIdx = 1;
+                else if (p.timeoutSeconds < 200) timeoutIdx = 2;
+                else if (p.timeoutSeconds < 450) timeoutIdx = 3;
+                else timeoutIdx = 4;
+            }
+            s_aiUi.profileTimeoutIndices[i] = timeoutIdx;
+        }
+
+        s_aiUi.actionNames.resize(actions.size());
+        s_aiUi.actionPrompts.resize(actions.size());
+        s_aiUi.actionNegativePrompts.resize(actions.size());
+        s_aiUi.actionProfileIndices.resize(actions.size(), 0);
+        s_aiUi.actionProfileOptionStrings.resize(actions.size());
+        s_aiUi.actionProfileOptionViews.resize(actions.size());
+        s_aiUi.actionScopeIndices.resize(actions.size(), 0);
+        s_aiUi.actionAspectIndices.resize(actions.size(), 0);
+        s_aiUi.actionResolutionIndices.resize(actions.size(), 1);
+        s_aiUi.actionDenoiseIndices.resize(actions.size(), 1);
+        s_aiUi.actionStepsIndices.resize(actions.size(), 2);
+        s_aiUi.actionCfgIndices.resize(actions.size(), 2);
+        if (s_aiUi.actionExpanded.size() != actions.size()) {
+            s_aiUi.actionExpanded.assign(actions.size(), false);
+        }
+
+        for (size_t i = 0; i < actions.size(); ++i) {
+            const auto& a = actions[i];
+            s_aiUi.actionNames[i] = a.name;
+            s_aiUi.actionPrompts[i] = a.promptTemplate;
+            s_aiUi.actionNegativePrompts[i] = a.negativePrompt;
+
+            // Action Execution Model Options: Option 0 is Default Provider
+            s_aiUi.actionProfileOptionStrings[i].clear();
+            s_aiUi.actionProfileOptionViews[i].clear();
+            s_aiUi.actionProfileOptionStrings[i].push_back(AppStrings::g.Settings_Option_AiDefaultModel ? AppStrings::g.Settings_Option_AiDefaultModel : L"Default Provider");
+
+            int curSel = 0; // Default to Option 0 ("默认模型")
+            for (size_t pi = 0; pi < profiles.size(); ++pi) {
+                std::wstring opt = profiles[pi].displayName;
+                if (!profiles[pi].defaultModel.empty()) {
+                    opt += L" (" + Utf8ToWide(profiles[pi].defaultModel) + L")";
+                }
+                s_aiUi.actionProfileOptionStrings[i].push_back(std::move(opt));
+                if (profiles[pi].id == a.modelProfileId) {
+                    curSel = static_cast<int>(pi + 1);
+                }
+            }
+            s_aiUi.actionProfileIndices[i] = curSel;
+            for (const auto& optStr : s_aiUi.actionProfileOptionStrings[i]) {
+                s_aiUi.actionProfileOptionViews[i].push_back(optStr);
+            }
+
+            s_aiUi.actionScopeIndices[i] = static_cast<int>(a.scopeMode);
+            s_aiUi.actionAspectIndices[i] = static_cast<int>(a.aspectRatio);
+            s_aiUi.actionResolutionIndices[i] = static_cast<int>(a.targetResolution);
+
+            int denoiseIdx = 1; // 0.35 default
+            if (a.denoisingStrength <= 0.32f) denoiseIdx = 0;
+            else if (a.denoisingStrength <= 0.37f) denoiseIdx = 1;
+            else if (a.denoisingStrength <= 0.45f) denoiseIdx = 2;
+            else if (a.denoisingStrength <= 0.60f) denoiseIdx = 3;
+            else denoiseIdx = 4;
+            s_aiUi.actionDenoiseIndices[i] = denoiseIdx;
+
+            int stepsIdx = 2; // 25 steps default
+            if (a.samplingSteps <= 17) stepsIdx = 0;
+            else if (a.samplingSteps <= 22) stepsIdx = 1;
+            else if (a.samplingSteps <= 27) stepsIdx = 2;
+            else if (a.samplingSteps <= 35) stepsIdx = 3;
+            else if (a.samplingSteps <= 45) stepsIdx = 4;
+            else stepsIdx = 5;
+            s_aiUi.actionStepsIndices[i] = stepsIdx;
+
+            int cfgIdx = 2; // 7.0 default
+            if (a.cfgScale <= 4.7f) cfgIdx = 0;
+            else if (a.cfgScale <= 6.2f) cfgIdx = 1;
+            else if (a.cfgScale <= 7.7f) cfgIdx = 2;
+            else if (a.cfgScale <= 9.2f) cfgIdx = 3;
+            else cfgIdx = 4;
+            s_aiUi.actionCfgIndices[i] = cfgIdx;
+        }
+    }
+
+    void BuildAiActionsTab(SettingsTab& tabAi, SettingsOverlay* overlay) {
+        tabAi.name = AppStrings::g.Settings_Tab_Ai ? AppStrings::g.Settings_Tab_Ai : L"AI Actions";
+        tabAi.icon = Icons::AiAction;
+
+        const bool isZh = IsSimplifiedChinese();
+        const bool isActiveOrDirty = !s_aiUi.syncedOnce || (overlay && overlay->IsAiTabActiveAndDirty());
+        if (isActiveOrDirty) {
+            SyncFromAiManager();
+            if (overlay) overlay->ClearAiSyncDirty();
+        }
+        auto& mgr = QuickView::AI::AiActionManager::Instance();
+        auto& profiles = mgr.GetProfiles();
+        auto& actions = mgr.GetActions();
+
+        // Section 1: Model Profiles Header
+        AddHeader(tabAi, AppStrings::g.Settings_Header_AiProviders ? AppStrings::g.Settings_Header_AiProviders : L"AI Model Providers");
+        AddInfoLabel(tabAi, AppStrings::g.Settings_Desc_AiProviders ? AppStrings::g.Settings_Desc_AiProviders : L"Manage AI endpoints, DPAPI-secured keys, and model identifiers.");
+        // Profiles Accordion Cards (Default: Only 1 compact card)
+        for (size_t i = 0; i < profiles.size(); ++i) {
+            auto& p = profiles[i];
+            bool isDefault = (p.id == mgr.GetDefaultProfileId());
+            std::wstring cardTitle = (isDefault ? L"★ " : L"") + 
+                ((!p.defaultModel.empty()) ? 
+                (p.displayName + L" - " + Utf8ToWide(p.defaultModel)) : 
+                (p.displayName.empty() ? (AppStrings::g.Settings_Header_AiProviders ? AppStrings::g.Settings_Header_AiProviders : L"AI Provider") : p.displayName));
+
+            SettingsItem itemProfCard = { cardTitle, OptionType::AccordionCardHeader, nullptr };
+            itemProfCard.isActivated = s_aiUi.profileExpanded[i];
+            itemProfCard.pIntVal = reinterpret_cast<int*>(i);
+            itemProfCard.onChange = []([[maybe_unused]] SettingsOverlay* ov, [[maybe_unused]] SettingsItem* it) {
+                if (!it) return;
+                size_t pIdx = reinterpret_cast<size_t>(it->pIntVal);
+                if (pIdx < s_aiUi.profileExpanded.size()) {
+                    s_aiUi.profileExpanded[pIdx] = !s_aiUi.profileExpanded[pIdx];
+                }
+                if (ov) ov->RequestRebuild();
+            };
+            tabAi.items.push_back(std::move(itemProfCard));
+
+            if (s_aiUi.profileExpanded[i]) {
+                // 1. Provider Select ComboBox
+                SettingsItem itemProv;
+                itemProv.label = AppStrings::g.Settings_Label_AiProviderName ? AppStrings::g.Settings_Label_AiProviderName : L"Provider Preset";
+                itemProv.type = OptionType::ComboBox;
+                itemProv.pIntVal = &s_aiUi.profileProviderIndices[i];
+                itemProv.pStrVal = reinterpret_cast<std::wstring*>(i);
+                itemProv.options = s_aiUi.providerOptions;
+                itemProv.onChange = []([[maybe_unused]] SettingsOverlay* ov, [[maybe_unused]] SettingsItem* it) {
+                    if (!it || !it->pIntVal) return;
+                    size_t pIdx = reinterpret_cast<size_t>(it->pStrVal);
+                    auto& m = QuickView::AI::AiActionManager::Instance();
+                    auto& pr = m.GetProfiles();
+                    if (pIdx < pr.size()) {
+                        int choice = *it->pIntVal;
+                        if (choice >= 0 && choice < static_cast<int>(std::size(s_providerPresets))) {
+                            const auto& preset = s_providerPresets[choice];
+                            pr[pIdx].displayName = preset.name;
+                            pr[pIdx].protocol = preset.protocol;
+                            s_aiUi.profileProtocolIndices[pIdx] = ProtocolToUiIndex(preset.protocol);
+                            if (!preset.defaultUrl.empty()) {
+                                pr[pIdx].baseUrl = preset.defaultUrl;
+                            }
+                            s_aiUi.profileProviderIndices[pIdx] = choice;
+                            if (pIdx < s_aiUi.profileUrls.size() && !preset.defaultUrl.empty()) {
+                                s_aiUi.profileUrls[pIdx] = Utf8ToWide(preset.defaultUrl);
+                            }
+                            bool isLocal = (preset.protocol == QuickView::AI::ApiProtocol::ComfyUI || 
+                                            preset.protocol == QuickView::AI::ApiProtocol::StabilityInpaint);
+                            pr[pIdx].timeoutSeconds = isLocal ? 0 : 600;
+                            if (pIdx < s_aiUi.profileTimeoutIndices.size()) {
+                                s_aiUi.profileTimeoutIndices[pIdx] = isLocal ? 5 : 4;
+                            }
+                            m.SaveConfig();
+                        }
+                    }
+                    if (ov) ov->RequestRebuild();
+                };
+                tabAi.items.push_back(std::move(itemProv));
+
+                // 2. Protocol Select ComboBox
+                SettingsItem itemProto;
+                itemProto.label = isZh ? L"API 协议标准 (Protocol)" : L"API Protocol Standard";
+                itemProto.type = OptionType::ComboBox;
+                itemProto.pIntVal = &s_aiUi.profileProtocolIndices[i];
+                itemProto.pStrVal = reinterpret_cast<std::wstring*>(i);
+                itemProto.options = s_aiUi.protocolOptions;
+                itemProto.onChange = []([[maybe_unused]] SettingsOverlay* ov, [[maybe_unused]] SettingsItem* it) {
+                    if (!it || !it->pIntVal) return;
+                    size_t pIdx = reinterpret_cast<size_t>(it->pStrVal);
+                    auto& m = QuickView::AI::AiActionManager::Instance();
+                    auto& pr = m.GetProfiles();
+                    if (pIdx < pr.size()) {
+                        int choice = *it->pIntVal;
+                        auto newProto = UiIndexToProtocol(choice);
+                        pr[pIdx].protocol = newProto;
+                        if (newProto == QuickView::AI::ApiProtocol::GeminiNative) {
+                            if (pr[pIdx].baseUrl.find("generativelanguage.googleapis.com") != std::string::npos &&
+                                pr[pIdx].baseUrl.find("openai") != std::string::npos) {
+                                pr[pIdx].baseUrl = "https://generativelanguage.googleapis.com/v1beta/";
+                                if (pIdx < s_aiUi.profileUrls.size()) {
+                                    s_aiUi.profileUrls[pIdx] = Utf8ToWide(pr[pIdx].baseUrl);
+                                }
+                            }
+                        }
+                        m.SaveConfig();
+                    }
+                    if (ov) ov->RequestRebuild();
+                };
+                tabAi.items.push_back(std::move(itemProto));
+
+                // 2. Base URL Input
+                SettingsItem itemUrl = { AppStrings::g.Settings_Label_AiBaseUrl ? AppStrings::g.Settings_Label_AiBaseUrl : L"Endpoint (Base URL)", OptionType::Input, nullptr, nullptr, nullptr, &s_aiUi.profileUrls[i] };
+                itemUrl.pIntVal = reinterpret_cast<int*>(i);
+                itemUrl.onChange = []([[maybe_unused]] SettingsOverlay* ov, [[maybe_unused]] SettingsItem* it) {
+                    if (!it) return;
+                    size_t pIdx = reinterpret_cast<size_t>(it->pIntVal);
+                    auto& m = QuickView::AI::AiActionManager::Instance();
+                    auto& pr = m.GetProfiles();
+                    if (pIdx < pr.size()) {
+                        pr[pIdx].baseUrl = WideToUtf8(s_aiUi.profileUrls[pIdx]);
+                        m.SaveConfig();
+                    }
+                };
+                tabAi.items.push_back(std::move(itemUrl));
+
+                // 3. API Key Input (Masked in list, plain in popup dialog)
+                SettingsItem itemKey = { AppStrings::g.Settings_Label_AiApiKey ? AppStrings::g.Settings_Label_AiApiKey : L"API Key (DPAPI Encrypted)", OptionType::Input, nullptr, nullptr, nullptr, &s_aiUi.profileMaskedKeys[i] };
+                itemKey.pIntVal = reinterpret_cast<int*>(i);
+                itemKey.onChange = []([[maybe_unused]] SettingsOverlay* ov, [[maybe_unused]] SettingsItem* it) {
+                    if (!it) return;
+                    size_t pIdx = reinterpret_cast<size_t>(it->pIntVal);
+                    auto& m = QuickView::AI::AiActionManager::Instance();
+                    auto& pr = m.GetProfiles();
+                    if (pIdx < pr.size()) {
+                        std::string utf8Key = WideToUtf8(s_aiUi.profileKeys[pIdx]);
+                        pr[pIdx].encryptedApiKey = QuickView::AI::AiActionManager::EncryptApiKey(utf8Key);
+                        m.SaveConfig();
+                        s_aiUi.profileMaskedKeys[pIdx] = FormatMaskedKey(s_aiUi.profileKeys[pIdx]);
+                    }
+                };
+                tabAi.items.push_back(std::move(itemKey));
+
+                // 4. Model Identifier (Hybrid Combobox: Auto-fetch online models + Custom input)
+                SettingsItem itemHybridModel;
+                std::wstring modelLabel = AppStrings::g.Settings_Label_AiModelId ? AppStrings::g.Settings_Label_AiModelId : L"Model Identifier";
+                if (!p.defaultModel.empty()) {
+                    modelLabel += L" (" + Utf8ToWide(p.defaultModel) + L")";
+                } else {
+                    modelLabel += AppStrings::g.Settings_Label_AiModelUnconfigured ? AppStrings::g.Settings_Label_AiModelUnconfigured : L" [Unconfigured]";
+                }
+                itemHybridModel.label = modelLabel;
+                itemHybridModel.type = OptionType::ComboBox;
+                itemHybridModel.pIntVal = &s_aiUi.profileHybridModelSelection[i];
+                itemHybridModel.options = s_aiUi.profileHybridModelOptionViews[i];
+                itemHybridModel.onChange = []([[maybe_unused]] SettingsOverlay* ov, [[maybe_unused]] SettingsItem* it) {
+                    if (!it || !it->pIntVal) return;
+                    size_t pIdx = static_cast<size_t>(it->pIntVal - s_aiUi.profileHybridModelSelection.data());
+                    auto& m = QuickView::AI::AiActionManager::Instance();
+                    auto& pr = m.GetProfiles();
+                    if (pIdx >= pr.size()) return;
+
+                    int choice = *it->pIntVal;
+                    if (choice == 0) {
+                        const std::string targetProfileId = pr[pIdx].id;
+                        std::wstring curModel = Utf8ToWide(pr[pIdx].defaultModel);
+                        std::wstring newVal = AppContext::GetInstance().DialogCtrl->ShowInputDialog(
+                            ::g_mainHwnd, L"", L"", curModel, L"OK");
+                        if (!newVal.empty()) {
+                            auto& prAfter = m.GetProfiles();
+                            for (size_t k = 0; k < prAfter.size(); ++k) {
+                                if (prAfter[k].id == targetProfileId) {
+                                    prAfter[k].defaultModel = WideToUtf8(newVal);
+                                    if (k < s_aiUi.profileModels.size()) {
+                                        s_aiUi.profileModels[k] = newVal;
+                                    }
+                                    m.SaveConfig();
+                                    break;
+                                }
+                            }
+                        }
+                        if (ov) {
+                            ov->InvalidateAiSync();
+                            ov->RequestRebuild();
+                        }
+                    } else if (pr[pIdx].fetchedModels.empty()) {
+                        // Trigger online discovery
+                        std::string plainKey = QuickView::AI::AiActionManager::DecryptApiKey(pr[pIdx].encryptedApiKey);
+                        if (plainKey.empty() && pIdx < s_aiUi.profileKeys.size()) {
+                            plainKey = WideToUtf8(s_aiUi.profileKeys[pIdx]);
+                        }
+
+                        SetProfileFetching(pr[pIdx].id, true);
+                        const wchar_t* fetchMsg = AppStrings::g.OSD_AiFetchingModels ? AppStrings::g.OSD_AiFetchingModels : L"Fetching model list...";
+                        ::g_osd.Show(::g_mainHwnd, fetchMsg, false, false, QuickView::UI::Theme::GetThemePalette().accentText, OSDPosition::Bottom, 3000);
+                        if (ov) {
+                            ov->InvalidateAiSync();
+                            ov->RequestRebuild();
+                        }
+
+                        std::string targetUrl = (pIdx < s_aiUi.profileUrls.size() && !s_aiUi.profileUrls[pIdx].empty()) ? 
+                                                WideToUtf8(s_aiUi.profileUrls[pIdx]) : pr[pIdx].baseUrl;
+                        QuickView::AI::ApiProtocol targetProtocol = pr[pIdx].protocol;
+                        if (targetUrl.find(":7860") != std::string::npos || targetUrl.find("sdapi") != std::string::npos) {
+                            targetProtocol = QuickView::AI::ApiProtocol::StabilityInpaint;
+                        } else if (targetUrl.find(":8188") != std::string::npos) {
+                            targetProtocol = QuickView::AI::ApiProtocol::ComfyUI;
+                        }
+
+                        auto* ctx = new FetchModelsSettingsCtx{ pr[pIdx].id, ov };
+                        m.FetchModelsAsync(targetUrl, plainKey, targetProtocol, QuickView::AI::ModelsCallback(
+                            OnFetchModelsOverlayComplete, ctx, CleanFetchModelsSettingsCtx));
+                    } else if (choice >= 1 && choice <= static_cast<int>(pr[pIdx].fetchedModels.size())) {
+                        pr[pIdx].defaultModel = pr[pIdx].fetchedModels[choice - 1];
+                        if (pIdx < s_aiUi.profileModels.size()) {
+                            s_aiUi.profileModels[pIdx] = Utf8ToWide(pr[pIdx].defaultModel);
+                        }
+                        m.SaveConfig();
+                        if (ov) {
+                            ov->InvalidateAiSync();
+                            ov->RequestRebuild();
+                        }
+                    }
+                };
+                tabAi.items.push_back(std::move(itemHybridModel));
+
+                // 5. Max Resolution ComboBox
+                SettingsItem itemRes;
+                itemRes.label = AppStrings::g.Settings_Label_AiMaxRes ? AppStrings::g.Settings_Label_AiMaxRes : L"Max Input Resolution";
+                itemRes.type = OptionType::ComboBox;
+                itemRes.pIntVal = &s_aiUi.profileMaxResIndices[i];
+                itemRes.options = s_aiUi.maxResOptions;
+                itemRes.onChange = []([[maybe_unused]] SettingsOverlay* ov, [[maybe_unused]] SettingsItem* it) {
+                    if (!it || !it->pIntVal) return;
+                    size_t pIdx = static_cast<size_t>(it->pIntVal - s_aiUi.profileMaxResIndices.data());
+                    auto& m = QuickView::AI::AiActionManager::Instance();
+                    auto& pr = m.GetProfiles();
+                    if (pIdx < pr.size()) {
+                        int choice = *it->pIntVal;
+                        if (choice == 0) pr[pIdx].maxResolution = QuickView::AI::MaxResolution::Original_4K;
+                        else if (choice == 1) pr[pIdx].maxResolution = QuickView::AI::MaxResolution::FHD_2K;
+                        else if (choice == 2) pr[pIdx].maxResolution = QuickView::AI::MaxResolution::Standard_1K;
+                        else pr[pIdx].maxResolution = QuickView::AI::MaxResolution::NoLimit;
+                        m.SaveConfig();
+                    }
+                };
+                tabAi.items.push_back(std::move(itemRes));
+
+                // 6. Network Timeout ComboBox
+                SettingsItem itemTimeout;
+                itemTimeout.label = IsSimplifiedChinese() ? L"网络超时时间" : L"Network Timeout";
+                itemTimeout.type = OptionType::ComboBox;
+                itemTimeout.pIntVal = &s_aiUi.profileTimeoutIndices[i];
+                itemTimeout.options = s_aiUi.timeoutOptions;
+                itemTimeout.onChange = []([[maybe_unused]] SettingsOverlay* ov, [[maybe_unused]] SettingsItem* it) {
+                    if (!it || !it->pIntVal) return;
+                    size_t pIdx = static_cast<size_t>(it->pIntVal - s_aiUi.profileTimeoutIndices.data());
+                    auto& m = QuickView::AI::AiActionManager::Instance();
+                    auto& pr = m.GetProfiles();
+                    if (pIdx < pr.size()) {
+                        int choice = *it->pIntVal;
+                        if (choice == 0) pr[pIdx].timeoutSeconds = 30;
+                        else if (choice == 1) pr[pIdx].timeoutSeconds = 60;
+                        else if (choice == 2) pr[pIdx].timeoutSeconds = 120;
+                        else if (choice == 3) pr[pIdx].timeoutSeconds = 300;
+                        else if (choice == 4) pr[pIdx].timeoutSeconds = 600;
+                        else if (choice == 5) pr[pIdx].timeoutSeconds = 0; // 无限制
+                        m.SaveConfig();
+                    }
+                };
+                tabAi.items.push_back(std::move(itemTimeout));
+
+                // Default Profile Marker & Switch Button
+                if (isDefault) {
+                    SettingsItem itemDefStatus = { AppStrings::g.Settings_Label_AiDefaultProfile ? AppStrings::g.Settings_Label_AiDefaultProfile : L"Default Provider", OptionType::ActionButton };
+                    itemDefStatus.buttonText = AppStrings::g.Settings_Label_AiDefaultProfile ? AppStrings::g.Settings_Label_AiDefaultProfile : L"★ Default Provider";
+                    itemDefStatus.isDisabled = true;
+                    itemDefStatus.isActivated = true;
+                    tabAi.items.push_back(std::move(itemDefStatus));
+                } else {
+                    SettingsItem itemSetDef = { AppStrings::g.Settings_Label_AiDefaultProfile ? AppStrings::g.Settings_Label_AiDefaultProfile : L"Default Provider", OptionType::ActionButton };
+                    itemSetDef.buttonText = AppStrings::g.Settings_Button_AiSetDefault ? AppStrings::g.Settings_Button_AiSetDefault : L"★ Set as Default Provider";
+                    itemSetDef.pIntVal = reinterpret_cast<int*>(i);
+                    itemSetDef.onChange = []([[maybe_unused]] SettingsOverlay* ov, [[maybe_unused]] SettingsItem* it) {
+                        if (!it) return;
+                        size_t pIdx = reinterpret_cast<size_t>(it->pIntVal);
+                        auto& m = QuickView::AI::AiActionManager::Instance();
+                        auto& pr = m.GetProfiles();
+                        if (pIdx < pr.size()) {
+                            m.SetDefaultProfileId(pr[pIdx].id);
+                            m.SaveConfig();
+                            wchar_t defBuf[128] = { 0 };
+                            const wchar_t* defFmt = AppStrings::g.OSD_AiSetDefaultSuccessFormat ? AppStrings::g.OSD_AiSetDefaultSuccessFormat : L"Set %s as default provider";
+                            swprintf_s(defBuf, defFmt, pr[pIdx].displayName.c_str());
+                            ::g_osd.Show(::g_mainHwnd, defBuf, false, false, D2D1::ColorF(D2D1::ColorF::LightGreen), OSDPosition::Bottom, 2500);
+                            if (ov) {
+                                ov->InvalidateAiSync();
+                                ov->RequestRebuild();
+                            }
+                        }
+                    };
+                    tabAi.items.push_back(std::move(itemSetDef));
+                }
+
+                // 6. Test Connection Button (Probe API connection and latency)
+                SettingsItem itemTestConn = { AppStrings::g.Settings_Button_AiTestConn ? AppStrings::g.Settings_Button_AiTestConn : L"Test Connection", OptionType::ActionButton };
+                itemTestConn.buttonText = AppStrings::g.Settings_Button_AiTestConn ? AppStrings::g.Settings_Button_AiTestConn : L"Test Connection";
+                itemTestConn.pIntVal = reinterpret_cast<int*>(i);
+                itemTestConn.onChange = []([[maybe_unused]] SettingsOverlay* ov, [[maybe_unused]] SettingsItem* it) {
+                    if (!it) return;
+                    size_t pIdx = reinterpret_cast<size_t>(it->pIntVal);
+                    auto& m = QuickView::AI::AiActionManager::Instance();
+                    auto& pr = m.GetProfiles();
+                    if (pIdx >= pr.size()) return;
+
+                    std::string plainKey = QuickView::AI::AiActionManager::DecryptApiKey(pr[pIdx].encryptedApiKey);
+                    if (plainKey.empty() && pIdx < s_aiUi.profileKeys.size()) {
+                        plainKey = WideToUtf8(s_aiUi.profileKeys[pIdx]);
+                    }
+
+                    const wchar_t* probeMsg = AppStrings::g.OSD_AiTestingConnection ? AppStrings::g.OSD_AiTestingConnection : L"Testing connection...";
+                    ::g_osd.Show(::g_mainHwnd, probeMsg, false, false, QuickView::UI::Theme::GetThemePalette().accentText, OSDPosition::Bottom, 3000);
+
+                    std::string targetUrl = (pIdx < s_aiUi.profileUrls.size() && !s_aiUi.profileUrls[pIdx].empty()) ? 
+                                            WideToUtf8(s_aiUi.profileUrls[pIdx]) : pr[pIdx].baseUrl;
+                    QuickView::AI::ApiProtocol targetProtocol = pr[pIdx].protocol;
+                    if (targetUrl.find(":7860") != std::string::npos || targetUrl.find("sdapi") != std::string::npos) {
+                        targetProtocol = QuickView::AI::ApiProtocol::StabilityInpaint;
+                    } else if (targetUrl.find(":8188") != std::string::npos) {
+                        targetProtocol = QuickView::AI::ApiProtocol::ComfyUI;
+                    }
+
+                    m.TestConnectionAsync(targetUrl, plainKey, targetProtocol, [](bool success, int statusCode, int latencyMs, const std::wstring& message) {
+                        auto* payload = new AiTestConnPayload{ success, statusCode, latencyMs, message };
+                        PostSettingsUiEvent(SettingsUiEventKind::AiTestConn, payload);
+                    });
+                };
+                tabAi.items.push_back(std::move(itemTestConn));
+
+                // 7. Save Profile Button (Collapses card and saves profile)
+                SettingsItem itemSaveProf = { AppStrings::g.Settings_Button_AiSaveProf ? AppStrings::g.Settings_Button_AiSaveProf : L"Save Provider", OptionType::ActionButton };
+                itemSaveProf.buttonText = AppStrings::g.Settings_Button_AiSaveProf ? AppStrings::g.Settings_Button_AiSaveProf : L"Save Provider";
+                itemSaveProf.pIntVal = reinterpret_cast<int*>(i);
+                itemSaveProf.onChange = []([[maybe_unused]] SettingsOverlay* ov, [[maybe_unused]] SettingsItem* it) {
+                    if (!it) return;
+                    size_t pIdx = reinterpret_cast<size_t>(it->pIntVal);
+                    auto& m = QuickView::AI::AiActionManager::Instance();
+                    auto& pr = m.GetProfiles();
+                    if (pIdx < pr.size()) {
+                        std::string targetUrl = (pIdx < s_aiUi.profileUrls.size()) ? WideToUtf8(s_aiUi.profileUrls[pIdx]) : pr[pIdx].baseUrl;
+                        std::string targetModel = (pIdx < s_aiUi.profileModels.size() && !s_aiUi.profileModels[pIdx].empty()) ? 
+                                                  WideToUtf8(s_aiUi.profileModels[pIdx]) : pr[pIdx].defaultModel;
+                        std::string targetKey = (pIdx < s_aiUi.profileKeys.size()) ? WideToUtf8(s_aiUi.profileKeys[pIdx]) : "";
+
+                        // 1. Check Base URL
+                        if (targetUrl.empty()) {
+                            const wchar_t* errEmpty = AppStrings::g.OSD_AiSaveFailedBaseUrlEmpty ? AppStrings::g.OSD_AiSaveFailedBaseUrlEmpty : L"Save failed: Base URL cannot be empty";
+                            ::g_osd.Show(::g_mainHwnd, errEmpty, false, false, D2D1::ColorF(D2D1::ColorF::OrangeRed), OSDPosition::Bottom, 3500);
+                            return;
+                        }
+
+                        // 2. Check API Key (Local providers can ignore key)
+                        bool isLocal = (pr[pIdx].protocol == QuickView::AI::ApiProtocol::ComfyUI || 
+                                        pr[pIdx].protocol == QuickView::AI::ApiProtocol::StabilityInpaint ||
+                                        targetUrl.find("127.0.0.1") != std::string::npos ||
+                                        targetUrl.find("localhost") != std::string::npos);
+                        if (!isLocal && targetKey.empty() && pr[pIdx].encryptedApiKey.empty()) {
+                            const wchar_t* errKey = AppStrings::g.OSD_AiSaveFailedApiKeyEmpty ? AppStrings::g.OSD_AiSaveFailedApiKeyEmpty : L"Save failed: Cloud provider API key cannot be empty";
+                            ::g_osd.Show(::g_mainHwnd, errKey, false, false, D2D1::ColorF(D2D1::ColorF::OrangeRed), OSDPosition::Bottom, 3500);
+                            return;
+                        }
+
+                        // 3. Check Model Identifier
+                        if (targetModel.empty()) {
+                            const wchar_t* errMod = AppStrings::g.OSD_AiSaveFailedModelEmpty ? AppStrings::g.OSD_AiSaveFailedModelEmpty : L"Save failed: Please specify or select a valid model";
+                            ::g_osd.Show(::g_mainHwnd, errMod, false, false, D2D1::ColorF(D2D1::ColorF::OrangeRed), OSDPosition::Bottom, 3500);
+                            return;
+                        }
+
+                        pr[pIdx].baseUrl = targetUrl;
+                        if (targetUrl.find(":7860") != std::string::npos || targetUrl.find("sdapi") != std::string::npos) {
+                            pr[pIdx].protocol = QuickView::AI::ApiProtocol::StabilityInpaint;
+                        } else if (targetUrl.find(":8188") != std::string::npos) {
+                            pr[pIdx].protocol = QuickView::AI::ApiProtocol::ComfyUI;
+                        }
+                        if (!targetKey.empty()) {
+                            pr[pIdx].encryptedApiKey = QuickView::AI::AiActionManager::EncryptApiKey(targetKey);
+                        }
+                        pr[pIdx].defaultModel = targetModel;
+                        if (pIdx < s_aiUi.profileModels.size()) {
+                            s_aiUi.profileModels[pIdx] = Utf8ToWide(targetModel);
+                        }
+                        m.SaveConfig();
+                        if (pIdx < s_aiUi.profileExpanded.size()) {
+                            s_aiUi.profileExpanded[pIdx] = false;
+                        }
+                        const wchar_t* succSaved = AppStrings::g.OSD_AiSaveProfileSuccess ? AppStrings::g.OSD_AiSaveProfileSuccess : L"Provider configuration saved";
+                        ::g_osd.Show(::g_mainHwnd, succSaved, false, false, D2D1::ColorF(D2D1::ColorF::LightGreen), OSDPosition::Bottom, 2500);
+                    }
+                    if (ov) ov->RequestRebuild();
+                };
+                tabAi.items.push_back(std::move(itemSaveProf));
+
+                // 9. Delete Profile Button (if more than 1 profile)
+                if (profiles.size() > 1) {
+                    SettingsItem itemDelProf = { AppStrings::g.Settings_Button_AiDeleteProf ? AppStrings::g.Settings_Button_AiDeleteProf : L"Delete Provider", OptionType::ActionButton };
+                    itemDelProf.buttonText = AppStrings::g.Settings_Button_AiDeleteProf ? AppStrings::g.Settings_Button_AiDeleteProf : L"Delete Provider";
+                    itemDelProf.isDestructive = true;
+                    itemDelProf.pIntVal = reinterpret_cast<int*>(i);
+                    itemDelProf.onChange = []([[maybe_unused]] SettingsOverlay* ov, [[maybe_unused]] SettingsItem* it) {
+                        if (!it) return;
+                        size_t pIdx = reinterpret_cast<size_t>(it->pIntVal);
+                        auto& m = QuickView::AI::AiActionManager::Instance();
+                        auto& pr = m.GetProfiles();
+                        if (pIdx < pr.size() && pr.size() > 1) {
+                            const bool deletedDefault = (pr[pIdx].id == m.GetDefaultProfileId());
+                            pr.erase(pr.begin() + pIdx);
+                            if (pIdx < s_aiUi.profileExpanded.size()) {
+                                s_aiUi.profileExpanded.erase(s_aiUi.profileExpanded.begin() + pIdx);
+                            }
+                            if (deletedDefault && !pr.empty()) {
+                                m.SetDefaultProfileId(pr[0].id);
+                            }
+                            m.SaveConfig();
+                            if (ov) {
+                                ov->InvalidateAiSync();
+                                ov->RequestRebuild();
+                            }
+                        }
+                    };
+                    tabAi.items.push_back(std::move(itemDelProf));
+                }
+            }
+        }
+
+        // Section Separator: Ends accordion card bounding box so buttons below sit cleanly outside card shadows
+        AddSeparator(tabAi, L"");
+        // Add Profile Button (Allow advanced users to add more if desired, default is just 1)
+        SettingsItem itemAddProf = { L"", OptionType::ActionButton };
+        itemAddProf.buttonText = AppStrings::g.Settings_Button_AiAddProf ? AppStrings::g.Settings_Button_AiAddProf : L"+ Add Model Provider";
+        itemAddProf.onChange = []([[maybe_unused]] SettingsOverlay* ov, [[maybe_unused]] SettingsItem* it) {
+            auto& m = QuickView::AI::AiActionManager::Instance();
+            auto& pr = m.GetProfiles();
+            QuickView::AI::ModelProfile newP;
+            newP.id = GenerateUniqueCustomId("custom_profile_", [&](const std::string& cid) {
+                return m.FindProfile(cid) != nullptr;
+            });
+            newP.displayName = AppStrings::g.Settings_Option_AiCustomEndpoint ? AppStrings::g.Settings_Option_AiCustomEndpoint : L"Custom Provider";
+            newP.protocol = QuickView::AI::ApiProtocol::OpenAiChat;
+            newP.baseUrl = "https://api.openai.com/v1/";
+            newP.defaultModel = "";
+            newP.maxResolution = QuickView::AI::MaxResolution::Standard_1K;
+            newP.timeoutSeconds = 600;
+            newP.isCustom = true;
+            pr.push_back(newP);
+            m.SaveConfig();
+            if (ov) {
+                ov->InvalidateAiSync();
+                ov->RequestRebuild();
+            }
+        };
+        tabAi.items.push_back(std::move(itemAddProf));
+
+        // Section 2: AI Actions Header
+        AddHeader(tabAi, AppStrings::g.Settings_Header_AiActions ? AppStrings::g.Settings_Header_AiActions : L"AI Actions");
+        // Add Action Button
+        SettingsItem itemAddAct = { L"", OptionType::ActionButton };
+        itemAddAct.buttonText = AppStrings::g.Settings_Button_AiAddAction ? AppStrings::g.Settings_Button_AiAddAction : L"+ New AI Action";
+        itemAddAct.onChange = []([[maybe_unused]] SettingsOverlay* ov, [[maybe_unused]] SettingsItem* it) {
+            auto& m = QuickView::AI::AiActionManager::Instance();
+            auto& acts = m.GetActions();
+            QuickView::AI::ActionDesc newAct;
+            newAct.id = GenerateUniqueCustomId("action_custom_", [&](const std::string& cid) {
+                return std::any_of(acts.begin(), acts.end(), [&](const auto& a) { return a.id == cid; });
+            });
+            newAct.name = L"Action " + std::to_wstring(acts.size() + 1);
+            newAct.promptTemplate = L"Describe or modify the image";
+            newAct.negativePrompt = L"blurry, noise, low quality, artifacts, distorted, bad quality";
+            newAct.scopeMode = QuickView::AI::ScopeMode::FullImage;
+            newAct.aspectRatio = QuickView::AI::OutputAspectRatio::Auto;
+            newAct.targetResolution = QuickView::AI::TargetResolution::Res_2K;
+            newAct.denoisingStrength = 0.35f;
+            newAct.samplingSteps = 25;
+            newAct.cfgScale = 7.0f;
+            acts.push_back(newAct);
+            m.SaveConfig();
+            if (ov) {
+                ov->InvalidateAiSync();
+                ov->RequestRebuild();
+            }
+        };
+        tabAi.items.push_back(std::move(itemAddAct));
+
+        // Breathing space below "+ New AI Action" button before action cards
+        AddSeparator(tabAi, L"spacing");
+        // Actions Accordion Cards
+        for (size_t i = 0; i < actions.size(); ++i) {
+            auto& a = actions[i];
+            wchar_t actNumBuf[16] = { 0 };
+            if (i < 9) swprintf_s(actNumBuf, L"[%d] ", static_cast<int>(i + 1));
+            else swprintf_s(actNumBuf, L"[•] ");
+
+            std::wstring actTitle = actNumBuf + a.name;
+            SettingsItem itemActCard = { actTitle, OptionType::AccordionCardHeader, nullptr };
+            itemActCard.isActivated = s_aiUi.actionExpanded[i];
+            itemActCard.pIntVal = reinterpret_cast<int*>(i);
+            itemActCard.onChange = []([[maybe_unused]] SettingsOverlay* ov, [[maybe_unused]] SettingsItem* it) {
+                if (!it) return;
+                size_t aIdx = reinterpret_cast<size_t>(it->pIntVal);
+                if (aIdx < s_aiUi.actionExpanded.size()) {
+                    s_aiUi.actionExpanded[aIdx] = !s_aiUi.actionExpanded[aIdx];
+                }
+                if (ov) ov->RequestRebuild();
+            };
+            tabAi.items.push_back(std::move(itemActCard));
+
+            if (s_aiUi.actionExpanded[i]) {
+                // Determine effective protocol for this action to filter compatible parameters
+                QuickView::AI::ApiProtocol effectiveProto = QuickView::AI::ApiProtocol::GeminiNative;
+                const QuickView::AI::ModelProfile* boundProf = nullptr;
+                auto& mInstance = QuickView::AI::AiActionManager::Instance();
+                if (!a.modelProfileId.empty()) {
+                    boundProf = mInstance.FindProfile(a.modelProfileId);
+                }
+                if (!boundProf) {
+                    boundProf = mInstance.GetDefaultProfile();
+                }
+                bool isDiffusionOrInpaint = false;
+                if (boundProf) {
+                    effectiveProto = boundProf->protocol;
+                    if (effectiveProto == QuickView::AI::ApiProtocol::StabilityInpaint ||
+                        effectiveProto == QuickView::AI::ApiProtocol::ComfyUI ||
+                        effectiveProto == QuickView::AI::ApiProtocol::OpenAiImagesGenerate ||
+                        boundProf->baseUrl.find(":7860") != std::string::npos ||
+                        boundProf->baseUrl.find("sdapi") != std::string::npos ||
+                        boundProf->baseUrl.find(":8188") != std::string::npos) {
+                        isDiffusionOrInpaint = true;
+                    }
+                }
+
+                // Action Name Input
+                SettingsItem itemActName = { AppStrings::g.Settings_Label_AiActionName ? AppStrings::g.Settings_Label_AiActionName : L"Action Name", OptionType::Input, nullptr, nullptr, nullptr, &s_aiUi.actionNames[i] };
+                itemActName.pIntVal = reinterpret_cast<int*>(i);
+                itemActName.onChange = []([[maybe_unused]] SettingsOverlay* ov, [[maybe_unused]] SettingsItem* it) {
+                    if (!it) return;
+                    size_t aIdx = reinterpret_cast<size_t>(it->pIntVal);
+                    auto& m = QuickView::AI::AiActionManager::Instance();
+                    auto& acts = m.GetActions();
+                    if (aIdx < acts.size()) {
+                        acts[aIdx].name = s_aiUi.actionNames[aIdx];
+                        m.SaveConfig();
+                    }
+                };
+                tabAi.items.push_back(std::move(itemActName));
+
+                // Prompt Input (Multi-line enabled for expansive prompt engineering)
+                SettingsItem itemPrompt = { AppStrings::g.Settings_Label_AiPromptTemplate ? AppStrings::g.Settings_Label_AiPromptTemplate : L"Prompt Template", OptionType::Input, nullptr, nullptr, nullptr, &s_aiUi.actionPrompts[i] };
+                itemPrompt.isMultiLine = true;
+                itemPrompt.pIntVal = reinterpret_cast<int*>(i);
+                itemPrompt.onChange = []([[maybe_unused]] SettingsOverlay* ov, [[maybe_unused]] SettingsItem* it) {
+                    if (!it) return;
+                    size_t aIdx = reinterpret_cast<size_t>(it->pIntVal);
+                    auto& m = QuickView::AI::AiActionManager::Instance();
+                    auto& acts = m.GetActions();
+                    if (aIdx < acts.size()) {
+                        acts[aIdx].promptTemplate = s_aiUi.actionPrompts[aIdx];
+                        m.SaveConfig();
+                    }
+                };
+                tabAi.items.push_back(std::move(itemPrompt));
+
+                // Negative Prompt Input
+                SettingsItem itemNegPrompt = { 
+                    IsSimplifiedChinese() ? L"反向提示词 (Negative Prompt)" : L"Negative Prompt", 
+                    OptionType::Input, nullptr, nullptr, nullptr, &s_aiUi.actionNegativePrompts[i] 
+                };
+                itemNegPrompt.isMultiLine = true;
+                itemNegPrompt.pIntVal = reinterpret_cast<int*>(i);
+                itemNegPrompt.onChange = []([[maybe_unused]] SettingsOverlay* ov, [[maybe_unused]] SettingsItem* it) {
+                    if (!it) return;
+                    size_t aIdx = reinterpret_cast<size_t>(it->pIntVal);
+                    auto& m = QuickView::AI::AiActionManager::Instance();
+                    auto& acts = m.GetActions();
+                    if (aIdx < acts.size()) {
+                        acts[aIdx].negativePrompt = s_aiUi.actionNegativePrompts[aIdx];
+                        m.SaveConfig();
+                    }
+                };
+                tabAi.items.push_back(std::move(itemNegPrompt));
+
+                // Action Execution Model (Option 0 is Default Provider)
+                SettingsItem itemActProfile;
+                itemActProfile.label = AppStrings::g.Settings_Label_AiExecModel ? AppStrings::g.Settings_Label_AiExecModel : L"Execution Provider";
+                itemActProfile.type = OptionType::ComboBox;
+                itemActProfile.pIntVal = &s_aiUi.actionProfileIndices[i];
+                itemActProfile.options = s_aiUi.actionProfileOptionViews[i];
+                itemActProfile.onChange = []([[maybe_unused]] SettingsOverlay* ov, [[maybe_unused]] SettingsItem* it) {
+                    if (!it || !it->pIntVal) return;
+                    size_t aIdx = static_cast<size_t>(it->pIntVal - s_aiUi.actionProfileIndices.data());
+                    auto& m = QuickView::AI::AiActionManager::Instance();
+                    auto& acts = m.GetActions();
+                    auto& pr = m.GetProfiles();
+                    if (aIdx < acts.size()) {
+                        int sel = *it->pIntVal;
+                        if (sel == 0 || sel > static_cast<int>(pr.size())) {
+                            acts[aIdx].modelProfileId = ""; // Default Provider
+                        } else {
+                            acts[aIdx].modelProfileId = pr[sel - 1].id;
+                        }
+                        m.SaveConfig();
+                        if (ov) ov->RequestRebuild();
+                    }
+                };
+                tabAi.items.push_back(std::move(itemActProfile));
+
+                // Scope Mode
+                SettingsItem itemScope;
+                itemScope.label = AppStrings::g.Settings_Label_AiScopeMode ? AppStrings::g.Settings_Label_AiScopeMode : L"Scope Mode";
+                itemScope.tooltipText = IsSimplifiedChinese() ? 
+                    L"控制动作的作用范围。全图处理针对整张图像运行；选区修补融合会将生成内容自然羽化贴回原图选区（若未框选则自动进入框选）。" : 
+                    L"Controls processing scope. Full Image applies globally; Inpaint & Blend feathers generation back onto base canvas (prompts for selection if none).";
+                itemScope.type = OptionType::ComboBox;
+                itemScope.pIntVal = &s_aiUi.actionScopeIndices[i];
+                itemScope.options = s_aiUi.scopeOptions;
+                itemScope.onChange = []([[maybe_unused]] SettingsOverlay* ov, [[maybe_unused]] SettingsItem* it) {
+                    if (!it || !it->pIntVal) return;
+                    size_t aIdx = static_cast<size_t>(it->pIntVal - s_aiUi.actionScopeIndices.data());
+                    auto& m = QuickView::AI::AiActionManager::Instance();
+                    auto& acts = m.GetActions();
+                    if (aIdx < acts.size()) {
+                        acts[aIdx].scopeMode = static_cast<QuickView::AI::ScopeMode>(*it->pIntVal);
+                        m.SaveConfig();
+                    }
+                };
+                tabAi.items.push_back(std::move(itemScope));
+
+                // Output Aspect Ratio & Framing ComboBox
+                SettingsItem itemAspect;
+                itemAspect.label = IsSimplifiedChinese() ? L"输出画幅与尺寸" : L"Aspect Ratio & Framing";
+                itemAspect.tooltipText = IsSimplifiedChinese() ?
+                    L"控制输出画幅与尺寸比例。自适应严格匹配原图比例；1:1/16:9/9:16等预设比例将自动映射到对应标准分辨率（如 1344x768、1024x1024 等）。" :
+                    L"Controls output framing and resolution. Auto matches input aspect ratio. Presets (1:1, 16:9, 9:16) map to standard diffusion resolutions.";
+                itemAspect.type = OptionType::ComboBox;
+                itemAspect.pIntVal = &s_aiUi.actionAspectIndices[i];
+                itemAspect.options = s_aiUi.aspectRatioOptions;
+                itemAspect.onChange = []([[maybe_unused]] SettingsOverlay* ov, [[maybe_unused]] SettingsItem* it) {
+                    if (!it || !it->pIntVal) return;
+                    size_t aIdx = static_cast<size_t>(it->pIntVal - s_aiUi.actionAspectIndices.data());
+                    auto& m = QuickView::AI::AiActionManager::Instance();
+                    auto& acts = m.GetActions();
+                    if (aIdx < acts.size()) {
+                        acts[aIdx].aspectRatio = static_cast<QuickView::AI::OutputAspectRatio>(*it->pIntVal);
+                        m.SaveConfig();
+                    }
+                };
+                tabAi.items.push_back(std::move(itemAspect));
+
+                // Target Output Resolution ComboBox (1K / 2K / 4K)
+                SettingsItem itemRes;
+                itemRes.label = IsSimplifiedChinese() ? L"生成分辨率" : L"Output Resolution";
+                itemRes.tooltipText = IsSimplifiedChinese() ?
+                    L"指定 AI 图像生成的物理分辨率。Google Gemini (3.1/Imagen 3) 原生输出 1K/2K/4K；OpenAI (DALL-E 3) 自动启用 HD 细节模式；本地 SD / Forge 自动计算对应 2K/4K 像素宽高。" :
+                    L"Controls actual output image resolution. Injects official 1K/2K/4K parameters for Google Gemini/Imagen, enables HD quality for OpenAI, and scales pixel dimensions for SD.";
+                itemRes.type = OptionType::ComboBox;
+                itemRes.pIntVal = &s_aiUi.actionResolutionIndices[i];
+                itemRes.options = s_aiUi.resolutionOptions;
+                itemRes.onChange = []([[maybe_unused]] SettingsOverlay* ov, [[maybe_unused]] SettingsItem* it) {
+                    if (!it || !it->pIntVal) return;
+                    size_t aIdx = static_cast<size_t>(it->pIntVal - s_aiUi.actionResolutionIndices.data());
+                    auto& m = QuickView::AI::AiActionManager::Instance();
+                    auto& acts = m.GetActions();
+                    if (aIdx < acts.size()) {
+                        acts[aIdx].targetResolution = static_cast<QuickView::AI::TargetResolution>(*it->pIntVal);
+                        m.SaveConfig();
+                    }
+                };
+                tabAi.items.push_back(std::move(itemRes));
+
+                // Denoising Strength, Sampling Steps, and CFG Scale only apply to Diffusion/Inpainting engines
+                if (isDiffusionOrInpaint) {
+                    // Denoising Strength ComboBox
+                    SettingsItem itemDenoise;
+                    itemDenoise.label = IsSimplifiedChinese() ? L"重绘/去噪幅度" : L"Denoising Strength";
+                    itemDenoise.tooltipText = IsSimplifiedChinese() ?
+                        L"去噪重绘幅度（仅生图/扩散模型生效）。0.30~0.35 保留主体轮廓与结构，做无痕质感增强；0.50 以上大幅重构画面内容。" :
+                        L"Denoising strength for diffusion/inpaint. 0.30~0.35 preserves subject geometry; >0.50 allows significant re-imagining.";
+                    itemDenoise.type = OptionType::ComboBox;
+                    itemDenoise.pIntVal = &s_aiUi.actionDenoiseIndices[i];
+                    itemDenoise.options = s_aiUi.denoiseOptions;
+                    itemDenoise.onChange = []([[maybe_unused]] SettingsOverlay* ov, [[maybe_unused]] SettingsItem* it) {
+                        if (!it || !it->pIntVal) return;
+                        size_t aIdx = static_cast<size_t>(it->pIntVal - s_aiUi.actionDenoiseIndices.data());
+                        auto& m = QuickView::AI::AiActionManager::Instance();
+                        auto& acts = m.GetActions();
+                        if (aIdx < acts.size()) {
+                            int choice = *it->pIntVal;
+                            if (choice == 0) acts[aIdx].denoisingStrength = 0.30f;
+                            else if (choice == 1) acts[aIdx].denoisingStrength = 0.35f;
+                            else if (choice == 2) acts[aIdx].denoisingStrength = 0.40f;
+                            else if (choice == 3) acts[aIdx].denoisingStrength = 0.50f;
+                            else if (choice == 4) acts[aIdx].denoisingStrength = 0.70f;
+                            m.SaveConfig();
+                        }
+                    };
+                    tabAi.items.push_back(std::move(itemDenoise));
+
+                    // Sampling Steps ComboBox
+                    SettingsItem itemSteps;
+                    itemSteps.label = IsSimplifiedChinese() ? L"采样步数 (Steps)" : L"Sampling Steps";
+                    itemSteps.tooltipText = IsSimplifiedChinese() ?
+                        L"扩散迭代步数（仅生图/扩散模型生效）。25 步为兼顾画质与耗时的推荐平衡点；更高步数细节更细腻但耗时成倍增加。" :
+                        L"Sampling iterations for diffusion. 25 steps is the recommended golden balance between quality and latency.";
+                    itemSteps.type = OptionType::ComboBox;
+                    itemSteps.pIntVal = &s_aiUi.actionStepsIndices[i];
+                    itemSteps.options = s_aiUi.stepsOptions;
+                    itemSteps.onChange = []([[maybe_unused]] SettingsOverlay* ov, [[maybe_unused]] SettingsItem* it) {
+                        if (!it || !it->pIntVal) return;
+                        size_t aIdx = static_cast<size_t>(it->pIntVal - s_aiUi.actionStepsIndices.data());
+                        auto& m = QuickView::AI::AiActionManager::Instance();
+                        auto& acts = m.GetActions();
+                        if (aIdx < acts.size()) {
+                            int choice = *it->pIntVal;
+                            if (choice == 0) acts[aIdx].samplingSteps = 15;
+                            else if (choice == 1) acts[aIdx].samplingSteps = 20;
+                            else if (choice == 2) acts[aIdx].samplingSteps = 25;
+                            else if (choice == 3) acts[aIdx].samplingSteps = 30;
+                            else if (choice == 4) acts[aIdx].samplingSteps = 40;
+                            else if (choice == 5) acts[aIdx].samplingSteps = 50;
+                            m.SaveConfig();
+                        }
+                    };
+                    tabAi.items.push_back(std::move(itemSteps));
+
+                    // Prompt Guidance (CFG Scale) ComboBox
+                    SettingsItem itemCfg;
+                    itemCfg.label = IsSimplifiedChinese() ? L"提示词引导 (CFG)" : L"CFG Scale";
+                    itemCfg.tooltipText = IsSimplifiedChinese() ?
+                        L"提示词引导系数（仅生图/扩散模型生效）。数值越大画面越严格依从文字提示词，推荐 7.0 黄金比例；过高可能导致画面过饱和或失真。" :
+                        L"Classifier-Free Guidance scale. Controls prompt adherence. 7.0 is the recommended golden ratio.";
+                    itemCfg.type = OptionType::ComboBox;
+                    itemCfg.pIntVal = &s_aiUi.actionCfgIndices[i];
+                    itemCfg.options = s_aiUi.cfgOptions;
+                    itemCfg.onChange = []([[maybe_unused]] SettingsOverlay* ov, [[maybe_unused]] SettingsItem* it) {
+                        if (!it || !it->pIntVal) return;
+                        size_t aIdx = static_cast<size_t>(it->pIntVal - s_aiUi.actionCfgIndices.data());
+                        auto& m = QuickView::AI::AiActionManager::Instance();
+                        auto& acts = m.GetActions();
+                        if (aIdx < acts.size()) {
+                            int choice = *it->pIntVal;
+                            if (choice == 0) acts[aIdx].cfgScale = 4.0f;
+                            else if (choice == 1) acts[aIdx].cfgScale = 5.5f;
+                            else if (choice == 2) acts[aIdx].cfgScale = 7.0f;
+                            else if (choice == 3) acts[aIdx].cfgScale = 8.5f;
+                            else if (choice == 4) acts[aIdx].cfgScale = 10.0f;
+                            m.SaveConfig();
+                        }
+                    };
+                    tabAi.items.push_back(std::move(itemCfg));
+                }
+
+                // Delete Action Button
+                SettingsItem itemDelAct = { AppStrings::g.Settings_Button_AiDeleteAction ? AppStrings::g.Settings_Button_AiDeleteAction : L"Delete Action", OptionType::ActionButton };
+                itemDelAct.buttonText = AppStrings::g.Settings_Button_AiDeleteAction ? AppStrings::g.Settings_Button_AiDeleteAction : L"Delete Action";
+                itemDelAct.isDestructive = true;
+                itemDelAct.pIntVal = reinterpret_cast<int*>(i);
+                itemDelAct.onChange = []([[maybe_unused]] SettingsOverlay* ov, [[maybe_unused]] SettingsItem* it) {
+                    if (!it) return;
+                    size_t aIdx = reinterpret_cast<size_t>(it->pIntVal);
+                    auto& m = QuickView::AI::AiActionManager::Instance();
+                    auto& acts = m.GetActions();
+                    if (aIdx < acts.size() && acts.size() > 1) {
+                        acts.erase(acts.begin() + aIdx);
+                        m.SaveConfig();
+                        if (ov) ov->RequestRebuild();
+                    }
+                };
+                tabAi.items.push_back(std::move(itemDelAct));
+            }
+        }
+    }
+}
+
 void SettingsOverlay::RebuildMenu() {
     BuildMenu();
 }
 
-void SettingsOverlay::BuildMenu() {
-    m_pActiveCombo = nullptr;
-    m_comboHoverIdx = -1;
-    m_pActiveSlider = nullptr;
-    m_pHoverItem = nullptr;
-    m_tabs.clear();
-
-    // Compute active separator preset index
-    m_separatorPresetIndex = -1;
-    if (g_config.InfoPanelLiteSeparator == L" \u00b7 ") m_separatorPresetIndex = 0;
-    else if (g_config.InfoPanelLiteSeparator == L"  ") m_separatorPresetIndex = 1;
-    else if (g_config.InfoPanelLiteSeparator == L" | ") m_separatorPresetIndex = 2;
-    else if (g_config.InfoPanelLiteSeparator == L" - ") m_separatorPresetIndex = 3;
-
-    // [UX Fix] Sync 3-state border option from config
-    if (!g_config.GlassShowBorders) {
-        m_borderStrokeOption = 0; // None
-    } else {
-        m_borderStrokeOption = (g_config.GlassVectorStrokeWeightIndex == 1) ? 1 : 2; // 1=Fine, 2=Standard
-    }
-
-    // --- 1. General ---
-    SettingsTab tabGeneral;
-    tabGeneral.name = AppStrings::Settings_Tab_General;
+void SettingsOverlay::BuildGeneralTab(SettingsTab& tabGeneral) {
+    tabGeneral.name = AppStrings::g.Settings_Tab_General;
     tabGeneral.icon = Icons::Settings;
     
-    tabGeneral.items.push_back({ AppStrings::Settings_Group_Foundation, OptionType::Header });
-    
+    AddHeader(tabGeneral, AppStrings::g.Settings_Group_Foundation);
     // Language ComboBox
-    SettingsItem itemLang = { AppStrings::Settings_Label_Language, OptionType::ComboBox, nullptr, nullptr, BindEnum(&g_config.Language) };
-    itemLang.options = { 
+    SettingsItem itemLang = { AppStrings::g.Settings_Label_Language, OptionType::ComboBox, nullptr, nullptr, BindEnum(&g_config.Language) };
+    { const std::wstring_view opts[] = { 
         L"Auto", 
         L"English", 
         L"Chinese (Simplified)", 
@@ -1007,7 +2226,7 @@ void SettingsOverlay::BuildMenu() {
         L"Russian", 
         L"German", 
         L"Spanish" 
-    };
+    }; AssignOptions(itemLang, opts); }
     itemLang.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         AppStrings::SetLanguage((AppStrings::Language)g_config.Language);
         // Force resource recreation to apply new font size
@@ -1018,90 +2237,91 @@ void SettingsOverlay::BuildMenu() {
         
         if (overlay->m_hwnd) InvalidateRect(overlay->m_hwnd, NULL, FALSE);
     };
-    tabGeneral.items.push_back(itemLang);
+    tabGeneral.items.push_back(std::move(itemLang));
 
-    tabGeneral.items.push_back({ AppStrings::Settings_Group_Startup, OptionType::Header });
-    
+    AddHeader(tabGeneral, AppStrings::g.Settings_Group_Startup);
     // Single Instance with restart notification
-    SettingsItem itemSI = { AppStrings::Settings_Label_SingleInstance, OptionType::Toggle, &g_config.SingleInstance };
+    SettingsItem itemSI = { AppStrings::g.Settings_Label_SingleInstance, OptionType::Toggle, &g_config.SingleInstance };
     itemSI.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-        overlay->SetItemStatus(AppStrings::Settings_Label_SingleInstance, AppStrings::Settings_Status_RestartRequired, D2D1::ColorF(0.9f, 0.7f, 0.1f));
+        overlay->SetItemStatus(AppStrings::g.Settings_Label_SingleInstance, AppStrings::g.Settings_Status_RestartRequired, D2D1::ColorF(0.9f, 0.7f, 0.1f));
     };
-    tabGeneral.items.push_back(itemSI);
+    tabGeneral.items.push_back(std::move(itemSI));
     
-    tabGeneral.items.push_back({ AppStrings::Settings_Label_CheckUpdates, OptionType::Toggle, &g_config.CheckUpdates });
-    
-    SettingsItem itemUpdateChannel;
-    itemUpdateChannel.label = AppStrings::Settings_Label_UpdateChannel;
-    itemUpdateChannel.type = OptionType::ComboBox;
-    itemUpdateChannel.pIntVal = &g_config.UpdateChannel;
-    itemUpdateChannel.options = { AppStrings::Settings_Option_UpdateStable, AppStrings::Settings_Option_UpdatePreRelease };
-    itemUpdateChannel.tooltipText = AppStrings::Settings_Tooltip_PreRelease;
-    itemUpdateChannel.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-        SaveConfig();
-        overlay->m_dismissedVersion.clear();
-        UpdateManager::Get().StartBackgroundCheck(0);
-    };
-    tabGeneral.items.push_back(itemUpdateChannel);
+    if (!SystemInfo::IsPackagedApp()) {
+        AddSimpleToggle(tabGeneral, AppStrings::g.Settings_Label_CheckUpdates, &g_config.CheckUpdates);
+        SettingsItem itemUpdateChannel;
+        itemUpdateChannel.label = AppStrings::g.Settings_Label_UpdateChannel;
+        itemUpdateChannel.type = OptionType::ComboBox;
+        itemUpdateChannel.pIntVal = &g_config.UpdateChannel;
+        { const std::wstring_view opts[] = { AppStrings::g.Settings_Option_UpdateStable, AppStrings::g.Settings_Option_UpdatePreRelease }; AssignOptions(itemUpdateChannel, opts); }
+        itemUpdateChannel.tooltipText = AppStrings::g.Settings_Tooltip_PreRelease;
+        itemUpdateChannel.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+            g_config.LastUpdateChannelCheckVer = SettingsOverlay::GetAppVersion();
+            SaveConfig();
+            overlay->m_dismissedVersion.clear();
+            UpdateManager::Get().StartBackgroundCheck(
+                0, true, g_config.UpdateChannel,
+                QuickView::WideToUtf8(g_config.LastUpdateChannelCheckVer));
+        };
+        tabGeneral.items.push_back(std::move(itemUpdateChannel));
+    }
     
     // Pro Habits
-    tabGeneral.items.push_back({ AppStrings::Settings_Group_Habits, OptionType::Header });
-
-    SettingsItem itemLoop = { AppStrings::Settings_Label_NavLoopMode, OptionType::Toggle, &g_config.NavLoop };
+    AddHeader(tabGeneral, AppStrings::g.Settings_Group_Habits);
+    SettingsItem itemLoop = { AppStrings::g.Settings_Label_NavLoopMode, OptionType::Toggle, &g_config.NavLoop };
     itemLoop.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         g_runtime.NavLoop = g_config.NavLoop;
         SaveConfig();
     };
-    tabGeneral.items.push_back(itemLoop);
+    tabGeneral.items.push_back(std::move(itemLoop));
 
-    SettingsItem itemTraverse = { AppStrings::Settings_Option_NavThrough, OptionType::Toggle, &g_config.NavTraverse };
+    SettingsItem itemTraverse = { AppStrings::g.Settings_Option_NavThrough, OptionType::Toggle, &g_config.NavTraverse };
     itemTraverse.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         g_runtime.NavTraverse = g_config.NavTraverse;
         SaveConfig();
     };
-    tabGeneral.items.push_back(itemTraverse);
+    tabGeneral.items.push_back(std::move(itemTraverse));
 
-    SettingsItem itemSortOrder = { AppStrings::Settings_Label_SortOrder, OptionType::ComboBox, nullptr, nullptr, &g_config.SortOrder };
-    itemSortOrder.options = {
-        AppStrings::Settings_Option_SortAuto, AppStrings::Settings_Option_SortName,
-        AppStrings::Settings_Option_SortModified, AppStrings::Settings_Option_SortDateTaken,
-        AppStrings::Settings_Option_SortSize, AppStrings::Settings_Option_SortType
-    };
+    SettingsItem itemSortOrder = { AppStrings::g.Settings_Label_SortOrder, OptionType::ComboBox, nullptr, nullptr, &g_config.SortOrder };
+    { const std::wstring_view opts[] = {
+        AppStrings::g.Settings_Option_SortAuto, AppStrings::g.Settings_Option_SortName,
+        AppStrings::g.Settings_Option_SortModified, AppStrings::g.Settings_Option_SortDateTaken,
+        AppStrings::g.Settings_Option_SortSize, AppStrings::g.Settings_Option_SortType
+    }; AssignOptions(itemSortOrder, opts); }
     itemSortOrder.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-        g_runtime.SortOrder = g_config.SortOrder;
-        SaveConfig();
-        extern HWND g_mainHwnd;
-        if (g_mainHwnd && !g_imagePath.empty()) {
-            g_navigator.Initialize(g_imagePath, g_mainHwnd, g_runtime.SortOrder == 0);
+        ApplySortPreferences(g_config.SortOrder, g_config.SortDescending, g_mainHwnd);
+    };
+    tabGeneral.items.push_back(std::move(itemSortOrder));
+
+    SettingsItem itemSortDesc = { AppStrings::g.Settings_Label_SortDescending, OptionType::Toggle, &g_config.SortDescending };
+    itemSortDesc.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        ApplySortPreferences(g_config.SortOrder, g_config.SortDescending, g_mainHwnd);
+    };
+    tabGeneral.items.push_back(std::move(itemSortDesc));
+
+    SettingsItem itemSortArchives = { AppStrings::g.Settings_Label_SortArchivesByNameAscending, OptionType::Toggle, &g_config.SortArchivesByNameAscending };
+    itemSortArchives.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        if (g_navigator.GetArchive() != nullptr) {
+            ApplySortPreferences(g_config.SortOrder, g_config.SortDescending, g_mainHwnd);
+        } else {
+            SaveConfig();
         }
     };
-    tabGeneral.items.push_back(itemSortOrder);
-
-    SettingsItem itemSortDesc = { AppStrings::Settings_Label_SortDescending, OptionType::Toggle, &g_config.SortDescending };
-    itemSortDesc.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-        g_runtime.SortDescending = g_config.SortDescending;
-        SaveConfig();
-    };
-    tabGeneral.items.push_back(itemSortDesc);
-
-    SettingsItem itemSortArchives = { AppStrings::Settings_Label_SortArchivesByNameAscending, OptionType::Toggle, &g_config.SortArchivesByNameAscending };
-    itemSortArchives.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-        SaveConfig();
-    };
-    tabGeneral.items.push_back(itemSortArchives);
+    tabGeneral.items.push_back(std::move(itemSortArchives));
     
     // [Phase 2] Cross-Monitor
-    SettingsItem itemCrossMon = { AppStrings::Settings_Label_SpanDisplays, OptionType::Toggle, &g_config.EnableCrossMonitor };
+    SettingsItem itemCrossMon = { AppStrings::g.Settings_Label_SpanDisplays, OptionType::Toggle, &g_config.EnableCrossMonitor };
     itemCrossMon.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         g_runtime.CrossMonitorMode = g_config.EnableCrossMonitor;
     };
-    tabGeneral.items.push_back(itemCrossMon);
+    tabGeneral.items.push_back(std::move(itemCrossMon));
     
 
     
-    // Portable Mode with file move logic
-    SettingsItem itemPortable = { AppStrings::Settings_Label_Portable, OptionType::Toggle, &g_config.PortableMode };
-    itemPortable.tooltipText = AppStrings::Settings_Tooltip_Portable;
+    // Portable Mode with file move logic (hidden in Microsoft Store / MSIX packages)
+    if (!SystemInfo::IsPackagedApp()) {
+        SettingsItem itemPortable = { AppStrings::g.Settings_Label_Portable, OptionType::Toggle, &g_config.PortableMode };
+    itemPortable.tooltipText = AppStrings::g.Settings_Tooltip_Portable;
     itemPortable.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         wchar_t exePath[MAX_PATH]; GetModuleFileNameW(nullptr, exePath, MAX_PATH);
         std::wstring exeDir = exePath;
@@ -1111,75 +2331,95 @@ void SettingsOverlay::BuildMenu() {
         
         wchar_t appDataPath[MAX_PATH];
         SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appDataPath);
-        std::wstring appDataDir = std::wstring(appDataPath) + L"\\QuickView";
+        std::wstring appDataPathStr = appDataPath;
+        std::wstring appDataDir = appDataPathStr + L"\\QuickView";
         std::wstring appDataIni = appDataDir + L"\\QuickView.ini";
+        std::wstring appDataAiJson = appDataDir + L"\\ai_actions.json";
+        std::wstring exeAiJson = exeDir + L"\\ai_actions.json";
         
         if (g_config.PortableMode) {
             // User turned ON: Move config from AppData to ExeDir
             if (!CheckWritePermission(exeDir)) {
                 g_config.PortableMode = false; // Revert
-                overlay->SetItemStatus(AppStrings::Settings_Label_Portable, AppStrings::Settings_Status_NoWritePerm, D2D1::ColorF(0.8f, 0.1f, 0.1f));
+                overlay->SetItemStatus(AppStrings::g.Settings_Label_Portable, AppStrings::g.Settings_Status_NoWritePerm, D2D1::ColorF(0.8f, 0.1f, 0.1f));
                 return;
             }
             
             // Refined Logic for Portable Mode transition:
-            bool appDataExists = (GetFileAttributesW(appDataIni.c_str()) != INVALID_FILE_ATTRIBUTES);
-            bool exeExists = (GetFileAttributesW(exeIni.c_str()) != INVALID_FILE_ATTRIBUTES);
+            const bool appDataExists = (GetFileAttributesW(appDataIni.c_str()) != INVALID_FILE_ATTRIBUTES);
+            const bool exeExists = (GetFileAttributesW(exeIni.c_str()) != INVALID_FILE_ATTRIBUTES);
+            auto migrateFileSafe = [](const std::wstring& src, const std::wstring& dst) {
+                if (GetFileAttributesW(src.c_str()) != INVALID_FILE_ATTRIBUTES) {
+                    if (CopyFileW(src.c_str(), dst.c_str(), FALSE)) {
+                        DeleteFileW(src.c_str());
+                    }
+                }
+            };
 
             if (appDataExists) {
-                // 1. AppData exists: Copy to ExeDir (Overwrite), then delete AppData config
-                CopyFileW(appDataIni.c_str(), exeIni.c_str(), FALSE);
-                DeleteFileW(appDataIni.c_str());
-                SaveConfig(); // Update to ensure PortableMode=true is saved
-            } else if (!exeExists) {
-                // 2. Both missing: Generate default config in ExeDir
-                SaveConfig();
+                // 1. AppData exists: Copy to ExeDir (Overwrite), then delete AppData config only on copy success
+                migrateFileSafe(appDataIni, exeIni);
+                migrateFileSafe(appDataAiJson, exeAiJson);
+                SaveConfigSync(); // Update to ensure PortableMode=true is saved immediately before reload
+            } else {
+                // Ensure standalone ai_actions.json is migrated even if QuickView.ini was absent
+                migrateFileSafe(appDataAiJson, exeAiJson);
+                if (!exeExists) {
+                    // 2. Both missing: Generate default config in ExeDir
+                    SaveConfigSync();
+                }
             }
             // 3. AppData missing, ExeDir exists: Do NOT overwrite (preserve existing portable config)
             
+            QuickView::AI::AiActionManager::Instance().ReloadConfig();
+
             // Clean up registry entries (portable mode should not use registry)
             overlay->UnregisterAssociations();
             
             // Use deferred rebuild to avoid crash (don't call overlay->RebuildMenu directly in onChange)
             overlay->m_pendingRebuild = true;
             
-            overlay->SetItemStatus(AppStrings::Settings_Label_Portable, AppStrings::Settings_Status_Enabled, D2D1::ColorF(0.1f, 0.8f, 0.1f));
+            overlay->SetItemStatus(AppStrings::g.Settings_Label_Portable, AppStrings::g.Settings_Status_Enabled, D2D1::ColorF(0.1f, 0.8f, 0.1f));
         } else {
             // User turned OFF: Move config from ExeDir to AppData
-            // Ensure AppData directory exists
-            if (GetFileAttributesW(appDataDir.c_str()) == INVALID_FILE_ATTRIBUTES) {
-                CreateDirectoryW(appDataDir.c_str(), nullptr);
+            bool dirOk = (GetFileAttributesW(appDataDir.c_str()) != INVALID_FILE_ATTRIBUTES);
+            if (!dirOk) {
+                dirOk = (CreateDirectoryW(appDataDir.c_str(), nullptr) != FALSE || GetLastError() == ERROR_ALREADY_EXISTS);
             }
-            
-            bool exeExists = (GetFileAttributesW(exeIni.c_str()) != INVALID_FILE_ATTRIBUTES);
-            
-            if (exeExists) {
-                // Copy ExeDir config to AppData (Overwrite existing to preserve current settings)
-                CopyFileW(exeIni.c_str(), appDataIni.c_str(), FALSE);
-                DeleteFileW(exeIni.c_str()); // Remove ExeDir config
+
+            if (dirOk) {
+                auto migrateFileSafe = [](const std::wstring& src, const std::wstring& dst) {
+                    if (GetFileAttributesW(src.c_str()) != INVALID_FILE_ATTRIBUTES) {
+                        if (CopyFileW(src.c_str(), dst.c_str(), FALSE)) {
+                            DeleteFileW(src.c_str());
+                        }
+                    }
+                };
+                migrateFileSafe(exeIni, appDataIni);
+                migrateFileSafe(exeAiJson, appDataAiJson);
             }
             
             // Save current config to AppData (ensures PortableMode=false is correctly persisted)
-            SaveConfig();
+            SaveConfigSync();
+            QuickView::AI::AiActionManager::Instance().ReloadConfig();
             
             // Use deferred rebuild to update File Association button state
             overlay->m_pendingRebuild = true;
             
-            overlay->SetItemStatus(AppStrings::Settings_Label_Portable, L"", D2D1::ColorF(1,1,1));
+            overlay->SetItemStatus(AppStrings::g.Settings_Label_Portable, L"", D2D1::ColorF(1,1,1));
         }
     };
-    tabGeneral.items.push_back(itemPortable);
+    tabGeneral.items.push_back(std::move(itemPortable));
+    }
+}
 
-    m_tabs.push_back(tabGeneral);
-
-    // --- 2. Theme & Geek Glass ---
-    SettingsTab tabTheme;
-    tabTheme.name = AppStrings::Settings_Tab_Theme;
+void SettingsOverlay::BuildThemeTab(SettingsTab& tabTheme) {
+    tabTheme.name = AppStrings::g.Settings_Tab_Theme;
     tabTheme.icon = Icons::Personalize;
 
     // Base Theme Modes
     SettingsItem itemThemeMode = {
-        AppStrings::Settings_Label_ThemeMode,
+        AppStrings::g.Settings_Label_ThemeMode,
         OptionType::Segment,
         nullptr,
         nullptr,
@@ -1187,94 +2427,121 @@ void SettingsOverlay::BuildMenu() {
         nullptr,
         0,
         0,
-        { AppStrings::Settings_Option_ThemeAuto, AppStrings::Settings_Option_ThemeDark, AppStrings::Settings_Option_ThemeLight, AppStrings::Settings_Option_ThemeCustom }
+        { AppStrings::g.Settings_Option_ThemeAuto, AppStrings::g.Settings_Option_ThemeDark, AppStrings::g.Settings_Option_ThemeLight }
     };
     itemThemeMode.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-        if (g_config.ThemeMode < 0 || g_config.ThemeMode > 3) g_config.ThemeMode = 0;
-        // Preset-driven full overwrite: clicking Dark/Light applies the built-in preset
-        if (g_config.ThemeMode == 1) {
-            g_config.ApplyThemePreset(PRESET_DARK);
-        } else if (g_config.ThemeMode == 2) {
-            g_config.ApplyThemePreset(PRESET_LIGHT);
-        }
+        if (g_config.ThemeMode < 0 || g_config.ThemeMode > 2) g_config.ThemeMode = 0;
+        QuickView::UI::Theme::RefreshThemePalette(g_config);
         SaveConfig();
         if (overlay->m_hwnd) {
             ApplyWindowTheme(overlay->m_hwnd);
             InvalidateRect(overlay->m_hwnd, nullptr, FALSE);
         }
-        // Needs a rebuild to show/hide the custom color choosers
-        overlay->m_pendingRebuild = true;
     };
-    tabTheme.items.push_back(itemThemeMode);
+    tabTheme.items.push_back(std::move(itemThemeMode));
 
-    SettingsItem itemDimmer = { AppStrings::Settings_Label_AmbientDimmer, OptionType::Toggle, &g_config.EnableAmbientDimmer, {} };
-    itemDimmer.tooltipText = AppStrings::Settings_Tooltip_AmbientDimmer;
-    tabTheme.items.push_back(itemDimmer);
-
-    // Rounded Corners
-    SettingsItem itemRounded = { AppStrings::Settings_Label_RoundedCorners, OptionType::Toggle, &g_config.RoundedCorners, {} };
-    itemRounded.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-        bool enable = g_config.RoundedCorners;
-        DWM_WINDOW_CORNER_PREFERENCE preference = enable ? DWMWCP_ROUND : DWMWCP_DONOTROUND;
-        DwmSetWindowAttribute(GetActiveWindow(), DWMWA_WINDOW_CORNER_PREFERENCE, &preference, sizeof(preference));
+    SettingsItem itemAccentMode = {
+        AppStrings::g.Settings_Label_AccentColor,
+        OptionType::Segment,
+        nullptr,
+        nullptr,
+        &g_config.AccentMode,
+        nullptr,
+        0,
+        0,
+        { AppStrings::g.Settings_Option_AccentSystem, AppStrings::g.Settings_Option_AccentCustom }
+    };
+    itemAccentMode.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        if (g_config.AccentMode < 0 || g_config.AccentMode > 1) g_config.AccentMode = 0;
+        QuickView::UI::Theme::RefreshThemePalette(g_config);
         SaveConfig();
+        if (overlay && overlay->m_hwnd) {
+            SyncWindowDwmFrameAttributes(overlay->m_hwnd);
+            InvalidateRect(overlay->m_hwnd, nullptr, FALSE);
+        }
+        if (overlay) overlay->m_pendingRebuild = true;
     };
-    itemRounded.tooltipText = AppStrings::Settings_Tooltip_RoundedCorners;
-    if (!IsWindows11()) {
-        itemRounded.isDisabled = true;
-    }
-    tabTheme.items.push_back(itemRounded);
+    itemAccentMode.isNewOption = true;
+    tabTheme.items.push_back(std::move(itemAccentMode));
 
-
-    if (g_config.ThemeMode == 3) {
-        // Custom Theme Mode options
-        SettingsItem itemAccentColor = { AppStrings::Settings_Label_AccentColor, OptionType::CustomColorRow, nullptr, {} };
+    if (g_config.AccentMode == 1) {
+        SettingsItem itemAccentColor = { AppStrings::g.Settings_Label_GlassCustomColor, OptionType::CustomColorRow, nullptr, {} };
         itemAccentColor.pFloatVal = &g_config.ThemeCustomAccentR;
         itemAccentColor.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
             HWND hwnd = GetActiveWindow();
-            static COLORREF acrCustClr[16]; 
+            static COLORREF acrCustClr[16];
             CHOOSECOLOR cc{}; cc.lStructSize = sizeof(cc);
             cc.hwndOwner = hwnd;
             cc.lpCustColors = acrCustClr;
             cc.rgbResult = RGB((int)(g_config.ThemeCustomAccentR * 255.0f), (int)(g_config.ThemeCustomAccentG * 255.0f), (int)(g_config.ThemeCustomAccentB * 255.0f));
             cc.Flags = CC_FULLOPEN | CC_RGBINIT;
-            
+
             if (ChooseColor(&cc)) {
                 g_config.ThemeCustomAccentR = GetRValue(cc.rgbResult) / 255.0f;
                 g_config.ThemeCustomAccentG = GetGValue(cc.rgbResult) / 255.0f;
                 g_config.ThemeCustomAccentB = GetBValue(cc.rgbResult) / 255.0f;
+                QuickView::UI::Theme::RefreshThemePalette(g_config);
                 SaveConfig();
-                if (overlay->m_hwnd) InvalidateRect(overlay->m_hwnd, nullptr, FALSE);
+                HWND targetHwnd = (overlay && overlay->m_hwnd) ? overlay->m_hwnd : hwnd;
+                if (targetHwnd) {
+                    SyncWindowDwmFrameAttributes(targetHwnd);
+                    InvalidateRect(targetHwnd, nullptr, FALSE);
+                }
             }
         };
-        tabTheme.items.push_back(itemAccentColor);
-
-        SettingsItem itemTextColor = { AppStrings::Settings_Label_TextColor, OptionType::CustomColorRow };
-        itemTextColor.pFloatVal = &g_config.ThemeCustomTextR;
-        itemTextColor.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-            HWND hwnd = GetActiveWindow();
-            static COLORREF acrCustClr[16]; 
-            CHOOSECOLOR cc{};
-            cc.lStructSize = sizeof(CHOOSECOLOR);
-            cc.hwndOwner = hwnd;
-            cc.lpCustColors = acrCustClr;
-            cc.rgbResult = RGB((int)(g_config.ThemeCustomTextR * 255.0f), (int)(g_config.ThemeCustomTextG * 255.0f), (int)(g_config.ThemeCustomTextB * 255.0f));
-            cc.Flags = CC_FULLOPEN | CC_RGBINIT;
-            
-            if (ChooseColor(&cc)) {
-                g_config.ThemeCustomTextR = GetRValue(cc.rgbResult) / 255.0f;
-                g_config.ThemeCustomTextG = GetGValue(cc.rgbResult) / 255.0f;
-                g_config.ThemeCustomTextB = GetBValue(cc.rgbResult) / 255.0f;
-                SaveConfig();
-                if (overlay->m_hwnd) InvalidateRect(overlay->m_hwnd, nullptr, FALSE);
-            }
-        };
-        tabTheme.items.push_back(itemTextColor);
+        tabTheme.items.push_back(std::move(itemAccentColor));
     }
+
+    SettingsItem itemBorderAccent = {
+        AppStrings::g.Settings_Label_WindowBorderAccent,
+        OptionType::Segment,
+        nullptr,
+        nullptr,
+        &g_config.WindowBorderAccentMode,
+        nullptr,
+        0,
+        0,
+        { AppStrings::g.Settings_Option_BorderFollowSystem, AppStrings::g.Settings_Option_On, AppStrings::g.Settings_Option_Off }
+    };
+    itemBorderAccent.isNewOption = true;
+    itemBorderAccent.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        if (g_config.WindowBorderAccentMode < 0 || g_config.WindowBorderAccentMode > 2) {
+            g_config.WindowBorderAccentMode = 0;
+        }
+        QuickView::UI::Theme::RefreshThemePalette(g_config);
+        HWND targetHwnd = (overlay && overlay->m_hwnd) ? overlay->m_hwnd : GetActiveWindow();
+        if (targetHwnd) {
+            SyncWindowDwmFrameAttributes(targetHwnd);
+        }
+        SaveConfig();
+    };
+    if (!IsWindows11()) {
+        itemBorderAccent.isDisabled = true;
+    }
+    tabTheme.items.push_back(std::move(itemBorderAccent));
+
+    SettingsItem itemDimmer = { AppStrings::g.Settings_Label_AmbientDimmer, OptionType::Toggle, &g_config.EnableAmbientDimmer, {} };
+    itemDimmer.tooltipText = AppStrings::g.Settings_Tooltip_AmbientDimmer;
+    tabTheme.items.push_back(std::move(itemDimmer));
+
+    // Rounded Corners
+    SettingsItem itemRounded = { AppStrings::g.Settings_Label_RoundedCorners, OptionType::Toggle, &g_config.RoundedCorners, {} };
+    itemRounded.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        HWND targetHwnd = (overlay && overlay->m_hwnd) ? overlay->m_hwnd : GetActiveWindow();
+        if (targetHwnd) {
+            SyncWindowDwmFrameAttributes(targetHwnd);
+        }
+        SaveConfig();
+    };
+    itemRounded.tooltipText = AppStrings::g.Settings_Tooltip_RoundedCorners;
+    if (!IsWindows11()) {
+        itemRounded.isDisabled = true;
+    }
+    tabTheme.items.push_back(std::move(itemRounded));
     
     // Geek Glass Engine
-    tabTheme.items.push_back({ AppStrings::Settings_Header_GeekGlass, OptionType::Header });
-    SettingsItem itemEnableGlass = { AppStrings::Settings_Label_EnableGeekGlass, OptionType::Toggle, &g_config.EnableGeekGlass };
+    AddHeader(tabTheme, AppStrings::g.Settings_Header_GeekGlass);
+    SettingsItem itemEnableGlass = { AppStrings::g.Settings_Label_EnableGeekGlass, OptionType::Toggle, &g_config.EnableGeekGlass };
     itemEnableGlass.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { 
         if (!g_config.EnableGeekGlass) {
             // [Requirement] Save current config as backup before disabling glass
@@ -1311,18 +2578,16 @@ void SettingsOverlay::BuildMenu() {
         SaveConfig(); 
         overlay->m_pendingRebuild = true; // Rebuild to update isDisabled states of dependent sliders
     };
-    tabTheme.items.push_back(itemEnableGlass);
+    tabTheme.items.push_back(std::move(itemEnableGlass));
 
-    SettingsItem itemAnimations = { AppStrings::Settings_Label_GlassUIAnimations, OptionType::Toggle, &g_config.GlassUIAnimations };
+    SettingsItem itemAnimations = { AppStrings::g.Settings_Label_GlassUIAnimations, OptionType::Toggle, &g_config.GlassUIAnimations };
     itemAnimations.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
-    tabTheme.items.push_back(itemAnimations);
+    tabTheme.items.push_back(std::move(itemAnimations));
     
     // --- Core Material Parameters ---
-    tabTheme.items.push_back({ AppStrings::Settings_Header_CoreMaterial, OptionType::Header });
-
-    SettingsItem itemContextMenuBackdrop = { AppStrings::Settings_Label_ContextMenuBackdrop, OptionType::Segment, nullptr, nullptr, BindEnum(&g_config.MenuBackdropStyle), nullptr, 0, 0, {L"Acrylic", L"Mica", L"Mica Alt"} };
-    itemContextMenuBackdrop.isNewOption = true;
-    itemContextMenuBackdrop.tooltipText = AppStrings::Settings_Tooltip_BackdropEffectsTip;
+    AddHeader(tabTheme, AppStrings::g.Settings_Header_CoreMaterial);
+    SettingsItem itemContextMenuBackdrop = { AppStrings::g.Settings_Label_ContextMenuBackdrop, OptionType::Segment, nullptr, nullptr, BindEnum(&g_config.MenuBackdropStyle), nullptr, 0, 0, {L"Acrylic", L"Mica", L"Mica Alt"} };
+    itemContextMenuBackdrop.tooltipText = AppStrings::g.Settings_Tooltip_BackdropEffectsTip;
     itemContextMenuBackdrop.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         if (g_config.MenuBackdropStyle != 0) { // 1=Mica, 2=Mica Alt
             if (g_config.GlassMenusOpacity > 0.0f) {
@@ -1339,61 +2604,61 @@ void SettingsOverlay::BuildMenu() {
         SaveConfig();
         overlay->m_pendingRebuild = true;
     };
-    tabTheme.items.push_back(itemContextMenuBackdrop);
+    tabTheme.items.push_back(std::move(itemContextMenuBackdrop));
     
     bool glassDisabled = !g_config.EnableGeekGlass;
     static float fZero = 0.0f;
  
     // Auto-switch to Custom lambda (shared by all material sliders)
     
-    SettingsItem itemBlur = { AppStrings::Settings_Label_BlurSigma, OptionType::Slider, nullptr, &g_config.GlassBlurSigma };
+    SettingsItem itemBlur = { AppStrings::g.Settings_Label_BlurSigma, OptionType::Slider, nullptr, &g_config.GlassBlurSigma };
     itemBlur.minVal = 1.0f;
     itemBlur.maxVal = 40.0f;
     itemBlur.displayFormat = L"%.0f px";
-    itemBlur.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->AutoSwitchToCustom(false); };
+    itemBlur.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->OnGlassMaterialChanged(false); };
     if (glassDisabled) {
         itemBlur.isDisabled = true;
         itemBlur.pFloatVal = &fZero;
     }
-    tabTheme.items.push_back(itemBlur);
+    tabTheme.items.push_back(std::move(itemBlur));
  
 
-    SettingsItem itemTintAlpha = { AppStrings::Settings_Label_TintDensity, OptionType::Slider, nullptr, &g_config.GlassTintAlpha };
+    SettingsItem itemTintAlpha = { AppStrings::g.Settings_Label_TintDensity, OptionType::Slider, nullptr, &g_config.GlassTintAlpha };
     itemTintAlpha.minVal = 0.01f;
     itemTintAlpha.maxVal = 1.0f;
     itemTintAlpha.displayFormat = L"%.0f %%";
-    itemTintAlpha.tooltipText = AppStrings::Settings_Tooltip_TintDensity;
-    itemTintAlpha.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->AutoSwitchToCustom(false); };
+    itemTintAlpha.tooltipText = AppStrings::g.Settings_Tooltip_TintDensity;
+    itemTintAlpha.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->OnGlassMaterialChanged(false); };
     // [Fix] Keep TintAlpha enabled in Traditional Mode to allow background density control
-    tabTheme.items.push_back(itemTintAlpha);
+    tabTheme.items.push_back(std::move(itemTintAlpha));
 
-    SettingsItem itemSpecular = { AppStrings::Settings_Label_SpecularOpacity, OptionType::Slider, nullptr, &g_config.GlassSpecularOpacity };
+    SettingsItem itemSpecular = { AppStrings::g.Settings_Label_SpecularOpacity, OptionType::Slider, nullptr, &g_config.GlassSpecularOpacity };
     itemSpecular.minVal = 0.0f;
     itemSpecular.maxVal = 0.50f;
     itemSpecular.displayFormat = L"%.0f %%";
-    itemSpecular.tooltipText = AppStrings::Settings_Tooltip_SpecularOpacity;
-    itemSpecular.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->AutoSwitchToCustom(false); };
+    itemSpecular.tooltipText = AppStrings::g.Settings_Tooltip_SpecularOpacity;
+    itemSpecular.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->OnGlassMaterialChanged(false); };
     if (glassDisabled) {
         itemSpecular.isDisabled = true;
         itemSpecular.pFloatVal = &fZero;
     }
-    tabTheme.items.push_back(itemSpecular);
+    tabTheme.items.push_back(std::move(itemSpecular));
 
-    SettingsItem itemShadow = { AppStrings::Settings_Label_ShadowIntensity, OptionType::Slider, nullptr, &g_config.GlassShadowOpacity };
+    SettingsItem itemShadow = { AppStrings::g.Settings_Label_ShadowIntensity, OptionType::Slider, nullptr, &g_config.GlassShadowOpacity };
     itemShadow.minVal = 0.0f;
     itemShadow.maxVal = 1.0f;
     itemShadow.displayFormat = L"%.0f %%";
-    itemShadow.tooltipText = AppStrings::Settings_Tooltip_ShadowIntensity;
-    itemShadow.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->AutoSwitchToCustom(false); };
+    itemShadow.tooltipText = AppStrings::g.Settings_Tooltip_ShadowIntensity;
+    itemShadow.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->OnGlassMaterialChanged(false); };
     if (glassDisabled) {
         itemShadow.isDisabled = true;
         itemShadow.pFloatVal = &fZero;
     }
-    tabTheme.items.push_back(itemShadow);
+    tabTheme.items.push_back(std::move(itemShadow));
 
     // Vector Stroke Config
-    tabTheme.items.push_back({ AppStrings::Settings_Header_VectorAssets, OptionType::Header });
-    SettingsItem itemStroke = { AppStrings::Settings_Label_UIBorders, OptionType::Segment, nullptr, nullptr, &m_borderStrokeOption, nullptr, 0, 0, { AppStrings::Settings_Option_None, AppStrings::Settings_Option_StrokeFine, AppStrings::Settings_Option_StrokeStandard } };
+    AddHeader(tabTheme, AppStrings::g.Settings_Header_VectorAssets);
+    SettingsItem itemStroke = { AppStrings::g.Settings_Label_UIBorders, OptionType::Segment, nullptr, nullptr, &m_borderStrokeOption, nullptr, 0, 0, { AppStrings::g.Settings_Option_None, AppStrings::g.Settings_Option_StrokeFine, AppStrings::g.Settings_Option_StrokeStandard } };
     itemStroke.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         if (overlay->m_borderStrokeOption == 0) {
             g_config.GlassShowBorders = false;
@@ -1407,19 +2672,19 @@ void SettingsOverlay::BuildMenu() {
         SaveConfig();
         if (overlay->m_hwnd) InvalidateRect(overlay->m_hwnd, NULL, FALSE);
     };
-    tabTheme.items.push_back(itemStroke);
+    tabTheme.items.push_back(std::move(itemStroke));
 
     // Glass Tint Profile (Base Color)
-    tabTheme.items.push_back({ AppStrings::Settings_Header_GlassTint, OptionType::Header });
-    SettingsItem itemTintProfile = { AppStrings::Settings_Label_TintProfile, OptionType::Segment, nullptr, nullptr, &g_config.GlassTintProfile, nullptr, 0, 0, { AppStrings::Settings_Option_TintAuto, AppStrings::Settings_Option_TintCustom } };
+    AddHeader(tabTheme, AppStrings::g.Settings_Header_GlassTint);
+    SettingsItem itemTintProfile = { AppStrings::g.Settings_Label_TintProfile, OptionType::Segment, nullptr, nullptr, &g_config.GlassTintProfile, nullptr, 0, 0, { AppStrings::g.Settings_Option_TintAuto, AppStrings::g.Settings_Option_TintCustom } };
     itemTintProfile.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { 
-        overlay->AutoSwitchToCustom();
+        overlay->OnGlassMaterialChanged();
         overlay->m_pendingRebuild = true; 
     };
-    tabTheme.items.push_back(itemTintProfile);
+    tabTheme.items.push_back(std::move(itemTintProfile));
 
     if (g_config.GlassTintProfile == 1) {
-        SettingsItem itemTintColor = { AppStrings::Settings_Label_GlassCustomColor, OptionType::CustomColorRow };
+        SettingsItem itemTintColor = { AppStrings::g.Settings_Label_GlassCustomColor, OptionType::CustomColorRow };
         itemTintColor.pFloatVal = &g_config.GlassCustomTintR;
         itemTintColor.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
             HWND hwnd = GetActiveWindow();
@@ -1435,49 +2700,64 @@ void SettingsOverlay::BuildMenu() {
                 g_config.GlassCustomTintR = GetRValue(cc.rgbResult) / 255.0f;
                 g_config.GlassCustomTintG = GetGValue(cc.rgbResult) / 255.0f;
                 g_config.GlassCustomTintB = GetBValue(cc.rgbResult) / 255.0f;
-                overlay->AutoSwitchToCustom();
+                overlay->OnGlassMaterialChanged();
             }
         };
-        tabTheme.items.push_back(itemTintColor);
+        tabTheme.items.push_back(std::move(itemTintColor));
     }
 
     // Z-Depth Modals
-    tabTheme.items.push_back({ AppStrings::Settings_Header_DensityMatrix, OptionType::Header });
-    
-    SettingsItem itemOsd = { AppStrings::Settings_Label_OsdDensity, OptionType::Slider, nullptr, &g_config.GlassOsdOpacity };
+    AddHeader(tabTheme, AppStrings::g.Settings_Header_DensityMatrix);
+    SettingsItem itemOsd = { AppStrings::g.Settings_Label_OsdDensity, OptionType::Slider, nullptr, &g_config.GlassOsdOpacity };
     itemOsd.minVal = 0.0f; itemOsd.maxVal = 100.0f; itemOsd.displayFormat = L"%.0f %%";
-    itemOsd.tooltipText = AppStrings::Settings_Tooltip_OsdDensity;
-    itemOsd.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->AutoSwitchToCustom(false); };
-    tabTheme.items.push_back(itemOsd);
+    itemOsd.tooltipText = AppStrings::g.Settings_Tooltip_OsdDensity;
+    itemOsd.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->OnGlassMaterialChanged(false); };
+    tabTheme.items.push_back(std::move(itemOsd));
 
-    SettingsItem itemPanels = { AppStrings::Settings_Label_PanelsDensity, OptionType::Slider, nullptr, &g_config.GlassPanelsOpacity };
+    SettingsItem itemPanels = { AppStrings::g.Settings_Label_PanelsDensity, OptionType::Slider, nullptr, &g_config.GlassPanelsOpacity };
     itemPanels.minVal = 0.0f; itemPanels.maxVal = 100.0f; itemPanels.displayFormat = L"%.0f %%";
-    itemPanels.tooltipText = AppStrings::Settings_Tooltip_PanelsDensity;
-    itemPanels.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->AutoSwitchToCustom(false); };
-    tabTheme.items.push_back(itemPanels);
+    itemPanels.tooltipText = AppStrings::g.Settings_Tooltip_PanelsDensity;
+    itemPanels.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->OnGlassMaterialChanged(false); };
+    tabTheme.items.push_back(std::move(itemPanels));
 
-    SettingsItem itemModals = { AppStrings::Settings_Label_ModalsDensity, OptionType::Slider, nullptr, &g_config.GlassModalsOpacity };
+    SettingsItem itemModals = { AppStrings::g.Settings_Label_ModalsDensity, OptionType::Slider, nullptr, &g_config.GlassModalsOpacity };
     itemModals.minVal = 0.0f; itemModals.maxVal = 100.0f; itemModals.displayFormat = L"%.0f %%";
-    itemModals.tooltipText = AppStrings::Settings_Tooltip_ModalsDensity;
-    itemModals.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->AutoSwitchToCustom(false); };
-    tabTheme.items.push_back(itemModals);
+    itemModals.tooltipText = AppStrings::g.Settings_Tooltip_ModalsDensity;
+    itemModals.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->OnGlassMaterialChanged(false); };
+    tabTheme.items.push_back(std::move(itemModals));
 
-    SettingsItem itemMenus = { AppStrings::Settings_Label_MenusDensity, OptionType::Slider, nullptr, &g_config.GlassMenusOpacity };
+    SettingsItem itemMenus = { AppStrings::g.Settings_Label_MenusDensity, OptionType::Slider, nullptr, &g_config.GlassMenusOpacity };
     itemMenus.minVal = 0.0f; itemMenus.maxVal = 100.0f; itemMenus.displayFormat = L"%.0f %%";
-    itemMenus.tooltipText = AppStrings::Settings_Tooltip_MenusDensity;
+    itemMenus.tooltipText = AppStrings::g.Settings_Tooltip_MenusDensity;
     if (g_config.MenuBackdropStyle != 0) { // 1=Mica, 2=Mica Alt
         g_config.GlassMenusOpacity = 0.0f;
         itemMenus.isDisabled = true;
         itemMenus.pFloatVal = &fZero;
     }
-    itemMenus.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->AutoSwitchToCustom(false); };
-    tabTheme.items.push_back(itemMenus);
+    itemMenus.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->OnGlassMaterialChanged(false); };
+    tabTheme.items.push_back(std::move(itemMenus));
+
+    SettingsItem itemResetGlass = { AppStrings::g.Settings_Label_ResetGlass, OptionType::ActionButton };
+    itemResetGlass.buttonText = AppStrings::g.Settings_Action_ResetGlass;
+    itemResetGlass.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        g_config.ApplyThemePreset(IsLightThemeActive() ? PRESET_LIGHT : PRESET_DARK);
+        if (!g_config.GlassShowBorders) {
+            overlay->m_borderStrokeOption = 0;
+        } else {
+            overlay->m_borderStrokeOption = (g_config.GlassVectorStrokeWeightIndex == 1) ? 1 : 2;
+        }
+        QuickView::UI::Theme::RefreshThemePalette(g_config);
+        SaveConfig();
+        if (overlay->m_hwnd) InvalidateRect(overlay->m_hwnd, nullptr, FALSE);
+        overlay->m_pendingRebuild = true;
+    };
+    tabTheme.items.push_back(std::move(itemResetGlass));
 
 
     // Theme Management
-    SettingsItem itemThemeManage = { AppStrings::Settings_Header_ThemeManagement, OptionType::DualActionButton };
-    itemThemeManage.buttonText = AppStrings::Settings_Action_ImportTheme;
-    itemThemeManage.buttonText2 = AppStrings::Settings_Action_ExportTheme;
+    SettingsItem itemThemeManage = { AppStrings::g.Settings_Header_ThemeManagement, OptionType::DualActionButton };
+    itemThemeManage.buttonText = AppStrings::g.Settings_Action_ImportTheme;
+    itemThemeManage.buttonText2 = AppStrings::g.Settings_Action_ExportTheme;
     itemThemeManage.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         if (QuickView::UI::ThemeSystem::ImportTheme(overlay->m_hwnd, g_config)) {
              g_runtime.SyncFrom(g_config);
@@ -1489,41 +2769,36 @@ void SettingsOverlay::BuildMenu() {
              // Maybe show a success status?
         }
     };
-    tabTheme.items.push_back(itemThemeManage);
+    tabTheme.items.push_back(std::move(itemThemeManage));
+}
 
-    m_tabs.push_back(tabTheme);
-    
-    // --- 3. Interface (Visuals) ---
-    SettingsTab tabVisuals;
-    tabVisuals.name = AppStrings::Settings_Tab_Visuals;
+void SettingsOverlay::BuildVisualsTab(SettingsTab& tabVisuals) {
+    tabVisuals.name = AppStrings::g.Settings_Tab_Visuals;
     tabVisuals.icon = Icons::Visuals;
     
     // Backdrop
-    tabVisuals.items.push_back({ AppStrings::Settings_Header_Backdrop, OptionType::Header });
-    
+    AddHeader(tabVisuals, AppStrings::g.Settings_Header_Backdrop);
     // Canvas Color Segment
-    SettingsItem itemColor = { AppStrings::Settings_Label_CanvasColor, OptionType::Segment, nullptr, nullptr, BindEnum(&g_config.CanvasColor), nullptr, 0, 0, {AppStrings::Settings_Option_Black, AppStrings::Settings_Option_White, AppStrings::Settings_Option_Grid, AppStrings::Settings_Option_Custom, AppStrings::Settings_Option_Effects} };
-    itemColor.isNewOption = true;
+    SettingsItem itemColor = { AppStrings::g.Settings_Label_CanvasColor, OptionType::Segment, nullptr, nullptr, BindEnum(&g_config.CanvasColor), nullptr, 0, 0, {AppStrings::g.Settings_Option_Black, AppStrings::g.Settings_Option_White, AppStrings::g.Settings_Option_Grid, AppStrings::g.Settings_Option_Custom, AppStrings::g.Settings_Option_Effects} };
     itemColor.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         ApplyWindowTheme(overlay->m_hwnd);
         overlay->m_pendingRebuild = true;
     }; // Rebuild to show/hide sub-options
-    tabVisuals.items.push_back(itemColor);
+    tabVisuals.items.push_back(std::move(itemColor));
     
     if (g_config.CanvasColor == 4) {
         // Effects mode: Show sub-segment for selecting effect (Mica, Mica Alt, Acrylic)
-        SettingsItem itemCanvasEffectStyle = { AppStrings::Settings_Label_CanvasEffectStyle, OptionType::Segment, nullptr, nullptr, BindEnum(&g_config.CanvasEffectStyle), nullptr, 0, 0, {L"Mica", L"Mica Alt", L"Acrylic"} };
-        itemCanvasEffectStyle.isNewOption = true;
-        itemCanvasEffectStyle.tooltipText = AppStrings::Settings_Tooltip_BackdropEffectsTip;
+        SettingsItem itemCanvasEffectStyle = { AppStrings::g.Settings_Label_CanvasEffectStyle, OptionType::Segment, nullptr, nullptr, BindEnum(&g_config.CanvasEffectStyle), nullptr, 0, 0, {L"Mica", L"Mica Alt", L"Acrylic"} };
+        itemCanvasEffectStyle.tooltipText = AppStrings::g.Settings_Tooltip_BackdropEffectsTip;
         itemCanvasEffectStyle.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
             ApplyWindowTheme(overlay->m_hwnd);
         };
-        tabVisuals.items.push_back(itemCanvasEffectStyle);
+        tabVisuals.items.push_back(std::move(itemCanvasEffectStyle));
         // ShowGrid toggle for overlaying grid on backdrop effects
-        tabVisuals.items.push_back({ AppStrings::Settings_Label_ShowGrid, OptionType::Toggle, &g_config.CanvasShowGrid });
+        AddSimpleToggle(tabVisuals, AppStrings::g.Settings_Label_ShowGrid, &g_config.CanvasShowGrid);
     } else if (g_config.CanvasColor == 3) {
         // Custom Mode: Show merged row
-        SettingsItem itemRow = { AppStrings::Settings_Label_Overlay, OptionType::CustomColorRow };
+        SettingsItem itemRow = { AppStrings::g.Settings_Label_Overlay, OptionType::CustomColorRow };
         // We can use onChange as the Color Picker callback
         itemRow.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
              HWND hwnd = GetActiveWindow();
@@ -1541,29 +2816,23 @@ void SettingsOverlay::BuildMenu() {
                 g_config.CanvasCustomB = GetBValue(cc.rgbResult) / 255.0f;
             }
         };
-        tabVisuals.items.push_back(itemRow);
+        tabVisuals.items.push_back(std::move(itemRow));
     } else if (g_config.CanvasColor != 2) {
         // Black (0) & White (1) Mode: Show Grid Toggle (Hidden for Grid (2) mode)
-        tabVisuals.items.push_back({ AppStrings::Settings_Label_ShowGrid, OptionType::Toggle, &g_config.CanvasShowGrid });
+        AddSimpleToggle(tabVisuals, AppStrings::g.Settings_Label_ShowGrid, &g_config.CanvasShowGrid);
     }
 
-    tabVisuals.items.push_back({ AppStrings::Settings_Header_Window, OptionType::Header });
-    SettingsItem itemSmooth = { AppStrings::Settings_Label_EnableSmoothScaling, OptionType::Toggle, &g_config.EnableSmoothScaling };
-    itemSmooth.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
-    tabVisuals.items.push_back(itemSmooth);
-
-
+    AddHeader(tabVisuals, AppStrings::g.Settings_Header_Window);
     static float s_uiScalePresetVal = (float)g_config.UIScalePreset;
     s_uiScalePresetVal = (float)g_config.UIScalePreset;
     SettingsItem itemUiScale;
-    itemUiScale.label = AppStrings::Settings_Label_UIScale;
+    itemUiScale.label = AppStrings::g.Settings_Label_UIScale;
     itemUiScale.type = OptionType::Slider;
     itemUiScale.pFloatVal = &s_uiScalePresetVal;
     itemUiScale.minVal = 0.0f;
     itemUiScale.maxVal = 11.0f;
     itemUiScale.step = 1.0f;
-    itemUiScale.isNewOption = true;
-    itemUiScale.options = { AppStrings::Settings_Option_Auto, L"75%", L"90%", L"100%", L"110%", L"125%", L"150%", L"175%", L"200%", L"225%", L"250%", L"300%" };
+    { const std::wstring_view opts[] = { AppStrings::g.Settings_Option_Auto, L"75%", L"90%", L"100%", L"110%", L"125%", L"150%", L"175%", L"200%", L"225%", L"250%", L"300%" }; AssignOptions(itemUiScale, opts); }
     itemUiScale.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, SettingsItem* item) {
         if (item && item->pFloatVal) {
             int idx = (int)roundf(*item->pFloatVal);
@@ -1582,29 +2851,28 @@ void SettingsOverlay::BuildMenu() {
         }
         SaveConfig();
     };
-    tabVisuals.items.push_back(itemUiScale);
+    tabVisuals.items.push_back(std::move(itemUiScale));
 
 
     
     // Always on Top with immediate effect
-    SettingsItem itemAoT = { AppStrings::Settings_Label_AlwaysOnTop, OptionType::Toggle, &g_config.AlwaysOnTop };
+    SettingsItem itemAoT = { AppStrings::g.Settings_Label_AlwaysOnTop, OptionType::Toggle, &g_config.AlwaysOnTop };
     itemAoT.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         HWND hwnd = GetActiveWindow();
         SetWindowPos(hwnd, g_config.AlwaysOnTop ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
     };
-    tabVisuals.items.push_back(itemAoT);
+    tabVisuals.items.push_back(std::move(itemAoT));
     
 
-    tabVisuals.items.push_back({ AppStrings::Settings_Label_AutoHideTitle, OptionType::Toggle, &g_config.AutoHideWindowControls });
-    
-    SettingsItem itemShowOSD = { AppStrings::Settings_Label_ShowOSD, OptionType::Toggle, &g_config.ShowOSD };
+    AddSimpleToggle(tabVisuals, AppStrings::g.Settings_Label_AutoHideTitle, &g_config.AutoHideWindowControls);
+    SettingsItem itemShowOSD = { AppStrings::g.Settings_Label_ShowOSD, OptionType::Toggle, &g_config.ShowOSD };
     itemShowOSD.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         SaveConfig();
     };
-    tabVisuals.items.push_back(itemShowOSD);
+    tabVisuals.items.push_back(std::move(itemShowOSD));
     
     // Window Min Width Slider (200px to 800px)
-    SettingsItem itemMinSize = { AppStrings::Settings_Label_WindowMinSize, OptionType::Slider, nullptr, &g_config.WindowMinSize };
+    SettingsItem itemMinSize = { AppStrings::g.Settings_Label_WindowMinSize, OptionType::Slider, nullptr, &g_config.WindowMinSize };
     // UI controls width is roughly 38.0f * 4 * m_uiScale (which is 152 at 1.0 scale).
     // We can set the minimum of the slider to 152.0f * m_uiScale to ensure we never go below the window controls width.
     itemMinSize.minVal = 152.0f * m_uiScale;
@@ -1614,16 +2882,16 @@ void SettingsOverlay::BuildMenu() {
     itemMinSize.maxVal = 800.0f;
     itemMinSize.step = 1.0f;
     itemMinSize.displayFormat = L"%.0f px";
-    tabVisuals.items.push_back(itemMinSize);
+    tabVisuals.items.push_back(std::move(itemMinSize));
 
     // Window Max Start Size Percent Slider (10% to 100%)
-    SettingsItem itemMaxSize = { AppStrings::Settings_Label_WindowMaxSizePercent, OptionType::Slider, nullptr, &g_config.WindowMaxSizePercent };
+    SettingsItem itemMaxSize = { AppStrings::g.Settings_Label_WindowMaxSizePercent, OptionType::Slider, nullptr, &g_config.WindowMaxSizePercent };
     itemMaxSize.minVal = 10.0f;
     itemMaxSize.maxVal = 100.0f;
     itemMaxSize.displayFormat = L"%.0f %%";
-    tabVisuals.items.push_back(itemMaxSize);
+    tabVisuals.items.push_back(std::move(itemMaxSize));
 
-    SettingsItem itemGalleryMin = { AppStrings::Settings_Label_GalleryMinSize, OptionType::Slider, nullptr, &g_config.GalleryMinSize };
+    SettingsItem itemGalleryMin = { AppStrings::g.Settings_Label_GalleryMinSize, OptionType::Slider, nullptr, &g_config.GalleryMinSize };
     float galleryMinLo = 0.0f, galleryMinHi = 0.0f;
     GalleryOverlay::GetMinSizeSliderRange(m_hwnd, m_uiScale, galleryMinLo, galleryMinHi);
     itemGalleryMin.minVal = galleryMinLo;
@@ -1640,11 +2908,11 @@ void SettingsOverlay::BuildMenu() {
             AdjustWindowForOverlay(g_mainHwnd, false);
         }
     };
-    tabVisuals.items.push_back(itemGalleryMin);
+    tabVisuals.items.push_back(std::move(itemGalleryMin));
 
-    SettingsItem itemBorderInd = { AppStrings::Settings_Label_ShowBorderIndicator, OptionType::Segment, nullptr, &g_config.BorderIndicatorCustomR, &g_config.ShowBorderIndicator, nullptr, 0, 0, {AppStrings::Settings_Option_Off, AppStrings::Settings_Option_On, AppStrings::Settings_Option_Custom} };
+    SettingsItem itemBorderInd = { AppStrings::g.Settings_Label_ShowBorderIndicator, OptionType::Segment, nullptr, &g_config.BorderIndicatorCustomR, &g_config.ShowBorderIndicator, nullptr, 0, 0, {AppStrings::g.Settings_Option_Off, AppStrings::g.Settings_Option_BorderAccent, AppStrings::g.Settings_Option_Custom} };
     itemBorderInd.isNewOption = true;
-    itemBorderInd.tooltipText = AppStrings::Settings_Tooltip_ShowBorderIndicator;
+    itemBorderInd.tooltipText = AppStrings::g.Settings_Tooltip_ShowBorderIndicator;
     itemBorderInd.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         if (g_config.ShowBorderIndicator == 2) {
             HWND hwnd = GetActiveWindow();
@@ -1665,17 +2933,17 @@ void SettingsOverlay::BuildMenu() {
         SaveConfig();
         if (overlay->m_hwnd) InvalidateRect(overlay->m_hwnd, nullptr, FALSE);
     };
-    tabVisuals.items.push_back(itemBorderInd);
+    tabVisuals.items.push_back(std::move(itemBorderInd));
 
-    SettingsItem itemShowNavigator = { AppStrings::Settings_Label_ShowNavigator, OptionType::Segment, nullptr, nullptr, &g_config.ShowNavigator, nullptr, 0, 0, {AppStrings::Settings_Option_NavigatorAuto, AppStrings::Settings_Option_NavigatorOn, AppStrings::Settings_Option_NavigatorOff} };
-    itemShowNavigator.tooltipText = AppStrings::Settings_Tooltip_ShowNavigator;
-    tabVisuals.items.push_back(itemShowNavigator);
+    SettingsItem itemShowNavigator = { AppStrings::g.Settings_Label_ShowNavigator, OptionType::Segment, nullptr, nullptr, &g_config.ShowNavigator, nullptr, 0, 0, {AppStrings::g.Settings_Option_Auto, AppStrings::g.Settings_Option_On, AppStrings::g.Settings_Option_Off} };
+    itemShowNavigator.tooltipText = AppStrings::g.Settings_Tooltip_ShowNavigator;
+    tabVisuals.items.push_back(std::move(itemShowNavigator));
 
     // Open FullScreen Mode & FullScreen Zoom Mode (Moved to Window Category Bottom)
-    tabVisuals.items.push_back({ AppStrings::Settings_Label_OpenFullScreenMode, OptionType::Segment, nullptr, nullptr, &g_config.OpenFullScreenMode, nullptr, 0, 0, {AppStrings::Settings_Option_Off, AppStrings::Settings_Option_LargeOnly, AppStrings::Settings_Option_All} });
+    tabVisuals.items.push_back({ AppStrings::g.Settings_Label_OpenFullScreenMode, OptionType::Segment, nullptr, nullptr, &g_config.OpenFullScreenMode, nullptr, 0, 0, {AppStrings::g.Settings_Option_Off, AppStrings::g.Settings_Option_LargeOnly, AppStrings::g.Settings_Option_All} });
     
-    SettingsItem itemFsZoom = { AppStrings::Settings_Label_FullScreenZoomMode, OptionType::Segment, nullptr, nullptr, &g_config.FullScreenZoomMode, nullptr, 0, 0, {AppStrings::Settings_Option_FitScreen, AppStrings::Settings_Option_AutoFit} };
-    itemFsZoom.tooltipText = AppStrings::Settings_Tooltip_ZoomAuto;
+    SettingsItem itemFsZoom = { AppStrings::g.Settings_Label_FullScreenZoomMode, OptionType::Segment, nullptr, nullptr, &g_config.FullScreenZoomMode, nullptr, 0, 0, {AppStrings::g.Settings_Option_FitScreen, AppStrings::g.Settings_Option_Auto} };
+    itemFsZoom.tooltipText = AppStrings::g.Settings_Tooltip_ZoomAuto;
     itemFsZoom.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         SaveConfig();
         HWND hwnd = GetActiveWindow();
@@ -1686,14 +2954,15 @@ void SettingsOverlay::BuildMenu() {
             InvalidateRect(hwnd, nullptr, FALSE);
         }
     };
-    tabVisuals.items.push_back(itemFsZoom);
+    tabVisuals.items.push_back(std::move(itemFsZoom));
 
-    tabVisuals.items.push_back({ AppStrings::Settings_Header_WindowLock, OptionType::Header });
-    SettingsItem itemLockWindow = { AppStrings::Settings_Label_LockWindow, OptionType::Toggle, &g_config.LockWindowSize };
-    itemLockWindow.tooltipText = AppStrings::Settings_Tooltip_LockWindow;
+    AddHeader(tabVisuals, AppStrings::g.Settings_Header_WindowLock);
+    SettingsItem itemLockWindow = { AppStrings::g.Settings_Label_LockWindow, OptionType::Toggle, &g_config.LockWindowSize };
+    itemLockWindow.tooltipText = AppStrings::g.Settings_Tooltip_LockWindow;
     itemLockWindow.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-        g_runtime.LockWindowSize = g_config.LockWindowSize;
-        g_toolbar.SetLockState(g_runtime.LockWindowSize);
+        extern void SetLockWindowSize(HWND hwnd, bool locked);
+        extern HWND g_mainHwnd;
+        SetLockWindowSize(g_mainHwnd, g_config.LockWindowSize);
         if (!g_config.LockWindowSize) {
             g_config.RememberLastWindowSizeAndPosition = false;
             if (g_config.GalleryKeepVisibleOnThumbnailClick) {
@@ -1703,9 +2972,9 @@ void SettingsOverlay::BuildMenu() {
         }
         SaveConfig();
     };
-    tabVisuals.items.push_back(itemLockWindow);
+    tabVisuals.items.push_back(std::move(itemLockWindow));
 
-    SettingsItem itemKeepWindowSize = { AppStrings::Settings_Label_KeepWindowSizeOnNav, OptionType::Toggle, &g_config.KeepWindowSizeOnNav };
+    SettingsItem itemKeepWindowSize = { AppStrings::g.Settings_Label_KeepWindowSizeOnNav, OptionType::Toggle, &g_config.KeepWindowSizeOnNav };
     itemKeepWindowSize.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         if (!g_config.KeepWindowSizeOnNav) {
             if (g_config.GalleryKeepVisibleOnThumbnailClick) {
@@ -1715,23 +2984,22 @@ void SettingsOverlay::BuildMenu() {
         }
         SaveConfig();
     };
-    tabVisuals.items.push_back(itemKeepWindowSize);
-    SettingsItem itemRememberWindow = { AppStrings::Settings_Label_RememberLastWindowSizeAndPosition, OptionType::Toggle, &g_config.RememberLastWindowSizeAndPosition };
+    tabVisuals.items.push_back(std::move(itemKeepWindowSize));
+    SettingsItem itemRememberWindow = { AppStrings::g.Settings_Label_RememberLastWindowSizeAndPosition, OptionType::Toggle, &g_config.RememberLastWindowSizeAndPosition };
     itemRememberWindow.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         if (g_config.RememberLastWindowSizeAndPosition) {
             g_config.LockWindowSize = true;
-            g_runtime.LockWindowSize = true;
-            g_toolbar.SetLockState(true);
+            extern void SetLockWindowSize(HWND hwnd, bool locked);
+            extern HWND g_mainHwnd;
+            SetLockWindowSize(g_mainHwnd, true);
         }
         SaveConfig();
     };
-    tabVisuals.items.push_back(itemRememberWindow);
-    tabVisuals.items.push_back({ AppStrings::Settings_Label_UpscaleSmallImagesWhenLocked, OptionType::Toggle, &g_config.UpscaleSmallImagesWhenLocked });
-
-    tabVisuals.items.push_back({ AppStrings::Settings_Header_Panel, OptionType::Header });
-    
+    tabVisuals.items.push_back(std::move(itemRememberWindow));
+    AddSimpleToggle(tabVisuals, AppStrings::g.Settings_Label_UpscaleSmallImagesWhenLocked, &g_config.UpscaleSmallImagesWhenLocked);
+    AddHeader(tabVisuals, AppStrings::g.Settings_Header_Panel);
     // [Fix] Lock Toolbar: Update runtime state immediately
-    SettingsItem itemToolbar = { AppStrings::Settings_Label_LockToolbar, OptionType::Toggle, &g_config.LockBottomToolbar };
+    SettingsItem itemToolbar = { AppStrings::g.Settings_Label_LockToolbar, OptionType::Toggle, &g_config.LockBottomToolbar };
     itemToolbar.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         g_toolbar.SetPinned(g_config.LockBottomToolbar);
         
@@ -1744,10 +3012,10 @@ void SettingsOverlay::BuildMenu() {
 
         if (g_config.LockBottomToolbar) g_toolbar.SetVisible(true);
     };
-    tabVisuals.items.push_back(itemToolbar);
+    tabVisuals.items.push_back(std::move(itemToolbar));
     
     // Exif Panel Mode (Syncs to Runtime ShowInfoPanel)
-    SettingsItem itemExif = { AppStrings::Settings_Label_ExifMode, OptionType::Segment, nullptr, nullptr, BindEnum(&g_config.ExifPanelMode), nullptr, 0, 0, {AppStrings::Settings_Option_Off, AppStrings::Settings_Option_Lite, AppStrings::Settings_Option_Full} };
+    SettingsItem itemExif = { AppStrings::g.Settings_Label_ExifMode, OptionType::Segment, nullptr, nullptr, BindEnum(&g_config.ExifPanelMode), nullptr, 0, 0, {AppStrings::g.Settings_Option_Off, AppStrings::g.Settings_Option_Lite, AppStrings::g.Settings_Option_Full} };
     itemExif.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         if (g_config.ExifPanelMode == 0) {
             g_runtime.ShowInfoPanel = false;
@@ -1756,37 +3024,36 @@ void SettingsOverlay::BuildMenu() {
             g_runtime.InfoPanelExpanded = (g_config.ExifPanelMode == 2); // 1=Lite (false), 2=Full (true)
         }
     };
-    tabVisuals.items.push_back(itemExif);
+    tabVisuals.items.push_back(std::move(itemExif));
     
     // Toolbar Info Button Default (Lite/Full) (Moved to Panel Category)
-    tabVisuals.items.push_back({ AppStrings::Settings_Label_ToolbarInfoDefault, OptionType::Segment, nullptr, nullptr, &g_config.ToolbarInfoDefault, nullptr, 0, 0, {AppStrings::Settings_Option_Lite, AppStrings::Settings_Option_Full} });
+    tabVisuals.items.push_back({ AppStrings::g.Settings_Label_ToolbarInfoDefault, OptionType::Segment, nullptr, nullptr, &g_config.ToolbarInfoDefault, nullptr, 0, 0, {AppStrings::g.Settings_Option_Lite, AppStrings::g.Settings_Option_Full} });
     
     // Custom Lite Info Panel Section (Group Header + Cloud Lists + Presets)
-    SettingsItem headerCustomLite = { AppStrings::Settings_Label_CustomLiteInfoPanel, OptionType::Header };
-    headerCustomLite.isNewOption = true;
-    tabVisuals.items.push_back(headerCustomLite);
+    SettingsItem headerCustomLite = { AppStrings::g.Settings_Label_CustomLiteInfoPanel, OptionType::Header };
+    tabVisuals.items.push_back(std::move(headerCustomLite));
     
     SettingsItem tagCloudNormal;
-    tagCloudNormal.label = AppStrings::Settings_Label_ItemsInNormalMode;
+    tagCloudNormal.label = AppStrings::g.Settings_Label_ItemsInNormalMode;
     tagCloudNormal.type = OptionType::TagCloud;
     tagCloudNormal.pStrVal = &g_config.InfoPanelLiteItemsNormal;
-    tagCloudNormal.options = { L"Zoom", L"Progress", L"File", L"Size", L"Disk", L"Date", L"Format", L"Sharp", L"Ent", L"BPP", L"Camera", L"Exp", L"Lens", L"Focal", L"Profile", L"HDR", L"Flash", L"W.Bal", L"Meter", L"Prog", L"Program", L"GPS" };
+    { const std::wstring_view opts[] = { L"Zoom", L"Progress", L"File", L"Rating", L"Size", L"Disk", L"Date", L"Format", L"Sharp", L"Ent", L"BPP", L"Camera", L"Exp", L"Lens", L"Focal", L"Profile", L"HDR", L"Flash", L"W.Bal", L"Meter", L"Prog", L"Program", L"GPS" }; AssignOptions(tagCloudNormal, opts); }
     tagCloudNormal.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
-    tabVisuals.items.push_back(tagCloudNormal);
+    tabVisuals.items.push_back(std::move(tagCloudNormal));
 
     SettingsItem tagCloudCompare;
-    tagCloudCompare.label = AppStrings::Settings_Label_ItemsInCompareMode;
+    tagCloudCompare.label = AppStrings::g.Settings_Label_ItemsInCompareMode;
     tagCloudCompare.type = OptionType::TagCloud;
     tagCloudCompare.pStrVal = &g_config.InfoPanelLiteItemsCompare;
-    tagCloudCompare.options = { L"Zoom", L"Progress", L"File", L"Size", L"Disk", L"Date", L"Format", L"Sharp", L"Ent", L"BPP", L"Camera", L"Exp", L"Lens", L"Focal", L"Profile", L"HDR", L"Flash", L"W.Bal", L"Meter", L"Prog", L"Program" };
+    { const std::wstring_view opts[] = { L"Zoom", L"Progress", L"File", L"Rating", L"Size", L"Disk", L"Date", L"Format", L"Sharp", L"Ent", L"BPP", L"Camera", L"Exp", L"Lens", L"Focal", L"Profile", L"HDR", L"Flash", L"W.Bal", L"Meter", L"Prog", L"Program" }; AssignOptions(tagCloudCompare, opts); }
     tagCloudCompare.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
-    tabVisuals.items.push_back(tagCloudCompare);
+    tabVisuals.items.push_back(std::move(tagCloudCompare));
 
     SettingsItem separatorPreset;
-    separatorPreset.label = AppStrings::Settings_Label_SeparatorPreset;
+    separatorPreset.label = AppStrings::g.Settings_Label_SeparatorPreset;
     separatorPreset.type = OptionType::Segment;
     separatorPreset.pIntVal = &m_separatorPresetIndex;
-    separatorPreset.options = { L" \u00b7 ", L"  ", L" | ", L" - " };
+    { const std::wstring_view opts[] = { L" \u00b7 ", L"  ", L" | ", L" - " }; AssignOptions(separatorPreset, opts); }
     separatorPreset.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         if (item->pIntVal) {
             int idx = *item->pIntVal;
@@ -1797,43 +3064,41 @@ void SettingsOverlay::BuildMenu() {
             }
         }
     };
-    tabVisuals.items.push_back(separatorPreset);
+    tabVisuals.items.push_back(std::move(separatorPreset));
 
-    SettingsItem headerCustomFull = { AppStrings::Settings_Label_CustomFullInfoPanel, OptionType::Header };
-    headerCustomFull.isNewOption = true;
-    tabVisuals.items.push_back(headerCustomFull);
+    SettingsItem headerCustomFull = { AppStrings::g.Settings_Label_CustomFullInfoPanel, OptionType::Header };
+    tabVisuals.items.push_back(std::move(headerCustomFull));
     
     SettingsItem tagCloudFullNormal;
-    tagCloudFullNormal.label = AppStrings::Settings_Label_ItemsInNormalMode;
+    tagCloudFullNormal.label = AppStrings::g.Settings_Label_ItemsInNormalMode;
     tagCloudFullNormal.type = OptionType::TagCloud;
     tagCloudFullNormal.pStrVal = &g_config.InfoPanelFullItemsNormal;
-    tagCloudFullNormal.options = { L"Histogram", L"Position", L"File", L"RAW", L"Size", L"Disk", L"Date", L"Format", L"Sharp", L"Ent", L"BPP", L"Camera", L"Exp", L"Lens", L"Focal", L"Profile", L"HDR", L"Flash", L"W.Bal", L"Meter", L"Prog", L"Program", L"GPS" };
+    { const std::wstring_view opts[] = { L"Histogram", L"Position", L"File", L"RAW", L"Rating", L"Size", L"Disk", L"Date", L"Format", L"Sharp", L"Ent", L"BPP", L"Camera", L"Exp", L"Lens", L"Focal", L"Profile", L"HDR", L"Flash", L"W.Bal", L"Meter", L"Prog", L"Program", L"GPS" }; AssignOptions(tagCloudFullNormal, opts); }
     tagCloudFullNormal.tagCloudNoLimit = true;
     tagCloudFullNormal.tagCloudNoSort = true;
     tagCloudFullNormal.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
-    tabVisuals.items.push_back(tagCloudFullNormal);
+    tabVisuals.items.push_back(std::move(tagCloudFullNormal));
 
     SettingsItem tagCloudFullCompare;
-    tagCloudFullCompare.label = AppStrings::Settings_Label_ItemsInCompareMode;
+    tagCloudFullCompare.label = AppStrings::g.Settings_Label_ItemsInCompareMode;
     tagCloudFullCompare.type = OptionType::TagCloud;
     tagCloudFullCompare.pStrVal = &g_config.InfoPanelFullItemsCompare;
-    tagCloudFullCompare.options = { L"Histogram", L"File", L"RAW", L"Size", L"Disk", L"Date", L"Format", L"Sharp", L"Ent", L"BPP", L"Camera", L"Exp", L"Lens", L"Focal", L"Profile", L"HDR", L"Flash", L"W.Bal", L"Meter", L"Prog", L"Program" };
+    { const std::wstring_view opts[] = { L"Histogram", L"File", L"RAW", L"Rating", L"Size", L"Disk", L"Date", L"Format", L"Sharp", L"Ent", L"BPP", L"Camera", L"Exp", L"Lens", L"Focal", L"Profile", L"HDR", L"Flash", L"W.Bal", L"Meter", L"Prog", L"Program" }; AssignOptions(tagCloudFullCompare, opts); }
     tagCloudFullCompare.tagCloudNoLimit = true;
     tagCloudFullCompare.tagCloudNoSort = true;
     tagCloudFullCompare.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
-    tabVisuals.items.push_back(tagCloudFullCompare);
+    tabVisuals.items.push_back(std::move(tagCloudFullCompare));
 
     SettingsItem scaleOption;
-    scaleOption.label = AppStrings::Settings_Label_InfoPanelScale;
+    scaleOption.label = AppStrings::g.Settings_Label_InfoPanelScale;
     scaleOption.type = OptionType::ComboBox;
     scaleOption.pIntVal = &g_config.InfoPanelScale;
-    scaleOption.options = { L"Global", L"100%", L"125%", L"150%", L"175%", L"200%" };
+    { const std::wstring_view opts[] = { L"Global", L"100%", L"125%", L"150%", L"175%", L"200%" }; AssignOptions(scaleOption, opts); }
     scaleOption.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
-    tabVisuals.items.push_back(scaleOption);
+    tabVisuals.items.push_back(std::move(scaleOption));
     // --- Slideshow ---
-    tabVisuals.items.push_back({ AppStrings::Context_SlideshowMode, OptionType::Header });
-    
-    SettingsItem itemSlideInterval = { AppStrings::Settings_Label_SlideshowInterval, OptionType::Slider, nullptr, nullptr, nullptr, nullptr, 1.0f, 60.0f, {}, L"%.0fs" };
+    AddHeader(tabVisuals, AppStrings::g.Context_SlideshowMode);
+    SettingsItem itemSlideInterval = { AppStrings::g.Settings_Label_SlideshowInterval, OptionType::Slider, nullptr, nullptr, nullptr, nullptr, 1.0f, 60.0f, {}, L"%.0fs" };
     // Map ms to seconds for the slider
     static float s_slideshowSecs = g_config.SlideshowIntervalMs / 1000.0f;
     s_slideshowSecs = g_config.SlideshowIntervalMs / 1000.0f;
@@ -1848,352 +3113,431 @@ void SettingsOverlay::BuildMenu() {
             SetTimer(hwnd, IDT_SLIDESHOW, interval, nullptr);
         }
     };
-    tabVisuals.items.push_back(itemSlideInterval);
+    tabVisuals.items.push_back(std::move(itemSlideInterval));
 
-    SettingsItem itemSlideMode = { AppStrings::Settings_Label_SlideshowImmersive, OptionType::Segment, nullptr, nullptr, &g_config.SlideshowImmersiveMode, nullptr, 0, 0, { AppStrings::Settings_Option_SlideshowNormal, AppStrings::Settings_Option_SlideshowSpotlight } };
+    SettingsItem itemSlideMode = { AppStrings::g.Settings_Label_SlideshowImmersive, OptionType::Segment, nullptr, nullptr, &g_config.SlideshowImmersiveMode, nullptr, 0, 0, { AppStrings::g.Settings_Option_SlideshowNormal, AppStrings::g.Settings_Option_SlideshowSpotlight } };
     itemSlideMode.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
-    tabVisuals.items.push_back(itemSlideMode);
+    tabVisuals.items.push_back(std::move(itemSlideMode));
 
     // Professional Tools
-    tabVisuals.items.push_back({ AppStrings::Settings_Header_Professional, OptionType::Header });
-    SettingsItem itemShowDirtyRect = { AppStrings::Settings_Label_ShowDirtyRect, OptionType::Toggle, &g_config.ShowDirtyRectButton };
-    itemShowDirtyRect.tooltipText = AppStrings::Settings_Tooltip_ShowDirtyRect;
+    AddHeader(tabVisuals, AppStrings::g.Settings_Header_Professional);
+    SettingsItem itemShowDirtyRect = { AppStrings::g.Settings_Label_ShowDirtyRect, OptionType::Toggle, &g_config.ShowDirtyRectButton };
+    itemShowDirtyRect.tooltipText = AppStrings::g.Settings_Tooltip_ShowDirtyRect;
     itemShowDirtyRect.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
-    tabVisuals.items.push_back(itemShowDirtyRect);
+    tabVisuals.items.push_back(std::move(itemShowDirtyRect));
 
-    SettingsItem itemLoupeShape = { AppStrings::Settings_Label_LoupeShape, OptionType::Segment, nullptr, nullptr, &g_config.LoupeShape, nullptr, 0, 0, { AppStrings::Settings_Option_LoupeShapeSquare, AppStrings::Settings_Option_LoupeShapeCircle } };
+    SettingsItem itemLoupeShape = { AppStrings::g.Settings_Label_LoupeShape, OptionType::Segment, nullptr, nullptr, &g_config.LoupeShape, nullptr, 0, 0, { AppStrings::g.Settings_Option_LoupeShapeSquare, AppStrings::g.Settings_Option_LoupeShapeCircle, AppStrings::g.Settings_Option_LoupeShapeFullscreen } };
     itemLoupeShape.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
-    tabVisuals.items.push_back(itemLoupeShape);
+    tabVisuals.items.push_back(std::move(itemLoupeShape));
 
-    m_tabs.push_back(tabVisuals);
+    SettingsItem itemLoupeZoom = { AppStrings::g.Settings_Label_LoupeZoom, OptionType::Slider, nullptr, &g_config.LoupeZoom, nullptr, nullptr, 1.0f, 8.0f, {}, L"%.1fx" };
+    itemLoupeZoom.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
+    tabVisuals.items.push_back(std::move(itemLoupeZoom));
+}
 
-    // --- 3. Controls ---
-    SettingsTab tabControl;
-    tabControl.name = AppStrings::Settings_Tab_Controls;
+void SettingsOverlay::BuildControlTab(SettingsTab& tabControl) {
+    tabControl.name = AppStrings::g.Settings_Tab_Controls;
     tabControl.icon = Icons::Control;
-    
-    tabControl.items.push_back({ AppStrings::Settings_Header_Mouse, OptionType::Header });
-    tabControl.items.push_back({ AppStrings::Settings_Label_InvertWheel, OptionType::Toggle, &g_config.InvertWheel });
-    tabControl.items.push_back({ AppStrings::Help_Mouse_Wheel, OptionType::Segment, nullptr, nullptr, &g_config.WheelActionMode, nullptr, 0, 0, {AppStrings::Help_Action_Zoom, AppStrings::Help_Action_NextPrev} });
-    
-    // Thumb Wheel with Tooltip
-    SettingsItem itemThumbWheel = { AppStrings::Settings_Label_ThumbWheel, OptionType::Segment, nullptr, nullptr, &g_config.ThumbWheelMode, nullptr, 0, 0, {AppStrings::Help_Action_NextPrev, AppStrings::Help_Action_Zoom} };
-    itemThumbWheel.tooltipText = AppStrings::Settings_Tooltip_ThumbWheel;
-    tabControl.items.push_back(itemThumbWheel);
 
-    // Double-Click mode (NEW - Dropdown ComboBox)
-    SettingsItem itemDoubleClick = { AppStrings::Settings_Label_DoubleClick, OptionType::ComboBox, nullptr, nullptr, &g_config.DoubleClickMode };
-    itemDoubleClick.options = {
-        AppStrings::Settings_Option_DoubleClick_Smart,
-        AppStrings::Settings_Option_DoubleClick_WheelMode1,
-        AppStrings::Settings_Option_DoubleClick_WheelMode2,
-        AppStrings::Settings_Option_None
+    // Top Segmented Tabs: [ 鼠标手势 | 按键设置 | 高级与偏好 ] (Horizontally Centered)
+    SettingsItem itemSegment = { L"", OptionType::Segment, nullptr, nullptr, &s_controlSubTab, nullptr, 0, 0,
+        { std::wstring_view(AppStrings::g.Settings_ControlSub_Mouse),
+          std::wstring_view(AppStrings::g.Settings_ControlSub_Keyboard),
+          std::wstring_view(AppStrings::g.Settings_ControlSub_Behavior) } };
+    itemSegment.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        if (overlay) overlay->BuildMenu();
     };
-    itemDoubleClick.isNewOption = true;
-    itemDoubleClick.tooltipText = AppStrings::Settings_Tooltip_DoubleClick;
-    itemDoubleClick.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-        extern void ResetWheelPanMode();
-        ResetWheelPanMode();
-        SaveConfig();
-    };
-    tabControl.items.push_back(itemDoubleClick);
+    tabControl.items.push_back(std::move(itemSegment));
 
-    tabControl.items.push_back({ AppStrings::Settings_Label_ZoomSnapDamping, OptionType::Toggle, &g_config.EnableZoomSnapDamping });
-    tabControl.items.push_back({ AppStrings::Settings_Label_MouseAnchorZoom, OptionType::Toggle, &g_config.MouseAnchoredWindowZoom });
-    tabControl.items.push_back({ AppStrings::Settings_Label_RightButtonDragZoom, OptionType::Toggle, &g_config.RightButtonDragZoom });
-    tabControl.items.push_back({ AppStrings::Settings_Label_RightDragZoomSpeed, OptionType::Slider, nullptr, &g_config.RightDragZoomSpeed, nullptr, nullptr, 0.1f, 3.0f, {}, L"%.1fx" });
-    SettingsItem itemWheelZoomSpeed = { AppStrings::Settings_Label_WheelZoomSpeed, OptionType::Slider, nullptr, &g_config.WheelZoomSpeed, nullptr, nullptr, 5.0f, 50.0f, {}, L"%.0f%%" };
-    itemWheelZoomSpeed.tooltipText = AppStrings::Settings_Tooltip_WheelZoomSpeed;
-    tabControl.items.push_back(itemWheelZoomSpeed);
-    
-    // Use Fixed Zoom Levels
-    SettingsItem itemUseFixedZoom = { AppStrings::Settings_Label_UseFixedZoom, OptionType::Toggle, &g_config.UseFixedZoom };
-    itemUseFixedZoom.tooltipText = AppStrings::Settings_Tooltip_UseFixedZoom;
-    itemUseFixedZoom.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
-    tabControl.items.push_back(itemUseFixedZoom);
-    
-    // Fixed Zoom Levels Input
-    SettingsItem itemFixedZoomLevels;
-    itemFixedZoomLevels.label = AppStrings::Settings_Label_FixedZoomLevels;
-    itemFixedZoomLevels.type = OptionType::Input;
-    itemFixedZoomLevels.pStrVal = &g_config.FixedZoomLevels;
-    itemFixedZoomLevels.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-        ParseFixedZoomLevels();
-        SaveConfig();
-    };
-    itemFixedZoomLevels.onReset = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-        g_config.FixedZoomLevels = L"0.05,0.1,0.125,0.166,0.25,0.333,0.5,0.66,1,1.5,2,3,4,5,6,7,8,12,16,32,64,128";
-        ParseFixedZoomLevels();
-        SaveConfig();
-        overlay->RebuildMenu();
-    };
-    tabControl.items.push_back(itemFixedZoomLevels);
-
-    tabControl.items.push_back({ AppStrings::Settings_Label_InvertButtons, OptionType::Toggle, &g_config.InvertXButton });
-    
-    // Left Drag
-    SettingsItem itemLeftDrag = { AppStrings::Settings_Label_LeftDrag, OptionType::Segment, nullptr, nullptr, &g_config.LeftDragIndex, nullptr, 0, 0, {AppStrings::Settings_Option_Window, AppStrings::Settings_Option_Pan} };
-    itemLeftDrag.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-        if (g_config.LeftDragIndex == 0) {
-            g_config.LeftDragAction = MouseAction::WindowDrag;
-            g_config.MiddleDragAction = MouseAction::PanImage;
-            g_config.MiddleDragIndex = 1;
-        } else {
-            g_config.LeftDragAction = MouseAction::PanImage;
-            g_config.MiddleDragAction = MouseAction::WindowDrag;
-            g_config.MiddleDragIndex = 0;
+    if (s_controlSubTab == 0) {
+        // --- Sub-Tab 0: Mouse Gestures ---
+        if (g_config.MouseGestures == GetDefaultMouseGestures()) {
+            s_gesturePresetIdx = 0;
+        } else if (g_config.MouseGestures == GetStandardViewerMouseGestures()) {
+            s_gesturePresetIdx = 1;
+        } else if (g_config.MouseGestures == GetMinimalBrowserMouseGestures()) {
+            s_gesturePresetIdx = 2;
         }
-    };
-    tabControl.items.push_back(itemLeftDrag);
-    
-    // Middle Drag with Tooltip
-    SettingsItem itemMiddleDrag = { AppStrings::Settings_Label_MiddleDrag, OptionType::Segment, nullptr, nullptr, &g_config.MiddleDragIndex, nullptr, 0, 0, {AppStrings::Settings_Option_Window, AppStrings::Settings_Option_Pan} };
-    itemMiddleDrag.tooltipText = AppStrings::Settings_Tooltip_MiddleDrag;
-    itemMiddleDrag.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-        if (g_config.MiddleDragIndex == 0) {
-            g_config.MiddleDragAction = MouseAction::WindowDrag;
-            g_config.LeftDragAction = MouseAction::PanImage;
-            g_config.LeftDragIndex = 1;
-        } else {
-            g_config.MiddleDragAction = MouseAction::PanImage;
-            g_config.LeftDragAction = MouseAction::WindowDrag;
-            g_config.LeftDragIndex = 0;
-        }
-    };
-    tabControl.items.push_back(itemMiddleDrag);
-    
-    // Middle Click
-    SettingsItem itemMiddleClick = { AppStrings::Settings_Label_MiddleClick, OptionType::Segment, nullptr, nullptr, &g_config.MiddleClickIndex, nullptr, 0, 0, {AppStrings::Settings_Option_None, AppStrings::Settings_Option_Exit} };
-    itemMiddleClick.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-        if (g_config.MiddleClickIndex == 0) {
-            g_config.MiddleClickAction = MouseAction::None;
-        } else {
-            g_config.MiddleClickAction = MouseAction::ExitApp;
-        }
-    };
-    tabControl.items.push_back(itemMiddleClick);
-    
-    tabControl.items.push_back({ AppStrings::Settings_Header_KeyboardPan, OptionType::Header });
-    
-    SettingsItem itemPanNormal = { AppStrings::Settings_Label_PanStepNormal, OptionType::Slider, nullptr, &g_config.PanStepNormal, nullptr, nullptr, 1.0f, 600.0f, {}, L"%.0f px" };
-    itemPanNormal.tooltipText = AppStrings::Settings_Tooltip_PanStepNormal;
-    tabControl.items.push_back(itemPanNormal);
 
-    SettingsItem itemPanFast = { AppStrings::Settings_Label_PanStepFast, OptionType::Slider, nullptr, &g_config.PanStepFast, nullptr, nullptr, 10.0f, 1000.0f, {}, L"%.0f px" };
-    itemPanFast.step = 1.0f;
-    tabControl.items.push_back(itemPanFast);
-
-    tabControl.items.push_back({ AppStrings::Settings_Header_Edge, OptionType::Header });
-    tabControl.items.push_back({ AppStrings::Settings_Label_EdgeNavClick, OptionType::Toggle, &g_config.EdgeNavClick });
-    tabControl.items.push_back({ AppStrings::Settings_Label_DisableEdgeNavInCompare, OptionType::Toggle, &g_config.DisableEdgeNavInCompare });
-    tabControl.items.push_back({ AppStrings::Settings_Label_NavIndicator, OptionType::Segment, nullptr, nullptr, BindEnum(&g_config.NavIndicator), nullptr, 0, 0, {AppStrings::Settings_Option_Arrow, AppStrings::Settings_Option_Cursor} });
- 
-    // Gallery Trigger Mode
-    {
-        tabControl.items.push_back({ AppStrings::Settings_Header_GalleryTrigger, OptionType::Header });
-
-        SettingsItem itemGalleryTrigger = { AppStrings::Settings_Label_GalleryTriggerMode, OptionType::ComboBox, nullptr, nullptr, &g_config.GalleryTriggerMode };
-        itemGalleryTrigger.options = {
-            AppStrings::Settings_Option_GalleryTriggerAuto,
-            AppStrings::Settings_Option_GalleryTriggerDelay,
-            AppStrings::Settings_Option_GalleryTriggerClick,
-            AppStrings::Settings_Option_GalleryTriggerDisable
+        SettingsItem itemPreset = { AppStrings::g.Settings_Gesture_Preset, OptionType::ComboBox, nullptr, nullptr, &s_gesturePresetIdx };
+        { const std::wstring_view opts[] = {
+            AppStrings::g.Settings_Gesture_Preset_Default,
+            AppStrings::g.Settings_Gesture_Preset_Standard,
+            AppStrings::g.Settings_Gesture_Preset_Browser
+        }; AssignOptions(itemPreset, opts); }
+        itemPreset.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+            g_config.LoadMouseGesturePreset(s_gesturePresetIdx);
+            g_config.SyncMiddleClickHotkeyFromGestures();
+            g_config.SyncLegacyHotkeysArray(g_hotkeys);
+            SaveMouseGesturesConfig();
+            SaveHotkeysConfig();
+            if (overlay) overlay->BuildMenu();
         };
-        itemGalleryTrigger.tooltipText = AppStrings::Settings_Tooltip_GalleryTrigger;
-        itemGalleryTrigger.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { 
-            SaveConfig(); 
-            overlay->BuildMenu();
-        };
-        tabControl.items.push_back(itemGalleryTrigger);
+        tabControl.items.push_back(std::move(itemPreset));
 
-        SettingsItem itemKeepVisible = { AppStrings::Settings_Label_KeepGalleryVisibleOnThumbnailClick, OptionType::Toggle, &g_config.GalleryKeepVisibleOnThumbnailClick };
-        itemKeepVisible.isNewOption = true;
-        itemKeepVisible.tooltipText = AppStrings::Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick;
-        itemKeepVisible.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-            if (g_config.GalleryKeepVisibleOnThumbnailClick) {
-                g_config.LockWindowSize = true;
-                g_runtime.LockWindowSize = true;
-                g_toolbar.SetLockState(true);
-                g_config.KeepWindowSizeOnNav = true;
-                if (overlay) {
-                    overlay->BuildMenu();
+        SettingsItem itemReset = { L"", OptionType::ActionButton };
+        itemReset.buttonText = AppStrings::g.Settings_Gesture_Reset;
+        itemReset.isDestructive = true;
+        itemReset.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+            g_config.ResetMouseGesturesToDefault();
+            g_config.SyncMiddleClickHotkeyFromGestures();
+            g_config.SyncLegacyHotkeysArray(g_hotkeys);
+            s_gesturePresetIdx = 0;
+            SaveMouseGesturesConfig();
+            SaveHotkeysConfig();
+            if (overlay) overlay->BuildMenu();
+        };
+        tabControl.items.push_back(std::move(itemReset));
+
+        AddHeader(tabControl, AppStrings::g.Settings_ControlSub_Mouse);
+        for (size_t i = 0; i < g_config.MouseGestures.size(); ++i) {
+            SettingsItem rowItem;
+            rowItem.label = L"";
+            rowItem.type = OptionType::MouseGestureRow;
+            rowItem.gestureIndex = static_cast<int>(i);
+            tabControl.items.push_back(std::move(rowItem));
+        }
+
+        SettingsItem itemAdd = { L"", OptionType::ActionButton };
+        itemAdd.buttonText = AppStrings::g.Settings_Gesture_Add;
+        itemAdd.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+            MouseGestureRule candidate{ 0, 0, (uint8_t)MouseTrigger::LeftDrag, (int)MouseActionTarget::None };
+            bool foundUnused = false;
+            for (uint8_t m = 0; m <= 3 && !foundUnused; ++m) {
+                for (int t = 0; t < (int)MouseTrigger::Count; ++t) {
+                    MouseGestureRule probe{ m, 0, static_cast<uint8_t>(t), (int)MouseActionTarget::None };
+                    if (!g_config.HasMouseGesture(probe.GetModifiers(), static_cast<MouseTrigger>(t))) {
+                        candidate = probe;
+                        foundUnused = true;
+                        break;
+                    }
                 }
             }
+            if (!foundUnused) {
+                // Check two-modifier combinations as fallback
+                for (uint8_t m1 = 1; m1 <= 3 && !foundUnused; ++m1) {
+                    for (uint8_t m2 = m1 + 1; m2 <= 3 && !foundUnused; ++m2) {
+                        for (int t = 0; t < (int)MouseTrigger::Count; ++t) {
+                            MouseGestureRule probe{ m1, m2, static_cast<uint8_t>(t), (int)MouseActionTarget::None };
+                            if (!g_config.HasMouseGesture(probe.GetModifiers(), static_cast<MouseTrigger>(t))) {
+                                candidate = probe;
+                                foundUnused = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            g_config.MouseGestures.push_back(candidate);
+            SaveMouseGesturesConfig();
+            if (overlay) overlay->BuildMenu();
+        };
+        tabControl.items.push_back(std::move(itemAdd));
+    } else if (s_controlSubTab == 1) {
+        // --- Sub-Tab 1: Keyboard Shortcuts ---
+        BuildKeysTab(tabControl);
+    } else {
+        // --- Sub-Tab 2: Behavior & Advanced Preferences ---
+        AddHeader(tabControl, AppStrings::g.Settings_Header_Mouse);
+        AddSimpleToggle(tabControl, AppStrings::g.Settings_Label_InvertWheel, &g_config.InvertWheel);
+        AddSimpleToggle(tabControl, AppStrings::g.Settings_Label_InvertButtons, &g_config.InvertXButton);
+        AddSimpleToggle(tabControl, AppStrings::g.Settings_Label_MouseAnchorZoom, &g_config.MouseAnchoredWindowZoom);
+        tabControl.items.push_back({ AppStrings::g.Settings_Label_RightDragZoomSpeed, OptionType::Slider, nullptr, &g_config.RightDragZoomSpeed, nullptr, nullptr, 0.1f, 3.0f, {}, L"%.1fx" });
+        SettingsItem itemWheelZoomSpeed = { AppStrings::g.Settings_Label_WheelZoomSpeed, OptionType::Slider, nullptr, &g_config.WheelZoomSpeed, nullptr, nullptr, 5.0f, 50.0f, {}, L"%.0f%%" };
+        itemWheelZoomSpeed.tooltipText = AppStrings::g.Settings_Tooltip_WheelZoomSpeed;
+        tabControl.items.push_back(std::move(itemWheelZoomSpeed));
+        
+        // Use Fixed Zoom Levels
+        SettingsItem itemUseFixedZoom = { AppStrings::g.Settings_Label_UseFixedZoom, OptionType::Toggle, &g_config.UseFixedZoom };
+        itemUseFixedZoom.tooltipText = AppStrings::g.Settings_Tooltip_UseFixedZoom;
+        itemUseFixedZoom.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
+        tabControl.items.push_back(std::move(itemUseFixedZoom));
+        
+        // Fixed Zoom Levels Input
+        SettingsItem itemFixedZoomLevels;
+        itemFixedZoomLevels.label = AppStrings::g.Settings_Label_FixedZoomLevels;
+        itemFixedZoomLevels.type = OptionType::Input;
+        itemFixedZoomLevels.pStrVal = &g_config.FixedZoomLevels;
+        itemFixedZoomLevels.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+            ParseFixedZoomLevels();
             SaveConfig();
         };
-        tabControl.items.push_back(itemKeepVisible);
+        itemFixedZoomLevels.onReset = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+            g_config.FixedZoomLevels = L"0.05,0.1,0.125,0.166,0.25,0.333,0.5,0.66,1,1.5,2,3,4,5,6,7,8,12,16,32,64,128";
+            ParseFixedZoomLevels();
+            SaveConfig();
+            overlay->RebuildMenu();
+        };
+        tabControl.items.push_back(std::move(itemFixedZoomLevels));
 
-        if (g_config.GalleryTriggerMode == 0) {
-            SettingsItem itemAreaHeight = { AppStrings::Settings_Label_GalleryTriggerAreaHeight, OptionType::Slider, nullptr, &g_config.GalleryTriggerAreaHeight };
-            itemAreaHeight.minVal = 5.0f;
-            itemAreaHeight.maxVal = 100.0f;
-            itemAreaHeight.step = 1.0f;
-            itemAreaHeight.displayFormat = L"%.0f px";
-            itemAreaHeight.isNewOption = true;
-            itemAreaHeight.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
-            tabControl.items.push_back(itemAreaHeight);
-        } else if (g_config.GalleryTriggerMode == 1) {
-            SettingsItem itemDwell = { AppStrings::Settings_Label_GalleryDwellTime, OptionType::Slider, nullptr, &g_config.GalleryDwellTime };
-            itemDwell.minVal = 0.05f;
-            itemDwell.maxVal = 2.00f;
-            itemDwell.step = 0.01f;
-            itemDwell.displayFormat = L"%.2f s";
-            itemDwell.isNewOption = true;
-            itemDwell.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
-            tabControl.items.push_back(itemDwell);
+        AddHeader(tabControl, AppStrings::g.Settings_Header_KeyboardPan);
+        SettingsItem itemPanNormal = { AppStrings::g.Settings_Label_PanStepNormal, OptionType::Slider, nullptr, &g_config.PanStepNormal, nullptr, nullptr, 1.0f, 600.0f, {}, L"%.0f px" };
+        itemPanNormal.tooltipText = AppStrings::g.Settings_Tooltip_PanStepNormal;
+        tabControl.items.push_back(std::move(itemPanNormal));
+
+        SettingsItem itemPanFast = { AppStrings::g.Settings_Label_PanStepFast, OptionType::Slider, nullptr, &g_config.PanStepFast, nullptr, nullptr, 10.0f, 1000.0f, {}, L"%.0f px" };
+        itemPanFast.step = 1.0f;
+        tabControl.items.push_back(std::move(itemPanFast));
+
+        AddHeader(tabControl, AppStrings::g.Settings_Header_Edge);
+        AddSimpleToggle(tabControl, AppStrings::g.Settings_Label_EdgeNavClick, &g_config.EdgeNavClick);
+        AddSimpleToggle(tabControl, AppStrings::g.Settings_Label_DisableEdgeNavInCompare, &g_config.DisableEdgeNavInCompare);
+        tabControl.items.push_back({ AppStrings::g.Settings_Label_NavIndicator, OptionType::Segment, nullptr, nullptr, BindEnum(&g_config.NavIndicator), nullptr, 0, 0, {AppStrings::g.Settings_Option_Arrow, AppStrings::g.Settings_Option_Cursor} });
+     
+        // Gallery Trigger Mode
+        {
+            AddHeader(tabControl, AppStrings::g.Settings_Header_GalleryTrigger);
+            SettingsItem itemGalleryTrigger = { AppStrings::g.Settings_Label_GalleryTriggerMode, OptionType::ComboBox, nullptr, nullptr, &g_config.GalleryTriggerMode };
+            { const std::wstring_view opts[] = {
+                AppStrings::g.Settings_Option_GalleryTriggerAuto,
+                AppStrings::g.Settings_Option_GalleryTriggerDelay,
+                AppStrings::g.Settings_Option_GalleryTriggerClick,
+                AppStrings::g.Settings_Option_GalleryTriggerDisable
+            }; AssignOptions(itemGalleryTrigger, opts); }
+            itemGalleryTrigger.tooltipText = AppStrings::g.Settings_Tooltip_GalleryTrigger;
+            itemGalleryTrigger.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { 
+                SaveConfig(); 
+                overlay->BuildMenu();
+            };
+            tabControl.items.push_back(std::move(itemGalleryTrigger));
+
+            SettingsItem itemKeepVisible = { AppStrings::g.Settings_Label_KeepGalleryVisibleOnThumbnailClick, OptionType::Toggle, &g_config.GalleryKeepVisibleOnThumbnailClick };
+            itemKeepVisible.tooltipText = AppStrings::g.Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick;
+            itemKeepVisible.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+                if (g_config.GalleryKeepVisibleOnThumbnailClick) {
+                    g_config.LockWindowSize = true;
+                    extern void SetLockWindowSize(HWND hwnd, bool locked);
+                    extern HWND g_mainHwnd;
+                    SetLockWindowSize(g_mainHwnd, true);
+                    g_config.KeepWindowSizeOnNav = true;
+                    if (overlay) {
+                        overlay->BuildMenu();
+                    }
+                }
+                SaveConfig();
+            };
+            tabControl.items.push_back(std::move(itemKeepVisible));
+
+            m_galleryExpandTriggerIndex = g_config.GalleryExpandOnClickOnly ? 0 : 1;
+            SettingsItem itemExpandTrigger = {
+                AppStrings::g.Settings_Label_GalleryExpandOnClickOnly,
+                OptionType::Segment,
+                nullptr,
+                nullptr,
+                &m_galleryExpandTriggerIndex,
+                nullptr, 0, 0,
+                { AppStrings::g.Settings_Option_TriggerClick, AppStrings::g.Settings_Option_TriggerHover }
+            };
+            itemExpandTrigger.isNewOption = true;
+            itemExpandTrigger.tooltipText = AppStrings::g.Settings_Tooltip_GalleryExpandOnClickOnly;
+            itemExpandTrigger.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+                if (overlay) {
+                    g_config.GalleryExpandOnClickOnly = (overlay->m_galleryExpandTriggerIndex == 0);
+                }
+                SaveConfig();
+            };
+            tabControl.items.push_back(std::move(itemExpandTrigger));
+
+            if (g_config.GalleryTriggerMode == 0) {
+                SettingsItem itemAreaHeight = { AppStrings::g.Settings_Label_GalleryTriggerAreaHeight, OptionType::Slider, nullptr, &g_config.GalleryTriggerAreaHeight };
+                itemAreaHeight.minVal = 5.0f;
+                itemAreaHeight.maxVal = 100.0f;
+                itemAreaHeight.step = 1.0f;
+                itemAreaHeight.displayFormat = L"%.0f px";
+                itemAreaHeight.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
+                tabControl.items.push_back(std::move(itemAreaHeight));
+            } else if (g_config.GalleryTriggerMode == 1) {
+                SettingsItem itemDwell = { AppStrings::g.Settings_Label_GalleryDwellTime, OptionType::Slider, nullptr, &g_config.GalleryDwellTime };
+                itemDwell.minVal = 0.05f;
+                itemDwell.maxVal = 2.00f;
+                itemDwell.step = 0.01f;
+                itemDwell.displayFormat = L"%.2f s";
+                itemDwell.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
+                tabControl.items.push_back(std::move(itemDwell));
+            }
+
+            SettingsItem itemExitDelay = { AppStrings::g.Settings_Label_GalleryExitDelay, OptionType::Slider, nullptr, &g_config.GalleryExitDelay };
+            itemExitDelay.minVal = 0.10f;
+            itemExitDelay.maxVal = 3.00f;
+            itemExitDelay.step = 0.05f;
+            itemExitDelay.displayFormat = L"%.2f s";
+            itemExitDelay.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
+            tabControl.items.push_back(std::move(itemExitDelay));
         }
-
-        SettingsItem itemExitDelay = { AppStrings::Settings_Label_GalleryExitDelay, OptionType::Slider, nullptr, &g_config.GalleryExitDelay };
-        itemExitDelay.minVal = 0.10f;
-        itemExitDelay.maxVal = 3.00f;
-        itemExitDelay.step = 0.05f;
-        itemExitDelay.displayFormat = L"%.2f s";
-        itemExitDelay.isNewOption = true;
-        itemExitDelay.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
-        tabControl.items.push_back(itemExitDelay);
     }
-    m_tabs.push_back(tabControl);
+}
 
-    // --- 4. Shortcuts ---
-    SettingsTab tabKeys;
-    tabKeys.name = AppStrings::Settings_Tab_Shortcuts;
-    tabKeys.icon = Icons::Keyboard;
- 
-    tabKeys.items.push_back({ AppStrings::Settings_Tab_Shortcuts, OptionType::Header });
-    tabKeys.items.push_back({ AppStrings::Settings_Hotkey_MouseTip, OptionType::InfoLabel });
- 
+void SettingsOverlay::BuildKeysTab(SettingsTab& tabKeys) {
+    AddHeader(tabKeys, AppStrings::g.Settings_Tab_Shortcuts);
+    AddInfoLabel(tabKeys, AppStrings::g.Settings_Hotkey_MouseTip);
     // Restore Default Hotkeys
     bool isChinese = (g_config.Language == 2 || g_config.Language == 3);
     SettingsItem itemRestoreKeys = { L"", OptionType::ActionButton };
-    itemRestoreKeys.buttonText = AppStrings::Settings_Hotkey_Restore;
-    itemRestoreKeys.buttonActivatedText = AppStrings::Settings_Hotkey_Restored;
+    itemRestoreKeys.buttonText = AppStrings::g.Settings_Hotkey_Restore;
+    itemRestoreKeys.buttonActivatedText = AppStrings::g.Settings_Hotkey_Restored;
     itemRestoreKeys.isDestructive = true;
     itemRestoreKeys.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-        for (auto& binding : g_hotkeys) {
-            binding.combo = binding.defaultCombo;
-        }
-        SaveConfig();
-        overlay->m_pendingRebuild = true;
+        g_config.ResetHotkeyRulesToDefault();
+        g_config.SyncMiddleClickHotkeyFromGestures();
+        g_config.SyncLegacyHotkeysArray(g_hotkeys);
+        SaveHotkeysConfig();
         overlay->m_pendingResetFeedback = true;
         if (overlay->m_hwnd) InvalidateRect(overlay->m_hwnd, NULL, FALSE);
     };
-    tabKeys.items.push_back(itemRestoreKeys);
+    tabKeys.items.push_back(std::move(itemRestoreKeys));
  
-    for (size_t i = 1; i < static_cast<size_t>(HotkeyAction::Count); ++i) {
-        HotkeyAction action = static_cast<HotkeyAction>(i);
-        if (action == HotkeyAction::Help || action == HotkeyAction::Exit || action == HotkeyAction::ToggleDebugHud) {
-            continue; // Exclude F1, Esc, and F12 from customization
-        }
-        if (action == HotkeyAction::Undo) {
-            continue; // Placed manually under EditFile
-        }
+    struct HotkeyGroupDef {
+        const wchar_t* titleZh;
+        const wchar_t* titleEn;
+        std::initializer_list<HotkeyAction> actions;
+    };
+    static constexpr HotkeyAction kGeneralActions[] = {
+        HotkeyAction::Help, HotkeyAction::ToggleSettings, HotkeyAction::AlwaysOnTop, HotkeyAction::Exit
+    };
+    static constexpr HotkeyAction kNavActions[] = {
+        HotkeyAction::NavNext, HotkeyAction::NavPrev, HotkeyAction::NavFirst, HotkeyAction::NavLast
+    };
+    static constexpr HotkeyAction kPanActions[] = {
+        HotkeyAction::PanUp, HotkeyAction::PanDown, HotkeyAction::PanLeft, HotkeyAction::PanRight,
+        HotkeyAction::PanUpFast, HotkeyAction::PanDownFast, HotkeyAction::PanLeftFast, HotkeyAction::PanRightFast
+    };
+    static constexpr HotkeyAction kZoomActions[] = {
+        HotkeyAction::ZoomIn, HotkeyAction::ZoomInFine, HotkeyAction::ZoomOut, HotkeyAction::ZoomOutFine,
+        HotkeyAction::Zoom100, HotkeyAction::ZoomFit, HotkeyAction::ZoomFitWindow, HotkeyAction::ZoomFill, HotkeyAction::Loupe
+    };
+    static constexpr HotkeyAction kTransformActions[] = {
+        HotkeyAction::RotateCW, HotkeyAction::RotateCCW, HotkeyAction::FlipH, HotkeyAction::FlipV
+    };
+    static constexpr HotkeyAction kAnimActions[] = {
+        HotkeyAction::ToggleAnimation, HotkeyAction::AnimNextFrame, HotkeyAction::AnimPrevFrame
+    };
+    static constexpr HotkeyAction kViewActions[] = {
+        HotkeyAction::ToggleGallery, HotkeyAction::ToggleFilmstrip, HotkeyAction::ToggleInfoPanel, HotkeyAction::ToggleExifPanel,
+        HotkeyAction::ToggleMinimap, HotkeyAction::ToggleFullscreen, HotkeyAction::ToggleSpan, HotkeyAction::ToggleSlideshow,
+        HotkeyAction::RenderRaw
+    };
+    static constexpr HotkeyAction kRatingActions[] = {
+        HotkeyAction::Rate0, HotkeyAction::Rate1, HotkeyAction::Rate2, HotkeyAction::Rate3, HotkeyAction::Rate4, HotkeyAction::Rate5
+    };
+    static constexpr HotkeyAction kFileActions[] = {
+        HotkeyAction::OpenFile, HotkeyAction::EditFile, HotkeyAction::Undo, HotkeyAction::RenameFile, HotkeyAction::DeleteFile,
+        HotkeyAction::CopyPixels, HotkeyAction::CopyFileItem, HotkeyAction::CopyPath, HotkeyAction::ShowInExplorer,
+        HotkeyAction::ToggleCompare, HotkeyAction::ComparePair, HotkeyAction::Print, HotkeyAction::EnterCropMode, HotkeyAction::SaveAs
+    };
+    static constexpr HotkeyAction kTracingActions[] = {
+        HotkeyAction::ToggleOverlay, HotkeyAction::OverlayAlphaUp, HotkeyAction::OverlayAlphaDown, HotkeyAction::OverlayTogglePassthrough
+    };
+    static constexpr HotkeyAction kPluginActions[] = {
+        HotkeyAction::SuperResolution, HotkeyAction::AiAction
+    };
 
-        // Category Group Headers
-        if (action == HotkeyAction::NavNext) {
-            tabKeys.items.push_back({ isChinese ? L"图片导航" : L"Navigation", OptionType::Header });
-        } else if (action == HotkeyAction::PanUp) {
-            tabKeys.items.push_back({ isChinese ? L"图片平移" : L"Image Panning", OptionType::Header });
-        } else if (action == HotkeyAction::ZoomIn) {
-            tabKeys.items.push_back({ isChinese ? L"图片缩放" : L"Zoom", OptionType::Header });
-        } else if (action == HotkeyAction::RotateCW) {
-            tabKeys.items.push_back({ isChinese ? L"图像变换" : L"Transforms", OptionType::Header });
-        } else if (action == HotkeyAction::ToggleAnimation) {
-            tabKeys.items.push_back({ isChinese ? L"动画控制" : L"Animation Control", OptionType::Header });
-        } else if (action == HotkeyAction::ToggleGallery) {
-            tabKeys.items.push_back({ isChinese ? L"视图模式" : L"View Modes", OptionType::Header });
-        } else if (action == HotkeyAction::OpenFile) {
-            tabKeys.items.push_back({ isChinese ? L"文件操作" : L"File Operations", OptionType::Header });
-        } else if (action == HotkeyAction::ToggleOverlay) {
-            tabKeys.items.push_back({ isChinese ? L"临摹模式" : L"Tracing (Overlay) Mode", OptionType::Header });
-        }
-
-        std::wstring name = AppStrings::GetHotkeyActionName(action);
-        
-        SettingsItem item;
-        item.label = name;
-        item.type = OptionType::HotkeyBindRow;
-        item.hotkeyAction = action;
-        
-        if (action == HotkeyAction::EnterCropMode || action == HotkeyAction::SaveAs ||
-            action == HotkeyAction::CopyPixels || action == HotkeyAction::CopyFileItem || action == HotkeyAction::CopyPath ||
-            action == HotkeyAction::ToggleFilmstrip || action == HotkeyAction::ToggleSettings) {
-            item.isNewOption = true;
-        }
-        if (action == HotkeyAction::EnterCropMode) {
-            item.tooltipText = AppStrings::Settings_Tooltip_CropModeHotkey;
-        }
-        if (action == HotkeyAction::Loupe) {
-            item.tooltipText = AppStrings::Settings_Tooltip_LoupeHotkey;
-        }
-        if (action == HotkeyAction::ToggleMinimap) {
-            item.isNewOption = true;
-        }
-        // Apply pending conflict status if any
-        if (m_lastConflictAction == action && GetTickCount() - m_lastConflictTime < 3000) {
-            item.statusText = m_lastConflictMsg;
-            item.statusColor = D2D1::ColorF(D2D1::ColorF::Red);
-            item.statusSetTime = m_lastConflictTime;
-        }
-        
-        tabKeys.items.push_back(item);
-
-        // Manually insert "Undo" (HotkeyAction::Undo) directly under "Edit" (HotkeyAction::EditFile)
-        if (action == HotkeyAction::EditFile) {
-            std::wstring undoName = AppStrings::GetHotkeyActionName(HotkeyAction::Undo);
-            SettingsItem undoItem;
-            undoItem.label = undoName;
-            undoItem.type = OptionType::HotkeyBindRow;
-            undoItem.hotkeyAction = HotkeyAction::Undo;
-            
-            if (m_lastConflictAction == HotkeyAction::Undo && GetTickCount() - m_lastConflictTime < 3000) {
-                undoItem.statusText = m_lastConflictMsg;
-                undoItem.statusColor = D2D1::ColorF(D2D1::ColorF::Red);
-                undoItem.statusSetTime = m_lastConflictTime;
+    auto appendGroup = [&](const wchar_t* titleZh, const wchar_t* titleEn, const auto& actionList) {
+        AddHeader(tabKeys, isChinese ? titleZh : titleEn);
+        for (HotkeyAction action : actionList) {
+            SettingsItem item;
+            item.label = AppStrings::GetHotkeyActionName(action);
+            item.type = OptionType::HotkeyBindRow;
+            item.hotkeyAction = action;
+            if (action == HotkeyAction::EnterCropMode) {
+                item.tooltipText = AppStrings::g.Settings_Tooltip_CropModeHotkey;
+            } else if (action == HotkeyAction::Loupe) {
+                item.tooltipText = AppStrings::g.Settings_Tooltip_LoupeHotkey;
+            } else if (action == HotkeyAction::SuperResolution || action == HotkeyAction::AiAction) {
+                item.isNewOption = true;
             }
-            tabKeys.items.push_back(undoItem);
+            if (m_lastConflictAction == action && GetTickCount() - m_lastConflictTime < 3000) {
+                item.statusText = m_lastConflictMsg;
+                item.statusColor = D2D1::ColorF(D2D1::ColorF::Red);
+                item.statusSetTime = m_lastConflictTime;
+            }
+            tabKeys.items.push_back(std::move(item));
         }
-    }
-    m_tabs.push_back(tabKeys);
+    };
 
-    // --- 4. Image & Edit ---
-    SettingsTab tabImage;
-    tabImage.name = AppStrings::Settings_Tab_Image; 
+    appendGroup(L"通用控制", L"General", kGeneralActions);
+    appendGroup(L"图片导航", L"Navigation", kNavActions);
+    appendGroup(L"图片平移", L"Image Panning", kPanActions);
+    appendGroup(L"图片缩放", L"Zoom", kZoomActions);
+    appendGroup(L"图像变换", L"Transforms", kTransformActions);
+    appendGroup(L"动画控制", L"Animation Control", kAnimActions);
+    appendGroup(L"视图模式", L"View Modes", kViewActions);
+    appendGroup(L"星级评分", L"Rating", kRatingActions);
+    appendGroup(L"文件操作", L"File Operations", kFileActions);
+    appendGroup(L"临摹模式", L"Tracing (Overlay) Mode", kTracingActions);
+    appendGroup(L"插件", L"Plugins", kPluginActions);
+}
+
+void SettingsOverlay::BuildImageTab(SettingsTab& tabImage) {
+    tabImage.name = AppStrings::g.Settings_Tab_Image; 
     tabImage.icon = Icons::Image;
     
     // --- 1. Render Group ---
-    tabImage.items.push_back({ AppStrings::Settings_Header_Render, OptionType::Header });
-
+    AddHeader(tabImage, AppStrings::g.Settings_Header_Render);
     // Zoom Mode In
-    SettingsItem itemZoomIn = { AppStrings::Settings_Label_ZoomModeIn, OptionType::ComboBox, nullptr, nullptr, BindEnum(&g_config.ZoomModeIn), nullptr, 0, 0, {AppStrings::Settings_Option_ZoomAuto, AppStrings::Settings_Option_Linear, AppStrings::Settings_Option_Nearest, AppStrings::Settings_Option_HighQualityCubic} };
+    SettingsItem itemZoomIn = { AppStrings::g.Settings_Label_ZoomModeIn, OptionType::ComboBox, nullptr, nullptr, BindEnum(&g_config.ZoomModeIn), nullptr, 0, 0, {AppStrings::g.Settings_Option_Auto, AppStrings::g.Settings_Option_Linear, AppStrings::g.Settings_Option_Nearest, AppStrings::g.Settings_Option_HighQualityCubic, AppStrings::g.Settings_Option_FSR} };
+    itemZoomIn.tooltipText = AppStrings::g.Settings_Tooltip_ZoomModeIn;
+    // [NEW-Badge] Added in v6.41.0 (AMD FSR 1.0 & upscaling algorithms)
+    itemZoomIn.isNewOption = true;
     itemZoomIn.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        SaveConfig();
+        if (overlay) overlay->m_pendingRebuild = true;
+        extern HWND g_mainHwnd;
+        extern void RefreshImageDisplay(HWND hwnd);
+        RefreshImageDisplay(g_mainHwnd);
+    };
+    tabImage.items.push_back(std::move(itemZoomIn));
+
+    // FSR Sharpness Slider
+    SettingsItem itemFsrSharpness = { AppStrings::g.Settings_Label_FsrSharpness, OptionType::Slider, nullptr, &g_config.FsrSharpness };
+    itemFsrSharpness.tooltipText = AppStrings::g.Settings_Tooltip_FsrSharpness;
+    itemFsrSharpness.minVal = 0.0f;
+    itemFsrSharpness.maxVal = 1.0f;
+    itemFsrSharpness.step = 0.05f;
+    itemFsrSharpness.displayFormat = L"%.2f";
+    itemFsrSharpness.isDisabled = (g_config.ZoomModeIn != 4);
+    // [NEW-Badge] Added in v6.41.0 (AMD FSR 1.0 sharpness)
+    itemFsrSharpness.isNewOption = true;
+    itemFsrSharpness.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         SaveConfig();
         extern HWND g_mainHwnd;
         extern void RefreshImageDisplay(HWND hwnd);
         RefreshImageDisplay(g_mainHwnd);
     };
-    tabImage.items.push_back(itemZoomIn);
+    itemFsrSharpness.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        extern HWND g_mainHwnd;
+        extern void RefreshImageDisplay(HWND hwnd);
+        RefreshImageDisplay(g_mainHwnd);
+    };
+    itemFsrSharpness.onReset = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        g_config.FsrSharpness = 0.20f;
+        SaveConfig();
+        if (overlay) overlay->m_pendingRebuild = true;
+        extern HWND g_mainHwnd;
+        extern void RefreshImageDisplay(HWND hwnd);
+        RefreshImageDisplay(g_mainHwnd);
+    };
+    tabImage.items.push_back(std::move(itemFsrSharpness));
 
     // Zoom Mode Out
-    SettingsItem itemZoomOut = { AppStrings::Settings_Label_ZoomModeOut, OptionType::ComboBox, nullptr, nullptr, BindEnum(&g_config.ZoomModeOut), nullptr, 0, 0, {AppStrings::Settings_Option_ZoomAuto, AppStrings::Settings_Option_Linear, AppStrings::Settings_Option_Nearest, AppStrings::Settings_Option_HighQualityCubic} };
+    SettingsItem itemZoomOut = { AppStrings::g.Settings_Label_ZoomModeOut, OptionType::ComboBox, nullptr, nullptr, BindEnum(&g_config.ZoomModeOut), nullptr, 0, 0, {AppStrings::g.Settings_Option_Auto, AppStrings::g.Settings_Option_Linear, AppStrings::g.Settings_Option_Nearest, AppStrings::g.Settings_Option_HighQualityCubic} };
     itemZoomOut.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         SaveConfig();
         extern HWND g_mainHwnd;
         extern void RefreshImageDisplay(HWND hwnd);
         RefreshImageDisplay(g_mainHwnd);
     };
-    tabImage.items.push_back(itemZoomOut);
+    tabImage.items.push_back(std::move(itemZoomOut));
 
     // Auto Rotate
-    tabImage.items.push_back({ AppStrings::Settings_Label_AutoRotate, OptionType::Toggle, &g_config.AutoRotate });
-    
+    AddSimpleToggle(tabImage, AppStrings::g.Settings_Label_AutoRotate, &g_config.AutoRotate);
     // Force Raw Decode (moved to Render group)
-    SettingsItem itemRaw = { AppStrings::Settings_Label_ForceRaw, OptionType::Toggle, &g_config.ForceRawDecode };
+    SettingsItem itemRaw = { AppStrings::g.Settings_Label_ForceRaw, OptionType::Toggle, &g_config.ForceRawDecode };
     itemRaw.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { g_runtime.ForceRawDecode = g_config.ForceRawDecode; };
-    tabImage.items.push_back(itemRaw);
+    tabImage.items.push_back(std::move(itemRaw));
 
     // [RAW+JPEG Pairing] Fold same-name RAW+JPEG shots into one photo
-    SettingsItem itemPairRaw = { AppStrings::Settings_Label_PairRawJpeg, OptionType::Toggle, &g_config.PairRawJpeg };
-    itemPairRaw.tooltipText = AppStrings::Settings_Tooltip_PairRawJpeg;
+    SettingsItem itemPairRaw = { AppStrings::g.Settings_Label_PairRawJpeg, OptionType::Toggle, &g_config.PairRawJpeg };
+    itemPairRaw.tooltipText = AppStrings::g.Settings_Tooltip_PairRawJpeg;
     itemPairRaw.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         extern void SaveConfig();
         extern HWND g_mainHwnd;
@@ -2201,14 +3545,13 @@ void SettingsOverlay::BuildMenu() {
         SaveConfig();
         ApplyPairRawJpegSetting(g_mainHwnd);
     };
-    tabImage.items.push_back(itemPairRaw);
+    tabImage.items.push_back(std::move(itemPairRaw));
 
     // --- 2. Color Management (CMS) Group ---
-    tabImage.items.push_back({ AppStrings::Settings_Label_CMS, OptionType::Header });
-
+    AddHeader(tabImage, AppStrings::g.Settings_Label_CMS);
     // CMS - Color Management System Toggle
-    SettingsItem itemCmsToggle = { AppStrings::Settings_Label_CMS, OptionType::Toggle, &g_config.ColorManagement };
-    itemCmsToggle.tooltipText = AppStrings::Settings_Tooltip_CMS;
+    SettingsItem itemCmsToggle = { AppStrings::g.Settings_Label_CMS, OptionType::Toggle, &g_config.ColorManagement };
+    itemCmsToggle.tooltipText = AppStrings::g.Settings_Tooltip_CMS;
     itemCmsToggle.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         SaveConfig();
         extern HWND g_mainHwnd;
@@ -2217,32 +3560,32 @@ void SettingsOverlay::BuildMenu() {
         RefreshImageDisplay(g_mainHwnd);
         RequestRepaint(QuickView::PaintLayer::Static | QuickView::PaintLayer::Dynamic);
     };
-    tabImage.items.push_back(itemCmsToggle);
+    tabImage.items.push_back(std::move(itemCmsToggle));
 
     // CMS Intent
-    SettingsItem itemCmsIntent = { AppStrings::Settings_Label_CmsIntent, OptionType::ComboBox, nullptr, nullptr, &g_config.CmsRenderingIntent, nullptr, 0, 0,
-        { AppStrings::Settings_Option_CmsIntentPerceptual, AppStrings::Settings_Option_CmsIntentRelative } };
-    itemCmsIntent.tooltipText = AppStrings::Settings_Tooltip_CmsIntent;
+    SettingsItem itemCmsIntent = { AppStrings::g.Settings_Label_CmsIntent, OptionType::ComboBox, nullptr, nullptr, &g_config.CmsRenderingIntent, nullptr, 0, 0,
+        { AppStrings::g.Settings_Option_CmsIntentPerceptual, AppStrings::g.Settings_Option_CmsIntentRelative } };
+    itemCmsIntent.tooltipText = AppStrings::g.Settings_Tooltip_CmsIntent;
     itemCmsIntent.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         SaveConfig();
         extern HWND g_mainHwnd;
         extern void RefreshImageDisplay(HWND hwnd);
         RefreshImageDisplay(g_mainHwnd);
     };
-    tabImage.items.push_back(itemCmsIntent);
+    tabImage.items.push_back(std::move(itemCmsIntent));
 
     // Default CMS Fallback (for unprofiled images)
-    SettingsItem itemCmsFallback = { AppStrings::Settings_Label_CmsFallback, OptionType::ComboBox, nullptr, nullptr, BindEnum(&g_config.CmsDefaultFallback), nullptr, 0, 0, {AppStrings::Settings_Option_CmssRGB, AppStrings::Settings_Option_CmsP3, AppStrings::Settings_Option_CmsAdobeRGB, AppStrings::Settings_Option_CmsProPhoto} };
+    SettingsItem itemCmsFallback = { AppStrings::g.Settings_Label_CmsFallback, OptionType::ComboBox, nullptr, nullptr, BindEnum(&g_config.CmsDefaultFallback), nullptr, 0, 0, {AppStrings::g.Settings_Option_CmssRGB, AppStrings::g.Settings_Option_CmsP3, AppStrings::g.Settings_Option_CmsAdobeRGB, AppStrings::g.Settings_Option_CmsProPhoto} };
     itemCmsFallback.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         SaveConfig();
         extern void RequestRepaint(QuickView::PaintLayer layerMask);
         RequestRepaint(QuickView::PaintLayer::All);
     };
-    tabImage.items.push_back(itemCmsFallback);
+    tabImage.items.push_back(std::move(itemCmsFallback));
     
     // Custom Soft Proofing Profile
-    SettingsItem itemCustomProof = { AppStrings::Settings_Label_CustomProof, OptionType::ActionButton };
-    itemCustomProof.buttonText = AppStrings::Context_SoftProofCustom;
+    SettingsItem itemCustomProof = { AppStrings::g.Settings_Label_CustomProof, OptionType::ActionButton };
+    itemCustomProof.buttonText = AppStrings::g.Context_SoftProofCustom;
     if (!g_config.CustomSoftProofProfile.empty()) {
         std::wstring filename = g_config.CustomSoftProofProfile.substr(g_config.CustomSoftProofProfile.find_last_of(L"/\\") + 1);
         itemCustomProof.buttonText = filename.length() > 20 ? (filename.substr(0, 17) + L"...") : filename;
@@ -2264,11 +3607,11 @@ void SettingsOverlay::BuildMenu() {
             SaveConfig();
         }
     };
-    tabImage.items.push_back(itemCustomProof);
+    tabImage.items.push_back(std::move(itemCustomProof));
 
     // Gamut Overflow / Color Spill Warning Detection
-    SettingsItem itemGamutWarning = { AppStrings::Settings_Label_GamutWarning, OptionType::Segment, nullptr, nullptr, &g_config.GamutWarningMode, nullptr, 0, 0, { AppStrings::Settings_Option_Off, AppStrings::Settings_Option_SoftProofing, AppStrings::Settings_Option_All } };
-    itemGamutWarning.tooltipText = AppStrings::Settings_Tooltip_GamutWarning;
+    SettingsItem itemGamutWarning = { AppStrings::g.Settings_Label_GamutWarning, OptionType::Segment, nullptr, nullptr, &g_config.GamutWarningMode, nullptr, 0, 0, { AppStrings::g.Settings_Option_Off, AppStrings::g.Settings_Option_SoftProofing, AppStrings::g.Settings_Option_All } };
+    itemGamutWarning.tooltipText = AppStrings::g.Settings_Tooltip_GamutWarning;
     itemGamutWarning.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         SaveConfig();
         extern HWND g_mainHwnd;
@@ -2277,18 +3620,18 @@ void SettingsOverlay::BuildMenu() {
         ScheduleGamutWarningAnalysis(g_mainHwnd);
         RequestRepaint(QuickView::PaintLayer::Static | QuickView::PaintLayer::Dynamic);
     };
-    tabImage.items.push_back(itemGamutWarning);
+    tabImage.items.push_back(std::move(itemGamutWarning));
 
     // Gamut Overflow Auto Prompt
-    SettingsItem itemGamutAutoPrompt = { AppStrings::Settings_Label_GamutAutoPrompt, OptionType::Toggle, &g_config.GamutWarningAutoPrompt };
-    itemGamutAutoPrompt.tooltipText = AppStrings::Settings_Tooltip_GamutAutoPrompt;
+    SettingsItem itemGamutAutoPrompt = { AppStrings::g.Settings_Label_GamutAutoPrompt, OptionType::Toggle, &g_config.GamutWarningAutoPrompt };
+    itemGamutAutoPrompt.tooltipText = AppStrings::g.Settings_Tooltip_GamutAutoPrompt;
     itemGamutAutoPrompt.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         SaveConfig();
     };
-    tabImage.items.push_back(itemGamutAutoPrompt);
+    tabImage.items.push_back(std::move(itemGamutAutoPrompt));
 
     // Gamut Warning Highlight Color Customizer
-    SettingsItem itemGamutColor = { AppStrings::Settings_Label_GamutColor, OptionType::CustomColorRow };
+    SettingsItem itemGamutColor = { AppStrings::g.Settings_Label_GamutColor, OptionType::CustomColorRow };
     itemGamutColor.pFloatVal = &g_config.GamutWarningColorR;
     itemGamutColor.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         extern HWND g_mainHwnd;
@@ -2313,14 +3656,13 @@ void SettingsOverlay::BuildMenu() {
             RequestRepaint(QuickView::PaintLayer::Dynamic);
         }
     };
-    tabImage.items.push_back(itemGamutColor);
+    tabImage.items.push_back(std::move(itemGamutColor));
 
     // --- 3. High Dynamic Range (HDR) Group ---
-    tabImage.items.push_back({ AppStrings::Settings_Header_Hdr, OptionType::Header });
-
+    AddHeader(tabImage, AppStrings::g.Settings_Header_Hdr);
     // Advanced Color (HDR & Wide Color Gamut switcher)
-    SettingsItem itemAdvColor = { AppStrings::Settings_Label_AdvancedColor, OptionType::Segment, nullptr, nullptr, &g_config.AdvancedColorMode, nullptr, 0, 0, {AppStrings::Settings_Option_Off, AppStrings::Settings_Option_On, AppStrings::Settings_Option_Auto} };
-    itemAdvColor.tooltipText = AppStrings::Settings_Tooltip_AdvancedColor;
+    SettingsItem itemAdvColor = { AppStrings::g.Settings_Label_AdvancedColor, OptionType::Segment, nullptr, nullptr, &g_config.AdvancedColorMode, nullptr, 0, 0, {AppStrings::g.Settings_Option_Off, AppStrings::g.Settings_Option_On, AppStrings::g.Settings_Option_Auto} };
+    itemAdvColor.tooltipText = AppStrings::g.Settings_Tooltip_AdvancedColor;
     itemAdvColor.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         SaveConfig();
         extern HWND g_mainHwnd;
@@ -2332,13 +3674,13 @@ void SettingsOverlay::BuildMenu() {
             }
         }
     };
-    tabImage.items.push_back(itemAdvColor);
+    tabImage.items.push_back(std::move(itemAdvColor));
 
     // Exposure Control
-    SettingsItem itemExposure = {AppStrings::Settings_Label_Exposure,
+    SettingsItem itemExposure = {AppStrings::g.Settings_Label_Exposure,
                                  OptionType::Slider, nullptr,
                                  &g_config.Exposure};
-    itemExposure.tooltipText = AppStrings::Settings_Tooltip_Exposure;
+    itemExposure.tooltipText = AppStrings::g.Settings_Tooltip_Exposure;
     itemExposure.minVal = 0.18f;
     itemExposure.maxVal = 10.0f;
     itemExposure.displayFormat = L"%.2fx";
@@ -2355,12 +3697,12 @@ void SettingsOverlay::BuildMenu() {
       extern void RefreshImageDisplay(HWND hwnd);
       RefreshImageDisplay(g_mainHwnd);
     };
-    tabImage.items.push_back(itemExposure);
+    tabImage.items.push_back(std::move(itemExposure));
 
     // HDR Tone Mapping Mode
-    SettingsItem itemHdrToneMapping = { AppStrings::Settings_Label_HdrToneMapping, OptionType::ComboBox, nullptr, nullptr, &g_config.HdrToneMappingMode, nullptr, 0, 0,
-        { AppStrings::Settings_Option_HdrSpline, AppStrings::Settings_Option_HdrColorimetric, AppStrings::Settings_Option_HdrLegacyReinhard } };
-    itemHdrToneMapping.tooltipText = AppStrings::Settings_Tooltip_HdrToneMapping;
+    SettingsItem itemHdrToneMapping = { AppStrings::g.Settings_Label_HdrToneMapping, OptionType::ComboBox, nullptr, nullptr, &g_config.HdrToneMappingMode, nullptr, 0, 0,
+        { AppStrings::g.Settings_Option_HdrSpline, AppStrings::g.Settings_Option_HdrColorimetric, AppStrings::g.Settings_Option_HdrLegacyReinhard } };
+    itemHdrToneMapping.tooltipText = AppStrings::g.Settings_Tooltip_HdrToneMapping;
     itemHdrToneMapping.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         SaveConfig();
         overlay->m_pendingRebuild = true;
@@ -2369,10 +3711,10 @@ void SettingsOverlay::BuildMenu() {
         extern void RefreshImageDisplay(HWND hwnd);
         RefreshImageDisplay(g_mainHwnd);
     };
-    tabImage.items.push_back(itemHdrToneMapping);
+    tabImage.items.push_back(std::move(itemHdrToneMapping));
 
-    SettingsItem itemHdrSplineKnee = { AppStrings::Settings_Label_HdrSplineKnee, OptionType::Slider, nullptr, &g_config.HdrSplineKnee };
-    itemHdrSplineKnee.tooltipText = AppStrings::Settings_Tooltip_HdrSplineKnee;
+    SettingsItem itemHdrSplineKnee = { AppStrings::g.Settings_Label_HdrSplineKnee, OptionType::Slider, nullptr, &g_config.HdrSplineKnee };
+    itemHdrSplineKnee.tooltipText = AppStrings::g.Settings_Tooltip_HdrSplineKnee;
     itemHdrSplineKnee.minVal = 0.0f;
     itemHdrSplineKnee.maxVal = 1.0f;
     itemHdrSplineKnee.displayFormat = L"%.2f";
@@ -2395,11 +3737,11 @@ void SettingsOverlay::BuildMenu() {
         extern void RefreshImageDisplay(HWND hwnd);
         RefreshImageDisplay(g_mainHwnd);
     };
-    tabImage.items.push_back(itemHdrSplineKnee);
+    tabImage.items.push_back(std::move(itemHdrSplineKnee));
 
     // HDR Peak Nits Override
-    SettingsItem itemHdrPeak = { AppStrings::Settings_Label_HdrPeakNitsOverride, OptionType::Slider, nullptr, &g_config.HdrPeakNitsOverride };
-    itemHdrPeak.tooltipText = AppStrings::Settings_Tooltip_HdrPeakNitsOverride;
+    SettingsItem itemHdrPeak = { AppStrings::g.Settings_Label_HdrPeakNitsOverride, OptionType::Slider, nullptr, &g_config.HdrPeakNitsOverride };
+    itemHdrPeak.tooltipText = AppStrings::g.Settings_Tooltip_HdrPeakNitsOverride;
     itemHdrPeak.minVal = 0.0f;
     itemHdrPeak.maxVal = 2000.0f;
     itemHdrPeak.displayFormat = L"%.0f nits";
@@ -2409,7 +3751,7 @@ void SettingsOverlay::BuildMenu() {
         extern HWND g_mainHwnd;
         RefreshHdrOverrideSettings(g_mainHwnd);
         };
-    tabImage.items.push_back(itemHdrPeak);
+    tabImage.items.push_back(std::move(itemHdrPeak));
 
     // HDR Peak Percentile (mpv behavior)
     // Map float to an integer index internally
@@ -2418,9 +3760,9 @@ void SettingsOverlay::BuildMenu() {
     else if (g_config.HdrPeakPercentile >= 99.99f) s_hdrPercentileIdx = 1;
     else s_hdrPercentileIdx = 2;
 
-    SettingsItem itemHdrPercentile = { AppStrings::Settings_Label_HdrPeakPercentile, OptionType::ComboBox, nullptr, nullptr, &s_hdrPercentileIdx, nullptr, 0, 0,
-        { AppStrings::Settings_Option_HdrPeakPercentile_100, AppStrings::Settings_Option_HdrPeakPercentile_99995, AppStrings::Settings_Option_HdrPeakPercentile_999 } };
-    itemHdrPercentile.tooltipText = AppStrings::Settings_Tooltip_HdrPeakPercentile;
+    SettingsItem itemHdrPercentile = { AppStrings::g.Settings_Label_HdrPeakPercentile, OptionType::ComboBox, nullptr, nullptr, &s_hdrPercentileIdx, nullptr, 0, 0,
+        { AppStrings::g.Settings_Option_HdrPeakPercentile_100, AppStrings::g.Settings_Option_HdrPeakPercentile_99995, AppStrings::g.Settings_Option_HdrPeakPercentile_999 } };
+    itemHdrPercentile.tooltipText = AppStrings::g.Settings_Tooltip_HdrPeakPercentile;
     itemHdrPercentile.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         if (s_hdrPercentileIdx == 0) g_config.HdrPeakPercentile = 100.0f;
         else if (s_hdrPercentileIdx == 1) g_config.HdrPeakPercentile = 99.995f;
@@ -2431,11 +3773,11 @@ void SettingsOverlay::BuildMenu() {
         extern HWND g_mainHwnd;
         RefreshHdrOverrideSettings(g_mainHwnd);
     };
-    tabImage.items.push_back(itemHdrPercentile);
+    tabImage.items.push_back(std::move(itemHdrPercentile));
 
     // HDR Desaturation Threshold (Range)
-    SettingsItem itemDesatRange = { AppStrings::Settings_Label_HdrDesatThreshold, OptionType::Slider, nullptr, &g_config.HdrDesatThreshold };
-    itemDesatRange.tooltipText = AppStrings::Settings_Tooltip_HdrDesatThreshold;
+    SettingsItem itemDesatRange = { AppStrings::g.Settings_Label_HdrDesatThreshold, OptionType::Slider, nullptr, &g_config.HdrDesatThreshold };
+    itemDesatRange.tooltipText = AppStrings::g.Settings_Tooltip_HdrDesatThreshold;
     itemDesatRange.minVal = 0.0f;
     itemDesatRange.maxVal = 1.0f;
     itemDesatRange.displayFormat = L"%.2f";
@@ -2451,11 +3793,11 @@ void SettingsOverlay::BuildMenu() {
       extern void RefreshImageDisplay(HWND hwnd);
       RefreshImageDisplay(g_mainHwnd);
     };
-    tabImage.items.push_back(itemDesatRange);
+    tabImage.items.push_back(std::move(itemDesatRange));
 
     // HDR Maximum Desaturation Strength
-    SettingsItem itemDesatStrength = { AppStrings::Settings_Label_HdrMaxDesat, OptionType::Slider, nullptr, &g_config.HdrMaxDesat };
-    itemDesatStrength.tooltipText = AppStrings::Settings_Tooltip_HdrMaxDesat;
+    SettingsItem itemDesatStrength = { AppStrings::g.Settings_Label_HdrMaxDesat, OptionType::Slider, nullptr, &g_config.HdrMaxDesat };
+    itemDesatStrength.tooltipText = AppStrings::g.Settings_Tooltip_HdrMaxDesat;
     itemDesatStrength.minVal = 0.0f;
     itemDesatStrength.maxVal = 1.0f;
     itemDesatStrength.displayFormat = L"%.2f";
@@ -2471,28 +3813,1155 @@ void SettingsOverlay::BuildMenu() {
       extern void RefreshImageDisplay(HWND hwnd);
       RefreshImageDisplay(g_mainHwnd);
     };
-    tabImage.items.push_back(itemDesatStrength);
+    tabImage.items.push_back(std::move(itemDesatStrength));
     
-    tabImage.items.push_back({ AppStrings::Settings_Header_Prompts, OptionType::Header });
-    SettingsItem itemConfirmDel = { AppStrings::Settings_Label_ConfirmDel, OptionType::Toggle, &g_config.ConfirmDelete };
-    tabImage.items.push_back(itemConfirmDel);
-    tabImage.items.push_back({ AppStrings::Checkbox_AlwaysSaveLossless, OptionType::Toggle, &g_config.AlwaysSaveLossless });
-    tabImage.items.push_back({ AppStrings::Checkbox_AlwaysSaveEdgeAdapted, OptionType::Toggle, &g_config.AlwaysSaveEdgeAdapted });
-    tabImage.items.push_back({ AppStrings::Checkbox_AlwaysSaveLossy, OptionType::Toggle, &g_config.AlwaysSaveLossy });
-    m_tabs.push_back(tabImage);
+    AddHeader(tabImage, AppStrings::g.Settings_Header_Prompts);
+    SettingsItem itemConfirmDel = { AppStrings::g.Settings_Label_ConfirmDel, OptionType::Toggle, &g_config.ConfirmDelete };
+    tabImage.items.push_back(std::move(itemConfirmDel));
+    AddSimpleToggle(tabImage, AppStrings::g.Checkbox_AlwaysSaveLossless, &g_config.AlwaysSaveLossless);
+    AddSimpleToggle(tabImage, AppStrings::g.Checkbox_AlwaysSaveEdgeAdapted, &g_config.AlwaysSaveEdgeAdapted);
+    AddSimpleToggle(tabImage, AppStrings::g.Checkbox_AlwaysSaveLossy, &g_config.AlwaysSaveLossy);
+}
 
-    // --- 5. Advanced ---
-    SettingsTab tabAdvanced;
-    tabAdvanced.name = AppStrings::Settings_Tab_Advanced;
+void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
+    tabPlugins.name = AppStrings::g.Settings_Tab_Plugins;
+    tabPlugins.icon = Icons::FixExt;
+
+    auto& pluginHost = QuickView::PluginHost::Instance();
+
+    static std::atomic<float> s_srDownloadProgress{ -1.0f };
+    static std::atomic<bool> s_srIsDownloading{ false };
+    static std::wstring s_srDownloadText;
+    static std::string s_srDownloadingModelId;
+    static std::mutex s_srDlMutex;
+
+    struct MarketDownloadEntry {
+        std::string url;
+        bool isDownloading = false;
+        float progress = -1.0f;
+        std::wstring statusText;
+    };
+    static std::vector<MarketDownloadEntry> s_mktDownloads;
+    static std::mutex s_mktDlMutex;
+
+    auto findMarketDl = [&](const std::string& url) -> MarketDownloadEntry {
+        std::lock_guard<std::mutex> lock(s_mktDlMutex);
+        for (const auto& entry : s_mktDownloads) {
+            if (entry.url == url) return entry;
+        }
+        return {};
+    };
+    auto anyMarketDlActive = [&]() -> bool {
+        std::lock_guard<std::mutex> lock(s_mktDlMutex);
+        for (const auto& entry : s_mktDownloads) {
+            if (entry.isDownloading) return true;
+        }
+        return false;
+    };
+
+    static bool s_pluginProbeInitialized = false;
+    static QuickView::PluginInstallState s_cachedInstallState = QuickView::PluginInstallState::NotInstalled;
+    static std::string s_cachedCurVer;
+    static std::vector<QuickView::SrModelEntry> s_models;
+    static std::vector<QuickView::SrParamEntry> s_dynParams;
+    static std::vector<QuickView::PluginCandidate> s_engineCandidates;
+
+    const bool dlActive = s_srIsDownloading.load(std::memory_order_acquire) || anyMarketDlActive();
+    const bool shouldProbe = !s_pluginProbeInitialized || (m_activeTab == m_pluginsTabIdx && !m_pluginsProbeValid && !dlActive);
+    if (shouldProbe) {
+        s_cachedInstallState = pluginHost.GetSrPluginInstallState();
+        s_cachedCurVer = pluginHost.GetInstalledPluginVersion();
+        if (s_cachedInstallState != QuickView::PluginInstallState::NotInstalled) {
+            s_models = pluginHost.GetCurrentSrModels();
+            s_dynParams = pluginHost.GetCurrentSrParams();
+            s_engineCandidates = pluginHost.ScanPluginsDirectory();
+        } else {
+            s_models.clear();
+            s_dynParams.clear();
+            s_engineCandidates.clear();
+        }
+        s_pluginProbeInitialized = true;
+        m_pluginsProbeValid = true;
+    }
+
+    const auto installState = s_cachedInstallState;
+    const std::string& curVer = s_cachedCurVer;
+
+    const bool isPackaged = SystemInfo::IsPackagedApp();
+    static int s_pluginViewMode = 0;
+    static bool s_pluginViewModeInitialized = false;
+    if (isPackaged) {
+        s_pluginViewMode = 0;
+    } else if (!s_pluginViewModeInitialized) {
+        s_pluginViewModeInitialized = true;
+        if (installState == QuickView::PluginInstallState::NotInstalled) {
+            s_pluginViewMode = 1;
+        }
+    }
+
+    static bool s_srPluginEnabled = false;
+    s_srPluginEnabled = pluginHost.IsSrPluginEnabled();
+
+    static bool s_srPluginExpanded = true;
+
+    QuickView::PluginHost::Instance().SetUINotifyCallback([](void* u) {
+        auto* payload = new PluginUiPayload{ static_cast<SettingsOverlay*>(u), false, false };
+        PostSettingsUiEvent(SettingsUiEventKind::PluginProgress, payload);
+    }, this);
+
+    // Top Segmented Switch: [ 已安装扩展 | 云端市场 ] (hidden in Store / MSIX builds)
+    if (!isPackaged) {
+        SettingsItem itemSegment = { L"", OptionType::Segment, nullptr, nullptr, &s_pluginViewMode, nullptr, 0, 0, { std::wstring_view(AppStrings::g.Settings_Segment_InstalledPlugins), std::wstring_view(AppStrings::g.Settings_Segment_Marketplace) } };
+        itemSegment.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+            if (overlay) {
+                overlay->m_pluginsProbeValid = false;
+                overlay->RequestRebuild();
+                extern void RequestRepaint(QuickView::PaintLayer layer);
+                RequestRepaint(QuickView::PaintLayer::Static);
+            }
+        };
+        tabPlugins.items.push_back(std::move(itemSegment));
+    }
+
+    if (s_pluginViewMode == 0) {
+        // ====================================================================
+        // VIEW 0: 已安装插件管理 (Installed Plugins - Blender Style Accordion)
+        // ====================================================================
+        if (installState != QuickView::PluginInstallState::NotInstalled) {
+            // 1. Data-Driven Dynamic Model Selector & Downloader pre-fetch
+            static std::vector<std::wstring> s_modelDisplayNames;
+            static std::vector<std::wstring> s_modelDescriptions;
+            static std::vector<std::wstring_view> s_modelOptionViews;
+            static int s_modelChoiceIndex = 0;
+
+            s_modelDisplayNames.clear();
+            s_modelDescriptions.clear();
+            s_modelOptionViews.clear();
+            s_modelChoiceIndex = 0;
+
+            bool isCurrentModelInstalled = false;
+            if (!s_models.empty()) {
+                std::string currentModelId = pluginHost.GetSrModelId();
+                for (size_t i = 0; i < s_models.size(); ++i) {
+                    s_modelDisplayNames.push_back(Utf8ToWide(s_models[i].displayName));
+                    s_modelDescriptions.push_back(Utf8ToWide(s_models[i].description));
+
+                    if (s_models[i].modelId == currentModelId || (currentModelId.empty() && i == 0)) {
+                        s_modelChoiceIndex = static_cast<int>(i);
+                    }
+                }
+                for (const auto& s : s_modelDisplayNames) {
+                    s_modelOptionViews.push_back(s);
+                }
+                if (s_modelChoiceIndex >= 0 && s_modelChoiceIndex < (int)s_models.size()) {
+                    isCurrentModelInstalled = s_models[s_modelChoiceIndex].isInstalled;
+                }
+            }
+
+            // UI effective enabled state: never clobber persisted config while browsing uninstalled model
+            const bool uiSrEnabled = s_srPluginEnabled && isCurrentModelInstalled;
+
+            // 1. Accordion Card Header (Level 1 Header - Left Chevron Arrow + Category Title + Right Direct Toggle)
+            SettingsItem itemAccordion = { AppStrings::g.Settings_Label_EnableSrPlugin, OptionType::AccordionCardHeader, &s_srPluginEnabled };
+            itemAccordion.isActivated = s_srPluginExpanded;
+            itemAccordion.isDisabled = !isCurrentModelInstalled;
+            itemAccordion.disabledText = !isCurrentModelInstalled ? AppStrings::g.Settings_Prompt_DownloadModelFirst : L"";
+            // [NEW-Badge] Added in v6.44.0 (AI Super-Resolution Plugin)
+            itemAccordion.isNewOption = true;
+            
+            // Clicking Card Header body / arrow toggles expansion
+            itemAccordion.onChange = []([[maybe_unused]] SettingsOverlay* overlay, SettingsItem* item) {
+                if (item) {
+                    s_srPluginExpanded = item->isActivated;
+                }
+                if (overlay) overlay->RequestRebuild();
+            };
+            // Clicking Right Toggle Switch toggles enable/disable
+            itemAccordion.onChange2 = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+                QuickView::PluginHost::Instance().SetSrPluginEnabled(s_srPluginEnabled);
+                SaveConfig();
+                if (overlay) overlay->RequestRebuild();
+                extern HWND g_mainHwnd;
+                extern void RefreshImageDisplay(HWND hwnd);
+                RefreshImageDisplay(g_mainHwnd);
+            };
+            tabPlugins.items.push_back(std::move(itemAccordion));
+
+            // If expanded, render details & subheaders (二级标题)
+            if (s_srPluginExpanded) {
+                // Engine Switcher Dropdown (Placed ABOVE AI Model, clean label, without redundant tooltip)
+                static std::vector<std::wstring> s_engineLabels;
+                static std::vector<std::wstring_view> s_engineViews;
+                static std::vector<std::wstring> s_enginePaths;
+                static int s_engineChoiceIndex = 0;
+
+                s_engineLabels.clear();
+                s_engineViews.clear();
+                s_enginePaths.clear();
+
+                std::wstring curPath = pluginHost.GetSrPluginPath();
+
+                for (const auto& cand : s_engineCandidates) {
+                    if (cand.supportedInterfaces & (1 << QVX_IFACE_SUPER_RESOLUTION)) {
+                        std::wstring label = Utf8ToWide(cand.pluginName);
+                        if (label.empty()) {
+                            label = cand.filePath;
+                        }
+                        s_engineLabels.push_back(label);
+                        s_enginePaths.push_back(cand.filePath);
+                    }
+                }
+
+                if (s_engineLabels.empty()) {
+                    s_engineLabels.push_back(L"Real-ESRGAN NCNN Vulkan");
+                    s_enginePaths.push_back(L"plugins\\sr\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx");
+                }
+
+                s_engineChoiceIndex = 0;
+                for (size_t e = 0; e < s_enginePaths.size(); ++e) {
+                    if (curPath == s_enginePaths[e] || (curPath.empty() && e == 0)) {
+                        s_engineChoiceIndex = static_cast<int>(e);
+                    }
+                }
+                for (const auto& l : s_engineLabels) {
+                    s_engineViews.push_back(l);
+                }
+
+                if (!s_engineViews.empty()) {
+                    SettingsItem itemEngine = { AppStrings::g.Settings_Label_SrEngine, OptionType::ComboBox, nullptr, nullptr, BindEnum(&s_engineChoiceIndex), nullptr, 0, 0, s_engineViews };
+                    itemEngine.tooltipText = nullptr;
+                    itemEngine.isDisabled = !uiSrEnabled;
+                    itemEngine.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+                        if (s_engineChoiceIndex >= 0 && s_engineChoiceIndex < static_cast<int>(s_enginePaths.size())) {
+                            auto& host = QuickView::PluginHost::Instance();
+                            host.SetSrPluginPath(s_enginePaths[s_engineChoiceIndex]);
+                            SaveConfig();
+                            if (overlay) {
+                                overlay->m_pluginsProbeValid = false;
+                                overlay->RequestRebuild();
+                            }
+                        }
+                    };
+                    tabPlugins.items.push_back(std::move(itemEngine));
+                }
+
+                // AI Model Selector
+                if (!s_models.empty()) {
+                    SettingsItem itemModel = { AppStrings::g.Settings_Label_SrModel, OptionType::ComboBox, nullptr, nullptr, BindEnum(&s_modelChoiceIndex), nullptr, 0, 0, s_modelOptionViews };
+                    if (s_modelChoiceIndex >= 0 && s_modelChoiceIndex < (int)s_modelDescriptions.size() && !s_modelDescriptions[s_modelChoiceIndex].empty()) {
+                        itemModel.tooltipText = s_modelDescriptions[s_modelChoiceIndex].c_str();
+                    }
+                    itemModel.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+                        if (!s_models.empty() && s_modelChoiceIndex >= 0 && s_modelChoiceIndex < (int)s_models.size()) {
+                            QuickView::PluginHost::Instance().SetSrModelId(s_models[s_modelChoiceIndex].modelId);
+                            SaveConfig();
+                            if (overlay) overlay->RequestRebuild();
+                            extern HWND g_mainHwnd;
+                            extern void RefreshImageDisplay(HWND hwnd);
+                            RefreshImageDisplay(g_mainHwnd);
+                        }
+                    };
+                    tabPlugins.items.push_back(std::move(itemModel));
+
+                    // Single model on-demand download button if not installed locally
+                    if (s_modelChoiceIndex >= 0 && s_modelChoiceIndex < (int)s_models.size() && !s_models[s_modelChoiceIndex].isInstalled && !s_models[s_modelChoiceIndex].downloadUrl.empty()) {
+                        uint64_t bytes = s_models[s_modelChoiceIndex].fileSizeBytes;
+                        wchar_t dlBuf[128] = { 0 };
+                        swprintf_s(dlBuf, AppStrings::g.Settings_Format_DownloadModel, (bytes + 1024 * 1024 - 1) / (1024 * 1024));
+                        
+                        SettingsItem itemDl = { AppStrings::g.Settings_Label_SrModelStatus, OptionType::ActionButton };
+                        itemDl.buttonText = dlBuf;
+
+                        const std::string curModelId = s_models[s_modelChoiceIndex].modelId;
+                        std::wstring snapText;
+                        std::string snapModelId;
+                        {
+                            std::lock_guard<std::mutex> lock(s_srDlMutex);
+                            snapText = s_srDownloadText;
+                            snapModelId = s_srDownloadingModelId;
+                        }
+                        if (s_srIsDownloading.load(std::memory_order_acquire) && snapModelId == curModelId) {
+                            itemDl.progress = s_srDownloadProgress.load(std::memory_order_acquire);
+                            itemDl.buttonText = snapText;
+                            itemDl.isDisabled = true;
+                        } else if (!snapText.empty() && snapModelId == curModelId) {
+                            itemDl.buttonText = snapText;
+                        }
+
+                        itemDl.onChange = [](SettingsOverlay* overlay, SettingsItem* item) {
+                            if (!item) return;
+                            if (s_modelChoiceIndex >= 0 && s_modelChoiceIndex < (int)s_models.size()) {
+                                const std::string url = s_models[s_modelChoiceIndex].downloadUrl;
+                                const std::string curModelId = s_models[s_modelChoiceIndex].modelId;
+                                const std::string curSha256 = s_models[s_modelChoiceIndex].sha256;
+                                const std::wstring wFilename = Utf8ToWide(curModelId + ".zip");
+
+                                {
+                                    std::lock_guard<std::mutex> lock(s_srDlMutex);
+                                    if (s_srIsDownloading.load(std::memory_order_relaxed)) return;
+                                    s_srIsDownloading.store(true, std::memory_order_release);
+                                    s_srDownloadingModelId = curModelId;
+                                    s_srDownloadProgress.store(0.0f, std::memory_order_release);
+                                    s_srDownloadText = L"Connecting (0%)...";
+                                }
+
+                                if (overlay) overlay->RequestRebuild();
+                                extern void RequestRepaint(QuickView::PaintLayer layer);
+                                RequestRepaint(QuickView::PaintLayer::Static);
+
+                                QuickView::RunDetached([wFilename, url, curSha256, overlay]() {
+                                    auto progressCb = [](float progress, bool finished, bool success, void* uData) {
+                                        {
+                                            std::lock_guard<std::mutex> lock(s_srDlMutex);
+                                            if (finished) {
+                                                s_srIsDownloading.store(false, std::memory_order_release);
+                                                if (success) {
+                                                    s_srDownloadProgress.store(1.0f, std::memory_order_release);
+                                                    s_srDownloadText = L"✓ Download Complete";
+                                                } else {
+                                                    s_srDownloadProgress.store(-1.0f, std::memory_order_release);
+                                                    s_srDownloadText = L"✗ Download Failed (Retry)";
+                                                }
+                                            } else {
+                                                const float p = (progress >= 0.0f) ? progress : 0.5f;
+                                                s_srDownloadProgress.store(p, std::memory_order_release);
+                                                const int percent = static_cast<int>(p * 100.0f);
+                                                s_srDownloadText = L"Downloading (" + std::to_wstring(percent) + L"%)...";
+                                            }
+                                        }
+                                        auto* payload = new PluginUiPayload{ static_cast<SettingsOverlay*>(uData), false, false };
+                                        PostSettingsUiEvent(SettingsUiEventKind::PluginProgress, payload);
+                                    };
+
+                                    const bool ok = QuickView::PluginHost::Instance().DownloadModel(wFilename, url, curSha256, progressCb, overlay);
+                                    auto* donePayload = new PluginUiPayload{ overlay, ok, false };
+                                    PostSettingsUiEvent(SettingsUiEventKind::PluginDone, donePayload);
+                                });
+                            }
+                        };
+                        tabPlugins.items.push_back(std::move(itemDl));
+                    }
+                }
+
+                // 2. SubHeader (Level 2 Header): 触发调度与交互
+                SettingsItem headerTrigger = { AppStrings::g.Settings_Header_PluginTriggers, OptionType::SubHeader };
+                tabPlugins.items.push_back(std::move(headerTrigger));
+
+                static bool s_srAutoTrigger = QuickView::PluginHost::Instance().IsSrAutoTriggerEnabled();
+                s_srAutoTrigger = QuickView::PluginHost::Instance().IsSrAutoTriggerEnabled();
+
+                SettingsItem itemAutoTrigger = { 
+                    AppStrings::g.Settings_Label_SrAutoTrigger, 
+                    OptionType::Toggle, 
+                    &s_srAutoTrigger 
+                };
+                itemAutoTrigger.isDisabled = !uiSrEnabled;
+                itemAutoTrigger.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+                    QuickView::PluginHost::Instance().SetSrAutoTriggerEnabled(s_srAutoTrigger);
+                    SaveConfig();
+                    if (overlay) overlay->RequestRebuild();
+                };
+                tabPlugins.items.push_back(std::move(itemAutoTrigger));
+
+                if (s_srAutoTrigger) {
+                    static float s_srMaxWidth = (float)g_config.SrAutoTriggerMaxWidth;
+                    s_srMaxWidth = (float)QuickView::PluginHost::Instance().GetSrAutoTriggerMaxWidth();
+                    SettingsItem itemMaxWidth = { AppStrings::g.Settings_Label_SrAutoTriggerMaxWidth, OptionType::Slider, nullptr, &s_srMaxWidth };
+                    itemMaxWidth.tooltipText = AppStrings::g.Settings_Tooltip_SrAutoTriggerMaxWidth;
+                    itemMaxWidth.minVal = 0.0f;
+                    itemMaxWidth.maxVal = 8192.0f;
+                    itemMaxWidth.step = 64.0f;
+                    itemMaxWidth.displayFormat = L"%.0f px";
+                    itemMaxWidth.isDisabled = !uiSrEnabled;
+                    itemMaxWidth.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+                        g_config.SrAutoTriggerMaxWidth = (int)(s_srMaxWidth + 0.5f);
+                        QuickView::PluginHost::Instance().SetSrAutoTriggerMaxWidth((uint32_t)g_config.SrAutoTriggerMaxWidth);
+                        SaveConfig();
+                    };
+                    itemMaxWidth.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+                        g_config.SrAutoTriggerMaxWidth = (int)(s_srMaxWidth + 0.5f);
+                        QuickView::PluginHost::Instance().SetSrAutoTriggerMaxWidth((uint32_t)g_config.SrAutoTriggerMaxWidth);
+                    };
+                    itemMaxWidth.onReset = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+                        s_srMaxWidth = 1080.0f;
+                        g_config.SrAutoTriggerMaxWidth = 1080;
+                        QuickView::PluginHost::Instance().SetSrAutoTriggerMaxWidth(1080);
+                        SaveConfig();
+                        if (overlay) overlay->RequestRebuild();
+                    };
+                    tabPlugins.items.push_back(std::move(itemMaxWidth));
+
+                    static float s_srMaxHeight = (float)g_config.SrAutoTriggerMaxHeight;
+                    s_srMaxHeight = (float)QuickView::PluginHost::Instance().GetSrAutoTriggerMaxHeight();
+                    SettingsItem itemMaxHeight = { AppStrings::g.Settings_Label_SrAutoTriggerMaxHeight, OptionType::Slider, nullptr, &s_srMaxHeight };
+                    itemMaxHeight.tooltipText = AppStrings::g.Settings_Tooltip_SrAutoTriggerMaxHeight;
+                    itemMaxHeight.minVal = 0.0f;
+                    itemMaxHeight.maxVal = 8192.0f;
+                    itemMaxHeight.step = 64.0f;
+                    itemMaxHeight.displayFormat = L"%.0f px";
+                    itemMaxHeight.isDisabled = !uiSrEnabled;
+                    itemMaxHeight.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+                        g_config.SrAutoTriggerMaxHeight = (int)(s_srMaxHeight + 0.5f);
+                        QuickView::PluginHost::Instance().SetSrAutoTriggerMaxHeight((uint32_t)g_config.SrAutoTriggerMaxHeight);
+                        SaveConfig();
+                    };
+                    itemMaxHeight.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+                        g_config.SrAutoTriggerMaxHeight = (int)(s_srMaxHeight + 0.5f);
+                        QuickView::PluginHost::Instance().SetSrAutoTriggerMaxHeight((uint32_t)g_config.SrAutoTriggerMaxHeight);
+                    };
+                    itemMaxHeight.onReset = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+                        s_srMaxHeight = 1080.0f;
+                        g_config.SrAutoTriggerMaxHeight = 1080;
+                        QuickView::PluginHost::Instance().SetSrAutoTriggerMaxHeight(1080);
+                        SaveConfig();
+                        if (overlay) overlay->RequestRebuild();
+                    };
+                    tabPlugins.items.push_back(std::move(itemMaxHeight));
+
+                    static float s_srDebounceFloat = (float)g_config.SrDebounceDelayMs;
+                    s_srDebounceFloat = (float)g_config.SrDebounceDelayMs;
+                    SettingsItem itemDebounce = { AppStrings::g.Settings_Label_SrDebounce, OptionType::Slider, nullptr, &s_srDebounceFloat };
+                    itemDebounce.tooltipText = AppStrings::g.Settings_Tooltip_SrDebounce;
+                    itemDebounce.minVal = 0.0f;
+                    itemDebounce.maxVal = 5000.0f;
+                    itemDebounce.step = 50.0f;
+                    itemDebounce.displayFormat = L"%.0f ms";
+                    itemDebounce.isDisabled = !uiSrEnabled;
+                    itemDebounce.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+                        g_config.SrDebounceDelayMs = (int)(s_srDebounceFloat + 0.5f);
+                        QuickView::PluginHost::Instance().SetSrDebounceDelayMs(g_config.SrDebounceDelayMs);
+                        SaveConfig();
+                    };
+                    itemDebounce.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+                        g_config.SrDebounceDelayMs = (int)(s_srDebounceFloat + 0.5f);
+                        QuickView::PluginHost::Instance().SetSrDebounceDelayMs(g_config.SrDebounceDelayMs);
+                    };
+                    itemDebounce.onReset = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+                        s_srDebounceFloat = 3000.0f;
+                        g_config.SrDebounceDelayMs = 3000;
+                        QuickView::PluginHost::Instance().SetSrDebounceDelayMs(3000);
+                        SaveConfig();
+                        if (overlay) overlay->RequestRebuild();
+                    };
+                    tabPlugins.items.push_back(std::move(itemDebounce));
+                }
+
+                static bool s_srOpenCompare = QuickView::PluginHost::Instance().IsSrOpenInCompareMode();
+                s_srOpenCompare = QuickView::PluginHost::Instance().IsSrOpenInCompareMode();
+                SettingsItem itemOpenCompare = { AppStrings::g.Settings_Label_SrOpenInCompare, OptionType::Toggle, &s_srOpenCompare };
+                itemOpenCompare.isDisabled = !uiSrEnabled;
+                itemOpenCompare.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+                    QuickView::PluginHost::Instance().SetSrOpenInCompareMode(s_srOpenCompare);
+                    SaveConfig();
+                };
+                tabPlugins.items.push_back(std::move(itemOpenCompare));
+
+                static bool s_srPromptModel = QuickView::PluginHost::Instance().IsSrPromptModelOnHotkey();
+                s_srPromptModel = QuickView::PluginHost::Instance().IsSrPromptModelOnHotkey();
+                SettingsItem itemPromptModel = { AppStrings::g.Settings_Label_SrPromptModel, OptionType::Toggle, &s_srPromptModel };
+                itemPromptModel.isDisabled = !uiSrEnabled;
+                itemPromptModel.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+                    QuickView::PluginHost::Instance().SetSrPromptModelOnHotkey(s_srPromptModel);
+                    SaveConfig();
+                };
+                tabPlugins.items.push_back(std::move(itemPromptModel));
+
+                // 3. Dynamic Parameter Reflection from Plugin Manifest (QVX_ParamDesc)
+                static float s_dynFloats[32] = { 0 };
+                static int s_dynInts[32] = { 0 };
+                static bool s_dynBools[32] = { false };
+                static std::wstring s_paramLabels[32];
+                static std::wstring s_paramTooltips[32];
+                static std::vector<std::wstring> s_enumOptionLabels[32];
+                static std::vector<std::wstring_view> s_enumOptionViews[32];
+                static std::vector<int32_t> s_enumOptionValues[32];
+
+                if (!s_dynParams.empty()) {
+                    std::string currentModelId = pluginHost.GetSrModelId();
+                    if (!s_models.empty() && s_modelChoiceIndex >= 0 && s_modelChoiceIndex < (int)s_models.size()) {
+                        currentModelId = s_models[s_modelChoiceIndex].modelId;
+                    }
+
+                    bool hasVisibleParams = false;
+                    for (size_t i = 0; i < s_dynParams.size(); ++i) {
+                        if (strcmp(s_dynParams[i].desc.id, "denoise") == 0 && currentModelId != "realesr-general-x4v3") {
+                            continue;
+                        }
+                        hasVisibleParams = true;
+                        break;
+                    }
+
+                    if (hasVisibleParams) {
+                        AddLabelItem(tabPlugins, AppStrings::g.Settings_Header_PluginParams, OptionType::SubHeader);
+                    }
+
+                    for (size_t i = 0; i < s_dynParams.size() && i < 32; ++i) {
+                        const auto& p = s_dynParams[i];
+                        if (strcmp(p.desc.id, "denoise") == 0 && currentModelId != "realesr-general-x4v3") {
+                            continue;
+                        }
+                        s_paramLabels[i] = Utf8ToWide(p.desc.label ? p.desc.label : p.desc.id);
+
+                        const wchar_t* pTooltip = nullptr;
+                        if (p.desc.tooltip && p.desc.tooltip[0] != '\0') {
+                            s_paramTooltips[i] = Utf8ToWide(p.desc.tooltip);
+                            pTooltip = s_paramTooltips[i].c_str();
+                        }
+
+                        if (p.desc.type == QVX_PARAM_TYPE_FLOAT) {
+                            s_dynFloats[i] = p.currentValue;
+                            SettingsItem itemParam = { s_paramLabels[i], OptionType::Slider, nullptr, &s_dynFloats[i] };
+                            itemParam.tooltipText = pTooltip;
+                            itemParam.minVal = p.desc.float_param.min_val;
+                            itemParam.maxVal = p.desc.float_param.max_val;
+                            itemParam.step = p.desc.float_param.step;
+                            itemParam.displayFormat = L"%.2f";
+                            itemParam.isDisabled = !uiSrEnabled;
+
+                            itemParam.onChange = []([[maybe_unused]] SettingsOverlay* overlay, SettingsItem* item) {
+                                if (!item || !item->pFloatVal) return;
+                                int idx = static_cast<int>(item->pFloatVal - s_dynFloats);
+                                if (idx >= 0 && idx < static_cast<int>(s_dynParams.size())) {
+                                    QuickView::PluginHost::Instance().SetParamValue(s_dynParams[idx].desc.id, *item->pFloatVal);
+                                    SaveConfig();
+                                    extern HWND g_mainHwnd;
+                                    extern void RefreshImageDisplay(HWND hwnd);
+                                    RefreshImageDisplay(g_mainHwnd);
+                                }
+                            };
+                            itemParam.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, SettingsItem* item) {
+                                if (!item || !item->pFloatVal) return;
+                                int idx = static_cast<int>(item->pFloatVal - s_dynFloats);
+                                if (idx >= 0 && idx < static_cast<int>(s_dynParams.size())) {
+                                    QuickView::PluginHost::Instance().SetParamValue(s_dynParams[idx].desc.id, *item->pFloatVal);
+                                }
+                            };
+                            itemParam.onReset = []([[maybe_unused]] SettingsOverlay* overlay, SettingsItem* item) {
+                                if (!item || !item->pFloatVal) return;
+                                int idx = static_cast<int>(item->pFloatVal - s_dynFloats);
+                                if (idx >= 0 && idx < static_cast<int>(s_dynParams.size())) {
+                                    float defVal = s_dynParams[idx].desc.float_param.default_val;
+                                    *item->pFloatVal = defVal;
+                                    QuickView::PluginHost::Instance().SetParamValue(s_dynParams[idx].desc.id, defVal);
+                                    SaveConfig();
+                                    if (overlay) overlay->RequestRebuild();
+                                    extern HWND g_mainHwnd;
+                                    extern void RefreshImageDisplay(HWND hwnd);
+                                    RefreshImageDisplay(g_mainHwnd);
+                                }
+                            };
+                            tabPlugins.items.push_back(std::move(itemParam));
+                        } else if (p.desc.type == QVX_PARAM_TYPE_BOOL) {
+                            s_dynBools[i] = (p.currentValue != 0.0f);
+                            SettingsItem itemParam = { s_paramLabels[i], OptionType::Toggle, &s_dynBools[i] };
+                            itemParam.tooltipText = pTooltip;
+                            itemParam.isDisabled = !uiSrEnabled;
+
+                            itemParam.onChange = []([[maybe_unused]] SettingsOverlay* overlay, SettingsItem* item) {
+                                if (!item || !item->pBoolVal) return;
+                                int idx = static_cast<int>(item->pBoolVal - s_dynBools);
+                                if (idx >= 0 && idx < static_cast<int>(s_dynParams.size())) {
+                                    QuickView::PluginHost::Instance().SetParamValue(s_dynParams[idx].desc.id, *item->pBoolVal ? 1.0f : 0.0f);
+                                    SaveConfig();
+                                    extern HWND g_mainHwnd;
+                                    extern void RefreshImageDisplay(HWND hwnd);
+                                    RefreshImageDisplay(g_mainHwnd);
+                                }
+                            };
+                            tabPlugins.items.push_back(std::move(itemParam));
+                        } else if (p.desc.type == QVX_PARAM_TYPE_INT) {
+                            s_dynFloats[i] = p.currentValue;
+                            SettingsItem itemParam = { s_paramLabels[i], OptionType::Slider, nullptr, &s_dynFloats[i] };
+                            itemParam.tooltipText = pTooltip;
+                            itemParam.minVal = static_cast<float>(p.desc.int_param.min_val);
+                            itemParam.maxVal = static_cast<float>(p.desc.int_param.max_val);
+                            itemParam.step = static_cast<float>(p.desc.int_param.step > 0 ? p.desc.int_param.step : 1);
+                            itemParam.displayFormat = L"%.0f";
+                            itemParam.isDisabled = !uiSrEnabled;
+
+                            itemParam.onChange = []([[maybe_unused]] SettingsOverlay* overlay, SettingsItem* item) {
+                                if (!item || !item->pFloatVal) return;
+                                int idx = static_cast<int>(item->pFloatVal - s_dynFloats);
+                                if (idx >= 0 && idx < static_cast<int>(s_dynParams.size())) {
+                                    float quantVal = static_cast<float>(static_cast<int>(*item->pFloatVal + 0.5f));
+                                    QuickView::PluginHost::Instance().SetParamValue(s_dynParams[idx].desc.id, quantVal);
+                                    SaveConfig();
+                                    extern HWND g_mainHwnd;
+                                    extern void RefreshImageDisplay(HWND hwnd);
+                                    RefreshImageDisplay(g_mainHwnd);
+                                }
+                            };
+                            itemParam.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, SettingsItem* item) {
+                                if (!item || !item->pFloatVal) return;
+                                int idx = static_cast<int>(item->pFloatVal - s_dynFloats);
+                                if (idx >= 0 && idx < static_cast<int>(s_dynParams.size())) {
+                                    float quantVal = static_cast<float>(static_cast<int>(*item->pFloatVal + 0.5f));
+                                    QuickView::PluginHost::Instance().SetParamValue(s_dynParams[idx].desc.id, quantVal);
+                                }
+                            };
+                            itemParam.onReset = []([[maybe_unused]] SettingsOverlay* overlay, SettingsItem* item) {
+                                if (!item || !item->pFloatVal) return;
+                                int idx = static_cast<int>(item->pFloatVal - s_dynFloats);
+                                if (idx >= 0 && idx < static_cast<int>(s_dynParams.size())) {
+                                    float defVal = static_cast<float>(s_dynParams[idx].desc.int_param.default_val);
+                                    *item->pFloatVal = defVal;
+                                    QuickView::PluginHost::Instance().SetParamValue(s_dynParams[idx].desc.id, defVal);
+                                    SaveConfig();
+                                    if (overlay) overlay->RequestRebuild();
+                                    extern HWND g_mainHwnd;
+                                    extern void RefreshImageDisplay(HWND hwnd);
+                                    RefreshImageDisplay(g_mainHwnd);
+                                }
+                            };
+                            tabPlugins.items.push_back(std::move(itemParam));
+                        } else if (p.desc.type == QVX_PARAM_TYPE_ENUM && p.desc.enum_param.options && p.desc.enum_param.option_count > 0) {
+                            s_enumOptionLabels[i].clear();
+                            s_enumOptionViews[i].clear();
+                            s_enumOptionValues[i].clear();
+
+                            const int32_t curEnumVal = static_cast<int32_t>(std::lround(p.currentValue));
+                            int selectedEnumIdx = 0;
+                            for (uint32_t o = 0; o < p.desc.enum_param.option_count; ++o) {
+                                const auto& opt = p.desc.enum_param.options[o];
+                                if (!opt.label) continue;
+                                if (opt.value == curEnumVal) {
+                                    selectedEnumIdx = static_cast<int>(s_enumOptionLabels[i].size());
+                                }
+                                s_enumOptionLabels[i].push_back(Utf8ToWide(opt.label));
+                                s_enumOptionValues[i].push_back(opt.value);
+                            }
+                            if (!s_enumOptionLabels[i].empty()) {
+                                s_dynInts[i] = selectedEnumIdx;
+                                for (const auto& s : s_enumOptionLabels[i]) {
+                                    s_enumOptionViews[i].push_back(s);
+                                }
+
+                                SettingsItem itemParam = { s_paramLabels[i], OptionType::ComboBox, nullptr, nullptr, BindEnum(&s_dynInts[i]), nullptr, 0, 0, s_enumOptionViews[i] };
+                                itemParam.tooltipText = pTooltip;
+                                itemParam.isDisabled = !uiSrEnabled;
+                                itemParam.onChange = []([[maybe_unused]] SettingsOverlay* overlay, SettingsItem* item) {
+                                    if (!item || !item->pIntVal) return;
+                                    int idx = static_cast<int>(item->pIntVal - s_dynInts);
+                                    if (idx >= 0 && idx < 32 && idx < static_cast<int>(s_dynParams.size())) {
+                                        const int choice = *item->pIntVal;
+                                        if (choice >= 0 && choice < static_cast<int>(s_enumOptionValues[idx].size())) {
+                                            QuickView::PluginHost::Instance().SetParamValue(
+                                                s_dynParams[idx].desc.id, static_cast<float>(s_enumOptionValues[idx][choice]));
+                                            SaveConfig();
+                                            extern HWND g_mainHwnd;
+                                            extern void RefreshImageDisplay(HWND hwnd);
+                                            RefreshImageDisplay(g_mainHwnd);
+                                        }
+                                    }
+                                };
+                                tabPlugins.items.push_back(std::move(itemParam));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Common / Public Storage Settings (Always accessible outside accordion)
+            AddSeparator(tabPlugins, L"");
+            SettingsItem itemOpenFolder = { AppStrings::g.Settings_Label_SrStorageFolder, OptionType::ActionButton };
+            itemOpenFolder.buttonText = AppStrings::g.Settings_Button_OpenModelFolder;
+            itemOpenFolder.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+                QuickView::PluginHost::Instance().OpenModelsDirectory();
+            };
+            tabPlugins.items.push_back(std::move(itemOpenFolder));
+        } else {
+            // Uninstalled guidance card in View 0
+            SettingsItem itemEmptyHeader = { AppStrings::g.Settings_Header_SrComponent, OptionType::Header };
+            tabPlugins.items.push_back(std::move(itemEmptyHeader));
+
+            SettingsItem itemQuickInstall = { AppStrings::g.Settings_Label_QuickEnableEngine, OptionType::ActionButton };
+            itemQuickInstall.buttonText = AppStrings::g.Settings_Button_QuickEnableNcnn;
+            itemQuickInstall.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+                auto& host = QuickView::PluginHost::Instance();
+                host.SetSrPluginPath(L"plugins\\sr\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx");
+                host.SetSrPluginEnabled(true);
+                SaveConfig();
+                if (overlay) {
+                    overlay->m_pluginsProbeValid = false;
+                    overlay->RequestRebuild();
+                    extern void RequestRepaint(QuickView::PaintLayer layer);
+                    RequestRepaint(QuickView::PaintLayer::Static);
+                }
+            };
+            tabPlugins.items.push_back(std::move(itemQuickInstall));
+
+            if (!isPackaged) {
+                SettingsItem itemGoMarket = { AppStrings::g.Settings_Label_OnlineExtensions, OptionType::ActionButton };
+                itemGoMarket.buttonText = AppStrings::g.Settings_Button_BrowseMarketplace;
+                itemGoMarket.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+                    s_pluginViewMode = 1;
+                    if (overlay) {
+                        overlay->m_pluginsProbeValid = false;
+                        overlay->RequestRebuild();
+                        extern void RequestRepaint(QuickView::PaintLayer layer);
+                        RequestRepaint(QuickView::PaintLayer::Static);
+                    }
+                };
+                tabPlugins.items.push_back(std::move(itemGoMarket));
+            }
+        }
+
+    } else {
+        // ====================================================================
+        // VIEW 1: 云端插件市场 (Online Plugin Marketplace)
+        // ====================================================================
+        const auto& remotePlugins = pluginHost.GetCachedRemoteManifest();
+        bool isFetching = pluginHost.IsFetchingManifest();
+
+        if (remotePlugins.empty() && !isFetching) {
+            static bool s_autoFetched = false;
+            if (!s_autoFetched) {
+                s_autoFetched = true;
+                pluginHost.TriggerManifestFetch();
+            }
+        }
+
+        // Refresh action button
+        SettingsItem itemRefresh = { AppStrings::g.Settings_Label_MarketManifest, OptionType::ActionButton };
+        itemRefresh.buttonText = isFetching ? AppStrings::g.Settings_Button_SyncingManifest : AppStrings::g.Settings_Button_RefreshManifest;
+        itemRefresh.isDisabled = isFetching;
+        itemRefresh.onChange = [](SettingsOverlay* overlay, SettingsItem* item) {
+            if (!item) return;
+            QuickView::PluginHost::Instance().TriggerManifestFetch();
+            if (overlay) {
+                overlay->RequestRebuild();
+                extern void RequestRepaint(QuickView::PaintLayer layer);
+                RequestRepaint(QuickView::PaintLayer::Static);
+            }
+        };
+        tabPlugins.items.push_back(std::move(itemRefresh));
+
+        struct MarketPluginSpec {
+            std::wstring fileName;
+            std::string downloadUrl;
+            std::string sha256;
+            bool isUpdate = false;
+        };
+        static std::vector<MarketPluginSpec> s_marketPluginSpecs;
+        static int s_marketIndices[64];
+        s_marketPluginSpecs.clear();
+
+        auto startMarketDownload = [](SettingsOverlay* overlay, SettingsItem* item) {
+            if (!item || !item->pIntVal) return;
+            const size_t idx = static_cast<size_t>(*item->pIntVal);
+            if (idx >= s_marketPluginSpecs.size()) return;
+            const auto spec = s_marketPluginSpecs[idx];
+
+            {
+                std::lock_guard<std::mutex> lock(s_mktDlMutex);
+                MarketDownloadEntry* found = nullptr;
+                for (auto& e : s_mktDownloads) {
+                    if (e.url == spec.downloadUrl) { found = &e; break; }
+                }
+                if (!found) {
+                    s_mktDownloads.push_back({ spec.downloadUrl, true, 0.0f, spec.isUpdate ? L"Updating (0%)..." : L"Connecting (0%)..." });
+                } else {
+                    if (found->isDownloading) return;
+                    found->isDownloading = true;
+                    found->progress = 0.0f;
+                    found->statusText = spec.isUpdate ? L"Updating (0%)..." : L"Connecting (0%)...";
+                }
+            }
+
+            if (overlay) overlay->RequestRebuild();
+            extern void RequestRepaint(QuickView::PaintLayer layer);
+            RequestRepaint(QuickView::PaintLayer::Static);
+
+            QuickView::RunDetached([spec, overlay]() {
+                struct DlCbCtx { SettingsOverlay* ov; std::string url; bool isUpdate; };
+                auto* cbCtx = new DlCbCtx{ overlay, spec.downloadUrl, spec.isUpdate };
+                auto progressCb = [](float progress, bool finished, bool success, void* uData) {
+                    auto* ctx = static_cast<DlCbCtx*>(uData);
+                    if (!ctx) return;
+                    {
+                        std::lock_guard<std::mutex> lock(s_mktDlMutex);
+                        for (auto& e : s_mktDownloads) {
+                            if (e.url == ctx->url) {
+                                if (finished) {
+                                    e.isDownloading = false;
+                                    if (success) {
+                                        e.progress = 1.0f;
+                                        e.statusText = ctx->isUpdate ? L"✓ Updated" : L"✓ Ready";
+                                    } else {
+                                        e.progress = -1.0f;
+                                        e.statusText = ctx->isUpdate ? L"✗ Update Failed" : L"✗ Failed (Retry)";
+                                    }
+                                } else {
+                                    e.progress = (progress >= 0.0f) ? progress : 0.5f;
+                                    const int percent = static_cast<int>(e.progress * 100.0f);
+                                    e.statusText = (ctx->isUpdate ? L"Updating (" : L"Downloading (") + std::to_wstring(percent) + L"%)...";
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    auto* payload = new PluginUiPayload{ ctx->ov, false, false };
+                    PostSettingsUiEvent(SettingsUiEventKind::PluginProgress, payload);
+                };
+
+                const bool ok = QuickView::PluginHost::Instance().DownloadPlugin(spec.fileName, spec.downloadUrl, spec.sha256, progressCb, cbCtx);
+                delete cbCtx;
+                auto* donePayload = new PluginUiPayload{ overlay, ok, ok && !spec.isUpdate };
+                PostSettingsUiEvent(SettingsUiEventKind::PluginDone, donePayload);
+            });
+        };
+
+        if (!remotePlugins.empty()) {
+            for (size_t rpIdx = 0; rpIdx < remotePlugins.size() && rpIdx < 64; ++rpIdx) {
+                const auto& rp = remotePlugins[rpIdx];
+                const std::wstring wFile = Utf8ToWide(rp.fileName);
+                const bool isMatchedPlugin =
+                    (rp.id == "sr_ncnn_vulkan" || rp.id.empty() || rp.fileName == "sr_ncnn_vulkan.qvx");
+                const auto entryInstallState = isMatchedPlugin ? installState : QuickView::PluginInstallState::NotInstalled;
+                const bool isUpdate = (entryInstallState == QuickView::PluginInstallState::UpdateAvailable) ||
+                                      (isMatchedPlugin && !curVer.empty() && curVer != rp.version && !rp.version.empty());
+
+                s_marketPluginSpecs.push_back({ wFile, rp.downloadUrl, rp.sha256, isUpdate });
+                s_marketIndices[rpIdx] = static_cast<int>(rpIdx);
+
+                std::wstring wName = Utf8ToWide(rp.name);
+                std::wstring wVer = Utf8ToWide(rp.version);
+                std::wstring wDesc = Utf8ToWide(rp.description);
+                std::wstring wAuthor = Utf8ToWide(rp.author);
+
+                // 1. Full-width Card Header: [ 🧩 插件名称 (vX.Y.Z) · 作者 ]
+                std::wstring cardHeaderTitle = wName + L" (v" + wVer + L") · " + wAuthor;
+                AddHeader(tabPlugins, cardHeaderTitle);
+                // 2. Action row: Label on left, ActionButton on right with progress & feedback
+                uint64_t mb = (rp.fileSize + 1024 * 1024 - 1) / (1024 * 1024);
+                wchar_t pkgBuf[128] = { 0 };
+                swprintf_s(pkgBuf, AppStrings::g.Settings_Format_PluginPackageSize, mb > 0 ? mb : 2);
+                SettingsItem itemMarketAction = { pkgBuf, OptionType::ActionButton };
+                itemMarketAction.pIntVal = &s_marketIndices[rpIdx];
+
+                if (entryInstallState == QuickView::PluginInstallState::Installed && (curVer == rp.version || rp.version.empty())) {
+                    itemMarketAction.buttonText = AppStrings::g.Settings_Button_InstalledUpToDate;
+                    itemMarketAction.isDisabled = true;
+                    itemMarketAction.isSuccess = true;
+                } else {
+                    if (isUpdate) {
+                        wchar_t updBuf[128] = { 0 };
+                        swprintf_s(updBuf, AppStrings::g.Settings_Format_UpdateTo, wVer.c_str());
+                        itemMarketAction.buttonText = updBuf;
+                    } else {
+                        itemMarketAction.buttonText = AppStrings::g.Settings_Button_InstallPlugin;
+                    }
+
+                    const MarketDownloadEntry dlSnap = findMarketDl(rp.downloadUrl);
+                    if (dlSnap.isDownloading) {
+                        itemMarketAction.progress = dlSnap.progress;
+                        itemMarketAction.buttonText = dlSnap.statusText;
+                        itemMarketAction.isDisabled = true;
+                    } else if (!dlSnap.statusText.empty()) {
+                        itemMarketAction.buttonText = dlSnap.statusText;
+                    }
+                    itemMarketAction.onChange = startMarketDownload;
+                }
+                tabPlugins.items.push_back(std::move(itemMarketAction));
+
+                // 3. Description InfoLabel
+                AddInfoLabel(tabPlugins, wDesc);
+            }
+        }
+    }
+}
+
+static void ApplyAssocPreset(SettingsOverlay* overlay, QuickView::AssocPreset preset) {
+    g_config.FileAssocExts = QuickView::GetPresetCsv(preset);
+    extern void SaveConfig();
+    SaveConfig();
+    if (overlay) {
+        overlay->RefreshFileAssocProbe();
+        overlay->RequestRebuild();
+    }
+}
+
+void SettingsOverlay::BuildFileAssocTab(SettingsTab& tabFileAssoc) {
+    tabFileAssoc.name = AppStrings::g.Settings_Tab_FileAssoc;
+    tabFileAssoc.icon = Icons::Link;
+
+    const bool isPackaged = SystemInfo::IsPackagedApp();
+
+    // Only probe registry on demand when user actually opens the File Associations tab
+    if (m_activeTab == m_fileAssocTabIdx && !m_assocProbeValid) {
+        RefreshFileAssocProbe();
+    } else if (!m_assocProbeValid) {
+        // Zero-I/O memory summary until user visits this tab
+        int selCount = 0;
+        for (auto ext : QuickView::ALL_ASSOCIABLE_EXTENSIONS) {
+            if (QuickView::IsExtensionInCsv(g_config.FileAssocExts, ext)) {
+                ++selCount;
+            }
+        }
+        wchar_t summaryBuf[256] = {};
+        const wchar_t* fmt = AppStrings::g.Settings_Status_AssocSummaryFormat
+            ? AppStrings::g.Settings_Status_AssocSummaryFormat
+            : L"%d selected \u00b7 %d system default \u00b7 %d Open With only";
+        swprintf_s(summaryBuf, fmt, isPackaged ? static_cast<int>(QuickView::ALL_ASSOCIABLE_EXTENSIONS.size()) : selCount, 0, 0);
+        m_assocSummaryText = summaryBuf;
+
+        for (size_t ci = 0; ci < static_cast<size_t>(QuickView::AssocExtCategory::Count); ++ci) {
+            const auto cat = static_cast<QuickView::AssocExtCategory>(ci);
+            const auto exts = QuickView::GetExtensionsByCategory(cat);
+            const int catSel = QuickView::CountCategoryInCsv(g_config.FileAssocExts, cat);
+            m_assocCatToggles[ci] = (!exts.empty() && catSel == static_cast<int>(exts.size()));
+        }
+    }
+
+    // 1. Overview & Diagnostics
+    AddHeader(tabFileAssoc, AppStrings::g.Settings_Header_FileAssocStatus);
+    AddInfoLabel(tabFileAssoc, m_assocSummaryText);
+    if (isPackaged) {
+        AddInfoLabel(tabFileAssoc, AppStrings::g.Settings_Status_AssocStoreManaged);
+    } else if (m_assocProbeValid && m_assocProbe.hasBrokenCommand && !g_config.PortableMode) {
+        AddInfoLabel(tabFileAssoc, AppStrings::g.Settings_Status_AssocBrokenHint);
+        SettingsItem itemRepair = { AppStrings::g.Settings_Header_FileAssocStatus, OptionType::ActionButton };
+        itemRepair.buttonText = AppStrings::g.Settings_Action_RepairAssoc;
+        itemRepair.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+            if (SettingsOverlay::RegisterAssociations() && overlay) {
+                overlay->m_assocAppliedTick = GetTickCount();
+                overlay->m_assocProbeValid = false;
+                overlay->RefreshFileAssocProbe();
+                overlay->RequestRebuild();
+            }
+        };
+        tabFileAssoc.items.push_back(std::move(itemRepair));
+    }
+
+    const bool showAppliedBanner = (m_assocAppliedTick != 0 && (GetTickCount() - m_assocAppliedTick) < 2500);
+    const bool hasPendingChanges = !isPackaged && !g_config.PortableMode &&
+        (QuickView::FormatAssocOptionsHash(QuickView::ComputeAssocOptionsHash(BuildCurrentAssocOptions())) != g_config.LastRegisteredAssocHash);
+
+    if (isPackaged) {
+        // Store / MSIX builds delegate Open With & Context Menu to the package manifest;
+        // only Windows Default Apps needs to be invoked (using registeredAUMID).
+        SettingsItem itemWinDefault = { L"", OptionType::ActionButton };
+        itemWinDefault.buttonText = AppStrings::g.Settings_Action_SetDefaultWin;
+        itemWinDefault.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+            QuickView::OpenSystemDefaultAppsSettings();
+            if (overlay) {
+                overlay->m_assocProbeValid = false;
+                overlay->RefreshFileAssocProbe();
+                overlay->RequestRebuild();
+            }
+        };
+        tabFileAssoc.items.push_back(std::move(itemWinDefault));
+    } else {
+        if (hasPendingChanges && !showAppliedBanner && AppStrings::g.Settings_Status_AssocPendingHint) {
+            AddInfoLabel(tabFileAssoc, AppStrings::g.Settings_Status_AssocPendingHint);
+        }
+
+        // Primary Action Bar: Apply Changes to System + Windows 10/11 Default Apps
+        SettingsItem itemApplyWin = { L"", OptionType::DualActionButton };
+        itemApplyWin.buttonText = showAppliedBanner
+            ? AppStrings::g.Settings_Status_AssocApplied
+            : (hasPendingChanges && AppStrings::g.Settings_Action_ApplyPending ? AppStrings::g.Settings_Action_ApplyPending : AppStrings::g.Settings_Action_ApplyAssoc);
+        itemApplyWin.buttonText2 = AppStrings::g.Settings_Action_SetDefaultWin;
+        if (g_config.PortableMode) {
+            itemApplyWin.isDisabled = true;
+            itemApplyWin.disabledText = AppStrings::g.Settings_Status_DisabledInPortable;
+        } else {
+            itemApplyWin.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+                if (SettingsOverlay::RegisterAssociations() && overlay) {
+                    overlay->m_assocAppliedTick = GetTickCount();
+                    overlay->m_assocProbeValid = false;
+                    overlay->RefreshFileAssocProbe();
+                    overlay->RequestRebuild();
+                }
+            };
+            itemApplyWin.onChange2 = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+                // Ensure Capabilities & ProgIDs exist in registry before opening Windows Settings
+                if (SettingsOverlay::IsRegistrationNeeded()) {
+                    SettingsOverlay::RegisterAssociations();
+                }
+                QuickView::OpenSystemDefaultAppsSettings();
+                if (overlay) {
+                    overlay->m_assocAppliedTick = GetTickCount();
+                    overlay->m_assocProbeValid = false;
+                    overlay->RefreshFileAssocProbe();
+                    overlay->RequestRebuild();
+                }
+            };
+        }
+        tabFileAssoc.items.push_back(std::move(itemApplyWin));
+    }
+
+    // 2. Integration Options
+    AddHeader(tabFileAssoc, AppStrings::g.Settings_Header_FileAssocOptions);
+    SettingsItem itemIconStyle = {
+        AppStrings::g.Settings_Label_FileAssocIconStyle,
+        OptionType::Segment,
+        nullptr,
+        nullptr,
+        &g_config.FileAssocIconStyle,
+        nullptr,
+        0,
+        0,
+        { AppStrings::g.Settings_Option_FileAssocIconNative, AppStrings::g.Settings_Option_FileAssocIconApp }
+    };
+    itemIconStyle.isDisabled = isPackaged || g_config.PortableMode;
+    itemIconStyle.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        extern void SaveConfig();
+        SaveConfig();
+        if (overlay) overlay->RequestRebuild();
+    };
+    tabFileAssoc.items.push_back(std::move(itemIconStyle));
+
+    SettingsItem itemContextMenu = { AppStrings::g.Settings_Label_FileAssocContextMenu, OptionType::Toggle, &g_config.FileAssocContextMenu };
+    itemContextMenu.isDisabled = isPackaged || g_config.PortableMode;
+    itemContextMenu.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        extern void SaveConfig();
+        SaveConfig();
+        // Immediately scrub context menu registry keys when user unchecks the toggle
+        if (!g_config.FileAssocContextMenu && !g_config.PortableMode && !SystemInfo::IsPackagedApp()) {
+            if (SettingsOverlay::RegisterAssociations() && overlay) {
+                overlay->m_assocAppliedTick = GetTickCount();
+                overlay->m_assocProbeValid = false;
+                overlay->RefreshFileAssocProbe();
+            }
+        }
+        if (overlay) overlay->RequestRebuild();
+    };
+    tabFileAssoc.items.push_back(std::move(itemContextMenu));
+
+    SettingsItem itemAutoRepair = { AppStrings::g.Settings_Label_FileAssocAutoRepair, OptionType::Toggle, &g_config.FileAssocAutoRepair };
+    itemAutoRepair.isDisabled = isPackaged || g_config.PortableMode;
+    itemAutoRepair.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        extern void SaveConfig();
+        SaveConfig();
+    };
+    tabFileAssoc.items.push_back(std::move(itemAutoRepair));
+
+    // 2x2 Presets Grid
+    SettingsItem itemPresetRow1 = { AppStrings::g.Settings_Label_FileAssocPresets, OptionType::DualActionButton };
+    itemPresetRow1.buttonText = AppStrings::g.Settings_Action_PresetRecommended;
+    itemPresetRow1.buttonText2 = AppStrings::g.Settings_Action_PresetPhotoRaw;
+    itemPresetRow1.isDisabled = isPackaged;
+    itemPresetRow1.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        ApplyAssocPreset(overlay, QuickView::AssocPreset::Recommended);
+    };
+    itemPresetRow1.onChange2 = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        ApplyAssocPreset(overlay, QuickView::AssocPreset::PhotoAndRaw);
+    };
+    tabFileAssoc.items.push_back(std::move(itemPresetRow1));
+
+    SettingsItem itemPresetRow2 = { L" ", OptionType::DualActionButton };
+    itemPresetRow2.buttonText = AppStrings::g.Settings_Action_PresetAllImages;
+    itemPresetRow2.buttonText2 = AppStrings::g.Settings_Action_PresetClearAll;
+    itemPresetRow2.isDisabled = isPackaged;
+    itemPresetRow2.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        ApplyAssocPreset(overlay, QuickView::AssocPreset::AllImages);
+    };
+    itemPresetRow2.onChange2 = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        ApplyAssocPreset(overlay, QuickView::AssocPreset::ClearAll);
+        if (!g_config.PortableMode && !SystemInfo::IsPackagedApp()) {
+            if (SettingsOverlay::RegisterAssociations() && overlay) {
+                overlay->m_assocAppliedTick = GetTickCount();
+                overlay->m_assocProbeValid = false;
+                overlay->RefreshFileAssocProbe();
+                overlay->RequestRebuild();
+            }
+        }
+    };
+    tabFileAssoc.items.push_back(std::move(itemPresetRow2));
+
+    // 3. All 92 Supported Formats (Data-driven Category Accordion Cards)
+    AddHeader(tabFileAssoc, AppStrings::g.Settings_Header_FileAssocFormats);
+    AddInfoLabel(tabFileAssoc, AppStrings::g.Settings_Status_AssocLegend);
+    constexpr size_t kCatCount = static_cast<size_t>(QuickView::AssocExtCategory::Count);
+    for (size_t ci = 0; ci < kCatCount; ++ci) {
+        const auto cat = static_cast<QuickView::AssocExtCategory>(ci);
+        const auto exts = QuickView::GetExtensionsByCategory(cat);
+        const int selCount = QuickView::CountCategoryInCsv(g_config.FileAssocExts, cat);
+        const wchar_t* const* titlePtr = GetCategoryTitlePtr(cat);
+        const wchar_t* titleStr = (titlePtr && *titlePtr) ? *titlePtr : L"Formats";
+
+        wchar_t cardTitle[160] = {};
+        if (isPackaged) {
+            swprintf_s(cardTitle, L"%s (%d)", titleStr, static_cast<int>(exts.size()));
+        } else {
+            swprintf_s(cardTitle, L"%s (%d/%d)", titleStr, selCount, static_cast<int>(exts.size()));
+        }
+
+        SettingsItem cardHeader = { cardTitle, OptionType::AccordionCardHeader, isPackaged ? nullptr : &m_assocCatToggles[ci] };
+        cardHeader.isActivated = m_assocCatExpanded[ci];
+        cardHeader.isDisabled = isPackaged;
+        cardHeader.onChange = [](SettingsOverlay* overlay, SettingsItem* item) {
+            if (!overlay || !item) return;
+            if (item->pBoolVal) {
+                const ptrdiff_t idx = item->pBoolVal - overlay->m_assocCatToggles;
+                if (idx >= 0 && static_cast<size_t>(idx) < kCatCount) {
+                    overlay->m_assocCatExpanded[idx] = item->isActivated;
+                }
+            } else {
+                // Packaged mode hides category switch; recover index from card order if expanded/collapsed
+                const auto& items = overlay->m_tabs[overlay->m_fileAssocTabIdx].items;
+                size_t catIdx = 0;
+                for (const auto& candidate : items) {
+                    if (candidate.type == OptionType::AccordionCardHeader) {
+                        if (&candidate == item) {
+                            if (catIdx < kCatCount) overlay->m_assocCatExpanded[catIdx] = item->isActivated;
+                            break;
+                        }
+                        ++catIdx;
+                    }
+                }
+            }
+            overlay->RequestRebuild();
+        };
+        cardHeader.onChange2 = [](SettingsOverlay* overlay, SettingsItem* item) {
+            if (!overlay || !item || !item->pBoolVal) return;
+            const ptrdiff_t idx = item->pBoolVal - overlay->m_assocCatToggles;
+            if (idx >= 0 && static_cast<size_t>(idx) < kCatCount) {
+                const auto targetCat = static_cast<QuickView::AssocExtCategory>(idx);
+                g_config.FileAssocExts = QuickView::SetCategoryInCsv(g_config.FileAssocExts, targetCat, *item->pBoolVal);
+                extern void SaveConfig();
+                SaveConfig();
+                overlay->RefreshFileAssocProbe();
+            }
+            overlay->RequestRebuild();
+        };
+        tabFileAssoc.items.push_back(std::move(cardHeader));
+
+        if (m_assocCatExpanded[ci]) {
+            SettingsItem tagCloud = { L"", OptionType::TagCloud, nullptr, nullptr, nullptr, isPackaged ? nullptr : &g_config.FileAssocExts };
+            if (cat == QuickView::AssocExtCategory::Archive && AppStrings::g.Settings_Tooltip_FileAssocArchive) {
+                tagCloud.label = AppStrings::g.Settings_Tooltip_FileAssocArchive;
+            }
+            tagCloud.isDisabled = isPackaged;
+            tagCloud.tagCloudNoLimit = true;
+            tagCloud.tagCloudNoSort = true;
+            tagCloud.tagCloudIgnoreCase = true;
+            tagCloud.tagStatusFn = FileAssocTagStatusProbe;
+            tagCloud.options.assign(exts.begin(), exts.end());
+            tagCloud.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+                if (overlay) {
+                    overlay->RefreshFileAssocProbe();
+                    overlay->RequestRebuild();
+                }
+            };
+            tabFileAssoc.items.push_back(std::move(tagCloud));
+        }
+
+        AddSeparator(tabFileAssoc, L"spacing");
+    }
+}
+
+void SettingsOverlay::BuildAdvancedTab(SettingsTab& tabAdvanced) {
+    tabAdvanced.name = AppStrings::g.Settings_Tab_Advanced;
     tabAdvanced.icon = Icons::Advanced;
     
     // Debug
-    tabAdvanced.items.push_back({ AppStrings::Settings_Header_Features, OptionType::Header });
-    tabAdvanced.items.push_back({ AppStrings::Settings_Label_DebugHUD, OptionType::Toggle, &g_config.EnableDebugFeatures });
-    
+    AddHeader(tabAdvanced, AppStrings::g.Settings_Header_Features);
+    AddSimpleToggle(tabAdvanced, AppStrings::g.Settings_Label_DebugHUD, &g_config.EnableDebugFeatures);
     // [Prefetch System]
-    tabAdvanced.items.push_back({ AppStrings::Settings_Header_Performance, OptionType::Header });
-    SettingsItem itemPrefetch = { AppStrings::Settings_Label_Prefetch, OptionType::Segment, nullptr, nullptr, &g_config.PrefetchGear, nullptr, 0, 0, {AppStrings::Settings_Option_Off, AppStrings::Settings_Option_Auto, AppStrings::Settings_Option_Eco, AppStrings::Settings_Option_Balanced, AppStrings::Settings_Option_Ultra} };
+    AddHeader(tabAdvanced, AppStrings::g.Settings_Header_Performance);
+    SettingsItem itemPrefetch = { AppStrings::g.Settings_Label_Prefetch, OptionType::Segment, nullptr, nullptr, &g_config.PrefetchGear, nullptr, 0, 0, {AppStrings::g.Settings_Option_Off, AppStrings::g.Settings_Option_Auto, AppStrings::g.Settings_Option_Eco, AppStrings::g.Settings_Option_Balanced, AppStrings::g.Settings_Option_Ultra} };
     itemPrefetch.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
          // Apply Policy Immediately
          if (g_pImageEngine) {
@@ -2530,43 +4999,27 @@ void SettingsOverlay::BuildMenu() {
                  swprintf_s(buf, L"Limit: %d MB | +%d", (int)(policy.maxCacheMemory / 1024 / 1024), policy.lookAheadCount);
                  status = buf;
              } else {
-                 status = AppStrings::Settings_Option_Off;
+                 status = AppStrings::g.Settings_Option_Off;
              }
-             overlay->SetItemStatus(AppStrings::Settings_Label_Prefetch, status, D2D1::ColorF(0.1f, 0.8f, 0.1f));
+             overlay->SetItemStatus(AppStrings::g.Settings_Label_Prefetch, status, D2D1::ColorF(0.1f, 0.8f, 0.1f));
          }
     };
-    tabAdvanced.items.push_back(itemPrefetch);
+    tabAdvanced.items.push_back(std::move(itemPrefetch));
 
-    SettingsItem itemMemoryReclaim = { AppStrings::Settings_Label_MemoryReclaim, OptionType::Segment, nullptr, nullptr, &g_config.MemoryReclaimStrategy, nullptr, 0, 0, {AppStrings::Settings_Option_MemSmart, AppStrings::Settings_Option_MemAggressive, AppStrings::Settings_Option_MemOnDemand} };
-    itemMemoryReclaim.tooltipText = AppStrings::Settings_Tooltip_MemoryReclaim;
+    SettingsItem itemMemoryReclaim = { AppStrings::g.Settings_Label_MemoryReclaim, OptionType::Segment, nullptr, nullptr, &g_config.MemoryReclaimStrategy, nullptr, 0, 0, {AppStrings::g.Settings_Option_MemSmart, AppStrings::g.Settings_Option_MemAggressive, AppStrings::g.Settings_Option_MemOnDemand} };
+    itemMemoryReclaim.tooltipText = AppStrings::g.Settings_Tooltip_MemoryReclaim;
     itemMemoryReclaim.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
          SaveConfig();
          // Runtime will naturally apply this on the next cycle, or we can force a shrink
          extern void QuickView_TryReclaimMemory();
          QuickView_TryReclaimMemory();
     };
-    tabAdvanced.items.push_back(itemMemoryReclaim);
+    tabAdvanced.items.push_back(std::move(itemMemoryReclaim));
     
     // System Helpers
-    tabAdvanced.items.push_back({ AppStrings::Settings_Header_System, OptionType::Header });
-    
-    SettingsItem itemFileAssoc = { AppStrings::Settings_Label_AddToOpenWith, OptionType::ActionButton };
-    itemFileAssoc.buttonText = AppStrings::Settings_Action_Add;
-    itemFileAssoc.buttonActivatedText = AppStrings::Settings_Action_Added;
-    
-    // Disable in Portable Mode (cannot write to registry)
-    if (g_config.PortableMode) {
-        itemFileAssoc.isDisabled = true;
-        itemFileAssoc.disabledText = AppStrings::Settings_Status_DisabledInPortable;
-    } else {
-        itemFileAssoc.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-            SettingsOverlay::RegisterAssociations();
-        };
-    }
-    tabAdvanced.items.push_back(itemFileAssoc);
-
-    SettingsItem itemCustomEditor = { AppStrings::Settings_Label_CustomEditor, OptionType::ActionButton };
-    itemCustomEditor.buttonText = AppStrings::Context_SelectEditor;
+    AddHeader(tabAdvanced, AppStrings::g.Settings_Header_System);
+    SettingsItem itemCustomEditor = { AppStrings::g.Settings_Label_CustomEditor, OptionType::ActionButton };
+    itemCustomEditor.buttonText = AppStrings::g.Context_SelectEditor;
     if (!g_config.CustomEditorPath.empty()) {
         std::wstring filename = g_config.CustomEditorPath.substr(g_config.CustomEditorPath.find_last_of(L"/\\") + 1);
         itemCustomEditor.buttonText = filename.length() > 20 ? (filename.substr(0, 17) + L"...") : filename;
@@ -2590,12 +5043,11 @@ void SettingsOverlay::BuildMenu() {
             g_settingsOverlay.RebuildMenu();
         }
     };
-    tabAdvanced.items.push_back(itemCustomEditor);
+    tabAdvanced.items.push_back(std::move(itemCustomEditor));
 
-    SettingsItem itemConfigIO = { AppStrings::Settings_Header_ConfigManagement, OptionType::DualActionButton };
-    itemConfigIO.isNewOption = true;
-    itemConfigIO.buttonText = AppStrings::Settings_Action_ImportTheme;
-    itemConfigIO.buttonText2 = AppStrings::Settings_Action_ExportTheme;
+    SettingsItem itemConfigIO = { AppStrings::g.Settings_Header_ConfigManagement, OptionType::DualActionButton };
+    itemConfigIO.buttonText = AppStrings::g.Settings_Action_ImportTheme;
+    itemConfigIO.buttonText2 = AppStrings::g.Settings_Action_ExportTheme;
     itemConfigIO.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         if (QuickView::UI::ConfigIO::ImportConfig(overlay->m_hwnd)) {
             AppStrings::SetLanguage((AppStrings::Language)g_config.Language);
@@ -2612,36 +5064,51 @@ void SettingsOverlay::BuildMenu() {
     itemConfigIO.onChange2 = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         QuickView::UI::ConfigIO::ExportConfig(overlay->m_hwnd);
     };
-    tabAdvanced.items.push_back(itemConfigIO);
+    tabAdvanced.items.push_back(std::move(itemConfigIO));
     
     // Reset Settings
-    SettingsItem itemReset = { AppStrings::Settings_Label_Reset, OptionType::ActionButton };
-    itemReset.buttonText = AppStrings::Settings_Action_Restore;
-    itemReset.buttonActivatedText = AppStrings::Settings_Action_Done;
+    SettingsItem itemReset = { AppStrings::g.Settings_Label_Reset, OptionType::ActionButton };
+    itemReset.buttonText = AppStrings::g.Settings_Action_Restore;
+    itemReset.buttonActivatedText = AppStrings::g.Settings_Action_Done;
     itemReset.isDestructive = true;
     itemReset.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+         const bool isPackaged = SystemInfo::IsPackagedApp();
          // 1. Delete Config Files
-         wchar_t exePath[MAX_PATH]; GetModuleFileNameW(nullptr, exePath, MAX_PATH);
-         std::wstring exeDir = exePath;
-         size_t lastSlash = exeDir.find_last_of(L"\\/");
-         if (lastSlash != std::wstring::npos) exeDir = exeDir.substr(0, lastSlash);
+         if (!isPackaged) {
+             wchar_t exePath[MAX_PATH]; GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+             std::wstring exeDir = exePath;
+             size_t lastSlash = exeDir.find_last_of(L"\\/");
+             if (lastSlash != std::wstring::npos) exeDir = exeDir.substr(0, lastSlash);
+             DeleteFileW((exeDir + L"\\QuickView.ini").c_str());
+             DeleteFileW((exeDir + L"\\ai_actions.json").c_str());
+         }
          
          wchar_t appDataPath[MAX_PATH];
-         SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appDataPath);
-         std::wstring appDataDir = std::wstring(appDataPath) + L"\\QuickView";
+         if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appDataPath))) {
+             std::wstring appDataDir = std::wstring(appDataPath) + L"\\QuickView";
+             DeleteFileW((appDataDir + L"\\QuickView.ini").c_str());
+             DeleteFileW((appDataDir + L"\\ai_actions.json").c_str());
+         }
          
-         DeleteFileW((exeDir + L"\\QuickView.ini").c_str());
-         DeleteFileW((appDataDir + L"\\QuickView.ini").c_str());
-         
-         // 2. Reset In-Memory Config (Preserving UpdateChannel)
+         // 2. Reset In-Memory Config (Preserving UpdateChannel for desktop builds)
          int preservedUpdateChannel = g_config.UpdateChannel;
+         std::wstring preservedChannelCheckVer = g_config.LastUpdateChannelCheckVer;
          g_config = AppConfig(); 
          g_config.UpdateChannel = preservedUpdateChannel;
-         extern void SaveConfig();
-         SaveConfig();
+         g_config.LastUpdateChannelCheckVer = preservedChannelCheckVer;
+         if (isPackaged) {
+             g_config.PortableMode = false;
+             g_config.CheckUpdates = false;
+         }
+         s_gesturePresetIdx = 0;
          for (auto& binding : g_hotkeys) {
              binding.combo = binding.defaultCombo;
          }
+         g_config.SyncLegacyHotkeysArray(g_hotkeys);
+         QuickView::PluginHost::Instance().ResetToDefaults();
+         QuickView::AI::AiActionManager::Instance().ResetToDefaults();
+         extern void SaveConfig();
+         SaveConfig();
          
          // 3. Sync Runtime & Refresh UI
          g_runtime.SyncFrom(g_config);
@@ -2655,17 +5122,11 @@ void SettingsOverlay::BuildMenu() {
          
          // 5. Visual Feedback - Deferred to overlay->Render()
     };
-    tabAdvanced.items.push_back(itemReset);
+    tabAdvanced.items.push_back(std::move(itemReset));
+}
 
-
-    m_tabs.push_back(tabAdvanced);
-
-
-
-    // --- 6. About ---
-    // --- 6. About ---
-    SettingsTab tabAbout;
-    tabAbout.name = AppStrings::Settings_Tab_About;
+void SettingsOverlay::BuildAboutTab(SettingsTab& tabAbout) {
+    tabAbout.name = AppStrings::g.Settings_Tab_About;
     tabAbout.icon = Icons::Info;
     
     // 1. Header (Logo + Name + Version)
@@ -2702,50 +5163,55 @@ void SettingsOverlay::BuildMenu() {
         }
         return std::wstring(s.begin(), s.end());
     };
-    itemHeader.disabledText = std::wstring(AppStrings::Settings_Label_Version) + L" " + GetAppVersion() + L" (" + AppStrings::Settings_Label_Build + L" " + GetBuildDate() + L")";
-    tabAbout.items.push_back(itemHeader);
+    itemHeader.disabledText = std::wstring(AppStrings::g.Settings_Label_Version) + L" " + GetAppVersion() + L" (" + AppStrings::g.Settings_Label_Build + L" " + GetBuildDate() + L")";
+    tabAbout.items.push_back(std::move(itemHeader));
 
-    // 2. Action Button (Check for Updates)
-    SettingsItem itemUpdate = { AppStrings::Settings_Action_CheckUpdates, OptionType::AboutVersionCard }; 
-    
-    // Check Status
-    UpdateStatus status = UpdateManager::Get().GetStatus();
-    if (status == UpdateStatus::NewVersionFound) {
-        std::string v = UpdateManager::Get().GetRemoteVersion().version;
-        itemUpdate.buttonText = AppStrings::Settings_Action_ViewUpdate;
-        itemUpdate.statusText = std::wstring(v.begin(), v.end());
-    } else if (status == UpdateStatus::Checking) {
-        itemUpdate.buttonText = AppStrings::Settings_Status_Checking;
-    } else if (status == UpdateStatus::UpToDate) {
-        itemUpdate.buttonText = AppStrings::Settings_Action_CheckUpdates;
-        itemUpdate.statusText = AppStrings::Settings_Status_UpToDate;
+    // 2. Action Button (Check for Updates / Store Link)
+    if (SystemInfo::IsPackagedApp()) {
+        SettingsItem itemStore = { AppStrings::g.Settings_Label_StoreUpdatesManaged, OptionType::AboutVersionCard };
+        itemStore.buttonText = AppStrings::g.Settings_Action_OpenStore;
+        itemStore.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+            ShellExecuteW(nullptr, L"open", L"ms-windows-store://pdp/?productid=9N1D85F032CC", nullptr, nullptr, SW_SHOWNORMAL);
+        };
+        tabAbout.items.push_back(std::move(itemStore));
     } else {
-        itemUpdate.buttonText = AppStrings::Settings_Action_CheckUpdates;
-    }
+        SettingsItem itemUpdate = { AppStrings::g.Settings_Action_CheckUpdates, OptionType::AboutVersionCard }; 
+        
+        // Check Status
+        UpdateStatus status = UpdateManager::Get().GetStatus();
+        if (status == UpdateStatus::NewVersionFound || status == UpdateStatus::ReadyToInstall) {
+            std::string v = UpdateManager::Get().GetRemoteVersion().version;
+            itemUpdate.buttonText = AppStrings::g.Settings_Action_ViewUpdate;
+            itemUpdate.statusText = std::wstring(v.begin(), v.end());
+        } else if (status == UpdateStatus::Checking) {
+            itemUpdate.buttonText = AppStrings::g.Settings_Status_Checking;
+        } else if (status == UpdateStatus::UpToDate) {
+            itemUpdate.buttonText = AppStrings::g.Settings_Action_CheckUpdates;
+            itemUpdate.statusText = AppStrings::g.Settings_Status_UpToDate;
+        } else {
+            itemUpdate.buttonText = AppStrings::g.Settings_Action_CheckUpdates;
+        }
 
-    itemUpdate.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-         if (UpdateManager::Get().GetStatus() == UpdateStatus::NewVersionFound) {
-             std::string v = UpdateManager::Get().GetRemoteVersion().version;
-             std::string log = UpdateManager::Get().GetRemoteVersion().changelog;
-             auto to_wide = [](const std::string& s) -> std::wstring {
-                 if (s.empty()) return L"";
-                 int sz = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
-                 std::wstring w(sz, 0);
-                 MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), &w[0], sz);
-                 return w;
-             };
-             overlay->m_updateVersion = to_wide(v);
-             overlay->m_updateLog = to_wide(log);
-             overlay->m_toastScrollY = 0.0f;
-             overlay->m_showUpdateToast = true;
-             overlay->SetVisible(false); // Close Settings to focus on Update (Fixes visibility/focus issues)
-         } else {
-             UpdateManager::Get().StartBackgroundCheck(0); 
-             // Force slight visual feedback
-             overlay->SetItemStatus(AppStrings::Settings_Action_CheckUpdates, AppStrings::Settings_Status_Checking, D2D1::ColorF(0.5f, 0.5f, 0.5f));
-         }
-    };
-    tabAbout.items.push_back(itemUpdate);
+        itemUpdate.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+             const UpdateStatus curStatus = UpdateManager::Get().GetStatus();
+             if (curStatus == UpdateStatus::NewVersionFound || curStatus == UpdateStatus::ReadyToInstall) {
+                 std::string v = UpdateManager::Get().GetRemoteVersion().version;
+                 std::string log = UpdateManager::Get().GetRemoteVersion().changelog;
+                 overlay->m_updateVersion = QuickView::Utf8ToWide(v);
+                 overlay->m_updateLog = QuickView::Utf8ToWide(log);
+                 overlay->m_toastScrollY = 0.0f;
+                 overlay->m_showUpdateToast = true;
+                 overlay->SetVisible(false); // Close Settings to focus on Update (Fixes visibility/focus issues)
+             } else {
+                 UpdateManager::Get().StartBackgroundCheck(
+                     0, false, g_config.UpdateChannel,
+                     QuickView::WideToUtf8(g_config.LastUpdateChannelCheckVer)); 
+                 // Force slight visual feedback
+                 overlay->SetItemStatus(AppStrings::g.Settings_Action_CheckUpdates, AppStrings::g.Settings_Status_Checking, D2D1::ColorF(0.5f, 0.5f, 0.5f));
+             }
+        };
+        tabAbout.items.push_back(std::move(itemUpdate));
+    }
 
     // 2.1 Release Logs REMOVED (Unified with Toast)
     
@@ -2753,34 +5219,226 @@ void SettingsOverlay::BuildMenu() {
     
     // 3. Links Row (GitHub, Issues, Hotkeys)
     SettingsItem itemLinks = { L"", OptionType::AboutLinks }; 
-    tabAbout.items.push_back(itemLinks);
+    tabAbout.items.push_back(std::move(itemLinks));
 
     // 4. Footer Header "Powered by"
-    SettingsItem itemPower = { AppStrings::Settings_Header_PoweredBy, OptionType::AboutTechBadges };
-    itemPower.label = AppStrings::Settings_Header_PoweredBy; // Header text
+    SettingsItem itemPower = { AppStrings::g.Settings_Header_PoweredBy, OptionType::AboutTechBadges };
+    itemPower.label = AppStrings::g.Settings_Header_PoweredBy; // Header text
     // Comprehensive List
-    itemPower.options = { 
+    { const std::wstring_view opts[] = { 
         L"libjpeg-turbo", L"libwebp", L"libavif", L"dav1d",
         L"libjxl", L"Highway", L"libraw", L"Wuffs", L"mimalloc",
         L"TinyEXR", L"Direct2D"
-    }; 
-    tabAbout.items.push_back(itemPower);
+    }; AssignOptions(itemPower, opts); } 
+    tabAbout.items.push_back(std::move(itemPower));
     
     // 5. System Info Footer
     SettingsItem itemSys = { GetSystemInfo(), OptionType::AboutSystemInfo };
-    tabAbout.items.push_back(itemSys);
+    tabAbout.items.push_back(std::move(itemSys));
 
     // 6. Copyright Footer
     std::wstring buildYear = GetBuildDate().substr(0, 4);
     wchar_t footerBuf[256];
-    swprintf_s(footerBuf, AppStrings::Settings_Text_Copyright, buildYear.c_str());
+    swprintf_s(footerBuf, AppStrings::g.Settings_Text_Copyright, buildYear.c_str());
     
-    std::wstring copyrightStr = std::wstring(footerBuf) + L"\n" + AppStrings::Settings_Text_License;
+    std::wstring copyrightStr = std::wstring(footerBuf) + L"\n" + AppStrings::g.Settings_Text_License;
     SettingsItem itemCopy = { copyrightStr, OptionType::CopyrightLabel };
-    tabAbout.items.push_back(itemCopy);
-
-    m_tabs.push_back(tabAbout);
+    tabAbout.items.push_back(std::move(itemCopy));
 }
+
+void SettingsOverlay::CloseGestureDropdown() {
+    m_activeGestureDropdown.gestureIndex = -1;
+    m_activeGestureDropdown.column = -1;
+    m_activeGestureDropdown.options.clear();
+    m_activeGestureDropdown.optionValues.clear();
+    m_gestureDropdownHoverIdx = -1;
+    m_gestureDropdownScrollOffset = 0;
+}
+
+void SettingsOverlay::CancelSliderInputState() {
+    StopCaretTimer();
+    m_pFocusedSlider = nullptr;
+    m_sliderInputLen = 0;
+    m_sliderInputStarted = false;
+    m_sliderInputError = false;
+}
+
+void SettingsOverlay::HandleUiEventMessage(WPARAM wParam, LPARAM lParam) {
+    const auto kind = static_cast<SettingsUiEventKind>(wParam);
+    extern void RequestRepaint(QuickView::PaintLayer layer);
+    extern void SaveConfig();
+    extern void RefreshImageDisplay(HWND hwnd);
+
+    switch (kind) {
+        case SettingsUiEventKind::AiFetchModels: {
+            std::unique_ptr<AiFetchModelsPayload> payload(reinterpret_cast<AiFetchModelsPayload*>(lParam));
+            if (!payload) return;
+            SetProfileFetching(payload->profileId, false);
+            if (!IsWindow(::g_mainHwnd)) return;
+
+            if (!payload->success) {
+                std::wstring msg = (AppStrings::g.OSD_AiFetchModelsFailed ? AppStrings::g.OSD_AiFetchModelsFailed : L"Failed to fetch models: ") + payload->errMsg;
+                ::g_osd.Show(::g_mainHwnd, msg.c_str(), false, false, D2D1::ColorF(D2D1::ColorF::OrangeRed), OSDPosition::Bottom, 4000);
+            } else {
+                auto& mgr = QuickView::AI::AiActionManager::Instance();
+                auto& profiles = mgr.GetProfiles();
+                for (size_t i = 0; i < profiles.size(); ++i) {
+                    if (profiles[i].id == payload->profileId) {
+                        profiles[i].fetchedModels = std::move(payload->models);
+                        if (!profiles[i].fetchedModels.empty() && profiles[i].defaultModel.empty()) {
+                            profiles[i].defaultModel = profiles[i].fetchedModels[0];
+                            if (i < s_aiUi.profileModels.size()) {
+                                s_aiUi.profileModels[i] = Utf8ToWide(profiles[i].defaultModel);
+                            }
+                        }
+                        mgr.SaveConfig();
+                        break;
+                    }
+                }
+                wchar_t countBuf[128] = { 0 };
+                const wchar_t* succFmt = AppStrings::g.OSD_AiFetchModelsSuccessFormat ? AppStrings::g.OSD_AiFetchModelsSuccessFormat : L"Fetched %zu available models";
+                const size_t fetchedCount = [&]() -> size_t {
+                    for (const auto& pr : profiles) {
+                        if (pr.id == payload->profileId) return pr.fetchedModels.size();
+                    }
+                    return 0;
+                }();
+                swprintf_s(countBuf, succFmt, fetchedCount);
+                ::g_osd.Show(::g_mainHwnd, countBuf, false, false, D2D1::ColorF(D2D1::ColorF::LightGreen), OSDPosition::Bottom, 3000);
+            }
+            if (payload->ov) {
+                payload->ov->m_aiSyncDirty = true;
+                payload->ov->RequestRebuild();
+            }
+            RequestRepaint(QuickView::PaintLayer::Static);
+            break;
+        }
+        case SettingsUiEventKind::AiTestConn: {
+            std::unique_ptr<AiTestConnPayload> payload(reinterpret_cast<AiTestConnPayload*>(lParam));
+            if (!payload || !IsWindow(::g_mainHwnd)) return;
+            if (payload->success) {
+                wchar_t connBuf[128] = { 0 };
+                const wchar_t* connFmt = AppStrings::g.OSD_AiConnSuccessFormat ? AppStrings::g.OSD_AiConnSuccessFormat : L"Connected successfully! Latency: %dms (HTTP %d)";
+                swprintf_s(connBuf, connFmt, payload->latencyMs, payload->statusCode);
+                ::g_osd.Show(::g_mainHwnd, connBuf, false, false, D2D1::ColorF(D2D1::ColorF::LightGreen), OSDPosition::Bottom, 4000);
+            } else {
+                std::wstring msg = L"✗ " + payload->message + (payload->latencyMs > 0 ? (L" (" + std::to_wstring(payload->latencyMs) + L"ms)") : L"");
+                ::g_osd.Show(::g_mainHwnd, msg.c_str(), false, false, D2D1::ColorF(D2D1::ColorF::OrangeRed), OSDPosition::Bottom, 5000);
+            }
+            break;
+        }
+        case SettingsUiEventKind::PluginProgress: {
+            std::unique_ptr<PluginUiPayload> payload(reinterpret_cast<PluginUiPayload*>(lParam));
+            if (!payload) return;
+            if (payload->ov) payload->ov->RequestRebuild();
+            RequestRepaint(QuickView::PaintLayer::Static);
+            break;
+        }
+        case SettingsUiEventKind::PluginDone: {
+            std::unique_ptr<PluginUiPayload> payload(reinterpret_cast<PluginUiPayload*>(lParam));
+            if (!payload) return;
+            if (payload->ok && payload->enableSrOnSuccess) {
+                QuickView::PluginHost::Instance().SetSrPluginEnabled(true);
+                SaveConfig();
+            }
+            if (payload->ov) {
+                payload->ov->m_pluginsProbeValid = false;
+                payload->ov->RequestRebuild();
+            }
+            RequestRepaint(QuickView::PaintLayer::Static);
+            if (payload->ok && IsWindow(::g_mainHwnd)) {
+                RefreshImageDisplay(::g_mainHwnd);
+            }
+            break;
+        }
+    }
+}
+
+void SettingsOverlay::BuildMenu() {
+    CancelSliderInputState();
+    m_pActiveCombo = nullptr;
+    m_comboHoverIdx = -1;
+    m_comboScrollOffset = 0;
+    CloseGestureDropdown();
+    m_pActiveSlider = nullptr;
+    m_pHoverItem = nullptr;
+    m_pHoverTooltipItem = nullptr;
+    m_tagCloudCache.clear();
+    m_tabs.clear();
+
+    // Compute active separator preset index
+    m_separatorPresetIndex = -1;
+    if (g_config.InfoPanelLiteSeparator == L" \u00b7 ") m_separatorPresetIndex = 0;
+    else if (g_config.InfoPanelLiteSeparator == L"  ") m_separatorPresetIndex = 1;
+    else if (g_config.InfoPanelLiteSeparator == L" | ") m_separatorPresetIndex = 2;
+    else if (g_config.InfoPanelLiteSeparator == L" - ") m_separatorPresetIndex = 3;
+
+    // [UX Fix] Sync 3-state border option from config
+    if (!g_config.GlassShowBorders) {
+        m_borderStrokeOption = 0; // None
+    } else {
+        m_borderStrokeOption = (g_config.GlassVectorStrokeWeightIndex == 1) ? 1 : 2; // 1=Fine, 2=Standard
+    }
+
+    m_tabs.reserve(10);
+
+    // --- 1. General ---
+    SettingsTab tabGeneral;
+    BuildGeneralTab(tabGeneral);
+    m_tabs.push_back(std::move(tabGeneral));
+
+    // --- 2. Theme ---
+    SettingsTab tabTheme;
+    BuildThemeTab(tabTheme);
+    m_tabs.push_back(std::move(tabTheme));
+
+    // --- 3. Visuals ---
+    SettingsTab tabVisuals;
+    BuildVisualsTab(tabVisuals);
+    m_tabs.push_back(std::move(tabVisuals));
+
+    // --- 4. Control (Unified Mouse, Keyboard Shortcuts & Behavior) ---
+    SettingsTab tabControl;
+    BuildControlTab(tabControl);
+    tabControl.isNew = true;
+    m_tabs.push_back(std::move(tabControl));
+
+    // --- 5. Image ---
+    SettingsTab tabImage;
+    BuildImageTab(tabImage);
+    m_tabs.push_back(std::move(tabImage));
+
+    // --- 6. Plugins ---
+    SettingsTab tabPlugins;
+    m_pluginsTabIdx = static_cast<int>(m_tabs.size());
+    BuildPluginsTab(tabPlugins);
+    m_tabs.push_back(std::move(tabPlugins));
+
+    // --- 7. AI Actions ---
+    SettingsTab tabAiActions;
+    m_aiTabIdx = static_cast<int>(m_tabs.size());
+    BuildAiActionsTab(tabAiActions, this);
+    tabAiActions.isNew = true;
+    m_tabs.push_back(std::move(tabAiActions));
+
+    // --- 8. File Associations ---
+    SettingsTab tabFileAssoc;
+    m_fileAssocTabIdx = static_cast<int>(m_tabs.size());
+    BuildFileAssocTab(tabFileAssoc);
+    tabFileAssoc.isNew = true;
+    m_tabs.push_back(std::move(tabFileAssoc));
+
+    // --- 9. Advanced ---
+    SettingsTab tabAdvanced;
+    BuildAdvancedTab(tabAdvanced);
+    m_tabs.push_back(std::move(tabAdvanced));
+
+    // --- 10. About ---
+    SettingsTab tabAbout;
+    BuildAboutTab(tabAbout);
+    m_tabs.push_back(std::move(tabAbout));
+}
+
 
 bool SettingsOverlay::IsItemInteractive(const SettingsItem& item) const {
     if (item.isDisabled) return false;
@@ -2822,15 +5480,27 @@ void SettingsOverlay::ResetKeyboardFocus() {
 void SettingsOverlay::SwitchTab(int delta) {
     if (m_tabs.empty()) return;
     if (m_pFocusedSlider) CommitInput();
+    ResetHotkeyCapture(false);
     m_pActiveCombo = nullptr;
     m_comboHoverIdx = -1;
+    m_comboScrollOffset = 0;
+    CloseGestureDropdown();
     m_pActiveSlider = nullptr;
     m_pHoverItem = nullptr;
+    m_pHoverTooltipItem = nullptr;
 
     int newTab = (m_activeTab + delta) % (int)m_tabs.size();
     if (newTab < 0) newTab += (int)m_tabs.size();
     m_activeTab = newTab;
     m_scrollOffset = 0.0f;
+    if (m_activeTab == m_fileAssocTabIdx && !m_assocProbeValid) {
+        RefreshFileAssocProbe();
+        RebuildMenu();
+    } else if (m_activeTab == m_pluginsTabIdx && !m_pluginsProbeValid) {
+        RebuildMenu();
+    } else if (m_activeTab == m_aiTabIdx && m_aiSyncDirty) {
+        RebuildMenu();
+    }
     m_focusedItemIdx = GetFirstInteractiveItemIndex(m_activeTab);
     m_focusedTagIdx = 0;
     m_focusedPartIdx = 0;
@@ -2839,6 +5509,7 @@ void SettingsOverlay::SwitchTab(int delta) {
 
 void SettingsOverlay::FocusNextItem(bool forward) {
     if (m_activeTab < 0 || m_activeTab >= (int)m_tabs.size()) return;
+    CloseGestureDropdown();
     auto& items = m_tabs[m_activeTab].items;
     if (items.empty()) return;
 
@@ -2894,22 +5565,28 @@ void SettingsOverlay::EnsureFocusedItemVisible() {
 }
 
 void SettingsOverlay::SetVisible(bool visible) {
-    if (!visible && m_pFocusedSlider) {
-        CommitInput();
+    if (!visible) {
+        if (m_pFocusedSlider) CommitInput();
+        ResetHotkeyCapture(false);
     }
     m_visible = visible;
     m_pActiveCombo = nullptr;
     m_comboHoverIdx = -1;
+    m_comboScrollOffset = 0;
+    CloseGestureDropdown();
     m_pActiveSlider = nullptr;
     m_pHoverItem = nullptr;
+    m_pHoverTooltipItem = nullptr;
     
     // Check for deferred rebuild (Fixes UAF on Reset)
-    if (m_pendingRebuild) {
+    if (m_pendingRebuild.exchange(false, std::memory_order_acq_rel)) {
          BuildMenu();
-         m_pendingRebuild = false;
     }
 
     if (m_visible) {
+        if (m_activeTab == m_fileAssocTabIdx && !m_assocProbeValid) {
+            RefreshFileAssocProbe();
+        }
         RebuildMenu(); // Ensure strings are up-to-date
         m_opacity = 0.0f;
         if (m_focusedItemIdx < 0) {
@@ -2931,10 +5608,13 @@ void SettingsOverlay::SetVisible(bool visible) {
         
         // Auto-Resize if window is too small
         if (m_hwnd) {
-             extern void AdjustWindowForOverlay(HWND hwnd, bool isClosed);
-             AdjustWindowForOverlay(m_hwnd, false);
+            extern void AdjustWindowForOverlay(HWND hwnd, bool isClosed);
+            AdjustWindowForOverlay(m_hwnd, false);
         }
     } else {
+        m_assocProbeValid = false;
+        m_pluginsProbeValid = false;
+        m_aiSyncDirty = true;
         m_focusedItemIdx = -1;
         m_focusedTagIdx = 0;
         m_focusedPartIdx = 0;
@@ -2948,6 +5628,8 @@ void SettingsOverlay::SetVisible(bool visible) {
              extern void AdjustWindowForOverlay(HWND hwnd, bool isClosed);
              if (!m_showUpdateToast) AdjustWindowForOverlay(m_hwnd, true);
         }
+        extern void RequestRepaint(QuickView::PaintLayer layer);
+        RequestRepaint(QuickView::PaintLayer::All);
     }
 }
 
@@ -2957,9 +5639,8 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
     const auto palette = GetSettingsThemePalette();
     
     // Check for deferred rebuild before rendering
-    if (m_pendingRebuild) {
+    if (m_pendingRebuild.exchange(false, std::memory_order_acq_rel)) {
         BuildMenu();
-        m_pendingRebuild = false;
     }
     
     const float s = m_uiScale;
@@ -3030,12 +5711,16 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
         } else {
             ComPtr<ID2D1SolidColorBrush> brushPanelBg;
             pRT->CreateSolidColorBrush(palette.panelBg, &brushPanelBg);
-            brushPanelBg->SetOpacity(g_config.GlassModalsOpacity / 100.0f);
-            pRT->FillRoundedRectangle(hudRounded, brushPanelBg.Get());
+            if (brushPanelBg) {
+                brushPanelBg->SetOpacity(g_config.GlassModalsOpacity / 100.0f);
+                pRT->FillRoundedRectangle(hudRounded, brushPanelBg.Get());
+            }
         }
 
         // 4. Draw Border
-        pRT->DrawRoundedRectangle(hudRounded, m_brushBorder.Get(), 1.0f);
+        if (m_brushBorder) {
+            pRT->DrawRoundedRectangle(hudRounded, m_brushBorder.Get(), 1.0f);
+        }
 
         // --- All subsequent drawing is RELATIVE to hudX, hudY ---
         
@@ -3044,17 +5729,22 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
         pRT->GetFactory(&factory);
         
         ComPtr<ID2D1RoundedRectangleGeometry> hudGeo;
-        factory->CreateRoundedRectangleGeometry(hudRounded, &hudGeo);
+        if (factory) {
+            factory->CreateRoundedRectangleGeometry(hudRounded, &hudGeo);
+        }
         
         ComPtr<ID2D1Layer> pLayer;
-        D2D1_LAYER_PARAMETERS layerParams = D2D1::LayerParameters(
-            D2D1::InfiniteRect(), hudGeo.Get(),
-            D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
-            D2D1::IdentityMatrix(), 1.0f, nullptr, D2D1_LAYER_OPTIONS_NONE
-        );
-        
         pRT->CreateLayer(nullptr, &pLayer);
-        pRT->PushLayer(layerParams, pLayer.Get());
+        bool layerPushed = false;
+        if (pLayer && hudGeo) {
+            D2D1_LAYER_PARAMETERS layerParams = D2D1::LayerParameters(
+                D2D1::InfiniteRect(), hudGeo.Get(),
+                D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                D2D1::IdentityMatrix(), 1.0f, nullptr, D2D1_LAYER_OPTIONS_NONE
+            );
+            pRT->PushLayer(layerParams, pLayer.Get());
+            layerPushed = true;
+        }
 
         // [Right Baseline] Material System
         // Content area follows masterOpacity directly. 
@@ -3147,7 +5837,7 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
             D2D1_RECT_F iconRect = D2D1::RectF(hudX + 15.0f * s, tabY, hudX + 15.0f * s + 40.0f * s, tabY + 40.0f * s);
             if (tab.icon) {
                 QuickView::UI::GeekIconRenderer::DrawVectorIcon(
-                    pRT, *tab.icon, FitSquareIcon(iconRect, 0.36f), isActive ? m_brushAccent.Get() : m_brushText.Get());
+                    pRT, *tab.icon, FitSquareIcon(iconRect, 0.36f), isActive ? m_brushAccentText.Get() : m_brushText.Get());
             }
 
             // Text
@@ -3155,7 +5845,28 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
             m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
             pRT->DrawText(tab.name.c_str(), (UINT32)tab.name.length(), m_textFormatItem.Get(), textRect, isActive ? m_brushText.Get() : m_brushTextDim.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
 
-            tabY += 45.0f * s;
+            if (tab.isNew) {
+                float textW = 55.0f * s;
+                if (m_dwriteFactory && m_textFormatItem) {
+                    ComPtr<IDWriteTextLayout> tabLayout;
+                    if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(
+                            tab.name.c_str(), (UINT32)tab.name.length(), m_textFormatItem.Get(),
+                            sidebarW - 75.0f * s, 40.0f * s, &tabLayout)) && tabLayout) {
+                        DWRITE_TEXT_METRICS metrics = {};
+                        if (SUCCEEDED(tabLayout->GetMetrics(&metrics))) {
+                            textW = ceilf(metrics.widthIncludingTrailingWhitespace);
+                        }
+                    }
+                }
+                float badgeW = 24.0f * s;
+                float badgeH = 11.0f * s;
+                float maxBadgeX = hudX + sidebarW - badgeW - 6.0f * s;
+                float badgeX = (std::min)(hudX + 65.0f * s + textW + 6.0f * s, maxBadgeX);
+                float badgeY = tabY + (40.0f * s - badgeH) / 2.0f;
+                DrawNewBadge(pRT, badgeX, badgeY, s);
+            }
+
+            tabY += SIDEBAR_TAB_STEP * s;
         }
 
         // Draw Minimalist Keyboard Navigation Hints at Sidebar Bottom
@@ -3165,9 +5876,8 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
         
         m_textFormatBadge->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         m_textFormatBadge->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        pRT->DrawText(L"↑↓ Move  ←→ Adjust", 19, m_textFormatBadge.Get(), hintRect1, m_brushTextDim.Get());
-        pRT->DrawText(L"Enter OK  ^Tab Switch", 21, m_textFormatBadge.Get(), hintRect2, m_brushTextDim.Get());
-        m_textFormatBadge->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        pRT->DrawText(L"Tab / ↑↓  Navigate", 18, m_textFormatBadge.Get(), hintRect1, m_brushTextDim.Get());
+        pRT->DrawText(L"Ctrl+Tab  Switch Tab", 20, m_textFormatBadge.Get(), hintRect2, m_brushTextDim.Get());
 
         // 3. Content Area (Right portion of HUD)
         float contentX = hudX + sidebarW + padding;
@@ -3186,10 +5896,14 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
         if (m_activeTab >= 0 && m_activeTab < (int)m_tabs.size()) {
             auto& currentTab = m_tabs[m_activeTab];
 
+            bool insideAccordionCard = false;
             for (size_t itemIdx = 0; itemIdx < currentTab.items.size(); ++itemIdx) {
                 auto& item = currentTab.items[itemIdx];
                 bool isFocused = m_isKeyboardNavActive && (static_cast<int>(itemIdx) == m_focusedItemIdx);
                 float rowHeight = itemH;
+                if (item.type == OptionType::HotkeyBindRow) {
+                    rowHeight = 34.0f * s;
+                }
                 
                 // Pinned Check
                 bool isPinned = (item.type == OptionType::AboutSystemInfo || item.type == OptionType::CopyrightLabel);
@@ -3198,14 +5912,200 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                     m_settingsContentHeight = contentY - startContentY;
                 }
 
+                if (insideAccordionCard &&
+                    (item.type == OptionType::Separator || item.type == OptionType::Header || item.type == OptionType::AccordionCardHeader)) {
+                    contentY += 8.0f * s;
+                    insideAccordionCard = false;
+                    if (item.type == OptionType::AccordionCardHeader) {
+                        contentY += 10.0f * s;
+                    }
+                }
+
+                const float indentLeft = insideAccordionCard ? (20.0f * s) : 0.0f;
+                const float indentRight = insideAccordionCard ? (14.0f * s) : 0.0f;
+                float rowContentX = contentX + indentLeft;
+                float rowContentW = contentW - indentLeft - indentRight;
+
                 // Calculate Rect for Hit Testing & Layout Anchor
-                item.rect = D2D1::RectF(contentX, contentY, contentX + contentW, contentY + rowHeight);
+                item.rect = D2D1::RectF(rowContentX, contentY, rowContentX + rowContentW, contentY + rowHeight);
                 item.interactRect = {};
                 item.interactRect2 = {};
 
+            // 1. Separator Type (Clean page or section divider line, or pure spacing if label == "spacing")
+            if (item.type == OptionType::Separator) {
+                if (item.label == L"spacing") {
+                    contentY += 12.0f * s;
+                } else {
+                    contentY += 8.0f * s;
+                    float origOpacity = m_brushBorder->GetOpacity();
+                    m_brushBorder->SetOpacity(origOpacity * 0.45f);
+                    pRT->DrawLine(
+                        D2D1::Point2F(contentX, contentY),
+                        D2D1::Point2F(contentX + contentW, contentY),
+                        m_brushBorder.Get(),
+                        1.0f * s
+                    );
+                    m_brushBorder->SetOpacity(origOpacity);
+                    contentY += 14.0f * s;
+                }
+                m_settingsContentHeight = (contentY - startContentY > m_settingsContentHeight) ? (contentY - startContentY) : m_settingsContentHeight;
+                continue;
+            }
+            // 2. SubHeader Type (Level 2 Header with Accent Pill)
+            else if (item.type == OptionType::SubHeader) {
+                contentY += 8.0f * s;
+                // Vertical accent pill on the left
+                D2D1_RECT_F barRect = D2D1::RectF(contentX, contentY + 3.0f * s, contentX + 3.0f * s, contentY + 17.0f * s);
+                pRT->FillRoundedRectangle(D2D1::RoundedRect(barRect, 1.5f * s, 1.5f * s), m_brushAccent.Get());
 
-            // 1. Header Type
-            if (item.type == OptionType::Header) {
+                D2D1_RECT_F subRect = D2D1::RectF(contentX + 10.0f * s, contentY, contentX + contentW, contentY + 22.0f * s);
+                m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                pRT->DrawText(item.label.c_str(), (UINT32)item.label.length(), m_textFormatItem.Get(), subRect, m_brushText.Get());
+                
+                contentY += 28.0f * s;
+                m_settingsContentHeight = (contentY - startContentY > m_settingsContentHeight) ? (contentY - startContentY) : m_settingsContentHeight;
+                continue;
+            }
+            // 3. AccordionCardHeader Type (Level 1 Header - Rounded Card Container Accordion)
+            else if (item.type == OptionType::AccordionCardHeader) {
+                insideAccordionCard = item.isActivated;
+                const float headerH = 40.0f * s;
+                const float cardRadius = 6.0f * s;
+                D2D1_RECT_F headerRect = D2D1::RectF(contentX, contentY, contentX + contentW, contentY + headerH);
+                item.rect = headerRect;
+                item.interactRect = headerRect;
+
+                bool isExpanded = item.isActivated;
+                bool isEnabled = (item.pBoolVal ? *item.pBoolVal : false);
+                bool hasToggle = (item.pBoolVal != nullptr);
+
+                // Right Toggle Switch Geometry (Only active if item has a boolean state)
+                const float toggleW = 44.0f * s;
+                const float toggleH = 22.0f * s;
+                const float togglePadRight = 14.0f * s;
+                const float toggleX = contentX + contentW - togglePadRight - toggleW;
+                const float toggleY = contentY + (headerH - toggleH) * 0.5f;
+                D2D1_RECT_F toggleRect = D2D1::RectF(toggleX, toggleY, toggleX + toggleW, toggleY + toggleH);
+                item.interactRect2 = hasToggle ? toggleRect : D2D1::RectF(0, 0, 0, 0);
+
+                // Calculate full container rect spanning all expanded items down to next Separator/Header/Card
+                float innerH = 0.0f;
+                if (isExpanded) {
+                    const float subAvailW = contentW - 34.0f * s;
+                    for (size_t nextIdx = itemIdx + 1; nextIdx < currentTab.items.size(); ++nextIdx) {
+                        const auto& subItem = currentTab.items[nextIdx];
+                        if (subItem.type == OptionType::Separator ||
+                            subItem.type == OptionType::Header ||
+                            subItem.type == OptionType::AccordionCardHeader) {
+                            break;
+                        }
+                        if (subItem.type == OptionType::TagCloud) {
+                            innerH += MeasureTagCloudHeight(subItem, subAvailW, s);
+                        } else if (subItem.type == OptionType::HotkeyBindRow) {
+                            innerH += 34.0f * s;
+                        } else {
+                            innerH += 36.0f * s;
+                        }
+                    }
+                }
+
+                const float containerEndY = contentY + headerH + (isExpanded ? (8.0f * s + innerH + 8.0f * s) : 0.0f);
+                const bool cardVisible = !(containerEndY < hudY || contentY > hudY + hudH);
+                D2D1_RECT_F fullContainerRect = D2D1::RectF(contentX, contentY, contentX + contentW, containerEndY);
+
+                if (cardVisible) {
+                    // 1. Draw Solid Rounded Card Container Background
+                    D2D1_COLOR_F containerBg = IsLightThemeActive() ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 1.0f) : D2D1::ColorF(0.125f, 0.125f, 0.145f, 1.0f);
+                    ComPtr<ID2D1SolidColorBrush> brushContainerBg;
+                    pRT->CreateSolidColorBrush(containerBg, &brushContainerBg);
+                    if (brushContainerBg) {
+                        pRT->FillRoundedRectangle(D2D1::RoundedRect(fullContainerRect, cardRadius, cardRadius), brushContainerBg.Get());
+                        pRT->DrawRoundedRectangle(D2D1::RoundedRect(fullContainerRect, cardRadius, cardRadius), m_brushBorder.Get(), 1.0f);
+                    }
+
+                    // If hovered on header bar (and not on toggle switch), draw header highlight
+                    if (item.isHovered && !item.isHovered2) {
+                        ComPtr<ID2D1SolidColorBrush> brushHeaderHover;
+                        pRT->CreateSolidColorBrush(palette.hoverTint, &brushHeaderHover);
+                        if (brushHeaderHover) {
+                            pRT->FillRoundedRectangle(D2D1::RoundedRect(isExpanded ? headerRect : fullContainerRect, cardRadius, cardRadius), brushHeaderHover.Get());
+                        }
+                    }
+
+                    // 2. Left Expand/Collapse Arrow Chevron
+                    D2D1_RECT_F arrowRect = D2D1::RectF(contentX + 6.0f * s, contentY, contentX + 22.0f * s, contentY + headerH);
+                    const float aside = 11.0f * s;
+                    const float acx = (arrowRect.left + arrowRect.right) * 0.5f;
+                    const float acy = (arrowRect.top + arrowRect.bottom) * 0.5f;
+                    D2D1_RECT_F arrowIconRect = D2D1::RectF(acx - aside * 0.5f, acy - aside * 0.5f, acx + aside * 0.5f, acy + aside * 0.5f);
+                    QuickView::UI::GeekIconRenderer::DrawVectorIcon(
+                        pRT, *(isExpanded ? Icons::ComboUp : Icons::Chevron), arrowIconRect, isExpanded ? m_brushAccent.Get() : m_brushTextDim.Get());
+
+                    // 3. Right Toggle Switch
+                    if (hasToggle) {
+                        if (item.isDisabled) {
+                            ComPtr<ID2D1SolidColorBrush> brushDisabledBg;
+                            pRT->CreateSolidColorBrush(D2D1::ColorF(0.20f, 0.20f, 0.22f, 0.6f), &brushDisabledBg);
+                            if (brushDisabledBg) {
+                                pRT->FillRoundedRectangle(D2D1::RoundedRect(toggleRect, toggleH * 0.5f, toggleH * 0.5f), brushDisabledBg.Get());
+                            }
+                            float knobSize = toggleH - 4.0f * s;
+                            D2D1_ELLIPSE knob = D2D1::Ellipse(D2D1::Point2F(toggleX + 2.0f * s + knobSize * 0.5f, toggleY + 2.0f * s + knobSize * 0.5f), knobSize * 0.5f, knobSize * 0.5f);
+                            ComPtr<ID2D1SolidColorBrush> brushDisabledKnob;
+                            pRT->CreateSolidColorBrush(D2D1::ColorF(0.45f, 0.45f, 0.48f, 0.9f), &brushDisabledKnob);
+                            if (brushDisabledKnob) {
+                                pRT->FillEllipse(knob, brushDisabledKnob.Get());
+                            }
+
+                            if (!item.disabledText.empty()) {
+                                D2D1_RECT_F textRect = D2D1::RectF(contentX + 140.0f * s, contentY, toggleX - 12.0f * s, contentY + headerH);
+                                m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+                                m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                                pRT->DrawText(item.disabledText.c_str(), (UINT32)item.disabledText.length(), m_textFormatItem.Get(), textRect, m_brushTextDim.Get());
+                                m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                            }
+                        } else {
+                            DrawToggle(pRT, toggleRect, isEnabled, item.isHovered2);
+                        }
+                    }
+
+                    // 4. Card Title Text (Item Font Size, Bold)
+                    float titleLeft = contentX + 30.0f * s;
+                    float titleRight = hasToggle ? (toggleX - (item.isDisabled && !item.disabledText.empty() ? 180.0f * s : 16.0f * s)) : (contentX + contentW - 16.0f * s);
+                    D2D1_RECT_F titleRect = D2D1::RectF(titleLeft, contentY, titleRight, contentY + headerH);
+                    m_textFormatItemBold->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                    m_textFormatItemBold->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                    ID2D1SolidColorBrush* titleBrush = (hasToggle ? (isEnabled && !item.isDisabled) : !item.isDisabled) ? m_brushText.Get() : m_brushTextDim.Get();
+                    pRT->DrawText(item.label.c_str(), (UINT32)item.label.length(), m_textFormatItemBold.Get(), titleRect, titleBrush);
+
+                    if (item.isNewOption) {
+                        float titleTextW = 100.0f * s;
+                        if (m_dwriteFactory && m_textFormatItemBold) {
+                            ComPtr<IDWriteTextLayout> titleLayout;
+                            if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(
+                                    item.label.c_str(), (UINT32)item.label.length(), m_textFormatItemBold.Get(),
+                                    titleRight - titleLeft, headerH, &titleLayout)) && titleLayout) {
+                                DWRITE_TEXT_METRICS metrics = {};
+                                if (SUCCEEDED(titleLayout->GetMetrics(&metrics))) {
+                                    titleTextW = ceilf(metrics.widthIncludingTrailingWhitespace);
+                                }
+                            }
+                        }
+                        float badgeW = 24.0f * s;
+                        float badgeH = 11.0f * s;
+                        float maxBadgeX = titleRight - badgeW;
+                        float badgeX = std::min(titleLeft + titleTextW + 8.0f * s, maxBadgeX);
+                        float badgeY = contentY + (headerH - badgeH) * 0.5f;
+                        DrawNewBadge(pRT, badgeX, badgeY, s);
+                    }
+                }
+
+                contentY += headerH + (isExpanded ? 8.0f * s : 16.0f * s);
+                m_settingsContentHeight = (contentY - startContentY > m_settingsContentHeight) ? (contentY - startContentY) : m_settingsContentHeight;
+                continue;
+            }
+            // 4. Header Type
+            else if (item.type == OptionType::Header) {
                 // Draw a separator line if it's not the first header in the tab
                 if (contentY > startContentY + 5.0f) {
                     contentY += 15.0f * s; // Spacing BEFORE the line
@@ -3233,13 +6133,15 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                 if (item.isNewOption) {
                     // Measure header text width
                     float textW = 100.0f * s; // Fallback
-                    ComPtr<IDWriteTextLayout> headerLayout;
-                    if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(
-                            item.label.c_str(), (UINT32)item.label.length(), m_textFormatHeader.Get(),
-                            contentW, headerTextH, &headerLayout))) {
-                        DWRITE_TEXT_METRICS metrics = {};
-                        if (SUCCEEDED(headerLayout->GetMetrics(&metrics))) {
-                            textW = ceilf(metrics.widthIncludingTrailingWhitespace);
+                    if (m_dwriteFactory && m_textFormatHeader) {
+                        ComPtr<IDWriteTextLayout> headerLayout;
+                        if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(
+                                item.label.c_str(), (UINT32)item.label.length(), m_textFormatHeader.Get(),
+                                contentW, headerTextH, &headerLayout)) && headerLayout) {
+                            DWRITE_TEXT_METRICS metrics = {};
+                            if (SUCCEEDED(headerLayout->GetMetrics(&metrics))) {
+                                textW = ceilf(metrics.widthIncludingTrailingWhitespace);
+                            }
                         }
                     }
 
@@ -3250,20 +6152,7 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                     float badgeX = std::min(contentX + textW + 6.0f * s, maxBadgeX);
                     // Align visually with header text center
                     float badgeY = contentY + 10.0f * s + (headerTextH - badgeH) / 2.0f;
-                    D2D1_RECT_F badgeRect = D2D1::RectF(badgeX, badgeY, badgeX + badgeW, badgeY + badgeH);
-                    D2D1_ROUNDED_RECT roundedBadge = D2D1::RoundedRect(badgeRect, 2.0f * s, 2.0f * s);
-                    
-                    // Draw Capsule Background (Accent color with slight transparency)
-                    float origOpacity = m_brushAccent->GetOpacity();
-                    m_brushAccent->SetOpacity(origOpacity * 0.85f);
-                    pRT->FillRoundedRectangle(roundedBadge, m_brushAccent.Get());
-                    m_brushAccent->SetOpacity(origOpacity); // Restore
-                    
-                    // Draw Micro text "NEW" (Force white text on blue background)
-                    D2D1_RECT_F textRect = badgeRect;
-                    textRect.top += 0.5f * s; // Visual vertical alignment refinement
-                    textRect.bottom += 0.5f * s;
-                    pRT->DrawText(L"NEW", 3, m_textFormatBadge.Get(), textRect, m_brushWhite.Get());
+                    DrawNewBadge(pRT, badgeX, badgeY, s);
                 }
 
                 contentY += 50.0f * s; // More spacing for header
@@ -3356,7 +6245,7 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                      float textW = 0.0f;
                      
                      ComPtr<IDWriteTextLayout> layout;
-                     if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(AppStrings::Settings_Link_GitHub, (UINT32)wcslen(AppStrings::Settings_Link_GitHub), m_textFormatItem.Get(), 1000.0f, 100.0f, &layout))) {
+                     if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(AppStrings::g.Settings_Link_GitHub, (UINT32)wcslen(AppStrings::g.Settings_Link_GitHub), m_textFormatItem.Get(), 1000.0f, 100.0f, &layout))) {
                          DWRITE_TEXT_METRICS m = {};
                          layout->GetMetrics(&m);
                          textW = m.widthIncludingTrailingWhitespace;
@@ -3373,7 +6262,7 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                      D2D1_RECT_F textR = D2D1::RectF(startX + iconW + gapW, r.github.top, r.github.right, r.github.bottom);
                      m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
                      m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                     pRT->DrawText(AppStrings::Settings_Link_GitHub, (UINT32)wcslen(AppStrings::Settings_Link_GitHub), m_textFormatItem.Get(), textR, m_brushText.Get());
+                     pRT->DrawText(AppStrings::g.Settings_Link_GitHub, (UINT32)wcslen(AppStrings::g.Settings_Link_GitHub), m_textFormatItem.Get(), textR, m_brushText.Get());
                 }
 
                 // Issues
@@ -3390,7 +6279,7 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                      float textW = 0.0f;
                      
                      ComPtr<IDWriteTextLayout> layout;
-                     if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(AppStrings::Settings_Link_ReportIssue, (UINT32)wcslen(AppStrings::Settings_Link_ReportIssue), m_textFormatItem.Get(), 1000.0f, 100.0f, &layout))) {
+                     if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(AppStrings::g.Settings_Link_ReportIssue, (UINT32)wcslen(AppStrings::g.Settings_Link_ReportIssue), m_textFormatItem.Get(), 1000.0f, 100.0f, &layout))) {
                          DWRITE_TEXT_METRICS m = {};
                          layout->GetMetrics(&m);
                          textW = m.widthIncludingTrailingWhitespace;
@@ -3407,7 +6296,7 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                      D2D1_RECT_F textR = D2D1::RectF(startX + iconW + gapW, r.issues.top, r.issues.right, r.issues.bottom);
                      m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
                      m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                     pRT->DrawText(AppStrings::Settings_Link_ReportIssue, (UINT32)wcslen(AppStrings::Settings_Link_ReportIssue), m_textFormatItem.Get(), textR, m_brushText.Get());
+                     pRT->DrawText(AppStrings::g.Settings_Link_ReportIssue, (UINT32)wcslen(AppStrings::g.Settings_Link_ReportIssue), m_textFormatItem.Get(), textR, m_brushText.Get());
                 }
 
                 // Hotkeys
@@ -3517,99 +6406,81 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                 const float headerH = 20.0f * s;
                 const float badgeH = 26.0f * s;
                 const float badgePadX = 12.0f * s;
-                const float badgeGapX = 6.0f * s;
-                const float badgeGapY = 8.0f * s;
                 const float badgeRadius = badgeH * 0.5f; // Pill badge
+                const float dotReserve = (item.tagStatusFn != nullptr) ? (10.0f * s) : 0.0f;
 
                 contentY += topGap;
-                
-                // Draw Label / Header
-                D2D1_RECT_F headerRect = D2D1::RectF(contentX, contentY, contentX + contentW, contentY + headerH);
-                pRT->DrawText(item.label.c_str(), (UINT32)item.label.length(), m_textFormatItem.Get(), headerRect, m_brushText.Get());
 
-                float badgeX = contentX;
-                float badgeY = contentY + headerH + 6.0f * s;
-                float maxLineRight = contentX + contentW;
-                
-                // Parse current items
-                std::wstring currentStr = item.pStrVal ? *item.pStrVal : L"";
-                std::vector<std::wstring> activeItems = SplitString(currentStr, L',');
-                
+                float headerTop = contentY;
+
+                const auto& tagCache = EnsureTagCloudLayoutCache(item, rowContentW, s);
+                const float totalBlockH = tagCache.totalH - topGap;
+                const bool tagCloudVisible = !(headerTop + totalBlockH < hudY || (headerTop - topGap) > hudY + hudH);
+
+                if (!item.label.empty() && tagCloudVisible) {
+                    D2D1_RECT_F headerRect = D2D1::RectF(rowContentX, contentY, rowContentX + rowContentW, contentY + headerH);
+                    pRT->DrawText(item.label.c_str(), (UINT32)item.label.length(), m_textFormatItem.Get(), headerRect, m_brushTextDim.Get());
+                }
+
                 item.optionRects.clear();
+                item.optionRects.reserve(tagCache.pills.size());
 
-                for (const auto& opt : item.options) {
-                    // Check if active
-                    auto it = std::find(activeItems.begin(), activeItems.end(), opt);
-                    bool isActive = (it != activeItems.end());
-                    int activeIndex = isActive ? (int)(std::distance(activeItems.begin(), it) + 1) : 0;
-
-                    // Build display string
-                    std::wstring_view optName = opt;
-                    if (opt == L"Size" && item.tagCloudNoLimit) optName = L"Size & Zoom";
-
-                    std::wstring displayText(optName);
-                    if (isActive && !item.tagCloudNoSort) {
-                        displayText = std::to_wstring(activeIndex) + L". " + std::wstring(optName);
-                    }
-
-                    float textW = 0.0f;
-                    if (m_dwriteFactory && m_textFormatItem) {
-                        ComPtr<IDWriteTextLayout> layout;
-                        if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(
-                            displayText.c_str(),
-                            (UINT32)displayText.length(),
-                            m_textFormatItem.Get(),
-                            2000.0f,
-                            badgeH,
-                            &layout))) {
-                            DWRITE_TEXT_METRICS metrics = {};
-                            if (SUCCEEDED(layout->GetMetrics(&metrics))) {
-                                textW = ceilf(metrics.widthIncludingTrailingWhitespace);
-                            }
-                        }
-                    }
-                    if (textW <= 0.0f) textW = (float)displayText.length() * 8.0f * s;
-
-                    float badgeW = textW + badgePadX * 2.0f;
-                    if (badgeW > contentW) badgeW = contentW;
-
-                    if (badgeX + badgeW > maxLineRight + 0.5f) {
-                        badgeX = contentX;
-                        badgeY += badgeH + badgeGapY;
-                    }
-
-                    D2D1_RECT_F badgeRect = D2D1::RectF(badgeX, badgeY, badgeX + badgeW, badgeY + badgeH);
+                for (size_t pi = 0; pi < tagCache.pills.size(); ++pi) {
+                    const auto& pill = tagCache.pills[pi];
+                    const float pillTop = (headerTop - topGap) + pill.relY;
+                    const D2D1_RECT_F badgeRect = D2D1::RectF(
+                        rowContentX + pill.relX, pillTop,
+                        rowContentX + pill.relX + pill.width, pillTop + badgeH);
                     item.optionRects.push_back(badgeRect);
 
+                    if (!tagCloudVisible) continue;
+
                     D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(badgeRect, badgeRadius, badgeRadius);
-                    
-                    if (isActive) {
-                        // Active: Fill with Accent Blue, draw white text for contrast
+                    D2D1_RECT_F pillTextRect = badgeRect;
+                    if (dotReserve > 0.0f) {
+                        pillTextRect.left += dotReserve * 0.75f;
+                    }
+
+                    if (pill.isActive) {
                         pRT->FillRoundedRectangle(rr, m_brushAccent.Get());
                         m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
                         m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                        ComPtr<ID2D1SolidColorBrush> badgeTextBrush;
-                        pRT->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &badgeTextBrush);
-                        pRT->DrawText(displayText.c_str(), (UINT32)displayText.length(), m_textFormatItem.Get(), badgeRect, badgeTextBrush.Get());
+                        pRT->DrawText(pill.displayText.c_str(), (UINT32)pill.displayText.length(), m_textFormatItem.Get(), pillTextRect, m_brushOnAccent.Get());
                     } else {
-                        // Inactive: Draw border and dim text
                         pRT->FillRoundedRectangle(rr, m_brushControlBg.Get());
                         pRT->DrawRoundedRectangle(rr, m_brushBorder.Get(), 1.0f * s);
                         m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
                         m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                        pRT->DrawText(displayText.c_str(), (UINT32)displayText.length(), m_textFormatItem.Get(), badgeRect, m_brushTextDim.Get());
+                        pRT->DrawText(pill.displayText.c_str(), (UINT32)pill.displayText.length(), m_textFormatItem.Get(), pillTextRect, m_brushTextDim.Get());
                     }
 
-                    if (isFocused && m_focusedTagIdx == (int)item.optionRects.size() - 1) {
+                    if (item.tagStatusFn != nullptr && pi < item.options.size()) {
+                        const uint8_t st = item.tagStatusFn(this, item.options[pi]);
+                        if (st > 0) {
+                            const float dotR = 3.0f * s;
+                            const float dotCx = badgeRect.left + badgePadX * 0.65f + dotR;
+                            const float dotCy = badgeRect.top + badgeH * 0.5f;
+                            const D2D1_COLOR_F dotColor = (st == 2)
+                                ? D2D1::ColorF(0.22f, 0.90f, 0.45f, 1.0f)
+                                : (pill.isActive ? palette.onAccentText : palette.accent);
+                            ComPtr<ID2D1SolidColorBrush> dotBrush;
+                            pRT->CreateSolidColorBrush(dotColor, &dotBrush);
+                            if (dotBrush) {
+                                pRT->FillEllipse(D2D1::Ellipse(D2D1::Point2F(dotCx, dotCy), dotR, dotR), dotBrush.Get());
+                            }
+                        }
+                    }
+
+                    if (isFocused && m_focusedTagIdx == static_cast<int>(pi)) {
                         pRT->DrawRoundedRectangle(rr, m_brushAccent.Get(), 1.5f * s);
                     }
-
-                    badgeX += badgeW + badgeGapX;
                 }
 
-                m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-                m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                contentY = badgeY + badgeH + 16.0f * s;
+                if (tagCloudVisible && m_textFormatItem) {
+                    m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                    m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                }
+                contentY = (headerTop - topGap) + tagCache.totalH;
                 
                 // Draw limit warning feedback if active
                 if (!item.statusText.empty() && item.statusSetTime > 0) {
@@ -3618,15 +6489,19 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                      }
                 }
                 if (!item.statusText.empty()) {
-                    ComPtr<ID2D1SolidColorBrush> statusBrush;
-                    pRT->CreateSolidColorBrush(item.statusColor, &statusBrush);
-                    D2D1_RECT_F statusR = D2D1::RectF(contentX, contentY - 12.0f * s, contentX + contentW, contentY + 6.0f * s);
-                    pRT->DrawText(item.statusText.c_str(), (UINT32)item.statusText.length(), m_textFormatItem.Get(), statusR, statusBrush.Get());
+                    if (tagCloudVisible && m_textFormatItem) {
+                        ComPtr<ID2D1SolidColorBrush> statusBrush;
+                        pRT->CreateSolidColorBrush(item.statusColor, &statusBrush);
+                        if (statusBrush) {
+                            D2D1_RECT_F statusR = D2D1::RectF(rowContentX, contentY - 12.0f * s, rowContentX + rowContentW, contentY + 6.0f * s);
+                            pRT->DrawText(item.statusText.c_str(), (UINT32)item.statusText.length(), m_textFormatItem.Get(), statusR, statusBrush.Get());
+                        }
+                    }
                     contentY += 18.0f * s;
                 }
 
                 // Define overall item.rect and interactRect for scrolling / containment hit testing
-                item.rect = D2D1::RectF(contentX, headerRect.top, contentX + contentW, contentY);
+                item.rect = D2D1::RectF(rowContentX, headerTop, rowContentX + rowContentW, contentY);
                 item.interactRect = item.rect;
                 
                 m_settingsContentHeight = (contentY - startContentY > m_settingsContentHeight) ? (contentY - startContentY) : m_settingsContentHeight;
@@ -3671,19 +6546,26 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
              }
             else if (item.type == OptionType::InfoLabel) {
                  // Flow Text (e.g. Release Notes)
-                 ComPtr<IDWriteTextLayout> textLayout;
-                 HRESULT hr = m_dwriteFactory->CreateTextLayout(
-                     item.label.c_str(), (UINT32)item.label.length(), m_textFormatItem.Get(),
-                     contentW, 5000.0f, &textLayout); // 5000px max height
-                 
-                 if (SUCCEEDED(hr)) {
-                     textLayout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
-                     DWRITE_TEXT_METRICS metrics;
-                     textLayout->GetMetrics(&metrics);
-                     pRT->DrawTextLayout(D2D1::Point2F(contentX, contentY), textLayout.Get(), m_brushTextDim.Get());
-                     contentY += metrics.height + 20.0f;
-                 } else {
-                     contentY += 30.0f; // Fallback
+                 bool layoutOk = false;
+                 if (m_dwriteFactory && m_textFormatItem) {
+                     ComPtr<IDWriteTextLayout> textLayout;
+                     HRESULT hr = m_dwriteFactory->CreateTextLayout(
+                         item.label.c_str(), (UINT32)item.label.length(), m_textFormatItem.Get(),
+                         contentW, 5000.0f, &textLayout);
+                     if (SUCCEEDED(hr) && textLayout) {
+                         textLayout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+                         DWRITE_TEXT_METRICS metrics{};
+                         if (SUCCEEDED(textLayout->GetMetrics(&metrics))) {
+                             if (!(contentY + metrics.height < hudY || contentY > hudY + hudH)) {
+                                 pRT->DrawTextLayout(D2D1::Point2F(contentX, contentY), textLayout.Get(), m_brushTextDim.Get());
+                             }
+                             contentY += metrics.height + 20.0f;
+                             layoutOk = true;
+                         }
+                     }
+                 }
+                 if (!layoutOk) {
+                     contentY += 30.0f;
                  }
                  
                  m_settingsContentHeight = (contentY - startContentY > m_settingsContentHeight) ? (contentY - startContentY) : m_settingsContentHeight;
@@ -3692,6 +6574,13 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
 
 
             // 2. Normal Item Row
+            if (item.type != OptionType::HotkeyBindRow && item.type != OptionType::MouseGestureRow &&
+                (item.rect.bottom < hudY || item.rect.top > hudY + hudH)) {
+                contentY += rowHeight;
+                float currentH = contentY - startContentY;
+                if (currentH > m_settingsContentHeight) m_settingsContentHeight = currentH;
+                continue;
+            }
             
             // Row Highlight for Keyboard Focus
             if (isFocused && !isPinned) {
@@ -3700,108 +6589,146 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                 rowFocusClr.a = 0.08f;
                 pRT->CreateSolidColorBrush(rowFocusClr, &brushFocusRow);
                 if (brushFocusRow) {
-                    D2D1_RECT_F rowHighlightRect = D2D1::RectF(contentX - 4.0f * s, contentY - 1.0f * s, contentX + contentW + 4.0f * s, contentY + rowHeight + 1.0f * s);
+                    D2D1_RECT_F rowHighlightRect = D2D1::RectF(rowContentX - 4.0f * s, contentY - 1.0f * s, rowContentX + rowContentW + 4.0f * s, contentY + rowHeight + 1.0f * s);
                     pRT->FillRoundedRectangle(D2D1::RoundedRect(rowHighlightRect, 4.0f * s, 4.0f * s), brushFocusRow.Get());
                 }
             }
 
             // Label
-            float labelWidth = (LABEL_COLUMN_WIDTH - 20.0f) * s; 
-            D2D1_RECT_F labelRect = D2D1::RectF(contentX, contentY, contentX + labelWidth, contentY + rowHeight);
-            pRT->DrawText(item.label.c_str(), (UINT32)item.label.length(), m_textFormatItem.Get(), labelRect, m_brushTextDim.Get());
+            if (!item.label.empty()) {
+                float labelWidth = (LABEL_COLUMN_WIDTH - 20.0f) * s; 
+                D2D1_RECT_F labelRect = D2D1::RectF(rowContentX, contentY, rowContentX + labelWidth, contentY + rowHeight);
+                pRT->DrawText(item.label.c_str(), (UINT32)item.label.length(), m_textFormatItem.Get(), labelRect, m_brushTextDim.Get());
 
-            // Measure Text Width for Badge and Tooltip positioning
-            float textW = 100.0f * s; // Fallback
-            ComPtr<IDWriteTextLayout> layout;
-            if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(
-                    item.label.c_str(), (UINT32)item.label.length(), m_textFormatItem.Get(),
-                    labelWidth, rowHeight, &layout))) {
-                DWRITE_TEXT_METRICS metrics = {};
-                if (SUCCEEDED(layout->GetMetrics(&metrics))) {
-                    textW = ceilf(metrics.widthIncludingTrailingWhitespace);
+                // Measure Text Width for Badge and Tooltip positioning
+                float textW = 100.0f * s; // Fallback
+                if (m_dwriteFactory && m_textFormatItem && (item.isNewOption || (item.tooltipText && item.tooltipText[0] != L'\0'))) {
+                    ComPtr<IDWriteTextLayout> layout;
+                    if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(
+                            item.label.c_str(), (UINT32)item.label.length(), m_textFormatItem.Get(),
+                            labelWidth, rowHeight, &layout)) && layout) {
+                        DWRITE_TEXT_METRICS metrics = {};
+                        if (SUCCEEDED(layout->GetMetrics(&metrics))) {
+                            textW = ceilf(metrics.widthIncludingTrailingWhitespace);
+                        }
+                    }
                 }
-            }
 
-            float badgeW = 0.0f;
-            if (item.isNewOption) {
-                badgeW = 24.0f * s;
-                float badgeH = 11.0f * s;
-                float maxBadgeX = contentX + labelWidth - badgeW;
-                float badgeX = std::min(contentX + textW + 5.0f * s, maxBadgeX);
-                float badgeY = contentY + (rowHeight - badgeH) / 2.0f;
-                D2D1_RECT_F badgeRect = D2D1::RectF(badgeX, badgeY, badgeX + badgeW, badgeY + badgeH);
-                D2D1_ROUNDED_RECT roundedBadge = D2D1::RoundedRect(badgeRect, 2.0f * s, 2.0f * s);
-                
-                // Draw Capsule Background (Accent color with slight transparency)
-                float origOpacity = m_brushAccent->GetOpacity();
-                m_brushAccent->SetOpacity(origOpacity * 0.85f);
-                pRT->FillRoundedRectangle(roundedBadge, m_brushAccent.Get());
-                m_brushAccent->SetOpacity(origOpacity); // Restore
-                
-                // Draw Micro text "NEW" (Force white text on blue background)
-                D2D1_RECT_F textRect = badgeRect;
-                textRect.top += 0.5f * s; // Visual vertical alignment refinement
-                textRect.bottom += 0.5f * s;
-                pRT->DrawText(L"NEW", 3, m_textFormatBadge.Get(), textRect, m_brushWhite.Get());
-            }
-
-            // Tooltip Icon (?)
-            if (item.tooltipText != nullptr && item.tooltipText[0] != L'\0') {
-                float iconX = contentX + textW + 10.0f * s;
+                float badgeW = 0.0f;
                 if (item.isNewOption) {
-                    iconX += badgeW + 6.0f * s;
+                    badgeW = 24.0f * s;
+                    float badgeH = 11.0f * s;
+                    float maxBadgeX = rowContentX + labelWidth - badgeW;
+                    float badgeX = std::min(rowContentX + textW + 5.0f * s, maxBadgeX);
+                    float badgeY = contentY + (rowHeight - badgeH) / 2.0f;
+                    DrawNewBadge(pRT, badgeX, badgeY, s);
                 }
-                float iconSize = 24.0f * s;
-                float maxIconX = contentX + (LABEL_COLUMN_WIDTH - 4.0f) * s - iconSize;
-                iconX = std::min(iconX, maxIconX);
-                float iconY = contentY + (rowHeight - iconSize) / 2.0f;
-                item.tooltipIconRect = D2D1::RectF(iconX, iconY, iconX + iconSize, iconY + iconSize);
 
-                bool isHover = (&item == m_pHoverTooltipItem);
-                ComPtr<ID2D1SolidColorBrush> iconBrush = isHover ? m_brushText : m_brushTextDim;
-                D2D1_RECT_F infoIconRect = item.tooltipIconRect;
-                const float iw = infoIconRect.right - infoIconRect.left;
-                const float ih = infoIconRect.bottom - infoIconRect.top;
-                const float iside = (std::min)(iw, ih) * 0.66f;
-                const float icx = (infoIconRect.left + infoIconRect.right) * 0.5f;
-                const float icy = (infoIconRect.top + infoIconRect.bottom) * 0.5f;
-                infoIconRect = D2D1::RectF(icx - iside * 0.5f, icy - iside * 0.5f, icx + iside * 0.5f, icy + iside * 0.5f);
-                QuickView::UI::GeekIconRenderer::DrawVectorIcon(pRT, *Icons::Info, infoIconRect, iconBrush.Get());
+                // Tooltip Icon (?)
+                if (item.tooltipText != nullptr && item.tooltipText[0] != L'\0') {
+                    float iconX = rowContentX + textW + 10.0f * s;
+                    if (item.isNewOption) {
+                        iconX += badgeW + 6.0f * s;
+                    }
+                    float iconSize = 24.0f * s;
+                    float maxIconX = rowContentX + (LABEL_COLUMN_WIDTH - 4.0f) * s - iconSize;
+                    iconX = std::min(iconX, maxIconX);
+                    float iconY = contentY + (rowHeight - iconSize) / 2.0f;
+                    item.tooltipIconRect = D2D1::RectF(iconX, iconY, iconX + iconSize, iconY + iconSize);
+
+                    bool isHover = (&item == m_pHoverTooltipItem);
+                    ComPtr<ID2D1SolidColorBrush> iconBrush = isHover ? m_brushText : m_brushTextDim;
+                    D2D1_RECT_F infoIconRect = item.tooltipIconRect;
+                    const float iw = infoIconRect.right - infoIconRect.left;
+                    const float ih = infoIconRect.bottom - infoIconRect.top;
+                    const float iside = (std::min)(iw, ih) * 0.66f;
+                    const float icx = (infoIconRect.left + infoIconRect.right) * 0.5f;
+                    const float icy = (infoIconRect.top + infoIconRect.bottom) * 0.5f;
+                    infoIconRect = D2D1::RectF(icx - iside * 0.5f, icy - iside * 0.5f, icx + iside * 0.5f, icy + iside * 0.5f);
+                    QuickView::UI::GeekIconRenderer::DrawVectorIcon(pRT, *Icons::Info, infoIconRect, iconBrush.Get());
+                } else {
+                    item.tooltipIconRect = {};
+                }
             } else {
                 item.tooltipIconRect = {};
             }
 
             // Control Area
-            float controlOffset = LABEL_COLUMN_WIDTH * s; 
-            float controlX = contentX + controlOffset;
-            float controlW = contentW - controlOffset;
+            float controlOffset = item.label.empty() ? 0.0f : (LABEL_COLUMN_WIDTH * s); 
+            float controlX = rowContentX + controlOffset;
+            float controlW = rowContentW - controlOffset;
+            if (item.label.empty() && item.type == OptionType::Segment) {
+                float targetW = (item.options.size() > 2) ? (item.options.size() * 115.0f * s) : (280.0f * s);
+                float segW = (std::min)(targetW, rowContentW);
+                controlX = rowContentX + (rowContentW - segW) * 0.5f;
+                controlW = segW;
+            }
             float insetY = CONTROL_INSET_Y * s;
             D2D1_RECT_F controlRect = D2D1::RectF(controlX, contentY + insetY, controlX + controlW, contentY + rowHeight - insetY);
 
             bool isHovered = (&item == m_pHoverItem);
 
             switch (item.type) {
-                case OptionType::Toggle:
-                    item.interactRect = D2D1::RectF(controlRect.right - 44.0f, controlRect.top + (controlRect.bottom - controlRect.top - 22.0f) / 2.0f, controlRect.right, controlRect.top + (controlRect.bottom - controlRect.top - 22.0f) / 2.0f + 22.0f);
+                case OptionType::Toggle: {
+                    const float padRight = 8.0f * m_uiScale;
+                    const float toggleRight = controlRect.right - padRight;
+                    const float s = m_uiScale;
+                    const float w = 44.0f * s;
+                    const float h = 22.0f * s;
+                    const float x = toggleRight - w;
+                    const float y = contentY + (rowHeight - h) * 0.5f;
+                    D2D1_RECT_F toggleRect = D2D1::RectF(x, y, toggleRight, y + h);
+                    item.interactRect = toggleRect;
+
                     if (item.isDisabled) {
-                        // Disabled: Draw gray toggle background + disabled text
-                        ComPtr<ID2D1SolidColorBrush> brushDisabled;
-                        pRT->CreateSolidColorBrush(palette.disabledFill, &brushDisabled);
-                        D2D1_RECT_F toggleBg = D2D1::RectF(controlRect.left, controlRect.top + 5, controlRect.left + 44, controlRect.top + 27);
-                        pRT->FillRoundedRectangle(D2D1::RoundedRect(toggleBg, 11, 11), brushDisabled.Get());
+                        const bool isLight = IsLightThemeActive();
+                        ComPtr<ID2D1SolidColorBrush> brushDisabledBg;
+                        ComPtr<ID2D1SolidColorBrush> brushDisabledBorder;
+                        ComPtr<ID2D1SolidColorBrush> brushDisabledKnob;
+
+                        D2D1_COLOR_F bgClr = isLight ? D2D1::ColorF(0.92f, 0.94f, 0.97f, 0.70f) : D2D1::ColorF(0.20f, 0.20f, 0.22f, 0.60f);
+                        D2D1_COLOR_F borderClr = isLight ? D2D1::ColorF(0.78f, 0.82f, 0.88f, 0.80f) : D2D1::ColorF(0.32f, 0.32f, 0.35f, 0.60f);
+                        D2D1_COLOR_F knobClr = isLight ? D2D1::ColorF(0.62f, 0.66f, 0.72f, 0.90f) : D2D1::ColorF(0.45f, 0.45f, 0.48f, 0.90f);
+
+                        pRT->CreateSolidColorBrush(bgClr, &brushDisabledBg);
+                        pRT->CreateSolidColorBrush(borderClr, &brushDisabledBorder);
+                        pRT->CreateSolidColorBrush(knobClr, &brushDisabledKnob);
+
+                        if (brushDisabledBg) {
+                            pRT->FillRoundedRectangle(D2D1::RoundedRect(toggleRect, h * 0.5f, h * 0.5f), brushDisabledBg.Get());
+                        }
+                        if (brushDisabledBorder) {
+                            pRT->DrawRoundedRectangle(D2D1::RoundedRect(toggleRect, h * 0.5f, h * 0.5f), brushDisabledBorder.Get(), 1.0f * s);
+                        }
+
+                        // Disabled knob
+                        float knobSize = h - 4.0f * s;
+                        float knobX = x + 2.0f * s;
+                        float knobY = y + 2.0f * s;
+                        D2D1_ELLIPSE knob = D2D1::Ellipse(D2D1::Point2F(knobX + knobSize * 0.5f, knobY + knobSize * 0.5f), knobSize * 0.5f, knobSize * 0.5f);
+                        if (brushDisabledKnob) {
+                            pRT->FillEllipse(knob, brushDisabledKnob.Get());
+                        }
                         
-                        // Disabled text
+                        // Disabled text placed on the left before the toggle switch
                         if (!item.disabledText.empty()) {
-                            D2D1_RECT_F textRect = D2D1::RectF(controlRect.left + 50, contentY, controlRect.right, contentY + rowHeight);
-                            pRT->DrawText(item.disabledText.c_str(), (UINT32)item.disabledText.length(), m_textFormatItem.Get(), textRect, m_brushTextDim.Get());
+                            D2D1_RECT_F textRect = D2D1::RectF(controlRect.left, contentY, x - 12.0f * s, contentY + rowHeight);
+                            if (m_textFormatItem) {
+                                m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+                                m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                                pRT->DrawText(item.disabledText.c_str(), (UINT32)item.disabledText.length(), m_textFormatItem.Get(), textRect, m_brushTextDim.Get());
+                                m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                            }
                         }
                     } else {
-                        DrawToggle(pRT, controlRect, (item.pBoolVal ? *item.pBoolVal : false), isHovered);
+                        D2D1_RECT_F toggleContainerRect = D2D1::RectF(controlRect.left, contentY, toggleRight, contentY + rowHeight);
+                        DrawToggle(pRT, toggleContainerRect, (item.pBoolVal ? *item.pBoolVal : false), isHovered);
                         if (isFocused) {
                             float togH = item.interactRect.bottom - item.interactRect.top;
                             float togR = togH * 0.5f;
                             pRT->DrawRoundedRectangle(D2D1::RoundedRect(item.interactRect, togR, togR), m_brushAccent.Get(), 1.5f * s);
                         }
+                    }
 
                         // Status text (e.g., "Restart required")
                         // Auto-hide after 3 seconds
@@ -3814,8 +6741,10 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                         if (!item.statusText.empty()) {
                             ComPtr<ID2D1SolidColorBrush> statusBrush;
                             pRT->CreateSolidColorBrush(item.statusColor, &statusBrush);
-                            D2D1_RECT_F statusR = D2D1::RectF(controlX + 60, contentY, controlX + controlW, contentY + rowHeight);
-                            pRT->DrawText(item.statusText.c_str(), (UINT32)item.statusText.length(), m_textFormatItem.Get(), statusR, statusBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+                            if (statusBrush && m_textFormatItem) {
+                                D2D1_RECT_F statusR = D2D1::RectF(controlX + 60, contentY, controlX + controlW, contentY + rowHeight);
+                                pRT->DrawText(item.statusText.c_str(), (UINT32)item.statusText.length(), m_textFormatItem.Get(), statusR, statusBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+                            }
                         }
                     }
                     break;
@@ -3841,7 +6770,7 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                         m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                         D2D1_RECT_F emojiRect = item.interactRect2;
                         emojiRect.top += 1.0f * s;
-                        pRT->DrawText(L"↺", 1, m_textFormatItem.Get(), emojiRect, item.isHovered2 ? m_brushWhite.Get() : m_brushTextDim.Get());
+                        pRT->DrawText(L"↺", 1, m_textFormatItem.Get(), emojiRect, item.isHovered2 ? m_brushText.Get() : m_brushTextDim.Get());
                         m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
                     } else {
                         item.interactRect2 = {};
@@ -3865,9 +6794,12 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
 
                     std::wstring valText = item.pStrVal ? *item.pStrVal : L"";
                     D2D1_RECT_F textRect = D2D1::RectF(inputRect.left + 12.0f * s, inputRect.top, inputRect.right - 12.0f * s, inputRect.bottom);
+                    DWRITE_WORD_WRAPPING origWrap = m_textFormatItem->GetWordWrapping();
+                    m_textFormatItem->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
                     m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                     
                     pRT->DrawText(valText.c_str(), (UINT32)valText.length(), m_textFormatItem.Get(), textRect, m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                    m_textFormatItem->SetWordWrapping(origWrap);
                     break;
                 }
                 case OptionType::Slider: {
@@ -3898,7 +6830,7 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                     D2D1_RECT_F emojiRect = item.interactRect2;
                     emojiRect.top += 1.0f * s;
                     pRT->DrawText(L"↺", 1, m_textFormatItem.Get(), emojiRect,
-                                  item.isHovered2 ? m_brushWhite.Get()
+                                  item.isHovered2 ? m_brushText.Get()
                                                   : m_brushTextDim.Get());
 
                     m_textFormatItem->SetTextAlignment(
@@ -3915,19 +6847,38 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                       pRT->DrawRoundedRectangle(D2D1::RoundedRect(pillGeom.rect, pillGeom.radius, pillGeom.radius), m_brushAccent.Get(), 1.5f * s);
                   }
                 } break;
-                case OptionType::Segment:
-                    item.interactRect = controlRect;
-                    if (item.isDisabled) {
-                        // Grayed out segment
-                        DrawSegment(pRT, controlRect, (item.pIntVal ? *item.pIntVal : 0), item.options, true, item.pFloatVal);
-                    } else {
-                        DrawSegment(pRT, controlRect, (item.pIntVal ? *item.pIntVal : 0), item.options, false, item.pFloatVal);
+                case OptionType::Segment: {
+                    D2D1_RECT_F segRect = controlRect;
+                    if (!item.label.empty()) {
+                        const float padRight = 8.0f * s;
+                        const float segH = 24.0f * s;
+                        const float segCy = contentY + rowHeight * 0.5f;
+                        segRect = D2D1::RectF(controlX, segCy - segH * 0.5f, controlX + controlW - padRight, segCy + segH * 0.5f);
                     }
+                    item.interactRect = segRect;
+                    const int selectedIdx = item.pIntVal ? *item.pIntVal : 0;
+                    const float* segCustomColor = (item.pFloatVal != nullptr && selectedIdx == 2) ? item.pFloatVal : nullptr;
+                    DrawSegment(pRT, segRect, selectedIdx, item.options, item.isDisabled, segCustomColor);
                     if (isFocused) {
-                        float segR = 12.0f * s;
-                        pRT->DrawRoundedRectangle(D2D1::RoundedRect(controlRect, segR, segR), m_brushAccent.Get(), 1.5f * s);
+                        float segR = (segRect.bottom - segRect.top) * 0.5f;
+                        pRT->DrawRoundedRectangle(D2D1::RoundedRect(segRect, segR, segR), m_brushAccent.Get(), 1.5f * s);
+                    }
+                    // If label is empty (top-level page switcher), draw hairline divider exactly at controlRect.bottom and add spacing
+                    if (item.label.empty()) {
+                        float lineY = controlRect.bottom;
+                        float origOpacity = m_brushBorder->GetOpacity();
+                        m_brushBorder->SetOpacity(origOpacity * 0.45f);
+                        pRT->DrawLine(
+                            D2D1::Point2F(contentX, lineY),
+                            D2D1::Point2F(contentX + contentW, lineY),
+                            m_brushBorder.Get(),
+                            1.0f * s
+                        );
+                        m_brushBorder->SetOpacity(origOpacity);
+                        contentY += 28.0f * s;
                     }
                     break;
+                }
                  case OptionType::ActionButton: {
                      const float padRight = 8.0f * s;
                      const float btnLeft = controlX;
@@ -3937,7 +6888,7 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                      D2D1_RECT_F btnRect = D2D1::RectF(btnLeft, btnCy - btnH * 0.5f, btnRight, btnCy + btnH * 0.5f);
                      item.interactRect = btnRect;
 
-                     std::wstring btnText = item.buttonText;
+                     std::wstring btnText = item.buttonText.empty() ? std::wstring(L"Select") : item.buttonText;
                      if (item.isActivated && item.buttonActivatedText != nullptr && item.buttonActivatedText[0] != L'\0') {
                          btnText = item.buttonActivatedText;
                      }
@@ -3948,8 +6899,78 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                      const auto palette = GetSettingsThemePalette();
 
                      GeekWidgets::DrawPillButton(pRT, btnRect, btnText, style, state, m_textFormatItem.Get(), s, ToWidgetPalette(palette));
+
+                     float btnR = (btnRect.bottom - btnRect.top) * 0.5f;
+
+                     // 1. Semi-transparent progress fill if downloading (0.0f ~ 1.0f)
+                     if (item.progress >= 0.0f && item.progress <= 1.0f) {
+                         float progW = (btnRect.right - btnRect.left) * std::clamp(item.progress, 0.0f, 1.0f);
+                         D2D1_RECT_F progRect = D2D1::RectF(btnRect.left, btnRect.top, btnRect.left + progW, btnRect.bottom);
+
+                         Microsoft::WRL::ComPtr<ID2D1Factory> pFactory;
+                         pRT->GetFactory(&pFactory);
+                         Microsoft::WRL::ComPtr<ID2D1RoundedRectangleGeometry> pClipGeom;
+                         if (pFactory) {
+                             pFactory->CreateRoundedRectangleGeometry(D2D1::RoundedRect(btnRect, btnR, btnR), &pClipGeom);
+                         }
+
+                         Microsoft::WRL::ComPtr<ID2D1Layer> pLayer;
+                         pRT->CreateLayer(&pLayer);
+                         if (pLayer && pClipGeom) {
+                             pRT->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), pClipGeom.Get()), pLayer.Get());
+                             Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushProg;
+                             pRT->CreateSolidColorBrush(D2D1::ColorF(palette.accent.r, palette.accent.g, palette.accent.b, 0.40f), &brushProg);
+                             if (brushProg) {
+                                 pRT->FillRectangle(progRect, brushProg.Get());
+                             }
+                             pRT->PopLayer();
+                         }
+                     }
+
+                     // 2. Success green feedback
+                     if (item.isSuccess) {
+                         Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushSuccessBg;
+                         Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushSuccessBorder;
+                         pRT->CreateSolidColorBrush(D2D1::ColorF(0.18f, 0.80f, 0.38f, 0.35f), &brushSuccessBg);
+                         pRT->CreateSolidColorBrush(D2D1::ColorF(0.20f, 0.88f, 0.40f, 0.95f), &brushSuccessBorder);
+                         if (brushSuccessBg) {
+                             pRT->FillRoundedRectangle(D2D1::RoundedRect(btnRect, btnR, btnR), brushSuccessBg.Get());
+                         }
+                         if (brushSuccessBorder) {
+                             pRT->DrawRoundedRectangle(D2D1::RoundedRect(btnRect, btnR, btnR), brushSuccessBorder.Get(), 1.5f * s);
+                         }
+                     }
+
+                     // 3. Failure red feedback
+                     if (item.isFailed) {
+                         Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushFailBg;
+                         Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushFailBorder;
+                         pRT->CreateSolidColorBrush(D2D1::ColorF(0.90f, 0.18f, 0.18f, 0.35f), &brushFailBg);
+                         pRT->CreateSolidColorBrush(D2D1::ColorF(0.95f, 0.22f, 0.22f, 0.95f), &brushFailBorder);
+                         if (brushFailBg) {
+                             pRT->FillRoundedRectangle(D2D1::RoundedRect(btnRect, btnR, btnR), brushFailBg.Get());
+                         }
+                         if (brushFailBorder) {
+                             pRT->DrawRoundedRectangle(D2D1::RoundedRect(btnRect, btnR, btnR), brushFailBorder.Get(), 1.5f * s);
+                         }
+                     }
+
+                     // Re-draw centered text if progress or feedback is active so it sits clearly on top of the fill
+                     if (item.progress >= 0.0f || item.isSuccess || item.isFailed) {
+                         Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushText;
+                         D2D1::ColorF textColor = D2D1::ColorF(D2D1::ColorF::White);
+                         if (item.isSuccess) textColor = D2D1::ColorF(0.85f, 1.0f, 0.85f);
+                         if (item.isFailed) textColor = D2D1::ColorF(1.0f, 0.85f, 0.85f);
+                         pRT->CreateSolidColorBrush(textColor, &brushText);
+                         if (brushText && m_textFormatItem) {
+                             m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                             m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                             pRT->DrawText(btnText.c_str(), static_cast<UINT32>(btnText.length()), m_textFormatItem.Get(), btnRect, brushText.Get());
+                             m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                         }
+                     }
+
                      if (isFocused) {
-                         float btnR = (btnRect.bottom - btnRect.top) * 0.5f;
                          pRT->DrawRoundedRectangle(D2D1::RoundedRect(btnRect, btnR, btnR), m_brushAccent.Get(), 1.5f * s);
                      }
                      break;
@@ -4008,12 +7029,13 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                          float labelLeft = controlRect.left + toggleW + 8.0f * s;
                          float labelRight = controlRect.left + 135.0f * s;
                          D2D1_RECT_F gridLabelRect = D2D1::RectF(labelLeft, controlRect.top, labelRight, controlRect.bottom);
-                         pRT->DrawText(AppStrings::Settings_Label_ShowGrid, (UINT32)wcslen(AppStrings::Settings_Label_ShowGrid), m_textFormatItem.Get(), gridLabelRect, m_brushTextDim.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE); 
+                         pRT->DrawText(AppStrings::g.Settings_Label_ShowGrid, (UINT32)wcslen(AppStrings::g.Settings_Label_ShowGrid), m_textFormatItem.Get(), gridLabelRect, m_brushTextDim.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE); 
                          btnLeft = controlRect.left + 140.0f * s;
                      }
                      
                      // Color Swatch Button (Pill shape)
-                     D2D1_RECT_F btnRect = D2D1::RectF(btnLeft, controlRect.top, controlRect.right, controlRect.bottom);
+                     const float padRight = 8.0f * s;
+                     D2D1_RECT_F btnRect = D2D1::RectF(btnLeft, controlRect.top, controlRect.right - padRight, controlRect.bottom);
                      float minBtnW = 90.0f * s;
                      if (btnRect.right - btnRect.left < minBtnW) {
                          btnRect.left = (std::max)(controlRect.left, btnRect.right - minBtnW);
@@ -4077,57 +7099,274 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                 }
                 case OptionType::HotkeyBindRow: {
                     const float padRight = 8.0f * s;
-                    const float btnLeft = controlX;
-                    const float btnRight = controlX + controlW - padRight;
-                    const float btnH = 24.0f * s;
-                    const float btnCy = contentY + rowHeight * 0.5f;
-                    D2D1_RECT_F btnRect = D2D1::RectF(btnLeft, btnCy - btnH * 0.5f, btnRight, btnCy + btnH * 0.5f);
-                    item.interactRect = btnRect;
-                    
-                    std::wstring btnText;
+                    const float btnH = 22.0f * s;
+                    const float gap = 6.0f * s;
+                    const float padX = 8.0f * s;
+
                     bool isThisCapturing = m_capturingHotkey && (m_capturingAction == item.hotkeyAction);
-                    
-                    if (isThisCapturing) {
-                        btnText = AppStrings::Settings_Hotkey_PressKey;
-                    } else {
-                        auto idx = static_cast<size_t>(item.hotkeyAction);
-                        if (idx < g_hotkeys.size()) {
-                            btnText = KeyComboToString(g_hotkeys[idx].combo);
-                        } else {
-                            btnText = L"None";
+
+                    // 1. Gather all key combos for this action
+                    std::vector<KeyCombo> combos = g_config.GetCombosForAction(item.hotkeyAction);
+
+                    // 2. Measure pill widths for each combo + add button
+                    struct PillData {
+                        std::wstring text;
+                        float width;
+                        bool isAdd;
+                    };
+                    std::vector<PillData> pills;
+                    pills.reserve(combos.size() + 1);
+
+                    for (const auto& cb : combos) {
+                        std::wstring t = KeyComboToString(cb);
+                        float tw = 24.0f * s;
+                        if (m_dwriteFactory && m_textFormatItem) {
+                            ComPtr<IDWriteTextLayout> layout;
+                            if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(t.c_str(), (UINT32)t.length(), m_textFormatItem.Get(), 500.0f, btnH, &layout)) && layout) {
+                                DWRITE_TEXT_METRICS m = {};
+                                if (SUCCEEDED(layout->GetMetrics(&m))) {
+                                    tw = std::ceil(m.widthIncludingTrailingWhitespace);
+                                }
+                            }
+                        }
+                        pills.push_back({ std::move(t), (std::max)(28.0f * s, tw + padX * 2.0f), false });
+                    }
+
+                    std::wstring addText = isThisCapturing ? AppStrings::g.Settings_Hotkey_PressKey : L"+";
+                    float addTw = 20.0f * s;
+                    if (m_dwriteFactory && m_textFormatItem) {
+                        ComPtr<IDWriteTextLayout> layout;
+                        if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(addText.c_str(), (UINT32)addText.length(), m_textFormatItem.Get(), 500.0f, btnH, &layout)) && layout) {
+                            DWRITE_TEXT_METRICS m = {};
+                            if (SUCCEEDED(layout->GetMetrics(&m))) {
+                                addTw = std::ceil(m.widthIncludingTrailingWhitespace);
+                            }
                         }
                     }
-                    
-                    using namespace QuickView::UI;
-                    ButtonStyle style = isThisCapturing ? ButtonStyle::Primary : ButtonStyle::Secondary;
-                    ButtonState state = isHovered ? ButtonState::Hovered : ButtonState::Normal;
-                    GeekWidgets::DrawPillButton(pRT, btnRect, btnText, style, state, m_textFormatItem.Get(), s, ToWidgetPalette(palette));
-                    
-                    if (isFocused && !isThisCapturing) {
-                        float btnR = (btnRect.bottom - btnRect.top) * 0.5f;
-                        pRT->DrawRoundedRectangle(D2D1::RoundedRect(btnRect, btnR, btnR), m_brushAccent.Get(), 1.5f * s);
+                    pills.push_back({ std::move(addText), (std::max)(24.0f * s, addTw + padX * 2.0f), true });
+
+                    // 3. Flow wrap layout for pills (prevents truncation when multiple shortcuts bound)
+                    float availW = (std::max)(60.0f * s, controlW - padRight);
+                    const float lineGap = 3.0f * s; // Very tight gap between folded lines of the same action
+                    struct LayoutLine {
+                        std::vector<size_t> indices;
+                        float totalW = 0.0f;
+                    };
+                    std::vector<LayoutLine> lines;
+                    lines.push_back({});
+
+                    for (size_t i = 0; i < pills.size(); ++i) {
+                        float needed = pills[i].width + (lines.back().indices.empty() ? 0.0f : gap);
+                        if (!lines.back().indices.empty() && lines.back().totalW + needed > availW) {
+                            lines.push_back({});
+                        }
+                        lines.back().indices.push_back(i);
+                        lines.back().totalW += needed;
                     }
+
+                    // Strict Group Proximity Layout:
+                    // Single line: compact 34px total height. Multi-line: tight pills + 12px bottom separation.
+                    const float padTop = 6.0f * s;
+                    float totalPillsH = lines.size() * btnH + (lines.size() - 1) * lineGap;
+                    rowHeight = (lines.size() > 1) ? (padTop + totalPillsH + 12.0f * s) : (34.0f * s);
+                    item.rect = D2D1::RectF(rowContentX, contentY, rowContentX + rowContentW, contentY + rowHeight);
+                    const bool hotkeyRowVisible = !(item.rect.bottom < hudY || item.rect.top > hudY + hudH);
+
+                    // Fixed padTop anchor: first row always aligns exactly at contentY + 6px (center-aligned with label at 17px)
+                    float startY = contentY + padTop;
+                    float curY = startY;
+
+                    item.optionRects.assign(pills.size(), D2D1_RECT_F{});
+                    using namespace QuickView::UI;
+                    auto ptIn = [this](const D2D1_RECT_F& r) {
+                        return m_lastMouseX >= r.left && m_lastMouseX <= r.right && m_lastMouseY >= r.top && m_lastMouseY <= r.bottom;
+                    };
+
+                    float minPillX = controlX + controlW;
+                    float maxPillX = controlX;
+
+                    for (const auto& line : lines) {
+                        float lineRight = controlX + controlW - padRight;
+                        float curX = (std::max)(controlX, lineRight - line.totalW);
+                        minPillX = (std::min)(minPillX, curX);
+
+                        for (size_t idx : line.indices) {
+                            D2D1_RECT_F rPill = D2D1::RectF(curX, curY, curX + pills[idx].width, curY + btnH);
+                            item.optionRects[idx] = rPill;
+                            maxPillX = (std::max)(maxPillX, rPill.right);
+                            curX += pills[idx].width + gap;
+
+                            if (!hotkeyRowVisible) continue;
+                            bool isPillHover = ptIn(rPill);
+                            if (!pills[idx].isAdd) {
+                                if (isPillHover) {
+                                    // Hover state: Warning red background with center delete mark '✕'
+                                    GeekWidgets::DrawPillButton(pRT, rPill, L"\u2715", ButtonStyle::Destructive, ButtonState::Hovered, m_textFormatItem.Get(), s, ToWidgetPalette(palette));
+                                } else {
+                                    // Normal state: Clean & minimal, displays only the key combo name without clutter
+                                    GeekWidgets::DrawPillButton(pRT, rPill, pills[idx].text, ButtonStyle::Secondary, ButtonState::Normal, m_textFormatItem.Get(), s, ToWidgetPalette(palette));
+                                }
+                            } else {
+                                ButtonStyle style = isThisCapturing ? ButtonStyle::Primary : ButtonStyle::Secondary;
+                                ButtonState bState = isPillHover ? ButtonState::Hovered : ButtonState::Normal;
+                                GeekWidgets::DrawPillButton(pRT, rPill, pills[idx].text, style, bState, m_textFormatItem.Get(), s, ToWidgetPalette(palette));
+
+                                if (isThisCapturing) {
+                                    float r = (rPill.bottom - rPill.top) * 0.5f;
+                                    pRT->DrawRoundedRectangle(D2D1::RoundedRect(rPill, r, r), m_brushAccent.Get(), 1.5f * s);
+                                }
+                            }
+                        }
+                        curY += btnH + lineGap;
+                    }
+
+                    item.interactRect = D2D1::RectF(minPillX, startY, maxPillX, (std::max)(startY + btnH, curY - lineGap));
 
                     if (!item.statusText.empty() && item.statusSetTime > 0) {
-                         if (GetTickCount() - item.statusSetTime > 3000) {
-                             item.statusText.clear();
-                         }
+                        if (GetTickCount() - item.statusSetTime > 3000) {
+                            item.statusText.clear();
+                        }
                     }
-                    if (!item.statusText.empty()) {
+                    if (!item.statusText.empty() && hotkeyRowVisible) {
                         ComPtr<ID2D1SolidColorBrush> statusBrush;
                         pRT->CreateSolidColorBrush(item.statusColor, &statusBrush);
-                        D2D1_RECT_F statusRect = D2D1::RectF(controlX, contentY, btnLeft - 16.0f * s, contentY + rowHeight);
-                        m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
-                        pRT->DrawText(item.statusText.c_str(), (UINT32)item.statusText.length(), m_textFormatItem.Get(), statusRect, statusBrush.Get());
-                        m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                        if (statusBrush && m_textFormatItem) {
+                            D2D1_RECT_F statusRect = D2D1::RectF(controlX, contentY, minPillX - 8.0f * s, contentY + rowHeight);
+                            m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+                            pRT->DrawText(item.statusText.c_str(), (UINT32)item.statusText.length(), m_textFormatItem.Get(), statusRect, statusBrush.Get());
+                            m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                        }
                     }
 
-                    m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-                    m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                    ID2D1SolidColorBrush* textBrush = isThisCapturing ? m_brushWhite.Get() : m_brushText.Get();
-                    pRT->DrawText(btnText.c_str(), (UINT32)btnText.length(), m_textFormatItem.Get(), btnRect, textBrush);
-                    m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-                    m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                    // Draw subtle bottom divider line between items to ensure crisp, unmistakable separation
+                    if (hotkeyRowVisible && m_brushBorder) {
+                        float origBorderOpacity = m_brushBorder->GetOpacity();
+                        m_brushBorder->SetOpacity(origBorderOpacity * 0.22f);
+                        pRT->DrawLine(
+                            D2D1::Point2F(rowContentX, contentY + rowHeight - 1.0f * s),
+                            D2D1::Point2F(rowContentX + rowContentW, contentY + rowHeight - 1.0f * s),
+                            m_brushBorder.Get(),
+                            1.0f * s
+                        );
+                        m_brushBorder->SetOpacity(origBorderOpacity);
+                    }
+                    break;
+                }
+
+                case OptionType::MouseGestureRow: {
+                    if (item.gestureIndex < 0 || item.gestureIndex >= (int)g_config.MouseGestures.size()) break;
+                    const auto& rule = g_config.MouseGestures[item.gestureIndex];
+                    const float padRight = 8.0f * s;
+                    const float gap = 6.0f * s;
+                    const float delBtnW = 26.0f * s;
+                    const float availW = (std::max)(100.0f * s, controlW - delBtnW - gap * 4.0f - padRight);
+                    const float col0W = std::floor(availW * 0.16f); // Mod1
+                    const float col1W = std::floor(availW * 0.16f); // Mod2
+                    const float col2W = std::floor(availW * 0.31f); // Trigger
+                    const float col3W = availW - col0W - col1W - col2W; // Action
+                    const float rowH = 24.0f * s;
+                    const float cy = contentY + rowHeight * 0.5f;
+                    const float top = cy - rowH * 0.5f;
+                    const float bot = cy + rowH * 0.5f;
+
+                    float curX = controlX;
+                    D2D1_RECT_F rCol0 = D2D1::RectF(curX, top, curX + col0W, bot); curX += col0W + gap;
+                    D2D1_RECT_F rCol1 = D2D1::RectF(curX, top, curX + col1W, bot); curX += col1W + gap;
+                    D2D1_RECT_F rCol2 = D2D1::RectF(curX, top, curX + col2W, bot); curX += col2W + gap;
+                    D2D1_RECT_F rCol3 = D2D1::RectF(curX, top, curX + col3W, bot); curX += col3W + gap;
+                    D2D1_RECT_F rDel  = D2D1::RectF(curX, top, curX + delBtnW, bot);
+
+                    item.optionRects = { rCol0, rCol1, rCol2, rCol3, rDel };
+                    item.interactRect = D2D1::RectF(controlX, top, curX + delBtnW, bot);
+
+                    auto ptIn = [this](const D2D1_RECT_F& r) {
+                        return m_lastMouseX >= r.left && m_lastMouseX <= r.right && m_lastMouseY >= r.top && m_lastMouseY <= r.bottom;
+                    };
+
+                    bool isDropdownOpen = (m_activeGestureDropdown.gestureIndex == item.gestureIndex);
+                    bool isRowHover = ptIn(item.interactRect);
+                    bool isEditing = isRowHover || isDropdownOpen;
+
+                    using namespace QuickView::UI;
+
+                    if (!isEditing) {
+                        // 1. Idle Natural Language View: "[Ctrl + 左键拖拽] ➔ 框选剪裁"
+                        std::wstring trDesc;
+                        if (rule.mod1 != 0) trDesc += AppStrings::GetMouseModifierName(rule.mod1) + L" + ";
+                        if (rule.mod2 != 0) trDesc += AppStrings::GetMouseModifierName(rule.mod2) + L" + ";
+                        trDesc += AppStrings::GetMouseTriggerName((MouseTrigger)rule.trigger);
+
+                        std::wstring actDesc = AppStrings::GetMouseActionTargetName((MouseActionTarget)rule.action);
+
+                        float tw = 60.0f * s;
+                        if (m_dwriteFactory) {
+                            ComPtr<IDWriteTextLayout> layout;
+                            if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(trDesc.c_str(), (UINT32)trDesc.length(), m_textFormatItem.Get(), 500.0f, rowH, &layout))) {
+                                DWRITE_TEXT_METRICS m = {};
+                                if (SUCCEEDED(layout->GetMetrics(&m))) {
+                                    tw = std::ceil(m.widthIncludingTrailingWhitespace);
+                                }
+                            }
+                        }
+                        const float pillPadX = 10.0f * s;
+                        float trigPillW = (std::max)(60.0f * s, tw + pillPadX * 2.0f);
+                        D2D1_RECT_F rTrigPill = D2D1::RectF(controlX, top, controlX + trigPillW, bot);
+
+                        GeekWidgets::DrawPillButton(pRT, rTrigPill, trDesc, ButtonStyle::Secondary, ButtonState::Normal, m_textFormatItem.Get(), s, ToWidgetPalette(palette));
+
+                        float arrowX = rTrigPill.right + 10.0f * s;
+                        float arrowW = 20.0f * s;
+                        D2D1_RECT_F rArrow = D2D1::RectF(arrowX, top, arrowX + arrowW, bot);
+                        m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                        m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                        pRT->DrawText(L"\u2794", 1, m_textFormatItem.Get(), rArrow, m_brushAccentText.Get());
+                        m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+
+                        float actX = rArrow.right + 10.0f * s;
+                        float actW = (controlX + controlW - delBtnW - padRight) - actX;
+                        if (actW > 0.0f) {
+                            D2D1_RECT_F rAct = D2D1::RectF(actX, top, actX + actW, bot);
+                            pRT->DrawText(actDesc.c_str(), (UINT32)actDesc.length(), m_textFormatItem.Get(), rAct, m_brushText.Get());
+                        }
+
+                        GeekWidgets::DrawPillButton(pRT, rDel, L"\u2715", ButtonStyle::Secondary, ButtonState::Normal, m_textFormatItem.Get(), s, ToWidgetPalette(palette));
+                    } else {
+                        // 2. Active Editing View: 4 Detailed Dropdown Columns
+                        std::wstring mod1Text = AppStrings::GetMouseModifierName(rule.mod1);
+                        std::wstring mod2Text = AppStrings::GetMouseModifierName(rule.mod2);
+                        std::wstring trText = AppStrings::GetMouseTriggerName((MouseTrigger)rule.trigger);
+                        std::wstring actText = AppStrings::GetMouseActionTargetName((MouseActionTarget)rule.action);
+
+                        bool isCol0Open = (m_activeGestureDropdown.gestureIndex == item.gestureIndex && m_activeGestureDropdown.column == 0);
+                        bool isCol1Open = (m_activeGestureDropdown.gestureIndex == item.gestureIndex && m_activeGestureDropdown.column == 1);
+                        bool isCol2Open = (m_activeGestureDropdown.gestureIndex == item.gestureIndex && m_activeGestureDropdown.column == 2);
+                        bool isCol3Open = (m_activeGestureDropdown.gestureIndex == item.gestureIndex && m_activeGestureDropdown.column == 3);
+
+                        bool isCol0Hover = ptIn(rCol0);
+                        bool isCol1Hover = ptIn(rCol1);
+                        bool isCol2Hover = ptIn(rCol2);
+                        bool isCol3Hover = ptIn(rCol3);
+                        bool isDelHover  = ptIn(rDel);
+
+                        GeekWidgets::DrawPillComboBox(pRT, rCol0, mod1Text, isCol0Open, isCol0Hover, false, m_textFormatItem.Get(), s, ToWidgetPalette(palette), m_dwriteFactory.Get());
+                        GeekWidgets::DrawPillComboBox(pRT, rCol1, mod2Text, isCol1Open, isCol1Hover, false, m_textFormatItem.Get(), s, ToWidgetPalette(palette), m_dwriteFactory.Get());
+                        GeekWidgets::DrawPillComboBox(pRT, rCol2, trText, isCol2Open, isCol2Hover, false, m_textFormatItem.Get(), s, ToWidgetPalette(palette), m_dwriteFactory.Get());
+                        GeekWidgets::DrawPillComboBox(pRT, rCol3, actText, isCol3Open, isCol3Hover, false, m_textFormatItem.Get(), s, ToWidgetPalette(palette), m_dwriteFactory.Get());
+
+                        // Delete Button (×)
+                        GeekWidgets::DrawPillButton(pRT, rDel, L"\u2715", ButtonStyle::Destructive, isDelHover ? ButtonState::Hovered : ButtonState::Normal, m_textFormatItem.Get(), s, ToWidgetPalette(palette));
+                    }
+
+                    // Subtle bottom divider line
+                    float origBorderOpacity = m_brushBorder->GetOpacity();
+                    m_brushBorder->SetOpacity(origBorderOpacity * 0.15f);
+                    pRT->DrawLine(
+                        D2D1::Point2F(controlX, contentY + rowHeight - 1.0f * s),
+                        D2D1::Point2F(controlX + controlW, contentY + rowHeight - 1.0f * s),
+                        m_brushBorder.Get(),
+                        1.0f * s
+                    );
+                    m_brushBorder->SetOpacity(origBorderOpacity);
                     break;
                 }
 
@@ -4140,6 +7379,11 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
             float currentH = contentY - startContentY;
             if (currentH > m_settingsContentHeight) m_settingsContentHeight = currentH;
         } // End Item Loop
+        if (insideAccordionCard) {
+            contentY += 8.0f * s;
+            const float currentH = contentY - startContentY;
+            if (currentH > m_settingsContentHeight) m_settingsContentHeight = currentH;
+        }
     } // End Active Tab Check
     pRT->PopAxisAlignedClip();
 
@@ -4151,10 +7395,14 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
         D2D1_COLOR_F thumbColor = (m_isDraggingScrollbar || m_isHoveringScrollbar) ? palette.accent : palette.subtleTint;
         ComPtr<ID2D1SolidColorBrush> scrollBrush;
         pRT->CreateSolidColorBrush(thumbColor, &scrollBrush);
-        pRT->FillRoundedRectangle(D2D1::RoundedRect(thumbRect, 2.0f * s, 2.0f * s), scrollBrush.Get());
+        if (scrollBrush) {
+            pRT->FillRoundedRectangle(D2D1::RoundedRect(thumbRect, 2.0f * s, 2.0f * s), scrollBrush.Get());
+        }
     }
 
-    pRT->PopLayer();
+    if (layerPushed) {
+        pRT->PopLayer();
+    }
     RenderTooltip(pRT);
 } // End if (m_visible)
 
@@ -4166,6 +7414,9 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
     // Draw Overlay Dropdowns (Z-Order Top)
     if (m_pActiveCombo) {
         DrawComboDropdown(pRT);
+    }
+    if (m_activeGestureDropdown.gestureIndex >= 0) {
+        DrawGestureDropdown(pRT);
     }
 } 
 
@@ -4214,10 +7465,49 @@ bool SettingsOverlay::OnMouseWheel(float delta) {
     // Fallback to Settings Scroll
     if (!m_visible) return false;
 
-    // Auto-collapse open dropdown when scrolling content
-                     if (m_pActiveCombo) {
+    // Gesture dropdown scrolling
+    if (m_activeGestureDropdown.gestureIndex >= 0) {
+        D2D1_RECT_F dropRect = GetGestureDropdownRect();
+        if (m_lastMouseX >= dropRect.left && m_lastMouseX <= dropRect.right &&
+            m_lastMouseY >= dropRect.top && m_lastMouseY <= dropRect.bottom) {
+            const float s = m_uiScale;
+            float itemH = ITEM_HEIGHT * s;
+            int count = (int)m_activeGestureDropdown.options.size();
+            int visibleItems = (int)std::round((dropRect.bottom - dropRect.top) / itemH);
+            int maxOffset = (std::max)(0, count - visibleItems);
+            if (delta < 0) {
+                m_gestureDropdownScrollOffset = (std::min)(m_gestureDropdownScrollOffset + 1, maxOffset);
+            } else if (delta > 0) {
+                m_gestureDropdownScrollOffset = (std::max)(0, m_gestureDropdownScrollOffset - 1);
+            }
+            return true;
+        }
+        CloseGestureDropdown();
+        return true;
+    }
+
+    // Dropdown list scrolling if mouse is over open ComboBox dropdown
+    if (m_pActiveCombo) {
+        D2D1_RECT_F dropRect = GetComboDropdownRect(m_pActiveCombo);
+        if (m_lastMouseX >= dropRect.left && m_lastMouseX <= dropRect.right &&
+            m_lastMouseY >= dropRect.top && m_lastMouseY <= dropRect.bottom) {
+            const float s = m_uiScale;
+            float itemH = ITEM_HEIGHT * s;
+            int count = (int)m_pActiveCombo->options.size();
+            int visibleItems = (int)std::round((dropRect.bottom - dropRect.top) / itemH);
+            int maxOffset = (std::max)(0, count - visibleItems);
+            if (delta < 0) { // Wheel Down
+                m_comboScrollOffset = (std::min)(m_comboScrollOffset + 1, maxOffset);
+            } else if (delta > 0) { // Wheel Up
+                m_comboScrollOffset = (std::max)(0, m_comboScrollOffset - 1);
+            }
+            return true;
+        }
+
+        // Auto-collapse open dropdown when scrolling outside content
         m_pActiveCombo = nullptr;
         m_comboHoverIdx = -1;
+        m_comboScrollOffset = 0;
     }
 
     // Scroll Settings Content (delta > 0 -> Scroll Up, delta < 0 -> Scroll Down)
@@ -4289,6 +7579,143 @@ void SettingsOverlay::CancelInput() {
     }
     m_pFocusedSlider = nullptr;
     m_sliderInputStarted = false;
+}
+
+bool SettingsOverlay::OpenInputItemDialog(size_t tabIdx, size_t itemIdx) {
+    if (tabIdx >= m_tabs.size() || itemIdx >= m_tabs[tabIdx].items.size()) return false;
+    SettingsItem* targetItem = &m_tabs[tabIdx].items[itemIdx];
+    if (!targetItem->pStrVal) return false;
+
+    std::wstring title;
+    std::wstring msg;
+    if (targetItem->pStrVal == &g_config.FixedZoomLevels) {
+        title = AppStrings::g.Dialog_FixedZoomTitle;
+        msg = AppStrings::g.Dialog_FixedZoomMsg;
+    }
+
+    std::wstring initialText = *targetItem->pStrVal;
+    bool isApiKeyField = false;
+    std::string targetProfileId;
+    size_t keyProfileIdx = 0;
+
+    for (size_t ki = 0; ki < s_aiUi.profileMaskedKeys.size(); ++ki) {
+        if (targetItem->pStrVal == &s_aiUi.profileMaskedKeys[ki]) {
+            isApiKeyField = true;
+            keyProfileIdx = ki;
+            if (ki < s_aiUi.profileKeys.size()) {
+                initialText = s_aiUi.profileKeys[ki];
+            }
+            const auto& profiles = QuickView::AI::AiActionManager::Instance().GetProfiles();
+            if (ki < profiles.size()) targetProfileId = profiles[ki].id;
+            title = AppStrings::g.Dialog_AiApiKeyTitle ? AppStrings::g.Dialog_AiApiKeyTitle : L"Configure API Key";
+            msg = AppStrings::g.Dialog_AiApiKeyPrompt ? AppStrings::g.Dialog_AiApiKeyPrompt : L"Enter provider API key (protected locally via Windows DPAPI):";
+            break;
+        }
+    }
+
+    if (!isApiKeyField) {
+        for (size_t ai = 0; ai < s_aiUi.actionPrompts.size(); ++ai) {
+            if (targetItem->pStrVal == &s_aiUi.actionPrompts[ai]) {
+                title = AppStrings::g.Dialog_AiPromptTitle ? AppStrings::g.Dialog_AiPromptTitle : L"Edit Prompt Template";
+                msg = AppStrings::g.Dialog_AiPromptPrompt ? AppStrings::g.Dialog_AiPromptPrompt : L"Configure AI prompt template (multi-line supported, press Ctrl+Enter to submit):";
+                break;
+            }
+        }
+        if (title.empty()) {
+            for (size_t ai = 0; ai < s_aiUi.actionNegativePrompts.size(); ++ai) {
+                if (targetItem->pStrVal == &s_aiUi.actionNegativePrompts[ai]) {
+                    title = IsSimplifiedChinese() ? L"编辑反向提示词" : L"Edit Negative Prompt";
+                    msg = IsSimplifiedChinese() ? L"配置反向提示词 (不支持则留空)：" : L"Configure negative prompt (leave empty if unused):";
+                    break;
+                }
+            }
+        }
+        if (title.empty()) {
+            for (size_t ai = 0; ai < s_aiUi.actionNames.size(); ++ai) {
+                if (targetItem->pStrVal == &s_aiUi.actionNames[ai]) {
+                    title = AppStrings::g.Dialog_AiActionNameTitle ? AppStrings::g.Dialog_AiActionNameTitle : L"Edit Action Name";
+                    msg = AppStrings::g.Dialog_AiActionNamePrompt ? AppStrings::g.Dialog_AiActionNamePrompt : L"Enter display name for this AI action:";
+                    break;
+                }
+            }
+        }
+        if (title.empty()) {
+            for (size_t pi = 0; pi < s_aiUi.profileUrls.size(); ++pi) {
+                if (targetItem->pStrVal == &s_aiUi.profileUrls[pi]) {
+                    title = AppStrings::g.Dialog_AiBaseUrlTitle ? AppStrings::g.Dialog_AiBaseUrlTitle : L"Configure Endpoint";
+                    msg = AppStrings::g.Dialog_AiBaseUrlPrompt ? AppStrings::g.Dialog_AiBaseUrlPrompt : L"Enter OpenAI / ComfyUI compatible API Base URL:";
+                    break;
+                }
+            }
+        }
+    }
+
+    if (title.empty() && !targetItem->label.empty()) {
+        title = (AppStrings::g.Help_Desc_Edit ? AppStrings::g.Help_Desc_Edit : L"Edit") + (L" " + targetItem->label);
+    }
+
+    const bool isMultiLine = targetItem->isMultiLine;
+    std::wstring* const fallbackStrPtr = targetItem->pStrVal;
+    void (*fallbackOnChange)(SettingsOverlay*, SettingsItem*) = targetItem->onChange;
+
+    DialogResult dlgRes = DialogResult::None;
+    std::vector<DialogButton> buttons = {
+        { DialogResult::Yes, AppStrings::g.Dialog_Button_OK ? AppStrings::g.Dialog_Button_OK : L"OK", true },
+        { DialogResult::Cancel, AppStrings::g.Dialog_Cancel ? AppStrings::g.Dialog_Cancel : L"Cancel" }
+    };
+    const std::wstring result = AppContext::GetInstance().DialogCtrl->ShowInputDialog(
+        m_hwnd, title, msg, initialText, buttons, dlgRes, isMultiLine
+    );
+
+    if (dlgRes != DialogResult::Yes) return false;
+
+    SettingsItem* currentItem = (tabIdx < m_tabs.size() && itemIdx < m_tabs[tabIdx].items.size())
+        ? &m_tabs[tabIdx].items[itemIdx]
+        : nullptr;
+
+    if (isApiKeyField) {
+        size_t resolvedIdx = keyProfileIdx;
+        if (!targetProfileId.empty()) {
+            const auto& profiles = QuickView::AI::AiActionManager::Instance().GetProfiles();
+            for (size_t k = 0; k < profiles.size(); ++k) {
+                if (profiles[k].id == targetProfileId) {
+                    resolvedIdx = k;
+                    break;
+                }
+            }
+        }
+        if (resolvedIdx < s_aiUi.profileKeys.size()) {
+            s_aiUi.profileKeys[resolvedIdx] = result;
+        }
+        if (resolvedIdx < s_aiUi.profileMaskedKeys.size()) {
+            s_aiUi.profileMaskedKeys[resolvedIdx] = FormatMaskedKey(result);
+        }
+        if (currentItem && currentItem->onChange) {
+            currentItem->onChange(this, currentItem);
+        } else {
+            auto& m = QuickView::AI::AiActionManager::Instance();
+            auto& pr = m.GetProfiles();
+            if (resolvedIdx < pr.size()) {
+                pr[resolvedIdx].encryptedApiKey = QuickView::AI::AiActionManager::EncryptApiKey(WideToUtf8(result));
+                m.SaveConfig();
+            }
+        }
+    } else if (currentItem && currentItem->pStrVal) {
+        *currentItem->pStrVal = result;
+        if (currentItem->onChange) {
+            currentItem->onChange(this, currentItem);
+        } else if (fallbackOnChange == nullptr) {
+            extern void SaveConfig();
+            SaveConfig();
+        }
+    } else if (fallbackStrPtr) {
+        *fallbackStrPtr = result;
+        if (fallbackOnChange == nullptr) {
+            extern void SaveConfig();
+            SaveConfig();
+        }
+    }
+    return true;
 }
 
 void SettingsOverlay::HandleItemKeyboardActivation(SettingsItem& item, WPARAM key) {
@@ -4379,6 +7806,17 @@ void SettingsOverlay::HandleItemKeyboardActivation(SettingsItem& item, WPARAM ke
             if (key == VK_SPACE || key == VK_RETURN) {
                 m_pActiveCombo = &item;
                 m_comboHoverIdx = item.pIntVal ? *item.pIntVal : 0;
+                m_comboScrollOffset = 0;
+                if (!item.options.empty() && m_comboHoverIdx >= 0) {
+                    const D2D1_RECT_F dropRect = GetComboDropdownRect(m_pActiveCombo);
+                    const float itemH = ITEM_HEIGHT * (m_uiScale > 0.0f ? m_uiScale : 1.0f);
+                    const int count = static_cast<int>(item.options.size());
+                    const int visibleItems = std::clamp(static_cast<int>(std::round((dropRect.bottom - dropRect.top) / itemH)), 1, count);
+                    const int maxOffset = (std::max)(0, count - visibleItems);
+                    if (m_comboHoverIdx >= visibleItems) {
+                        m_comboScrollOffset = std::clamp(m_comboHoverIdx - visibleItems + 1, 0, maxOffset);
+                    }
+                }
             } else if (item.pIntVal && !item.options.empty()) {
                 int count = (int)item.options.size();
                 int current = *item.pIntVal;
@@ -4440,16 +7878,9 @@ void SettingsOverlay::HandleItemKeyboardActivation(SettingsItem& item, WPARAM ke
         }
         case OptionType::Input: {
             if (key == VK_SPACE || key == VK_RETURN) {
-                if (item.pStrVal) {
-                    std::wstring title = AppStrings::Dialog_FixedZoomTitle;
-                    std::wstring msg = AppStrings::Dialog_FixedZoomMsg;
-                    std::wstring result = AppContext::GetInstance().DialogCtrl->ShowInputDialog(
-                        m_hwnd, title, msg, *item.pStrVal, L"OK");
-                    if (!result.empty()) {
-                        *item.pStrVal = result;
-                        if (item.onChange) item.onChange(this, &item);
-                        SaveConfig();
-                    }
+                if (m_activeTab >= 0 && m_activeTab < static_cast<int>(m_tabs.size()) &&
+                    m_focusedItemIdx >= 0 && m_focusedItemIdx < static_cast<int>(m_tabs[m_activeTab].items.size())) {
+                    OpenInputItemDialog(static_cast<size_t>(m_activeTab), static_cast<size_t>(m_focusedItemIdx));
                 }
             } else if (key == VK_BACK || key == 'R') {
                 if (item.onReset) {
@@ -4465,12 +7896,23 @@ void SettingsOverlay::HandleItemKeyboardActivation(SettingsItem& item, WPARAM ke
                 m_capturingAction = item.hotkeyAction;
                 m_pendingRebuild = true;
             } else if (key == VK_DELETE || key == VK_BACK) {
+                auto combos = g_config.GetCombosForAction(item.hotkeyAction);
+                for (const auto& cb : combos) {
+                    g_config.RemoveHotkeyRule(item.hotkeyAction, cb);
+                }
                 auto idx = static_cast<size_t>(item.hotkeyAction);
                 if (idx < g_hotkeys.size()) {
                     g_hotkeys[idx].combo = {0, 0};
-                    SaveConfig();
-                    m_pendingRebuild = true;
                 }
+                if (item.hotkeyAction == HotkeyAction::Exit) {
+                    const auto* mClick = g_config.FindMouseGesture(MouseModMask::None, MouseTrigger::MiddleClick);
+                    if (mClick && mClick->action == static_cast<int>(MouseActionTarget::ExitApp)) {
+                        g_config.SetMouseGesture(0, 0, MouseTrigger::MiddleClick, MouseActionTarget::None);
+                        SaveMouseGesturesConfig();
+                    }
+                }
+                SaveHotkeysConfig();
+                m_pendingRebuild = true;
             }
             break;
         }
@@ -4481,34 +7923,8 @@ void SettingsOverlay::HandleItemKeyboardActivation(SettingsItem& item, WPARAM ke
                     m_focusedTagIdx = (m_focusedTagIdx > 0) ? m_focusedTagIdx - 1 : tagCount - 1;
                 } else if (key == VK_RIGHT) {
                     m_focusedTagIdx = (m_focusedTagIdx + 1) % tagCount;
-                } else if (key == VK_SPACE || key == VK_RETURN) {
-                    if (m_focusedTagIdx >= 0 && m_focusedTagIdx < tagCount && item.pStrVal) {
-                        std::wstring_view clickedOpt = item.options[m_focusedTagIdx];
-                        std::wstring currentStr = *item.pStrVal;
-                        std::vector<std::wstring> activeItems = SplitString(currentStr, L',');
-
-                        auto it = std::find(activeItems.begin(), activeItems.end(), clickedOpt);
-                        if (it != activeItems.end()) {
-                            activeItems.erase(it);
-                        } else {
-                            if (item.tagCloudNoLimit || (int)activeItems.size() < kInfoPanelLiteMaxItems) {
-                                activeItems.push_back(std::wstring(clickedOpt));
-                            } else {
-                                item.statusText = L"Limit reached (max 8 items)";
-                                item.statusColor = D2D1::ColorF(1.0f, 0.35f, 0.35f, 1.0f);
-                                item.statusSetTime = GetTickCount();
-                            }
-                        }
-
-                        std::wstring newStr;
-                        for (size_t i = 0; i < activeItems.size(); ++i) {
-                            if (i > 0) newStr += L",";
-                            newStr += activeItems[i];
-                        }
-                        *item.pStrVal = newStr;
-                        if (item.onChange) item.onChange(this, &item);
-                        SaveConfig();
-                    }
+                } else if ((key == VK_SPACE || key == VK_RETURN) && !item.isDisabled) {
+                    ToggleTagCloudOption(item, m_focusedTagIdx);
                 }
             }
             break;
@@ -4530,8 +7946,12 @@ void SettingsOverlay::HandleItemKeyboardActivation(SettingsItem& item, WPARAM ke
                 } else if (m_focusedPartIdx == 1) {
                     ShellExecuteW(NULL, L"open", L"https://github.com/justnullname/QuickView/issues", NULL, NULL, SW_SHOWNORMAL);
                 } else if (m_focusedPartIdx == 2) {
-                    extern HelpOverlay g_helpOverlay;
+                    extern void EnsureHelpInitialized(HWND hwnd);
+                    extern void RequestRepaint(QuickView::PaintLayer layerMask);
+                    EnsureHelpInitialized(m_hwnd);
                     g_helpOverlay.SetVisible(true);
+                    SetVisible(false);
+                    RequestRepaint(QuickView::PaintLayer::All);
                 }
             }
             break;
@@ -4587,31 +8007,64 @@ bool SettingsOverlay::OnKeyDown(WPARAM key) {
 
     // 2. Active ComboBox Dropdown Handling
     if (m_pActiveCombo) {
-        int optCount = (int)m_pActiveCombo->options.size();
+        const int optCount = (int)m_pActiveCombo->options.size();
+        const D2D1_RECT_F dropRect = GetComboDropdownRect(m_pActiveCombo);
+        const float itemH = ITEM_HEIGHT * (m_uiScale > 0.0f ? m_uiScale : 1.0f);
+        const int visibleItems = optCount > 0 ? std::clamp(static_cast<int>(std::round((dropRect.bottom - dropRect.top) / itemH)), 1, optCount) : 1;
+        const int maxOffset = (std::max)(0, optCount - visibleItems);
+        auto syncComboScroll = [&]() {
+            if (optCount <= visibleItems) {
+                m_comboScrollOffset = 0;
+                return;
+            }
+            if (m_comboHoverIdx < m_comboScrollOffset) {
+                m_comboScrollOffset = std::clamp(m_comboHoverIdx, 0, maxOffset);
+            } else if (m_comboHoverIdx >= m_comboScrollOffset + visibleItems) {
+                m_comboScrollOffset = std::clamp(m_comboHoverIdx - visibleItems + 1, 0, maxOffset);
+            }
+        };
+
         if (key == VK_ESCAPE) {
             m_pActiveCombo = nullptr;
+            m_comboHoverIdx = -1;
+            m_comboScrollOffset = 0;
             return true;
         }
-        if (key == VK_UP) {
+        if (key == VK_UP && optCount > 0) {
             if (m_comboHoverIdx < 0) m_comboHoverIdx = m_pActiveCombo->pIntVal ? *m_pActiveCombo->pIntVal : 0;
             m_comboHoverIdx = (m_comboHoverIdx > 0) ? m_comboHoverIdx - 1 : optCount - 1;
+            syncComboScroll();
             return true;
         }
-        if (key == VK_DOWN) {
+        if (key == VK_DOWN && optCount > 0) {
             if (m_comboHoverIdx < 0) m_comboHoverIdx = m_pActiveCombo->pIntVal ? *m_pActiveCombo->pIntVal : 0;
             m_comboHoverIdx = (m_comboHoverIdx + 1) % optCount;
+            syncComboScroll();
             return true;
         }
         if (key == VK_RETURN || key == VK_SPACE) {
-            if (m_comboHoverIdx >= 0 && m_comboHoverIdx < optCount && m_pActiveCombo->pIntVal) {
-                if (*m_pActiveCombo->pIntVal != m_comboHoverIdx) {
-                    *m_pActiveCombo->pIntVal = m_comboHoverIdx;
-                    if (m_pActiveCombo->onChange) m_pActiveCombo->onChange(this, m_pActiveCombo);
+            SettingsItem* activeCombo = m_pActiveCombo;
+            const int chosenIdx = m_comboHoverIdx;
+            m_pActiveCombo = nullptr;
+            m_comboHoverIdx = -1;
+            m_comboScrollOffset = 0;
+            if (activeCombo && chosenIdx >= 0 && chosenIdx < optCount && activeCombo->pIntVal) {
+                if (*activeCombo->pIntVal != chosenIdx) {
+                    *activeCombo->pIntVal = chosenIdx;
+                    if (activeCombo->onChange) activeCombo->onChange(this, activeCombo);
                     extern void SaveConfig();
                     SaveConfig();
                 }
             }
-            m_pActiveCombo = nullptr;
+            return true;
+        }
+        return true;
+    }
+
+    // 2.5 Active Gesture Dropdown Handling
+    if (m_activeGestureDropdown.gestureIndex >= 0) {
+        if (key == VK_ESCAPE) {
+            CloseGestureDropdown();
             return true;
         }
         return true;
@@ -4820,24 +8273,50 @@ void SettingsOverlay::DrawToggle(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rec
     float w = 44.0f * s;
     float h = 22.0f * s;
     float x = rect.right - w;
-    float y = rect.top + (rect.bottom - rect.top - h) / 2.0f;
+    float y = rect.top + (rect.bottom - rect.top - h) * 0.5f;
     D2D1_RECT_F toggleRect = D2D1::RectF(x, y, x + w, y + h);
 
-    // Background pill
-    ComPtr<ID2D1SolidColorBrush> brush;
-    if (isOn) {
-        brush = m_brushAccent;
-    } else {
-        brush = isHovered ? m_brushBorder : m_brushControlBg;
-    }
-    pRT->FillRoundedRectangle(D2D1::RoundedRect(toggleRect, h/2, h/2), brush.Get());
+    const bool isLight = IsLightThemeActive();
 
-    // Knob
-    float knobSize = h - 4.0f;
-    float knobX = isOn ? (x + w - knobSize - 2.0f) : (x + 2.0f);
-    float knobY = y + 2.0f;
-    D2D1_ELLIPSE knob = D2D1::Ellipse(D2D1::Point2F(knobX + knobSize/2, knobY + knobSize/2), knobSize/2, knobSize/2);
-    pRT->FillEllipse(knob, m_brushText.Get());
+    // 1. Track (Background Pill & Border) - Fully unified with ComboBox / Segment
+    if (isOn) {
+        pRT->FillRoundedRectangle(D2D1::RoundedRect(toggleRect, h * 0.5f, h * 0.5f), m_brushAccent.Get());
+        pRT->DrawRoundedRectangle(D2D1::RoundedRect(toggleRect, h * 0.5f, h * 0.5f), m_brushAccent.Get(), 1.0f * s);
+    } else {
+        // Off state: exactly the same controlBg and border as ComboBox
+        pRT->FillRoundedRectangle(D2D1::RoundedRect(toggleRect, h * 0.5f, h * 0.5f), m_brushControlBg.Get());
+        pRT->DrawRoundedRectangle(
+            D2D1::RoundedRect(toggleRect, h * 0.5f, h * 0.5f),
+            isHovered ? m_brushAccent.Get() : m_brushBorder.Get(),
+            1.0f * s);
+    }
+
+    // 2. Knob (Thumb circle)
+    const float pad = 2.0f * s;
+    float knobSize = h - pad * 2.0f;
+    float knobX = isOn ? (x + w - knobSize - pad) : (x + pad);
+    float knobY = y + pad;
+    D2D1_ELLIPSE knob = D2D1::Ellipse(
+        D2D1::Point2F(knobX + knobSize * 0.5f, knobY + knobSize * 0.5f),
+        knobSize * 0.5f,
+        knobSize * 0.5f);
+
+    if (isOn) {
+        // Active: High-contrast knob on colored accent track
+        pRT->FillEllipse(knob, m_brushOnAccent.Get());
+    } else {
+        if (isLight) {
+            const auto palette = GetSettingsThemePalette();
+            const D2D1_COLOR_F knobClr = isHovered
+                ? D2D1::ColorF(0.28f, 0.28f, 0.31f, 1.0f)
+                : D2D1::ColorF(0.40f, 0.40f, 0.44f, 1.0f);
+            m_brushBorder->SetColor(knobClr);
+            pRT->FillEllipse(knob, m_brushBorder.Get());
+            m_brushBorder->SetColor(palette.border); // Restore
+        } else {
+            pRT->FillEllipse(knob, m_brushWhite.Get());
+        }
+    }
 }
 
 void SettingsOverlay::DrawSlider(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rect, float val,
@@ -4871,7 +8350,12 @@ void SettingsOverlay::DrawSlider(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rec
             if (maxV <= 1.05f && wcsstr(format, L"%%") != nullptr) {
                 displayVal *= 100.0f;
             }
-            swprintf_s(buf, format, displayVal);
+            if ((wcsstr(format, L"MP") != nullptr && val >= maxV - 0.05f) ||
+                (wcsstr(format, L"px") != nullptr && minV == 0.0f && val <= 0.05f)) {
+                swprintf_s(buf, L"%s", AppStrings::g.Settings_Value_Unlimited ? AppStrings::g.Settings_Value_Unlimited : L"Unlimited");
+            } else {
+                swprintf_s(buf, format, displayVal);
+            }
         }
     }
 
@@ -4968,8 +8452,45 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
         return SettingsAction::RepaintStatic;
     }
 
-    // Active Combo Logic (Priority)
+    // Active Gesture Dropdown Logic
+    if (m_activeGestureDropdown.gestureIndex >= 0) {
+        m_pHoverItem = nullptr;
+        D2D1_RECT_F dropRect = GetGestureDropdownRect();
+        const float s = m_uiScale;
+        float itemH = ITEM_HEIGHT * s;
+        int count = (int)m_activeGestureDropdown.options.size();
+
+        if (x >= dropRect.left && x <= dropRect.right && y >= dropRect.top && y <= dropRect.bottom) {
+            g_currentCursor = ::LoadCursor(NULL, IDC_HAND);
+            ::SetCursor(g_currentCursor);
+            int relIdx = (int)((y - dropRect.top) / itemH);
+            int idx = m_gestureDropdownScrollOffset + relIdx;
+            if (idx >= 0 && idx < count) {
+                if (m_gestureDropdownHoverIdx != idx) {
+                    m_gestureDropdownHoverIdx = idx;
+                }
+                return SettingsAction::RepaintStatic; // Drive marquee smooth scroll while hovering
+            } else {
+                if (m_gestureDropdownHoverIdx != -1) {
+                    m_gestureDropdownHoverIdx = -1;
+                    return SettingsAction::RepaintStatic;
+                }
+            }
+            return SettingsAction::None;
+        } else {
+            if (m_gestureDropdownHoverIdx != -1) {
+                m_gestureDropdownHoverIdx = -1;
+                g_currentCursor = ::LoadCursor(NULL, IDC_ARROW);
+                ::SetCursor(g_currentCursor);
+                return SettingsAction::RepaintStatic;
+            }
+            return SettingsAction::None;
+        }
+    }
+
+    // Active Combo Logic (Priority Modal Behavior)
     if (m_pActiveCombo) {
+        m_pHoverItem = nullptr; // Block all background hover testing while dropdown is open
         D2D1_RECT_F dropRect = GetComboDropdownRect(m_pActiveCombo);
         const float s = m_uiScale;
         float itemH = ITEM_HEIGHT * s;
@@ -4977,16 +8498,31 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
         
         if (x >= dropRect.left && x <= dropRect.right && y >= dropRect.top && y <= dropRect.bottom) {
              g_currentCursor = ::LoadCursor(NULL, IDC_HAND);
-             int idx = (int)((y - dropRect.top) / itemH);
+             ::SetCursor(g_currentCursor);
+             int relIdx = (int)((y - dropRect.top) / itemH);
+             int idx = m_comboScrollOffset + relIdx;
              if (idx >= 0 && idx < count) {
                  if (m_comboHoverIdx != idx) {
                      m_comboHoverIdx = idx;
+                 }
+                 return SettingsAction::RepaintStatic; // Drive marquee smooth scroll while hovering
+             } else {
+                 if (m_comboHoverIdx != -1) {
+                     m_comboHoverIdx = -1;
                      return SettingsAction::RepaintStatic;
                  }
              }
              return SettingsAction::None;
         } else {
-             m_comboHoverIdx = -1;
+             if (m_comboHoverIdx != -1) {
+                 m_comboHoverIdx = -1;
+                 g_currentCursor = ::LoadCursor(NULL, IDC_ARROW);
+                 ::SetCursor(g_currentCursor);
+                 return SettingsAction::RepaintStatic;
+             }
+             g_currentCursor = ::LoadCursor(NULL, IDC_ARROW);
+             ::SetCursor(g_currentCursor);
+             return SettingsAction::None;
         }
     }
 
@@ -5026,13 +8562,13 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
     m_hoverSliderSubPart = 0;
     int oldLinkHover = m_hoverLinkIndex;
     m_hoverLinkIndex = -1;
-    bool oldCopyHover = m_isHoveringCopyright;
-    m_isHoveringCopyright = false;
 
     SettingsItem* oldTooltipHover = m_pHoverTooltipItem;
     m_pHoverTooltipItem = nullptr;
 
     bool oldScrollbarHover = m_isHoveringScrollbar;
+    int oldSubRectHash = m_hoverSubRectHash;
+    m_hoverSubRectHash = 0;
     D2D1_RECT_F trackRect = GetScrollbarTrackRect();
     float visibleH = HUD_HEIGHT * m_uiScale - 60.0f * m_uiScale;
     m_isHoveringScrollbar = (m_settingsContentHeight > visibleH) &&
@@ -5045,7 +8581,7 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
     // Sidebar & Close button cursor hit testing
     float sidebarW = SIDEBAR_WIDTH * m_uiScale;
     float backH = 50.0f * m_uiScale;
-    float tabStep = 45.0f * m_uiScale;
+    float tabStep = SIDEBAR_TAB_STEP * m_uiScale;
     float sidebarInteractiveHeight = backH + (float)m_tabs.size() * tabStep;
     if (x >= m_hudX && x < m_hudX + sidebarW && y >= m_hudY && y <= m_hudY + sidebarInteractiveHeight) {
         g_currentCursor = ::LoadCursor(NULL, IDC_HAND);
@@ -5056,7 +8592,11 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
     float hudBottom = m_hudY + HUD_HEIGHT * m_uiScale;
 
     if (m_activeTab >= 0 && m_activeTab < (int)m_tabs.size()) {
-        for (auto& item : m_tabs[m_activeTab].items) {
+        auto& tabItems = m_tabs[m_activeTab].items;
+        for (size_t idx = 0; idx < tabItems.size(); ++idx) {
+            auto& item = tabItems[idx];
+            item.isHovered = false;
+            item.isHovered2 = false;
             if (y >= hudY && y <= hudBottom) {
                 // Tooltip Hit Testing
                 if (item.tooltipText != nullptr && item.tooltipText[0] != L'\0') {
@@ -5105,10 +8645,8 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
                 bool inR2 = (x >= item.interactRect2.left && x <= item.interactRect2.right &&
                            y >= item.interactRect2.top && y <= item.interactRect2.bottom);
 
-                if (item.type != OptionType::Slider && (inR1 || inR2)) {
-                    if (!m_pHoverItem) {
-                        m_pHoverItem = &item;
-                    }
+                if (item.type != OptionType::Slider && (inR1 || inR2) && !m_pHoverItem) {
+                    m_pHoverItem = &item;
                     item.isHovered = inR1;
                     item.isHovered2 = inR2;
 
@@ -5124,6 +8662,7 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
                         if (m_hoverLinkIndex != -1) g_currentCursor = ::LoadCursor(NULL, IDC_HAND);
                     }
                     
+                    int subPartIdx = 0;
                     if (item.type == OptionType::TagCloud) {
                         bool onBadge = false;
                         for (const auto& r : item.optionRects) {
@@ -5137,23 +8676,34 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
                         } else {
                             m_pHoverItem = nullptr;
                             item.isHovered = false;
+                            item.isHovered2 = false;
                             g_currentCursor = ::LoadCursor(NULL, IDC_ARROW);
                         }
                     }
                     
-                    if (!m_pHoverTooltipItem) break;
-                } else {
-                    item.isHovered = false;
-                    item.isHovered2 = false;
+                    if (item.type == OptionType::HotkeyBindRow || item.type == OptionType::MouseGestureRow) {
+                        for (size_t oi = 0; oi < item.optionRects.size(); ++oi) {
+                            const auto& r = item.optionRects[oi];
+                            if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+                                subPartIdx = static_cast<int>(oi + 1);
+                                break;
+                            }
+                        }
+                    }
+
+                    if (m_pHoverItem == &item) {
+                        // Encode (inR1, inR2, subPartIdx) so intra-item transitions (e.g. Accordion header <-> toggle) repaint.
+                        m_hoverSubRectHash = (subPartIdx << 2) | (inR1 ? 1 : 0) | (inR2 ? 2 : 0);
+                    }
                 }
             }
         }
     }
 
     return ((oldHover != m_pHoverItem) || (oldSubPartHover != m_hoverSliderSubPart) ||
-            (oldLinkHover != m_hoverLinkIndex) || (oldCopyHover != m_isHoveringCopyright) ||
+            (oldLinkHover != m_hoverLinkIndex) ||
             (oldTooltipHover != m_pHoverTooltipItem) || (oldScrollbarHover != m_isHoveringScrollbar) ||
-            m_visible) ? SettingsAction::RepaintStatic : SettingsAction::None;
+            (oldSubRectHash != m_hoverSubRectHash)) ? SettingsAction::RepaintStatic : SettingsAction::None;
 }
 
 SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
@@ -5187,6 +8737,101 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
 
     if (!m_visible) return SettingsAction::None;
 
+    // Active Gesture Dropdown Processing (Exclusive Modal Priority)
+    if (m_activeGestureDropdown.gestureIndex >= 0) {
+        if (m_pFocusedSlider) CommitInput();
+        D2D1_RECT_F dropRect = GetGestureDropdownRect();
+        const float sc = m_uiScale;
+        float itemH = ITEM_HEIGHT * sc;
+        int count = (int)m_activeGestureDropdown.options.size();
+
+        if (x >= dropRect.left && x <= dropRect.right && y >= dropRect.top && y <= dropRect.bottom) {
+            int relIdx = (int)((y - dropRect.top) / itemH);
+            int idx = m_gestureDropdownScrollOffset + relIdx;
+            if (idx >= 0 && idx < count && m_activeGestureDropdown.gestureIndex < (int)g_config.MouseGestures.size()) {
+                int rowIdx = m_activeGestureDropdown.gestureIndex;
+                auto& rule = g_config.MouseGestures[rowIdx];
+                int actualVal = (idx < (int)m_activeGestureDropdown.optionValues.size()) ? m_activeGestureDropdown.optionValues[idx] : idx;
+                if (m_activeGestureDropdown.column == 0) {
+                    rule.mod1 = (uint8_t)actualVal;
+                    if (rule.mod1 != 0 && rule.mod1 == rule.mod2) rule.mod2 = 0;
+                } else if (m_activeGestureDropdown.column == 1) {
+                    rule.mod2 = (uint8_t)actualVal;
+                    if (rule.mod2 != 0 && rule.mod2 == rule.mod1) rule.mod1 = 0;
+                } else if (m_activeGestureDropdown.column == 2) {
+                    rule.trigger = (uint8_t)actualVal;
+                } else if (m_activeGestureDropdown.column == 3) {
+                    rule.action = actualVal;
+                }
+
+                // Deduplicate conflicting rules sharing the same (modifiers, trigger)
+                if (m_activeGestureDropdown.column <= 2) {
+                    uint8_t newMods = rule.GetModifiers();
+                    uint8_t newTrig = rule.trigger;
+                    for (int i = (int)g_config.MouseGestures.size() - 1; i >= 0; --i) {
+                        if (i != rowIdx && g_config.MouseGestures[i].trigger == newTrig && g_config.MouseGestures[i].GetModifiers() == newMods) {
+                            g_config.MouseGestures.erase(g_config.MouseGestures.begin() + i);
+                            if (i < rowIdx) --rowIdx;
+                            m_pendingRebuild = true;
+                        }
+                    }
+                }
+
+                g_config.SyncMiddleClickHotkeyFromGestures();
+                g_config.SyncLegacyHotkeysArray(g_hotkeys);
+                SaveMouseGesturesConfig();
+                SaveHotkeysConfig();
+                CloseGestureDropdown();
+                return SettingsAction::RepaintAll;
+            }
+        }
+        // Clicked anchor or outside gesture dropdown: close it
+        CloseGestureDropdown();
+        return SettingsAction::RepaintAll;
+    }
+
+    // Active Combo Processing (Exclusive Modal Priority: Process BEFORE HUD boundary check!)
+    if (m_pActiveCombo) {
+        if (m_pFocusedSlider) CommitInput();
+        D2D1_RECT_F dropRect = GetComboDropdownRect(m_pActiveCombo);
+        const float sc = m_uiScale;
+        float itemH = ITEM_HEIGHT * sc;
+        int count = (int)m_pActiveCombo->options.size();
+        
+        // Click inside Dropdown?
+        if (x >= dropRect.left && x <= dropRect.right && y >= dropRect.top && y <= dropRect.bottom) {
+             int relIdx = (int)((y - dropRect.top) / itemH);
+             int idx = m_comboScrollOffset + relIdx;
+             if (idx >= 0 && idx < count) {
+                 SettingsItem* activeCombo = m_pActiveCombo;
+                 m_pActiveCombo = nullptr; // Close before potential modal dialog in onChange
+                 m_comboHoverIdx = -1;
+                 m_comboScrollOffset = 0;
+                 if (activeCombo && activeCombo->pIntVal) {
+                     *activeCombo->pIntVal = idx;
+                     [[maybe_unused]] int effectiveCmsMode = g_runtime.GetEffectiveCmsMode(g_config.ColorManagement);
+                     if (activeCombo->onChange) activeCombo->onChange(this, activeCombo);
+                 }
+                 return SettingsAction::RepaintAll;
+             }
+        }
+        
+        // Click inside the Button itself? (Toggle Close)
+        if (x >= m_pActiveCombo->rect.left && x <= m_pActiveCombo->rect.right && 
+            y >= m_pActiveCombo->rect.top && y <= m_pActiveCombo->rect.bottom) {
+            m_pActiveCombo = nullptr;
+            m_comboHoverIdx = -1;
+            m_comboScrollOffset = 0;
+            return SettingsAction::RepaintAll;
+        }
+
+        // Click outside -> Close (Modal consumption: absolutely prevent closing Settings!)
+        m_pActiveCombo = nullptr;
+        m_comboHoverIdx = -1;
+        m_comboScrollOffset = 0;
+        return SettingsAction::RepaintAll;
+    }
+
     float s = m_uiScale;
     float hudX = m_hudX;
     float hudY = m_hudY;
@@ -5195,6 +8840,7 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
 
     // Check if click is OUTSIDE HUD -> Close settings
     if (x < hudX || x > hudRight || y < hudY || y > hudBottom) {
+        ResetHotkeyCapture(false);
         SetVisible(false);
         return SettingsAction::RepaintStatic;
     }
@@ -5202,16 +8848,17 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
     const float sidebarW = SIDEBAR_WIDTH * m_uiScale;
     const float backH = 50.0f * m_uiScale;
     const float tabH = 40.0f * m_uiScale;
-    const float tabStep = 45.0f * m_uiScale;
+    const float tabStep = SIDEBAR_TAB_STEP * m_uiScale;
 
     // 1. Sidebar Click (hudX <= x < hudX + sidebarW)
     if (x >= hudX && x < hudX + sidebarW) {
-        // Convert to HUD-local Y
+        ResetHotkeyCapture(false);
         float localY = y - hudY;
 
         // Any click on sidebar collapses active dropdown/slider
         m_pActiveCombo = nullptr;
         m_comboHoverIdx = -1;
+        m_comboScrollOffset = 0;
         m_pActiveSlider = nullptr;
 
         // Back Button (Top 50px)
@@ -5228,6 +8875,14 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
                 if (m_activeTab != i) {
                     m_activeTab = i;
                     m_scrollOffset = 0.0f;
+                    if (m_activeTab == m_fileAssocTabIdx && !m_assocProbeValid) {
+                        RefreshFileAssocProbe();
+                        RebuildMenu();
+                    } else if (m_activeTab == m_pluginsTabIdx && !m_pluginsProbeValid) {
+                        RebuildMenu();
+                    } else if (m_activeTab == m_aiTabIdx && m_aiSyncDirty) {
+                        RebuildMenu();
+                    }
                 }
                 return SettingsAction::RepaintAll;
             }
@@ -5262,41 +8917,6 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
         }
     }
 
-    // 3. Active Combo Processing
-    if (m_pActiveCombo) {
-        if (m_pFocusedSlider) CommitInput();
-        D2D1_RECT_F dropRect = GetComboDropdownRect(m_pActiveCombo);
-        const float sc = m_uiScale;
-        float itemH = ITEM_HEIGHT * sc;
-        int count = (int)m_pActiveCombo->options.size();
-        
-        // Click inside Dropdown?
-        if (x >= dropRect.left && x <= dropRect.right && y >= dropRect.top && y <= dropRect.bottom) {
-             int idx = (int)((y - dropRect.top) / itemH);
-             if (idx >= 0 && idx < count) {
-                 if (m_pActiveCombo->pIntVal) {
-                     if (*m_pActiveCombo->pIntVal != idx) {
-                         *m_pActiveCombo->pIntVal = idx;
-                         [[maybe_unused]] int effectiveCmsMode = g_runtime.GetEffectiveCmsMode(g_config.ColorManagement);
-                         if (m_pActiveCombo->onChange) m_pActiveCombo->onChange(this, m_pActiveCombo);
-                     }
-                 }
-                 m_pActiveCombo = nullptr; // Close
-                 return SettingsAction::RepaintAll;
-             }
-        }
-        
-        // Click inside the Button itself? (Toggle Close)
-        if (x >= m_pActiveCombo->rect.left && x <= m_pActiveCombo->rect.right && 
-            y >= m_pActiveCombo->rect.top && y <= m_pActiveCombo->rect.bottom) {
-            m_pActiveCombo = nullptr;
-            return SettingsAction::RepaintAll;
-        }
-
-        // Click outside -> Close
-        m_pActiveCombo = nullptr;
-    }
-
     // Commit any active in-place input if clicking outside its value capsule
     if (m_pFocusedSlider && (m_pHoverItem != m_pFocusedSlider || m_hoverSliderSubPart != 2)) {
         CommitInput();
@@ -5304,12 +8924,24 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
 
     // 4. Content Click (uses hover item)
     if (m_pHoverItem) {
+        // Cancel hotkey capture before dispatching any control click, remembering if the same capturing row was clicked
+        const bool wasCapturing = m_capturingHotkey;
+        const HotkeyAction prevCapturingAction = m_capturingAction;
+        if (wasCapturing) {
+            ResetHotkeyCapture(false);
+            if (m_pHoverItem->type == OptionType::HotkeyBindRow && m_pHoverItem->hotkeyAction == prevCapturingAction) {
+                return SettingsAction::RepaintAll;
+            }
+        }
+
         // Sync keyboard focus with clicked item
+        int hoverItemIdx = -1;
         if (m_activeTab >= 0 && m_activeTab < (int)m_tabs.size()) {
             auto& currentItems = m_tabs[m_activeTab].items;
             for (int i = 0; i < (int)currentItems.size(); ++i) {
                 if (&currentItems[i] == m_pHoverItem) {
                     m_focusedItemIdx = i;
+                    hoverItemIdx = i;
                     m_isKeyboardNavActive = false;
                     break;
                 }
@@ -5320,9 +8952,36 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
         if (m_pHoverItem->type == OptionType::ComboBox) {
              if (m_pActiveCombo == m_pHoverItem) {
                  m_pActiveCombo = nullptr;
+                 m_comboHoverIdx = -1;
+                 m_comboScrollOffset = 0;
              } else {
                  m_pActiveCombo = m_pHoverItem;
                  m_comboHoverIdx = -1;
+                 m_comboScrollOffset = 0;
+
+                 // Auto-trigger online discovery if opening model identifier combobox and models list is empty
+                 if (!s_aiUi.profileHybridModelSelection.empty() &&
+                     m_pHoverItem->pIntVal >= s_aiUi.profileHybridModelSelection.data() &&
+                     m_pHoverItem->pIntVal < s_aiUi.profileHybridModelSelection.data() + s_aiUi.profileHybridModelSelection.size()) {
+                     size_t pIdx = static_cast<size_t>(m_pHoverItem->pIntVal - s_aiUi.profileHybridModelSelection.data());
+                     auto& m = QuickView::AI::AiActionManager::Instance();
+                     auto& pr = m.GetProfiles();
+                     if (pIdx < pr.size() && pr[pIdx].fetchedModels.empty() && !IsProfileFetching(pr[pIdx].id)) {
+                         SetProfileFetching(pr[pIdx].id, true);
+                         m_aiSyncDirty = true;
+                         RequestRebuild();
+                         std::string plainKey = QuickView::AI::AiActionManager::DecryptApiKey(pr[pIdx].encryptedApiKey);
+                         if (plainKey.empty() && pIdx < s_aiUi.profileKeys.size()) {
+                             plainKey = QuickView::WideToUtf8(s_aiUi.profileKeys[pIdx]);
+                         }
+
+                         ::g_osd.Show(::g_mainHwnd, AppStrings::g.OSD_AiFetchingModels ? AppStrings::g.OSD_AiFetchingModels : L"Discovering available models...", false, false, QuickView::UI::Theme::GetThemePalette().accentText, OSDPosition::Bottom, 2500);
+
+                         auto* ctx = new FetchModelsSettingsCtx{ pr[pIdx].id, this };
+                         m.FetchModelsAsync(pr[pIdx].baseUrl, plainKey, pr[pIdx].protocol, QuickView::AI::ModelsCallback(
+                             OnFetchModelsOverlayComplete, ctx, CleanFetchModelsSettingsCtx));
+                     }
+                 }
              }
              return SettingsAction::RepaintAll;
         }
@@ -5398,9 +9057,8 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
         // Segment
         if (m_pHoverItem->type == OptionType::Segment && m_pHoverItem->pIntVal) {
             if (m_pHoverItem->isDisabled) return SettingsAction::RepaintStatic;
-             const float sc = m_uiScale;
-             float controlX = m_pHoverItem->rect.left + LABEL_COLUMN_WIDTH * sc;
-             float controlW = m_pHoverItem->rect.right - controlX;
+            float controlX = m_pHoverItem->interactRect.left;
+            float controlW = m_pHoverItem->interactRect.right - m_pHoverItem->interactRect.left;
              
              if (x >= controlX && x <= controlX + controlW) {
                  std::vector<float> itemWidths = CalculateSegmentWidths(m_pHoverItem->options, controlW);
@@ -5431,17 +9089,8 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
             }
             
             // Check for Input field click
-            if (m_pHoverItem->isHovered && m_pHoverItem->pStrVal) {
-                SettingsItem* targetItem = m_pHoverItem;
-                std::wstring title = AppStrings::Dialog_FixedZoomTitle;
-                std::wstring msg = AppStrings::Dialog_FixedZoomMsg;
-                std::wstring result = AppContext::GetInstance().DialogCtrl->ShowInputDialog(
-                    m_hwnd, title, msg, *targetItem->pStrVal, L"OK"
-                );
-                
-                if (!result.empty() && targetItem->pStrVal) {
-                    *targetItem->pStrVal = result;
-                    if (targetItem->onChange) targetItem->onChange(this, targetItem);
+            if (m_pHoverItem->isHovered && m_pHoverItem->pStrVal && hoverItemIdx >= 0 && m_activeTab >= 0) {
+                if (OpenInputItemDialog(static_cast<size_t>(m_activeTab), static_cast<size_t>(hoverItemIdx))) {
                     return SettingsAction::RepaintAll;
                 }
             }
@@ -5461,48 +9110,152 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
             }
             
             if (clickedIdx != -1 && m_pHoverItem->pStrVal) {
-                std::wstring_view clickedOpt = m_pHoverItem->options[clickedIdx];
-                std::wstring currentStr = *m_pHoverItem->pStrVal;
-                std::vector<std::wstring> activeItems = SplitString(currentStr, L',');
-                
-                auto it = std::find(activeItems.begin(), activeItems.end(), clickedOpt);
-                if (it != activeItems.end()) {
-                    activeItems.erase(it);
-                } else {
-                    if (m_pHoverItem->tagCloudNoLimit || (int)activeItems.size() < kInfoPanelLiteMaxItems) {
-                        activeItems.push_back(std::wstring(clickedOpt));
-                    } else {
-                        m_pHoverItem->statusText = L"Limit reached (max 8 items)";
-                        m_pHoverItem->statusColor = D2D1::ColorF(1.0f, 0.35f, 0.35f, 1.0f);
-                        m_pHoverItem->statusSetTime = GetTickCount();
+                ToggleTagCloudOption(*m_pHoverItem, clickedIdx);
+                return SettingsAction::RepaintAll;
+            }
+            return SettingsAction::RepaintStatic;
+        }
+
+        // Hotkey binding row button
+        if (m_pHoverItem->type == OptionType::HotkeyBindRow) {
+            if (m_pHoverItem->isDisabled) return SettingsAction::RepaintStatic;
+            
+            auto combos = g_config.GetCombosForAction(m_pHoverItem->hotkeyAction);
+
+            int clickedIdx = -1;
+            for (size_t i = 0; i < m_pHoverItem->optionRects.size(); ++i) {
+                const auto& r = m_pHoverItem->optionRects[i];
+                if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+                    clickedIdx = (int)i;
+                    break;
+                }
+            }
+
+            if (clickedIdx >= 0 && clickedIdx < (int)combos.size()) {
+                // Clicked an existing key pill: remove this binding!
+                KeyCombo removedCombo = combos[clickedIdx];
+                g_config.RemoveHotkeyRule(m_pHoverItem->hotkeyAction, removedCombo);
+                auto remaining = g_config.GetCombosForAction(m_pHoverItem->hotkeyAction);
+                auto actionIdx = static_cast<size_t>(m_pHoverItem->hotkeyAction);
+                if (actionIdx < g_hotkeys.size()) {
+                    g_hotkeys[actionIdx].combo = remaining.empty() ? KeyCombo{} : remaining[0];
+                }
+                if (m_pHoverItem->hotkeyAction == HotkeyAction::Exit && removedCombo.virtualKey == VK_MBUTTON && removedCombo.modifiers == 0) {
+                    const auto* mClick = g_config.FindMouseGesture(MouseModMask::None, MouseTrigger::MiddleClick);
+                    if (mClick && mClick->action == static_cast<int>(MouseActionTarget::ExitApp)) {
+                        g_config.SetMouseGesture(0, 0, MouseTrigger::MiddleClick, MouseActionTarget::None);
+                        SaveMouseGesturesConfig();
                     }
                 }
-                
-                std::wstring newStr;
-                for (size_t i = 0; i < activeItems.size(); ++i) {
-                    if (i > 0) newStr += L",";
-                    newStr += activeItems[i];
+                SaveHotkeysConfig();
+                return SettingsAction::RepaintAll;
+            } else if (clickedIdx == (int)combos.size()) {
+                // Explicitly clicked [+] pill -> Start capturing!
+                m_capturingHotkey = true;
+                m_capturingAction = m_pHoverItem->hotkeyAction;
+                return SettingsAction::RepaintAll;
+            }
+            return SettingsAction::RepaintStatic;
+        }
+        // Mouse Gesture Row
+        if (m_pHoverItem->type == OptionType::MouseGestureRow) {
+            int rowIdx = m_pHoverItem->gestureIndex;
+            if (rowIdx >= 0 && rowIdx < (int)g_config.MouseGestures.size() && m_pHoverItem->optionRects.size() == 5) {
+                const auto& rects = m_pHoverItem->optionRects;
+                auto ptInRect = [x, y](const D2D1_RECT_F& r) {
+                    return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+                };
+
+                if (ptInRect(rects[4])) {
+                    // Delete Button (×)
+                    g_config.MouseGestures.erase(g_config.MouseGestures.begin() + rowIdx);
+                    g_config.SyncMiddleClickHotkeyFromGestures();
+                    g_config.SyncLegacyHotkeysArray(g_hotkeys);
+                    SaveMouseGesturesConfig();
+                    SaveHotkeysConfig();
+                    m_pendingRebuild = true;
+                    return SettingsAction::RepaintAll;
                 }
-                *m_pHoverItem->pStrVal = newStr;
-                
+
+                auto openDropdown = [this, rowIdx](int col, const D2D1_RECT_F& anchor) {
+                    m_pActiveCombo = nullptr;
+                    m_activeGestureDropdown.gestureIndex = rowIdx;
+                    m_activeGestureDropdown.column = col;
+                    m_activeGestureDropdown.anchorRect = anchor;
+                    m_activeGestureDropdown.options.clear();
+                    m_activeGestureDropdown.optionValues.clear();
+                    m_gestureDropdownHoverIdx = -1;
+                    m_gestureDropdownScrollOffset = 0;
+
+                    const auto& r = g_config.MouseGestures[rowIdx];
+                    if (col == 0 || col == 1) {
+                        uint8_t otherMod = (col == 0) ? r.mod2 : r.mod1;
+                        int curVal = (col == 0) ? r.mod1 : r.mod2;
+                        int selOptionIdx = 0;
+                        for (uint8_t m = 0; m <= 3; ++m) {
+                            if (m != 0 && m == otherMod) continue; // Exclude modifier already in use by the other column
+                            if (m == curVal) {
+                                selOptionIdx = (int)m_activeGestureDropdown.options.size();
+                            }
+                            m_activeGestureDropdown.options.push_back(AppStrings::GetMouseModifierName(m));
+                            m_activeGestureDropdown.optionValues.push_back(m);
+                        }
+                        m_activeGestureDropdown.selectedIdx = selOptionIdx;
+                    } else if (col == 2) {
+                        for (int t = 0; t < (int)MouseTrigger::Count; ++t) {
+                            m_activeGestureDropdown.options.push_back(AppStrings::GetMouseTriggerName((MouseTrigger)t));
+                            m_activeGestureDropdown.optionValues.push_back(t);
+                        }
+                        m_activeGestureDropdown.selectedIdx = r.trigger;
+                    } else if (col == 3) {
+                        for (int a = 0; a < (int)MouseActionTarget::Count; ++a) {
+                            m_activeGestureDropdown.options.push_back(AppStrings::GetMouseActionTargetName((MouseActionTarget)a));
+                            m_activeGestureDropdown.optionValues.push_back(a);
+                        }
+                        m_activeGestureDropdown.selectedIdx = r.action;
+                    }
+                };
+
+                if (ptInRect(rects[0])) {
+                    openDropdown(0, rects[0]);
+                    return SettingsAction::RepaintAll;
+                } else if (ptInRect(rects[1])) {
+                    openDropdown(1, rects[1]);
+                    return SettingsAction::RepaintAll;
+                } else if (ptInRect(rects[2])) {
+                    openDropdown(2, rects[2]);
+                    return SettingsAction::RepaintAll;
+                } else if (ptInRect(rects[3])) {
+                    openDropdown(3, rects[3]);
+                    return SettingsAction::RepaintAll;
+                }
+            }
+            return SettingsAction::RepaintStatic;
+        }
+        // AccordionCardHeader: Toggle expansion or toggle direct switch
+        if (m_pHoverItem->type == OptionType::AccordionCardHeader) {
+            // 1. If clicking toggle switch on the right (interactRect2) and item has a boolean state
+            if (m_pHoverItem->pBoolVal && m_pHoverItem->isHovered2) {
+                if (!m_pHoverItem->isDisabled) {
+                    *m_pHoverItem->pBoolVal = !*m_pHoverItem->pBoolVal;
+                    if (m_pHoverItem->onChange2) m_pHoverItem->onChange2(this, m_pHoverItem);
+                    else if (m_pHoverItem->onChange) m_pHoverItem->onChange(this, m_pHoverItem);
+                }
+                return SettingsAction::RepaintAll;
+            }
+            // 2. If clicking header bar / chevron arrow / whole card
+            if (m_pHoverItem->isHovered) {
+                m_pHoverItem->isActivated = !m_pHoverItem->isActivated;
                 if (m_pHoverItem->onChange) m_pHoverItem->onChange(this, m_pHoverItem);
                 return SettingsAction::RepaintAll;
             }
             return SettingsAction::RepaintStatic;
         }
-        // Hotkey binding row button
-        if (m_pHoverItem->type == OptionType::HotkeyBindRow) {
-            if (m_pHoverItem->isDisabled) return SettingsAction::RepaintStatic;
-            m_capturingHotkey = true;
-            m_capturingAction = m_pHoverItem->hotkeyAction;
-            m_pendingRebuild = true;
-            return SettingsAction::RepaintAll;
-        }
         // ActionButton
         if (m_pHoverItem->type == OptionType::ActionButton) {
-             if (m_pHoverItem->isDisabled) return SettingsAction::RepaintStatic;
-             if (m_pHoverItem->onChange) m_pHoverItem->onChange(this, m_pHoverItem);
-             return SettingsAction::RepaintAll;
+            if (m_pHoverItem->isDisabled) return SettingsAction::RepaintStatic;
+            if (m_pHoverItem->onChange) m_pHoverItem->onChange(this, m_pHoverItem);
+            return SettingsAction::RepaintAll;
         }
         // DualActionButton: Primary vs Secondary
         if (m_pHoverItem->type == OptionType::DualActionButton) {
@@ -5556,15 +9309,20 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
         }
     }
 
+    const bool wasCapturing = m_capturingHotkey;
+    if (wasCapturing) {
+        ResetHotkeyCapture(false);
+    }
+
     // Check if clicked in scroll bounds
     float contentX = m_hudX + SIDEBAR_WIDTH * m_uiScale;
     float contentRight = m_hudX + HUD_WIDTH * m_uiScale;
 
     if (x >= contentX && x <= contentRight && y >= m_hudY && y <= m_hudY + HUD_HEIGHT * m_uiScale) {
-        return (m_pActiveCombo) ? SettingsAction::RepaintAll : SettingsAction::DragWindow;
+        return (m_pActiveCombo || wasCapturing) ? SettingsAction::RepaintAll : SettingsAction::DragWindow;
     }
 
-    return (m_pActiveCombo) ? SettingsAction::RepaintAll : SettingsAction::DragWindow;
+    return (m_pActiveCombo || wasCapturing) ? SettingsAction::RepaintAll : SettingsAction::DragWindow;
 }
 
 SettingsAction SettingsOverlay::OnLButtonUp([[maybe_unused]] float x, [[maybe_unused]] float y) {
@@ -5636,10 +9394,14 @@ void SettingsOverlay::SetItemStatus(const std::wstring& label, const std::wstrin
 
 void SettingsOverlay::OpenTab(int index) {
     if (index >= 0 && index < (int)m_tabs.size()) {
+        ResetHotkeyCapture(false);
         m_pActiveCombo = nullptr;
         m_comboHoverIdx = -1;
+        m_comboScrollOffset = 0;
+        CloseGestureDropdown();
         m_pActiveSlider = nullptr;
         m_pHoverItem = nullptr;
+        m_pHoverTooltipItem = nullptr;
         m_activeTab = index;
         m_scrollOffset = 0.0f;
         m_focusedItemIdx = GetFirstInteractiveItemIndex(m_activeTab);
@@ -5649,111 +9411,172 @@ void SettingsOverlay::OpenTab(int index) {
     }
 }
 
+D2D1_RECT_F SettingsOverlay::ComputeDropdownPopupRect(const D2D1_RECT_F& anchorRect, float dropW, int count) const {
+    if (count <= 0) return D2D1::RectF(0, 0, 0, 0);
+
+    const float s = m_uiScale;
+    float dropX = anchorRect.left;
+    const float hudRight = m_hudX + HUD_WIDTH * s - 16.0f * s;
+    if (dropX + dropW > hudRight) {
+        dropX = (std::max)(m_hudX + 16.0f * s, hudRight - dropW);
+    }
+
+    const float itemH = ITEM_HEIGHT * s;
+    const float anchorTop = anchorRect.top;
+    const float anchorBottom = anchorRect.bottom;
+    const float hudTop = m_hudY + 12.0f * s;
+    const float hudBottom = m_hudY + HUD_HEIGHT * s - 12.0f * s;
+
+    const float spaceBelow = hudBottom - anchorBottom;
+    const float spaceAbove = anchorTop - hudTop;
+
+    constexpr int maxItems = 10;
+    const int targetItems = (count > maxItems) ? maxItems : count;
+    const float idealDropH = targetItems * itemH;
+
+    bool openUpwards = false;
+    float availableH = spaceBelow;
+    if (spaceBelow < idealDropH && spaceAbove > spaceBelow) {
+        openUpwards = true;
+        availableH = spaceAbove;
+    }
+
+    int visibleItems = static_cast<int>(availableH / itemH);
+    if (visibleItems < 1) visibleItems = 1;
+    if (visibleItems > targetItems) visibleItems = targetItems;
+
+    float dropH = visibleItems * itemH;
+    const float gap = 4.0f * s;
+    float dropY = openUpwards ? (anchorTop - dropH - gap) : (anchorBottom + gap);
+
+    if (dropY < hudTop) dropY = hudTop;
+    if (dropY + dropH > hudBottom) dropH = (std::max)(itemH, hudBottom - dropY);
+
+    return D2D1::RectF(dropX, dropY, dropX + dropW, dropY + dropH);
+}
+
+void SettingsOverlay::DrawDropdownPopup(
+    ID2D1DeviceContext* pRT, const D2D1_RECT_F& dropRect, int count,
+    int selectedIdx, int hoverIdx, int scrollOffset,
+    std::wstring_view (*getLabel)(int, void*), void* userData) {
+    if (!pRT || !getLabel || count <= 0 || dropRect.right <= dropRect.left) return;
+    const auto palette = GetSettingsThemePalette();
+
+    const float controlX = dropRect.left;
+    const float controlW = dropRect.right - controlX;
+    const float dropY = dropRect.top;
+    const float s = m_uiScale;
+    const float radius = 8.0f * s;
+    const float itemH = ITEM_HEIGHT * s;
+
+    int visibleItems = static_cast<int>(std::round((dropRect.bottom - dropRect.top) / itemH));
+    if (visibleItems <= 0) visibleItems = 1;
+    if (visibleItems > count) visibleItems = count;
+
+    const int maxOffset = (std::max)(0, count - visibleItems);
+    const int startIdx = std::clamp(scrollOffset, 0, maxOffset);
+
+    if (m_brushBg) {
+        D2D1_COLOR_F opaqueBg = palette.panelBg;
+        opaqueBg.a = 1.0f;
+        m_brushBg->SetColor(opaqueBg);
+        pRT->FillRoundedRectangle(D2D1::RoundedRect(dropRect, radius, radius), m_brushBg.Get());
+    }
+    if (m_brushBorder) {
+        pRT->DrawRoundedRectangle(D2D1::RoundedRect(dropRect, radius, radius), m_brushBorder.Get(), 1.0f * s);
+    }
+
+    pRT->PushAxisAlignedClip(dropRect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+
+    DWRITE_WORD_WRAPPING origWrap = DWRITE_WORD_WRAPPING_WRAP;
+    if (m_textFormatItem) {
+        origWrap = m_textFormatItem->GetWordWrapping();
+        m_textFormatItem->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    }
+
+    for (int i = 0; i < visibleItems; i++) {
+        const int idx = startIdx + i;
+        if (idx >= count) break;
+
+        const float y = dropY + i * itemH;
+        const float padRightEdge = (count > visibleItems) ? (10.0f * s) : (3.0f * s);
+        const D2D1_RECT_F itemRect = D2D1::RectF(controlX + 3.0f * s, y + 2.0f * s, controlX + controlW - padRightEdge, y + itemH - 2.0f * s);
+        const float itemRadius = 4.0f * s;
+
+        const bool isHover = (idx == hoverIdx);
+        if (isHover && m_brushAccent) {
+            pRT->FillRoundedRectangle(D2D1::RoundedRect(itemRect, itemRadius, itemRadius), m_brushAccent.Get());
+        } else if (idx == selectedIdx && m_brushBg) {
+            m_brushBg->SetColor(palette.subtleTint);
+            pRT->FillRoundedRectangle(D2D1::RoundedRect(itemRect, itemRadius, itemRadius), m_brushBg.Get());
+        }
+
+        const D2D1_RECT_F textRect = D2D1::RectF(itemRect.left + 10.0f * s, y, itemRect.right - 6.0f * s, y + itemH);
+        ID2D1SolidColorBrush* textBrush = isHover ? m_brushOnAccent.Get() : m_brushText.Get();
+        if (m_textFormatItem && textBrush) {
+            QuickView::UI::GeekWidgets::DrawMarqueeText(
+                pRT, textRect, getLabel(idx, userData), isHover, false,
+                m_textFormatItem.Get(), textBrush, s, m_dwriteFactory.Get());
+        }
+    }
+
+    if (m_textFormatItem) {
+        m_textFormatItem->SetWordWrapping(origWrap);
+    }
+
+    if (count > visibleItems && maxOffset > 0 && m_brushAccent) {
+        const float scrollTrackH = dropRect.bottom - dropRect.top - 8.0f * s;
+        const float thumbH = (std::max)(16.0f * s, scrollTrackH * ((float)visibleItems / (float)count));
+        const float thumbY = dropRect.top + 4.0f * s + (scrollTrackH - thumbH) * ((float)startIdx / (float)maxOffset);
+        const D2D1_RECT_F thumbRect = D2D1::RectF(dropRect.right - 6.0f * s, thumbY, dropRect.right - 3.0f * s, thumbY + thumbH);
+        pRT->FillRoundedRectangle(D2D1::RoundedRect(thumbRect, 1.5f * s, 1.5f * s), m_brushAccent.Get());
+    }
+
+    pRT->PopAxisAlignedClip();
+}
+
 void SettingsOverlay::DrawComboBox(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rect, [[maybe_unused]] int selectedIdx, const std::vector<std::wstring_view>& options, bool isOpen) {
     std::wstring_view text = L"";
     if (selectedIdx >= 0 && selectedIdx < (int)options.size()) {
         text = options[selectedIdx];
     }
     const auto palette = GetSettingsThemePalette();
+    bool isHover = (m_lastMouseX >= rect.left && m_lastMouseX <= rect.right && m_lastMouseY >= rect.top && m_lastMouseY <= rect.bottom);
     QuickView::UI::GeekWidgets::DrawPillComboBox(
-        pRT, rect, text, isOpen, false, false, m_textFormatItem.Get(), m_uiScale, ToWidgetPalette(palette));
+        pRT, rect, text, isOpen, isHover, false, m_textFormatItem.Get(), m_uiScale, ToWidgetPalette(palette), m_dwriteFactory.Get());
 }
 
 D2D1_RECT_F SettingsOverlay::GetComboDropdownRect(const SettingsItem* item) const {
-    if (!item) return D2D1::RectF(0, 0, 0, 0);
+    if (!item || item->options.empty()) return D2D1::RectF(0, 0, 0, 0);
 
     const float s = m_uiScale;
-    float controlX = item->rect.left + LABEL_COLUMN_WIDTH * s;
-    float controlW = item->rect.right - controlX - 8.0f * s;
-    float dropY = item->rect.bottom;
+    float controlX = (item->interactRect.right > item->interactRect.left) ?
+        item->interactRect.left : (item->rect.left + (item->label.empty() ? 0.0f : LABEL_COLUMN_WIDTH * s));
+    float controlW = (item->interactRect.right > item->interactRect.left) ?
+        (item->interactRect.right - item->interactRect.left) : (item->rect.right - controlX - 8.0f * s);
+    float anchorTop = (item->interactRect.bottom > item->interactRect.top) ? item->interactRect.top : item->rect.top;
+    float anchorBottom = (item->interactRect.bottom > item->interactRect.top) ? item->interactRect.bottom : item->rect.bottom;
 
-    float itemH = ITEM_HEIGHT * s;
-    int count = (int)item->options.size();
-    int maxItems = 16;
-    int visibleItems = (count > maxItems) ? maxItems : count;
-    float dropH = visibleItems * itemH;
-
-    // Check if expanding downwards would overflow the HUD bottom
-    const float hudBottom = m_hudY + HUD_HEIGHT * s;
-    if (dropY + dropH > hudBottom) {
-        // Expand upwards: place dropdown list directly above the combobox (matching row boundaries)
-        dropY = item->rect.top - dropH;
-    }
-
-    return D2D1::RectF(controlX, dropY, controlX + controlW, dropY + dropH);
+    return ComputeDropdownPopupRect(
+        D2D1::RectF(controlX, anchorTop, controlX + controlW, anchorBottom),
+        controlW, static_cast<int>(item->options.size()));
 }
 
 void SettingsOverlay::DrawComboDropdown(ID2D1DeviceContext* pRT) {
     if (!m_pActiveCombo) return;
-    const auto palette = GetSettingsThemePalette();
-    
-    D2D1_RECT_F dropRect = GetComboDropdownRect(m_pActiveCombo);
-    float controlX = dropRect.left;
-    float controlW = dropRect.right - controlX;
-    float dropY = dropRect.top;
-    
-    const float s = m_uiScale;
-    const float radius = 8.0f * s; // Rounded popup menu
-    float itemH = ITEM_HEIGHT * s;
-    int count = (int)m_pActiveCombo->options.size();
-    int maxItems = 16;
-    int visibleItems = (count > maxItems) ? maxItems : count;
-    
-    // 1. Dropdown Shadow
-    D2D1_RECT_F shadowRect = D2D1::RectF(dropRect.left - 2.0f * s, dropRect.top + 2.0f * s, dropRect.right + 2.0f * s, dropRect.bottom + 4.0f * s);
-    if (m_brushBg) {
-        m_brushBg->SetColor(palette.shadow);
-        pRT->FillRoundedRectangle(D2D1::RoundedRect(shadowRect, radius + 2.0f * s, radius + 2.0f * s), m_brushBg.Get());
-
-        // 2. Dropdown Container Background (100% Opaque solid panel background)
-        D2D1_COLOR_F opaqueBg = palette.panelBg;
-        opaqueBg.a = 1.0f;
-        m_brushBg->SetColor(opaqueBg);
-        pRT->FillRoundedRectangle(D2D1::RoundedRect(dropRect, radius, radius), m_brushBg.Get());
-    }
-    pRT->DrawRoundedRectangle(D2D1::RoundedRect(dropRect, radius, radius), m_brushBorder.Get(), 1.0f * s);
-    
-    // 3. Items (with clipping & inner item rounded highlights)
-    pRT->PushAxisAlignedClip(dropRect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-    
-    int startIdx = 0;
-    
-    for (int i = 0; i < visibleItems; i++) {
-        int idx = startIdx + i;
-        if (idx >= count) break;
-        
-        float y = dropY + i * itemH;
-        D2D1_RECT_F itemRect = D2D1::RectF(controlX + 3.0f * s, y + 2.0f * s, controlX + controlW - 3.0f * s, y + itemH - 2.0f * s);
-        float itemRadius = 4.0f * s;
-        
-        // Hover
-        bool isHover = (idx == m_comboHoverIdx);
-        if (isHover) {
-            pRT->FillRoundedRectangle(D2D1::RoundedRect(itemRect, itemRadius, itemRadius), m_brushAccent.Get());
-        } else {
-            // Selected
-            bool isSel = (m_pActiveCombo->pIntVal && *m_pActiveCombo->pIntVal == idx);
-            if (isSel && m_brushBg) {
-                m_brushBg->SetColor(palette.subtleTint);
-                pRT->FillRoundedRectangle(D2D1::RoundedRect(itemRect, itemRadius, itemRadius), m_brushBg.Get());
-            }
-        }
-        
-        // Text
-        D2D1_RECT_F textRect = D2D1::RectF(itemRect.left + 10.0f * s, y, itemRect.right - 10.0f * s, y + itemH);
-        m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        ID2D1SolidColorBrush* textBrush = isHover ? m_brushWhite.Get() : m_brushText.Get();
-        pRT->DrawText(m_pActiveCombo->options[idx].data(), (UINT32)m_pActiveCombo->options[idx].length(), 
-                      m_textFormatItem.Get(), textRect, textBrush);
-    }
-    
-    pRT->PopAxisAlignedClip();
+    const D2D1_RECT_F dropRect = GetComboDropdownRect(m_pActiveCombo);
+    const int selIdx = m_pActiveCombo->pIntVal ? *m_pActiveCombo->pIntVal : -1;
+    auto getLabel = [](int idx, void* ud) -> std::wstring_view {
+        const auto* item = static_cast<const SettingsItem*>(ud);
+        return (idx >= 0 && idx < static_cast<int>(item->options.size())) ? item->options[idx] : std::wstring_view{};
+    };
+    DrawDropdownPopup(pRT, dropRect, static_cast<int>(m_pActiveCombo->options.size()),
+                      selIdx, m_comboHoverIdx, m_comboScrollOffset, getLabel, m_pActiveCombo);
 }
 
 
 void SettingsOverlay::RenderTooltip(ID2D1DeviceContext* pRT) {
     if (!m_pHoverTooltipItem || m_pHoverTooltipItem->tooltipText == nullptr || m_pHoverTooltipItem->tooltipText[0] == L'\0') return;
-    const auto palette = GetSettingsThemePalette();
 
     float s = m_uiScale;
 
@@ -5794,12 +9617,13 @@ void SettingsOverlay::RenderTooltip(ID2D1DeviceContext* pRT) {
 
     // Soft shadow (simulated)
     D2D1_ROUNDED_RECT shadow = D2D1::RoundedRect(D2D1::RectF(bgRect.left, bgRect.top + 4.0f, bgRect.right, bgRect.bottom + 4.0f), 4.0f * s, 4.0f * s);
-    ComPtr<ID2D1SolidColorBrush> shadowBrush;
-    pRT->CreateSolidColorBrush(palette.shadow, &shadowBrush);
-    pRT->FillRoundedRectangle(shadow, shadowBrush.Get());
+    if (m_brushShadow) {
+        pRT->FillRoundedRectangle(shadow, m_brushShadow.Get());
+    }
 
-    // Background and border
-    pRT->FillRoundedRectangle(roundedBg, m_brushControlBg.Get());
+    // Background and border (High opacity tooltip card to prevent background bleeding)
+    ID2D1Brush* bgBrush = m_brushTooltipBg ? m_brushTooltipBg.Get() : m_brushControlBg.Get();
+    pRT->FillRoundedRectangle(roundedBg, bgBrush);
     pRT->DrawRoundedRectangle(roundedBg, m_brushBorder.Get(), 1.0f * s);
 
     // Text
@@ -5813,63 +9637,129 @@ void SettingsOverlay::OnHotkeyCaptured(const KeyCombo& combo) {
     
     m_capturingHotkey = false;
     m_capturingAction = HotkeyAction::None;
-    m_pendingRebuild = true;
 
-    // ESC (without modifiers) cancels the capture
+    // Pure ESC cancels hotkey capture unless binding Exit when it doesn't already have ESC
     if (combo.virtualKey == VK_ESCAPE && combo.modifiers == 0) {
-        if (m_hwnd) InvalidateRect(m_hwnd, NULL, FALSE);
-        return;
+        bool exitAlreadyHasEsc = false;
+        for (const auto& rule : g_config.HotkeyRules) {
+            if (rule.action == HotkeyAction::Exit && rule.combo.virtualKey == VK_ESCAPE && rule.combo.modifiers == 0) {
+                exitAlreadyHasEsc = true;
+                break;
+            }
+        }
+        if (action != HotkeyAction::Exit || exitAlreadyHasEsc) {
+            if (m_hwnd) InvalidateRect(m_hwnd, NULL, FALSE);
+            return;
+        }
     }
 
-    // Check conflict
+    // Check conflict against HotkeyRules
     HotkeyAction conflictAction = HotkeyAction::None;
-    for (const auto& binding : g_hotkeys) {
-        if (binding.action != action && !binding.combo.IsEmpty() && binding.combo == combo) {
-            conflictAction = binding.action;
+    for (const auto& rule : g_config.HotkeyRules) {
+        if (rule.action != action && !rule.combo.IsEmpty() && rule.combo == combo) {
+            conflictAction = rule.action;
             break;
         }
     }
 
     extern OSDState g_osd;
-    extern void SaveConfig();
+
+    auto syncMouseHotkeyToGesture = [&](HotkeyAction boundAction) {
+        if (combo.virtualKey != VK_MBUTTON && combo.virtualKey != VK_XBUTTON1 && combo.virtualKey != VK_XBUTTON2) {
+            return;
+        }
+        uint8_t mod1 = 0, mod2 = 0;
+        MouseGestureRule::ModifiersToMods(combo.modifiers, mod1, mod2);
+        MouseTrigger trig = MouseTrigger::MiddleClick;
+        if (combo.virtualKey == VK_XBUTTON1) trig = MouseTrigger::XButton1Click;
+        else if (combo.virtualKey == VK_XBUTTON2) trig = MouseTrigger::XButton2Click;
+
+        if (combo.virtualKey == VK_MBUTTON && combo.modifiers == 0 && boundAction == HotkeyAction::Exit) {
+            g_config.SetMouseGesture(0, 0, MouseTrigger::MiddleClick, MouseActionTarget::ExitApp);
+            SaveMouseGesturesConfig();
+        } else {
+            const bool losslessMods = (MouseGestureRule{ mod1, mod2, 0, 0 }.GetModifiers() == combo.modifiers);
+            if (losslessMods && g_config.FindMouseGesture(combo.modifiers, trig) != nullptr) {
+                g_config.SetMouseGesture(mod1, mod2, trig, MouseActionTarget::None);
+                SaveMouseGesturesConfig();
+            }
+        }
+    };
 
     if (conflictAction != HotkeyAction::None) {
         std::wstring actionName = AppStrings::GetHotkeyActionName(conflictAction);
         wchar_t contentBuf[512] = { 0 };
-        swprintf_s(contentBuf, 512, AppStrings::Settings_Hotkey_ConflictPrompt, actionName.c_str());
+        swprintf_s(contentBuf, 512, AppStrings::g.Settings_Hotkey_ConflictPrompt, actionName.c_str());
 
         std::vector<DialogButton> buttons = {
-            { DialogResult::Yes, AppStrings::Dialog_ButtonContinue, true },
-            { DialogResult::Cancel, AppStrings::Dialog_Cancel }
+            { DialogResult::Yes, AppStrings::g.Dialog_ButtonContinue, true },
+            { DialogResult::Cancel, AppStrings::g.Dialog_Cancel }
         };
 
         DialogResult result = AppContext::GetInstance().DialogCtrl->ShowDialog(
             m_hwnd,
-            AppStrings::Settings_Hotkey_Conflict,
+            AppStrings::g.Settings_Hotkey_Conflict,
             contentBuf,
-            D2D1::ColorF(D2D1::ColorF::DodgerBlue),
+            QuickView::UI::Theme::GetThemePalette().accentFill,
             buttons
         );
 
         if (result == DialogResult::Yes) {
-            for (auto& binding : g_hotkeys) {
-                if (binding.action == conflictAction) {
-                    binding.combo = KeyCombo{};
-                } else if (binding.action == action) {
-                    binding.combo = combo;
-                }
-            }
-            SaveConfig();
+            g_config.RemoveHotkeyRule(conflictAction, combo);
+            g_config.AddHotkeyRule(action, combo);
+            g_config.SyncLegacyHotkeysArray(g_hotkeys);
+            syncMouseHotkeyToGesture(action);
+            SaveHotkeysConfig();
         }
     } else {
         // Apply new key combo
-        for (auto& binding : g_hotkeys) {
-            if (binding.action == action) {
-                binding.combo = combo;
-                break;
-            }
-        }
-        SaveConfig();
+        g_config.AddHotkeyRule(action, combo);
+        g_config.SyncLegacyHotkeysArray(g_hotkeys);
+        syncMouseHotkeyToGesture(action);
+        SaveHotkeysConfig();
     }
     if (m_hwnd) InvalidateRect(m_hwnd, NULL, FALSE);
 }
+
+void SettingsOverlay::DrawNewBadge(ID2D1DeviceContext* pRT, float badgeX, float badgeY, float s) {
+    if (!pRT || !m_brushAccent || !m_brushOnAccent || !m_textFormatBadge) return;
+
+    float badgeW = 24.0f * s;
+    float badgeH = 11.0f * s;
+    D2D1_RECT_F badgeRect = D2D1::RectF(badgeX, badgeY, badgeX + badgeW, badgeY + badgeH);
+    D2D1_ROUNDED_RECT roundedBadge = D2D1::RoundedRect(badgeRect, 2.0f * s, 2.0f * s);
+
+    // Draw Capsule Background (Accent color with slight transparency)
+    float origOpacity = m_brushAccent->GetOpacity();
+    m_brushAccent->SetOpacity(origOpacity * 0.85f);
+    pRT->FillRoundedRectangle(roundedBadge, m_brushAccent.Get());
+    m_brushAccent->SetOpacity(origOpacity);
+
+    // Draw Micro text "NEW" strictly centered horizontally and vertically
+    m_textFormatBadge->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    m_textFormatBadge->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    pRT->DrawText(L"NEW", 3, m_textFormatBadge.Get(), badgeRect, m_brushOnAccent.Get());
+}
+
+D2D1_RECT_F SettingsOverlay::GetGestureDropdownRect() const {
+    if (m_activeGestureDropdown.gestureIndex < 0) return D2D1::RectF(0, 0, 0, 0);
+
+    const float s = m_uiScale;
+    const auto& anchor = m_activeGestureDropdown.anchorRect;
+    const float anchorW = anchor.right - anchor.left;
+    const float dropW = (m_activeGestureDropdown.column <= 1) ? (std::max)(anchorW, 120.0f * s) : (std::max)(anchorW, 200.0f * s);
+    return ComputeDropdownPopupRect(anchor, dropW, static_cast<int>(m_activeGestureDropdown.options.size()));
+}
+
+void SettingsOverlay::DrawGestureDropdown(ID2D1DeviceContext* pRT) {
+    if (m_activeGestureDropdown.gestureIndex < 0) return;
+    const D2D1_RECT_F dropRect = GetGestureDropdownRect();
+    auto getLabel = [](int idx, void* ud) -> std::wstring_view {
+        const auto* dd = static_cast<const ActiveGestureDropdown*>(ud);
+        return (idx >= 0 && idx < static_cast<int>(dd->options.size())) ? dd->options[idx] : std::wstring_view{};
+    };
+    DrawDropdownPopup(pRT, dropRect, static_cast<int>(m_activeGestureDropdown.options.size()),
+                      m_activeGestureDropdown.selectedIdx, m_gestureDropdownHoverIdx, m_gestureDropdownScrollOffset,
+                      getLabel, &m_activeGestureDropdown);
+}
+

@@ -22,7 +22,6 @@
 #include <string>
 #include <vector>
 #include <expected>
-#include <set>
 #include <atomic>
 #include <d2d1_1.h>
 #include <windows.h>
@@ -70,7 +69,25 @@ struct PrintJobSettings {
 
     // 多页选择
     bool printMultiPage = false; 
-    std::set<int> disabledPages;
+    std::vector<int> disabledPages;
+
+    bool IsPageDisabled(int pageIdx) const noexcept {
+        for (int p : disabledPages) {
+            if (p == pageIdx) return true;
+        }
+        return false;
+    }
+
+    void ToggleDisabledPage(int pageIdx) {
+        for (size_t i = 0; i < disabledPages.size(); ++i) {
+            if (disabledPages[i] == pageIdx) {
+                disabledPages[i] = disabledPages.back();
+                disabledPages.pop_back();
+                return;
+            }
+        }
+        disabledPages.push_back(pageIdx);
+    }
 
     // 驱动持久化数据 (保存用户在高级属性里选择的非标纸张、无边距等状态)
     std::vector<uint8_t> devModeData;

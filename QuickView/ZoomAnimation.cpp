@@ -66,6 +66,8 @@ void SmoothZoomController::ResolvePan(HWND hwnd, float zoom, float& outPanX, flo
     const float winW = (float)rc.right;
     const float winH = (float)rc.bottom;
     float galleryH = (g_gallery.IsPinned() && g_gallery.IsVisible()) ? g_gallery.GetVisualHeight(winH) : 0.0f;
+    float effWinH = winH - galleryH;
+    if (effWinH < 1.0f) effWinH = 1.0f;
 
     POINT anchorClient = m_context.SmoothZoom.AnchorScreenPt;
     ScreenToClient(hwnd, &anchorClient);
@@ -74,6 +76,27 @@ void SmoothZoomController::ResolvePan(HWND hwnd, float zoom, float& outPanX, flo
     const float dy = (float)anchorClient.y - (winH * 0.5f + galleryH * 0.5f);
     outPanX = dx - zoom * m_context.SmoothZoom.AnchorImageX;
     outPanY = dy - zoom * m_context.SmoothZoom.AnchorImageY;
+
+    extern VisualState GetVisualState();
+    VisualState vs = GetVisualState();
+    if (vs.VisualSize.width > 0.0f && vs.VisualSize.height > 0.0f) {
+        const float scaledW = vs.VisualSize.width * zoom;
+        const float scaledH = vs.VisualSize.height * zoom;
+        const float maxPanX = (std::max)(0.0f, (scaledW - winW) * 0.5f);
+        const float maxPanY = (std::max)(0.0f, (scaledH - effWinH) * 0.5f);
+
+        if (maxPanX <= 0.5f) {
+            outPanX = 0.0f;
+        } else {
+            outPanX = (std::clamp)(outPanX, -maxPanX, maxPanX);
+        }
+
+        if (maxPanY <= 0.5f) {
+            outPanY = 0.0f;
+        } else {
+            outPanY = (std::clamp)(outPanY, -maxPanY, maxPanY);
+        }
+    }
 }
 
 void SmoothZoomController::Configure(HWND hwnd,
@@ -194,7 +217,6 @@ bool SmoothZoomController::Tick(HWND hwnd) {
     m_context.SmoothZoom.CurrentZoom += (m_context.SmoothZoom.TargetZoom - m_context.SmoothZoom.CurrentZoom) * zoomAlpha;
 
     bool windowDone = true;
-    extern bool g_programmaticResize;
     if (m_context.SmoothZoom.AnimateWindow) {
         RECT currentWindowRect{};
         GetWindowRect(hwnd, &currentWindowRect);
@@ -203,7 +225,7 @@ bool SmoothZoomController::Tick(HWND hwnd) {
         windowDone = !moved && memcmp(&currentWindowRect, &m_context.SmoothZoom.TargetWindowRect, sizeof(RECT)) == 0;
 
         if (moved) {
-            g_programmaticResize = true;
+            ProgrammaticResizeScope resizeScope;
             SetWindowPos(hwnd, nullptr,
                          nextWindowRect.left, nextWindowRect.top,
                          nextWindowRect.right - nextWindowRect.left,
@@ -232,12 +254,14 @@ bool SmoothZoomController::Tick(HWND hwnd) {
 
     if (done) {
         if (m_context.SmoothZoom.AnimateWindow) {
-            g_programmaticResize = true;
+        {
+            ProgrammaticResizeScope resizeScope;
             SetWindowPos(hwnd, nullptr,
                          m_context.SmoothZoom.TargetWindowRect.left, m_context.SmoothZoom.TargetWindowRect.top,
                          m_context.SmoothZoom.TargetWindowRect.right - m_context.SmoothZoom.TargetWindowRect.left,
                          m_context.SmoothZoom.TargetWindowRect.bottom - m_context.SmoothZoom.TargetWindowRect.top,
                          SWP_NOZORDER | SWP_NOACTIVATE);
+        }
             GetClientRect(hwnd, &rc);
             winW = (float)rc.right;
             winH = (float)rc.bottom;
@@ -252,7 +276,6 @@ bool SmoothZoomController::Tick(HWND hwnd) {
         m_context.SmoothZoom.LastWinH = effWinH;
         GetPaneContext(PaneSlot::Primary).view.PanX = m_context.SmoothZoom.CurrentPanX;
         GetPaneContext(PaneSlot::Primary).view.PanY = m_context.SmoothZoom.CurrentPanY;
-        g_programmaticResize = false;
         m_context.SmoothZoom.Active = false;
     }
 

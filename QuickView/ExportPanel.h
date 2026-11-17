@@ -5,6 +5,8 @@
 #include <wrl/client.h>
 #include "GeekGlass.h"
 #include "ImageExporter.h"
+#include "ImageTypes.h"
+#include "PaneTypes.h"
 #include "GeekWidgets.h"
 #include <string>
 #include <vector>
@@ -51,6 +53,10 @@ struct PanelLayout {
     bool showLosslessCheckbox = false;
     D2D1_RECT_F losslessCheckboxRect = {};
 
+    // Super-Resolution Switch
+    bool showSrCheckbox = false;
+    D2D1_RECT_F srCheckboxRect = {};
+
     // Preserve EXIF Metadata Switch
     D2D1_RECT_F preserveMetadataCheckboxRect = {};
 
@@ -82,7 +88,11 @@ public:
         return instance;
     }
 
-    void Show(HWND hwnd, int initialWidth, int initialHeight, const std::wstring& originalPath, PendingAction pending = PendingAction::None);
+    void Show(HWND hwnd, int initialWidth, int initialHeight, const std::wstring& originalPath, 
+              PendingAction pending = PendingAction::None,
+              PaneSlot targetSlot = PaneSlot::Primary,
+              std::shared_ptr<RawImageFrame> sourceFrame = nullptr,
+              ExportMode mode = ExportMode::NormalExport);
     void Hide();
     bool IsVisible() const { return m_isVisible; }
     bool IsInputFocused() const { 
@@ -114,7 +124,7 @@ public:
     bool IsExporting() const { return m_isExporting.load(std::memory_order_relaxed); }
     void ForceAbortExport(); // Cancel in-flight export and clean up .tmp file
 
-    void Render(ID2D1DeviceContext* dc, float width, float height, IDWriteTextFormat* textFormat);
+    void Render(ID2D1DeviceContext* dc, float width, float height, IDWriteTextFormat* textFormat, IDWriteFactory* dwriteFactory = nullptr);
 
     PanelLayout ComputeLayout(float canvasWidth, float canvasHeight) const;
 
@@ -130,6 +140,7 @@ private:
 
     // State
     HWND m_hwnd = nullptr;
+    IDWriteFactory* m_dwriteFactory = nullptr;
     int m_cropWidth = 0;
     int m_cropHeight = 0;
     int m_targetWidth = 0;
@@ -140,6 +151,13 @@ private:
     ExportMode m_exportMode = ExportMode::NormalExport;
     PendingAction m_pendingAction = PendingAction::None;
     bool m_isModified = false;
+    PaneSlot m_targetSlot = PaneSlot::Primary;
+    std::shared_ptr<RawImageFrame> m_customSourceFrame = nullptr;
+
+    // Super-Resolution Export
+    bool m_hasSrBitmap = false;
+    bool m_exportSr = false;
+    float m_srScale = 1.0f;
 
     // UI Input State
     enum class HoverState { 
@@ -152,6 +170,7 @@ private:
         FormatDropdownBtn,
         FormatDropdownItem,
         LosslessCheckbox,
+        SrCheckbox,
         PreserveMetadataCheckbox,
         QualitySlider,
         QualityInput,

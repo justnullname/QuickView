@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "LosslessTransform.h"
 #include "EditState.h"
+#include "StringUtils.h"
 
 #include <memory>
 // Include libjpeg-turbo header
@@ -276,11 +277,8 @@ TransformResult CLosslessTransform::TransformJPEG(
         std::wstring errMsg = L"JPEG transformation failed";
         const char* errStr = tj3GetErrorStr(tjHandle.get());
         if (errStr) {
-            // Convert error string to wide
-            int len = MultiByteToWideChar(CP_UTF8, 0, errStr, -1, NULL, 0);
-            if (len > 0) {
-                std::wstring wideErr(len, 0);
-                MultiByteToWideChar(CP_UTF8, 0, errStr, -1, &wideErr[0], len);
+            std::wstring wideErr = QuickView::Utf8ToWide(errStr);
+            if (!wideErr.empty()) {
                 errMsg += L": " + wideErr;
             }
         }
@@ -358,10 +356,8 @@ TransformResult CLosslessTransform::TransformJPEG(LPCWSTR inputPath, LPCWSTR out
         std::wstring errMsg = L"Single-pass JPEG transformation failed";
         const char* errStr = tj3GetErrorStr(tjHandle.get());
         if (errStr) {
-            int len = MultiByteToWideChar(CP_UTF8, 0, errStr, -1, NULL, 0);
-            if (len > 0) {
-                std::wstring wideErr(len, 0);
-                MultiByteToWideChar(CP_UTF8, 0, errStr, -1, &wideErr[0], len);
+            std::wstring wideErr = QuickView::Utf8ToWide(errStr);
+            if (!wideErr.empty()) {
                 errMsg += L": " + wideErr;
             }
         }

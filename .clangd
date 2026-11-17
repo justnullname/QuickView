@@ -1,0 +1,10 @@
+CompileFlags:
+  CompilationDatabase: out/build/Release-LTO
+  Remove:
+    - "/Yc*"
+    - "/Yu*"
+    - "/Fp*"
+    - "/FID*"
+    - "/clang:-flto=*"
+    - "/clang:-fwhole-program-vtables"
+    - "/clang:-fvirtual-function-elimination"

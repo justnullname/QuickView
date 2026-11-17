@@ -29,3 +29,20 @@ public:
 private:
     AppContext& m_context;
 };
+
+// [Barrier] RAII guard to suppress re-entrant DComp commits during programmatic window resizing
+extern bool g_programmaticResize;
+extern bool g_deferProgrammaticZoomResizeSync;
+
+struct ProgrammaticResizeScope {
+    ProgrammaticResizeScope() noexcept {
+        g_programmaticResize = true;
+        g_deferProgrammaticZoomResizeSync = true;
+    }
+    ~ProgrammaticResizeScope() noexcept {
+        g_programmaticResize = false;
+        g_deferProgrammaticZoomResizeSync = false;
+    }
+    ProgrammaticResizeScope(const ProgrammaticResizeScope&) = delete;
+    ProgrammaticResizeScope& operator=(const ProgrammaticResizeScope&) = delete;
+};

@@ -9,7 +9,7 @@
 #include "PaneTypes.h"
 
 // --- Dialog Definitions ---
-enum class DialogResult { None, Yes, No, Cancel, Custom1, Custom2 };
+enum class DialogResult { None, Yes, No, Cancel, Custom1, Custom2, Custom3, Custom4, Custom5, Custom6, Custom7, Custom8, Custom9, Custom10 };
 
 struct DialogButton {
     DialogResult Result;
@@ -25,7 +25,11 @@ struct DialogButton {
 struct DialogLayout {
     D2D1_RECT_F Box;
     D2D1_RECT_F Checkbox;
+    D2D1_RECT_F Checkbox2;
     D2D1_RECT_F Input; 
+    D2D1_RECT_F Choice;
+    D2D1_RECT_F ChoicePopup;
+    std::vector<D2D1_RECT_F> ChoiceItemRects;
     std::vector<D2D1_RECT_F> Buttons;
 };
 
@@ -34,24 +38,66 @@ struct DialogState {
     std::wstring Title;
     std::wstring Message;
     std::wstring QualityText; 
-    D2D1_COLOR_F AccentColor = D2D1::ColorF(D2D1::ColorF::DodgerBlue);
+    D2D1_COLOR_F AccentColor = D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f);
     std::vector<DialogButton> Buttons;
     int SelectedButtonIndex = 0;
     bool HasCheckbox = false;
     std::wstring CheckboxText;
     bool IsChecked = false;
+
+    bool HasCheckbox2 = false;
+    std::wstring Checkbox2Text;
+    bool IsChecked2 = false;
     
     // [Input Mode]
     bool HasInput = false;
+    bool IsMultiLineInput = false;
     std::wstring InputText;
     HWND hEdit = nullptr;
     HWND hInputHost = nullptr; 
     WNDPROC oldEditProc = nullptr;
     HFONT hFont = nullptr;
 
+    // [Choice / ComboBox Mode]
+    bool HasChoice = false;
+    std::vector<std::wstring> ChoiceOptions;
+    int SelectedChoiceIndex = 0;
+    bool IsChoiceDropdownOpen = false;
+    int HoverChoiceIndex = -1;
+    bool IsChoiceHovered = false;
+
     DialogResult FinalResult = DialogResult::None;
     bool UseCustomCenter = false;
     D2D1_POINT_2F CustomCenter = D2D1::Point2F(0.0f, 0.0f);
+
+    /// Resets per-dialog content, mode flags, and interaction state (preserving UseCustomCenter/CustomCenter set prior to Show*).
+    void ResetModeState() {
+        Title.clear();
+        Message.clear();
+        QualityText.clear();
+        Buttons.clear();
+        SelectedButtonIndex = 0;
+        HasCheckbox = false;
+        CheckboxText.clear();
+        IsChecked = false;
+        HasCheckbox2 = false;
+        Checkbox2Text.clear();
+        IsChecked2 = false;
+        HasInput = false;
+        IsMultiLineInput = false;
+        InputText.clear();
+        hEdit = nullptr;
+        hInputHost = nullptr;
+        oldEditProc = nullptr;
+        hFont = nullptr;
+        HasChoice = false;
+        ChoiceOptions.clear();
+        SelectedChoiceIndex = 0;
+        IsChoiceDropdownOpen = false;
+        HoverChoiceIndex = -1;
+        IsChoiceHovered = false;
+        FinalResult = DialogResult::None;
+    }
 };
 
 // --- Smooth Zoom Definitions ---
@@ -77,20 +123,6 @@ struct SmoothZoomState {
     ULONGLONG LastTick = 0;
 
     void Reset();
-};
-
-struct SmoothWindowZoomState {
-    bool active = false;
-    std::chrono::steady_clock::time_point startTime;
-    float durationMs = 90.0f;
-    RECT startRect{};
-    RECT targetRect{};
-    float startZoom = 1.0f;
-    float targetZoom = 1.0f;
-    float startPanX = 0.0f;
-    float startPanY = 0.0f;
-    float targetPanX = 0.0f;
-    float targetPanY = 0.0f;
 };
 
 // --- Compare Mode Definitions ---
@@ -136,6 +168,9 @@ struct LoupeState {
     bool active = false;
     POINT cursorClient = { 0, 0 }; // current cursor position in client coords
     bool sizeChanged = false;      // wheel resized the loupe this session -> persist on release
+    bool isViewportMode = false;   // Whole-image/viewport magnification mode (LoupeShape == 2)
+    ViewState baselineView;        // Snapshot of view state prior to activating viewport loupe
+    uint32_t triggerMouseBtn = 0;  // 0 for keyboard, VK_LBUTTON/VK_RBUTTON/VK_MBUTTON for mouse gesture
 };
 
 enum class MinimapOverride : uint8_t {
@@ -162,6 +197,12 @@ struct MinimapState {
     D2D1_RECT_F closeBtnRect = { 0.0f, 0.0f, 0.0f, 0.0f };
     D2D1_RECT_F innerRect = { 0.0f, 0.0f, 0.0f, 0.0f };
 
+    void ClearRects() {
+        layoutRect = { 0.0f, 0.0f, 0.0f, 0.0f };
+        closeBtnRect = { 0.0f, 0.0f, 0.0f, 0.0f };
+        innerRect = { 0.0f, 0.0f, 0.0f, 0.0f };
+    }
+
     void ResetLayout() {
         overrideState = MinimapOverride::Auto;
         closedByUser = false;
@@ -169,7 +210,24 @@ struct MinimapState {
         isDraggingView = false;
         isEdgeHovered = false;
         isCloseHovered = false;
+        ClearRects();
     }
+};
+
+struct NavigatorPaneMetrics {
+    D2D1_RECT_F vpRect = { 0.0f, 0.0f, 0.0f, 0.0f };
+    float effVpW = 0.0f;
+    float effVpH = 0.0f;
+    D2D1_SIZE_F orientedSize = { 0.0f, 0.0f };
+    float fitScale = 1.0f;
+    float totalScale = 1.0f;
+    float panX = 0.0f;
+    float panY = 0.0f;
+    float scaledW = 0.0f;
+    float scaledH = 0.0f;
+    bool isOverflow = false;
+    bool shouldShowByDefault = false;
+    bool valid = false;
 };
 
 struct MinimapGeometry {
@@ -218,7 +276,6 @@ public:
 
     DialogState Dialog;
     SmoothZoomState SmoothZoom;
-    SmoothWindowZoomState SmoothWindowZoom;
     CompareState Compare;
     LoupeState Loupe;
     MinimapState Minimaps[2];

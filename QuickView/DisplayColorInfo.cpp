@@ -481,3 +481,4 @@ const wchar_t* ToString(ColorPrimaries value) {
 }
 
 } // namespace QuickView
+

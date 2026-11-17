@@ -26,6 +26,7 @@ enum class ToolbarButtonID {
     CompareZoomOut,
     CompareSyncZoom,
     CompareSyncPan,
+    CompareSave,
     CompareExit,
     // Animation mode
     AnimPlayPause,
@@ -211,6 +212,7 @@ private:
     ComPtr<ID2D1SolidColorBrush> m_brushHover;
     ComPtr<ID2D1SolidColorBrush> m_brushGreen;
     ComPtr<ID2D1SolidColorBrush> m_brushRed;
+    ComPtr<ID2D1SolidColorBrush> m_brushWork;
     
     ComPtr<IDWriteTextFormat> m_textFormatUI;
     ComPtr<IDWriteFactory> m_dwriteFactory; // Need factory to create format

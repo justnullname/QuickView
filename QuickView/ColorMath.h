@@ -2,10 +2,16 @@
 #include "ImageTypes.h"
 
 #include "QuickView.h"
+#include <cstdint>
 #include <string>
 #include <vector>
 
 namespace ColorMath {
+
+struct SurfaceSize2D {
+    uint32_t width = 0;
+    uint32_t height = 0;
+};
 
 struct ColorMatrix3 {
     float m[3][3];
@@ -37,7 +43,23 @@ QuickView::ColorPrimaries GuessPrimariesFromPath(const std::wstring& path);
 
 float SrgbToLinear(float v);
 
-// Interpolation heuristics
-bool IsEffectivelyPixelArtMode(float totalScale, float origW, float origH, int pixelArtModeOverride, int zoomModeIn, int zoomModeOut);
+// Interpolation heuristics (Content-Aware)
+bool IsEffectivelyPixelArtMode(
+    float totalScale, float origW, float origH,
+    int pixelArtModeOverride, int zoomModeIn, int zoomModeOut,
+    double entropy = 8.0, bool hasEntropy = false);
+
+float GetAdaptiveFsrSharpness(
+    float baseSharpness,
+    double sharpness,
+    double entropy,
+    bool hasMetrics);
+
+SurfaceSize2D ComputeBoundedBitmapSurfaceSize(
+    float originalW,
+    float originalH,
+    float desiredScale,
+    uint32_t maxAxis = 8192u,
+    uint64_t maxPixels = 4096ull * 4096ull);
 
 } // namespace ColorMath

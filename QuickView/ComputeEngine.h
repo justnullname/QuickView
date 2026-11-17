@@ -2,9 +2,11 @@
 #include "pch.h"
 #include <d3d11.h>
 #include <wrl/client.h>
+#include <mutex>
 #include <vector>
 #include <memory>
 #include "ImageTypes.h"
+#include "Plugin/qvx_sr.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -70,7 +72,7 @@ public:
     /// Initialize Compute Context associated with a Render Device.
     /// Needs existing D3D11 Device (from RenderEngine) to share resources.
     /// </summary>
-    HRESULT Initialize(ID3D11Device* pDevice);
+    HRESULT Initialize(ID3D11Device* pDevice, std::recursive_mutex* contextMutex = nullptr);
 
     /// <summary>
     /// Available Compute Capability Check
@@ -140,6 +142,31 @@ public:
         ID3D11Texture2D** outTexture);
 
     /// <summary>
+    /// Execute AMD FidelityFX Super Resolution 1.0 (EASU + RCAS) on GPU.
+    /// Upscales srcTexture to outTexture (dstW x dstH) with edge-adaptive reconstruction and contrast-adaptive sharpening.
+    /// </summary>
+    HRESULT ExecuteFsr1Upscale(
+        ID3D11Texture2D* srcTexture,
+        UINT srcW, UINT srcH,
+        UINT dstW, UINT dstH,
+        float sharpness,
+        ID3D11Texture2D** outTexture);
+
+    /// <summary>
+    /// Unified Super-Resolution Dispatcher.
+    /// Attempts QVX plugin execution first with cancellation check; gracefully falls back to built-in FSR 1.0.
+    /// </summary>
+    HRESULT ExecuteSuperResolution(
+        ID3D11Texture2D* srcTexture,
+        UINT srcW, UINT srcH,
+        UINT dstW, UINT dstH,
+        float sharpness,
+        SimplePredicate checkCancel,
+        ID3D11Texture2D** outTexture,
+        QVX_ProgressCallback onProgress = nullptr,
+        void* progressUserData = nullptr);
+
+    /// <summary>
     /// Generate Mipmaps for a texture.
     /// </summary>
     HRESULT GenerateMips(ID3D11Texture2D* pTexture);
@@ -155,8 +182,14 @@ public:
         GamutMaskReadback* outReadback);
 
 private:
+    std::recursive_mutex& ContextMutex() const noexcept {
+        return m_externalContextMutex ? *m_externalContextMutex : m_internalContextMutex;
+    }
+
     ComPtr<ID3D11Device> m_d3dDevice;
     ComPtr<ID3D11DeviceContext> m_d3dContext;
+    std::recursive_mutex* m_externalContextMutex = nullptr;
+    mutable std::recursive_mutex m_internalContextMutex;
     bool m_valid = false;
 
     // Shader Cache
@@ -165,11 +198,15 @@ private:
     ComPtr<ID3D11ComputeShader> m_csToneMapHdrToSdr;
     ComPtr<ID3D11ComputeShader> m_csToneMapHdrToHdr;
     ComPtr<ID3D11ComputeShader> m_csComposeGainMap;
+    ComPtr<ID3D11ComputeShader> m_csFsrEasu;
+    ComPtr<ID3D11ComputeShader> m_csFsrRcas;
 
     ComPtr<ID3D11ComputeShader> m_csGamutLut;
 
     ComPtr<ID3D11Buffer> m_toneMapConstantBuffer;
     ComPtr<ID3D11Buffer> m_gainMapConstantBuffer;
+    ComPtr<ID3D11Buffer> m_fsrEasuConstantBuffer;
+    ComPtr<ID3D11Buffer> m_fsrRcasConstantBuffer;
 
     ComPtr<ID3D11Buffer> m_gamutLutConstantBuffer;
     ComPtr<ID3D11Buffer> m_gamutCounterBuffer;       // GPU atomic overflow counter (RWStructuredBuffer<uint>)
@@ -177,8 +214,9 @@ private:
     ComPtr<ID3D11SamplerState> m_linearSampler;
     ComPtr<ID3D11SamplerState> m_pointSampler;
 
-    // Helper: Compile Embedded Shaders
-    HRESULT CompileShaders();
+    // Helpers: Fast Direct Bytecode Shader & Resource Creation
+    HRESULT EnsureComputeShader(ComPtr<ID3D11ComputeShader>& shader, const uint8_t* bytecode, size_t bytecodeSize, const char* debugName);
+    HRESULT EnsureSamplers();
     HRESULT ReadbackMaskTexture(ID3D11Texture2D* maskTexture, GamutMaskReadback* outReadback);
 };
 

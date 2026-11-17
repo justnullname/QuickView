@@ -109,7 +109,7 @@ namespace GeekIcons {
     extern const VectorIcon ControlVector;        // 0xE967
     extern const VectorIcon ImageVector;          // 0xE91B
     extern const VectorIcon AdvancedVector;       // 0xE71C
-
+    extern const VectorIcon AiActionVector;       // AI 3-Star Sparkles (✨)
 
     // --- Legacy Mapping Aliases (now pointing to Vectors) ---
     inline IconGlyph Open        = &OpenVector;
@@ -165,6 +165,8 @@ namespace GeekIcons {
     inline IconGlyph Restore          = &RestoreVector;
     inline IconGlyph Contact          = &ContactVector;
     inline IconGlyph Passthrough      = &PassthroughVector;
+    inline IconGlyph SuperResolution  = &AiActionVector;
+    inline IconGlyph AiAction         = &AiActionVector;
 
     // --- Aliases & Batch 1 Mapping ---
     inline IconGlyph Close            = &CancelVector;

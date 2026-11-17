@@ -3,11 +3,11 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <utility>
 #include <unordered_map>
 #include <unordered_set>
 #include <atomic>
 #include <thread>
-#include <filesystem>
 #include <algorithm>
 #include <cwctype>
 #include <functional>
@@ -15,6 +15,7 @@
 #include "EditState.h" // for g_runtime
 #include "exif.h"      // for easyexif
 #include "SupportedExtensions.h" // Unified supported extensions
+#include "StringUtils.h"
 #include "ArchiveVFS.h"
 
 #pragma comment(lib, "Shlwapi.lib")
@@ -49,6 +50,19 @@ public:
         std::unordered_map<ImageID, PairedRaw> pairedRaws;
     };
 
+    // Background Explorer cursor bind result (produced by watcher thread, consumed on UI thread)
+    struct ExplorerBindResult {
+        bool bound = false;
+        int index = -1;
+        int count = 0;
+        std::wstring openedPath;
+        bool hasSort = false;
+        GUID sortFmtid{};
+        DWORD sortPid = 0;
+        int sortDir = 0;
+        std::vector<std::pair<int, std::wstring>> prefetchedPaths;
+    };
+
     FileNavigator() = default;
     ~FileNavigator() { StopPairVerification(true); StopDirectoryWatcher(); }
     FileNavigator(const FileNavigator&) = delete;
@@ -60,6 +74,13 @@ public:
     // Callers that need a complete playlist before returning (sort change,
     // tests, folder gallery) leave this false.
     void Initialize(const std::wstring& currentPath, HWND hwnd = nullptr, bool deferFolderScan = false);
+
+    // Ultra-fast single-file seed for cold boot.
+    // Skips all Explorer COM bindings, directory watchers, and pairing threads
+    // so the initial image can be presented on screen with zero blocking.
+    // Call HydrateBootNavigator() after the first frame is displayed.
+    void InitializeForBoot(const std::wstring& currentPath, HWND hwnd = nullptr);
+    void HydrateBootNavigator();
 
     // If `path` is already in the current playlist (or is a RAW folded
     // behind a rendered sibling), retarget the index and return true.
@@ -92,6 +113,7 @@ public:
     size_t Count() const;
     int Index() const;
     void SetIndex(int index);
+    bool RemoveAt(int index);
     const std::wstring& GetWatchedDir() const { return m_watchedDir; }
 
     // Random Access (For Gallery Virtualization)
@@ -160,8 +182,8 @@ public:
     // not walk Explorer's item list.
     struct SortEntry {
         std::wstring p;
-        uintmax_t s;
-        std::filesystem::file_time_type m;
+        uintmax_t s = 0;
+        uint64_t m = 0; // Win32 FILETIME last-write 100ns ticks
         std::wstring t; // type (extension)
         std::string exifDate; // EXIF DateTaken
     };
@@ -198,12 +220,24 @@ public:
     // only) cannot parse: RAW via LibRaw, HEIF etc. via WIC. Injected at
     // startup because the unit-test binary links FileNavigator without
     // LibRaw/WIC. Returns 0 when unavailable.
+    // [Ratings] Injected predicate: true when QuickView itself wrote a file
+    // in the watched folder a moment ago, so a directory-change notification
+    // is its own echo and rescanning would be waste. Injected rather than
+    // called directly to keep the navigator (and the test binary) free of the
+    // rating subsystem.
+    using SelfWriteProbe = bool (*)();
+    static void SetSelfWriteProbe(SelfWriteProbe probe) {
+        s_selfWriteProbe.store(probe, std::memory_order_release);
+    }
+
     using CaptureTimeFallbackReader = int64_t (*)(const wchar_t* path);
-    static void SetCaptureTimeFallbackReader(CaptureTimeFallbackReader reader) { s_captureTimeFallback = reader; }
+    static void SetCaptureTimeFallbackReader(CaptureTimeFallbackReader reader) {
+        s_captureTimeFallback.store(reader, std::memory_order_release);
+    }
 
 private:
     static std::wstring_view GetPhysicalHostPath(std::wstring_view vfsPath);
-    static std::vector<std::wstring> GetSortedSiblings(const std::filesystem::path& parentDir);
+    static std::vector<std::wstring> GetSortedSiblings(std::wstring_view parentDir);
     std::wstring FindAdjacentFolderImage(bool next);
 
     // [Directory Watcher] Background directory monitoring
@@ -215,6 +249,7 @@ private:
     bool CollectFolderEntries(const std::wstring& dir, std::vector<SortEntry>& entries) const;
     bool ScanCancelled() const;
     bool TryBindExplorer(const std::wstring& dir, const std::wstring& openedPath);
+    void ApplyExplorerBindResult(ExplorerBindResult&& res);
     bool SyncExplorerCursor(bool allowDematerialize);
     void ClearExplorerCursor();
     std::wstring CurrentVisiblePath() const;
@@ -246,7 +281,8 @@ private:
     std::unordered_set<ImageID> m_verifyUnpaired;  // confirmed mismatch: never fold
     std::wstring m_verifyDir;
     std::atomic<uint32_t> m_verifyGeneration{ 0 }; // cancels superseded runs
-    inline static CaptureTimeFallbackReader s_captureTimeFallback = nullptr;
+    inline static std::atomic<CaptureTimeFallbackReader> s_captureTimeFallback{ nullptr };
+    inline static std::atomic<SelfWriteProbe> s_selfWriteProbe{ nullptr };
     int m_currentIndex = -1;
     bool m_hitEnd = false;
     std::wstring m_crossFolderMessage;
@@ -271,6 +307,10 @@ private:
     std::thread m_watcherThread;
     std::mutex m_scanResultMutex;
     std::optional<DirectoryScanResult> m_pendingScanResult;
+    std::atomic<bool> m_needExplorerBind{ false };
+    std::wstring m_initialBindPath;
+    std::optional<ExplorerBindResult> m_pendingExplorerBind;
+    bool m_bootDeferredHydration = false;
 
 public:
     std::wstring m_archivePath;

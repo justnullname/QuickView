@@ -1,5 +1,8 @@
 #include "pch.h"
 #include "ThemeSystem.h"
+#include "ThemePalette.h"
+#include "AiActionManager.h"
+#include "SystemInfo.h"
 #include "yyjson.h"
 #include <commdlg.h>
 #include <cstring>
@@ -10,6 +13,7 @@
 
 extern AppConfig g_config;
 extern void SaveConfig(); // Defined in main.cpp
+extern void SaveConfigSync(); // Defined in main.cpp
 
 namespace {
 
@@ -124,8 +128,10 @@ namespace QuickView::UI::ThemeSystem {
         yyjson_mut_val *root = yyjson_mut_obj(doc);
         yyjson_mut_doc_set_root(doc, root);
 
-        yyjson_mut_obj_add_real(doc, root, "version", 1.0);
+        yyjson_mut_obj_add_real(doc, root, "version", 1.2);
         yyjson_mut_obj_add_int(doc, root, "theme_mode", config.ThemeMode);
+        yyjson_mut_obj_add_int(doc, root, "accent_mode", config.AccentMode);
+        yyjson_mut_obj_add_int(doc, root, "window_border_accent_mode", config.WindowBorderAccentMode);
         yyjson_mut_obj_add_int(doc, root, "menu_backdrop_style", config.MenuBackdropStyle);
         yyjson_mut_obj_add_bool(doc, root, "glass_enabled", config.EnableGeekGlass);
         yyjson_mut_obj_add_bool(doc, root, "animations", config.GlassUIAnimations);
@@ -228,7 +234,12 @@ namespace QuickView::UI::ThemeSystem {
             }
         };
 
+        float importedVersion = 1.0f;
+        int importedAccentMode = -1;
+        get_double("version", importedVersion);
         get_int("theme_mode", config.ThemeMode);
+        get_int("accent_mode", importedAccentMode);
+        get_int("window_border_accent_mode", config.WindowBorderAccentMode);
         get_int("menu_backdrop_style", config.MenuBackdropStyle);
         get_bool("glass_enabled", config.EnableGeekGlass);
         get_bool("animations", config.GlassUIAnimations);
@@ -253,7 +264,21 @@ namespace QuickView::UI::ThemeSystem {
         get_int("canvas_effect_style", config.CanvasEffectStyle);
         get_color("canvas_custom", config.CanvasCustomR, config.CanvasCustomG, config.CanvasCustomB);
 
+        const int schemaVersion = (importedVersion >= 1.19f) ? 2 : 1;
+        if (config.WindowBorderAccentMode < 0 || config.WindowBorderAccentMode > 2) {
+            config.WindowBorderAccentMode = 0;
+        }
+        QuickView::UI::Theme::MigrateLegacyThemeConfig(
+            config.ThemeMode,
+            importedAccentMode,
+            schemaVersion,
+            config.GlassTintProfile,
+            config.GlassCustomTintR, config.GlassCustomTintG, config.GlassCustomTintB,
+            config.ThemeCustomTextR, config.ThemeCustomTextG, config.ThemeCustomTextB,
+            config.ThemeCustomAccentR, config.ThemeCustomAccentG, config.ThemeCustomAccentB);
+        config.AccentMode = importedAccentMode;
         config.EnforceGlassSafetyLimits();
+        QuickView::UI::Theme::RefreshThemePalette(config);
         ::SaveConfig(); // Persist to QuickView.ini as requested
         yyjson_doc_free(doc);
         return true;
@@ -263,7 +288,9 @@ namespace QuickView::UI::ThemeSystem {
 namespace QuickView::UI::ConfigIO {
 
     bool ExportConfig(HWND hwnd) {
-        ::SaveConfig();
+        ::SaveConfigSync();
+        QuickView::AI::AiActionManager::Instance().SaveConfig();
+
         std::wstring dest = ShowFileDialog(hwnd, true,
             L"QuickView Config (*.ini)\0*.ini\0All Files (*.*)\0*.*\0", L"ini", L"QuickView.ini");
         if (dest.empty()) return false;
@@ -271,7 +298,20 @@ namespace QuickView::UI::ConfigIO {
         std::wstring src = GetConfigPath();
         if (src.empty() || GetFileAttributesW(src.c_str()) == INVALID_FILE_ATTRIBUTES) return false;
         if (_wcsicmp(src.c_str(), dest.c_str()) == 0) return true;
-        return CopyFileW(src.c_str(), dest.c_str(), FALSE) != FALSE;
+        bool ok = CopyFileW(src.c_str(), dest.c_str(), FALSE) != FALSE;
+
+        // Synchronously export ai_actions.json to the same folder if present
+        wchar_t destAiJson[MAX_PATH] = { 0 };
+        wcscpy_s(destAiJson, dest.c_str());
+        PathRemoveFileSpecW(destAiJson);
+        PathAppendW(destAiJson, L"ai_actions.json");
+
+        std::wstring srcAiJson = QuickView::AI::AiActionManager::Instance().GetConfigFilePath();
+        if (GetFileAttributesW(srcAiJson.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            CopyFileW(srcAiJson.c_str(), destAiJson, FALSE);
+        }
+
+        return ok;
     }
 
     bool ImportConfig(HWND hwnd) {
@@ -288,11 +328,29 @@ namespace QuickView::UI::ConfigIO {
             if (!CopyFileW(src.c_str(), dest.c_str(), FALSE)) return false;
         }
 
+        // Synchronously import ai_actions.json from the same source folder if present
+        wchar_t srcAiJson[MAX_PATH] = { 0 };
+        wcscpy_s(srcAiJson, src.c_str());
+        PathRemoveFileSpecW(srcAiJson);
+        PathAppendW(srcAiJson, L"ai_actions.json");
+
+        if (GetFileAttributesW(srcAiJson) != INVALID_FILE_ATTRIBUTES) {
+            std::wstring destAiJson = QuickView::AI::AiActionManager::Instance().GetConfigFilePath();
+            CopyFileW(srcAiJson, destAiJson.c_str(), FALSE);
+            QuickView::AI::AiActionManager::Instance().ReloadConfig();
+        }
+
         LoadConfig();
-        g_config.PortableMode = portable;
+        if (SystemInfo::IsPackagedApp()) {
+            g_config.PortableMode = false;
+            g_config.CheckUpdates = false;
+        } else {
+            g_config.PortableMode = portable;
+        }
         g_config.EnforceGlassSafetyLimits();
         ::SaveConfig();
         return true;
     }
 
 }
+

@@ -11,17 +11,20 @@
 #include <unordered_map>
 #include "TileTypes.h"  // [Titan]
 #include "ComputeEngine.h"
+#include "Plugin/qvx_sr.h"
 #include <mutex>
-#include <map>
+#include <array>
 #include <string>
 #include <vector>
 
 // Direct2D Effects GUIDs
 #include <d2d1effects.h>
 
-struct ColorContextCacheKey {
-    std::vector<uint8_t> data;
-    bool operator<(const ColorContextCacheKey& other) const { return data < other.data; }
+struct ColorContextCacheEntry {
+    uint64_t hash = 0;
+    size_t size = 0;
+    std::vector<uint8_t> profileData;
+    Microsoft::WRL::ComPtr<ID2D1ColorContext> context;
 };
 
 bool TryLoadProfileBytesForPrimaries(QuickView::ColorPrimaries primaries, std::vector<uint8_t>* outBytes);
@@ -32,8 +35,6 @@ bool TryLoadProfileBytesForPrimaries(QuickView::ColorPrimaries primaries, std::v
 /// </summary>
 class CRenderEngine {
 public:
-    struct GamutProgram;
-
     enum class GamutTargetKind : uint8_t {
         ScreenTarget = 0,
         ProofTarget
@@ -50,6 +51,32 @@ public:
         AnalyticMatrixTrc,
         Lut3DCompiled,
         CpuReferenceFallback
+    };
+
+    struct GamutProgram {
+        struct AnalyticData {
+            std::array<float, 9> srcToXyz = {};
+            std::array<float, 9> xyzToDst = {};
+            std::vector<float> trcR;
+            std::vector<float> trcG;
+            std::vector<float> trcB;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> trcSrvR;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> trcSrvG;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> trcSrvB;
+        };
+
+        struct LutData {
+            int edge = 0;
+            std::vector<uint8_t> overflowLut;
+            Microsoft::WRL::ComPtr<ID3D11Texture3D> overflowTexture;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> overflowSrv;
+        };
+
+        GamutBackendKind backend = GamutBackendKind::Unknown;
+        std::wstring srcName;
+        std::wstring dstName;
+        AnalyticData analytic;
+        LutData lut;
     };
 
     struct GamutWarningAnalysisOptions {
@@ -92,8 +119,21 @@ public:
     HRESULT Initialize(HWND hwnd);
 
     void SetAdvancedColorMode(bool enabled) { m_isAdvancedColor = enabled; }
-    void SetDisplayColorState(const QuickView::DisplayColorState& state) { m_displayColorState = state; }
-    const QuickView::DisplayColorState& GetDisplayColorState() const { return m_displayColorState; }
+    void SetDisplayColorState(const QuickView::DisplayColorState& state) {
+        std::lock_guard<std::mutex> lock(m_cacheMutex);
+        if (state.gdiDeviceName != m_displayColorState.gdiDeviceName ||
+            state.advancedColorActive != m_displayColorState.advancedColorActive) {
+            m_cachedMonitorColorContext.Reset();
+            m_cachedDestDeviceName.clear();
+            m_cachedMonitorProfilePath.clear();
+            m_cachedMonitorIsSrgb = false;
+        }
+        m_displayColorState = state;
+    }
+    QuickView::DisplayColorState GetDisplayColorState() const {
+        std::lock_guard<std::mutex> lock(m_cacheMutex);
+        return m_displayColorState;
+    }
 
     /// <summary>
     /// Create D2D bitmap from WIC bitmap
@@ -119,6 +159,34 @@ public:
     /// <param name="options">Optional rendering pipeline options (CMS and Soft Proofing)</param>
     /// <returns>S_OK on success, error code on failure</returns>
     HRESULT UploadRawFrameToGPU(const QuickView::RawImageFrame& frame, ID2D1Bitmap** outBitmap, const RenderPipelineOptions* options = nullptr);
+
+    /// <summary>
+    /// Execute GPU Super-Resolution on a frame to produce a 2x or 4x high-density D2D bitmap.
+    /// </summary>
+    HRESULT GenerateSuperResolutionBitmap(const QuickView::RawImageFrame& frame, float targetScale, ID2D1Bitmap** outBitmap);
+
+    /// <summary>
+    /// Thread-safe pure D3D11 Super-Resolution computation (Safe for worker threads).
+    /// </summary>
+    HRESULT GenerateSuperResolutionTexture(
+        const QuickView::RawImageFrame& frame,
+        float targetScale,
+        ID3D11Texture2D** outTexture,
+        QuickView::SimplePredicate checkCancel = {},
+        QVX_ProgressCallback onProgress = nullptr,
+        void* progressUserData = nullptr
+    );
+
+    /// <summary>
+    /// Fast wrapper to create D2D bitmap from a D3D11 texture on main UI thread.
+    /// </summary>
+    HRESULT CreateBitmapFromD3DTexture(ID3D11Texture2D* pTexture, bool hasAlpha, ID2D1Bitmap** outBitmap);
+
+    /// <summary>
+    /// Extract GPU bitmap/texture pixels back to CPU memory (RawImageFrame).
+    /// </summary>
+    HRESULT ExtractBitmapPixels(ID2D1Bitmap* pBitmap, QuickView::RawImageFrame* outFrame);
+    HRESULT ExtractTexturePixels(ID3D11Texture2D* pTexture, QuickView::RawImageFrame* outFrame);
 
     /// <summary>
     /// Estimate the peak luminance of a floating point frame (scRGB) using SIMD.
@@ -149,19 +217,33 @@ public:
     ID2D1DeviceContext* GetDeviceContext() const { return m_d2dContext.Get(); }
 
 private:
-    std::map<ColorContextCacheKey, Microsoft::WRL::ComPtr<ID2D1ColorContext>> m_colorContextCache;
-    std::mutex m_cacheMutex;
-    mutable std::unordered_map<size_t, std::shared_ptr<GamutProgram>> m_gamutProgramCache;
+    static constexpr size_t COLOR_CONTEXT_CACHE_CAPACITY = 16;
+    std::array<ColorContextCacheEntry, COLOR_CONTEXT_CACHE_CAPACITY> m_colorContextCache;
+    size_t m_colorContextCount = 0;
+    size_t m_colorContextNextSlot = 0;
+    mutable std::mutex m_cacheMutex;
+    mutable std::unordered_map<size_t, std::unique_ptr<GamutProgram>> m_gamutProgramCache;
     mutable std::mutex m_gamutProgramCacheMutex;
+    mutable std::wstring m_cachedDestDeviceName;
+    mutable std::wstring m_cachedMonitorProfilePath;
+    mutable ComPtr<ID2D1ColorContext> m_cachedMonitorColorContext;
+    mutable ComPtr<ID2D1ColorContext> m_cachedSrgbColorContext;
+    mutable ComPtr<ID2D1ColorContext> m_cachedScRgbColorContext;
+    mutable bool m_cachedMonitorIsSrgb = false;
     HRESULT CreateDeviceResources();
+    HRESULT GetOrCreateSrgbColorContext(ID2D1ColorContext** outContext) const;
+    HRESULT GetOrCreateScRgbColorContext(ID2D1ColorContext** outContext) const;
     HRESULT ResolveSourceColorContext(const QuickView::RawImageFrame& frame,
                                       int effectiveCmsMode,
                                       ID2D1ColorContext** outContext);
     HRESULT ResolveDestinationColorContext(const QuickView::RawImageFrame& frame,
-                                          ID2D1ColorContext** outContext) const;
+                                          ID2D1ColorContext** outContext,
+                                          bool* outIsSrgb = nullptr) const;
     HRESULT LoadColorContextForPrimaries(QuickView::ColorPrimaries primaries,
                                          ID2D1ColorContext** outContext) const;
     bool ShouldUseHdrOutputForFrame(const QuickView::RawImageFrame& frame) const;
+    bool ShouldUseHdrOutputForFrameLocked(const QuickView::RawImageFrame& frame,
+                                          const QuickView::DisplayColorState& displayState) const;
 
     HWND m_hwnd = nullptr;
     bool m_isAdvancedColor = false;
@@ -204,4 +286,10 @@ private:
     ComPtr<IWICImagingFactory> m_wicFactory;
     
     std::unique_ptr<QuickView::ComputeEngine> m_computeEngine;
+
+    // GPU Context synchronization mutex across UI thread and background AI worker threads
+    mutable std::recursive_mutex m_gpuContextMutex;
+
+public:
+    std::recursive_mutex& GetGpuContextMutex() const noexcept { return m_gpuContextMutex; }
 };

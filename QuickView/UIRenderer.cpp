@@ -1,10 +1,10 @@
 #include "UIRenderer.h"
+#include "RatingStore.h"
 #include "StringUtils.h"
 #include "AppStrings.h"
 #include <Shlwapi.h>
 #pragma comment(lib, "Shlwapi.lib")
 #include "SupportedExtensions.h"
-#include <filesystem>
 #include <optional>
 #include "CompareController.h"
 #include "DebugMetrics.h"
@@ -16,6 +16,9 @@
 #include "SettingsOverlay.h"
 #include "PrintPreviewUI.h"
 #include "ExportPanel.h"
+#include "AiActionOverlay.h"
+#include "GeekWidgets.h"
+#include "ThemePalette.h"
 #include <functional> // For std::hash
 
 namespace {
@@ -37,7 +40,6 @@ namespace {
 
 // External globals (retained - these are global state needed by overlays)
 extern Toolbar g_toolbar;
-extern D2D1_SIZE_F GetEffectiveImageSize();
 extern GalleryOverlay g_gallery;
 extern SettingsOverlay g_settingsOverlay;
 extern HelpOverlay g_helpOverlay;
@@ -45,6 +47,7 @@ extern ImageEngine* g_pImageEngine; // [v3.1] Accessor (renamed from g_imageEngi
 
 #include "FileNavigator.h"
 extern FileNavigator& g_navigator;
+extern RatingStore g_ratingStore;
 
 // Dialog rendering is handled by DialogController
 
@@ -56,11 +59,12 @@ extern ViewState& g_viewState;  // [v3.2] For Nav Indicators
 extern CImageLoader::ImageMetadata& g_currentMetadata;  // [v3.2] For Info Panel
 extern std::wstring& g_imagePath;  // [v3.2] For Info Panel
 extern AppConfig g_config;
-extern int g_renderExifOrientation;
 extern int GetCurrentZoomPercent(); // [v3.2.3] For Info Panel Zoom Display
 extern bool GetCompareIndicatorState(int& outPane, float& outSplitRatio, bool& outIsWipe);
 extern bool GetCompareInfoSnapshot(CImageLoader::ImageMetadata& left, CImageLoader::ImageMetadata& right);
 extern bool GetAdaptiveUiPaneSnapshot(int paneIndex, AdaptiveUiPaneSnapshot& outSnapshot);
+extern int GetNavigatorPaneCount();
+extern bool ComputeNavigatorPaneMetrics(PaneSlot slot, float winW, float winH, int numPanes, bool useSmoothZoom, NavigatorPaneMetrics& outMetrics);
 
 static void GetMaximizedWindowPaddings(HWND hwnd, bool isFullscreen, float& outPadX, float& outPadY) {
     outPadX = 0.0f;
@@ -114,6 +118,23 @@ static bool PointInRect(float x, float y, const D2D1_RECT_F& rect) {
 }
 
 namespace {
+inline void ApplyStarAccent(IDWriteTextLayout* layout, std::wstring_view text, ID2D1Brush* accentBrush) {
+    if (!layout || !accentBrush) return;
+    size_t i = 0;
+    while (i < text.size()) {
+        if (text[i] == L'\u2605') {
+            size_t start = i;
+            while (i < text.size() && text[i] == L'\u2605') {
+                i++;
+            }
+            DWRITE_TEXT_RANGE range{ (UINT32)start, (UINT32)(i - start) };
+            layout->SetDrawingEffect(accentBrush, range);
+        } else {
+            i++;
+        }
+    }
+}
+
 // Delegate to shared StringUtils
 static std::vector<std::wstring> SplitString(const std::wstring& str, wchar_t delim) {
     return QuickView::SplitAndTrimCSV(str, delim);
@@ -557,11 +578,12 @@ std::wstring UIRenderer::MakeEndEllipsis(float maxWidth, std::wstring_view text,
     return std::wstring(text.substr(0, lo)) + L"...";
 }
 
-void UIRenderer::SetOSD(const std::wstring& text, float opacity, D2D1_COLOR_F color, OSDPosition pos) {
+void UIRenderer::SetOSD(const std::wstring& text, float opacity, D2D1_COLOR_F color, OSDPosition pos, float progress) {
     m_osdText = text;
     m_osdOpacity = opacity;
     m_osdColor = color;
     m_osdPos = pos;
+    m_osdProgress = progress;
     // Reset compare fields
     m_osdTextLeft = L"";
     m_osdTextRight = L"";
@@ -575,15 +597,15 @@ void UIRenderer::SetCompareOSD(const std::wstring& left, const std::wstring& rig
     m_osdOpacity = opacity;
     m_osdColor = color;
     m_osdPos = OSDPosition::Bottom;
+    m_osdProgress = -1.0f;
     m_isCompareOSD = true;
     m_osdText = L"COMPARE"; // dummy
     MarkOSDDirty();
 }
+
 RECT UIRenderer::CalculateOSDDirtyRect() {
-    // OSD Position
     const float s = m_uiScale;
-    
-    float paddingH = 30.0f * s; (void)paddingH; (void)paddingH;
+    float paddingH = 30.0f * s; (void)paddingH;
     float paddingV = 15.0f * s; (void)paddingV;
     float maxOSDWidth = 800.0f * s;  // Estimated max
     float maxOSDHeight = 80.0f * s;  // Estimated max
@@ -597,6 +619,9 @@ RECT UIRenderer::CalculateOSDDirtyRect() {
     
     if (m_osdPos == OSDPosition::Top) {
         y = 60.0f * s; // Top offset
+    } else if (m_osdPos == OSDPosition::TopRight) {
+        x = m_width - toastW - 20.0f * s;
+        y = 55.0f * s;
     } else {
         y = m_height - toastH - 100.0f * s; // Bottom offset
     }
@@ -610,6 +635,7 @@ RECT UIRenderer::CalculateOSDDirtyRect() {
     
     // Merge with previous frame rect (to clear old position)
     if (m_lastOSDRect.right > 0) {
+        x = std::min(x, m_lastOSDRect.left);
         y = std::min(y, m_lastOSDRect.top);
         right = std::max(right, m_lastOSDRect.right);
         bottom = std::max(bottom, m_lastOSDRect.bottom);
@@ -629,7 +655,7 @@ void UIRenderer::EnsureTextFormats() {
         m_dwriteFactory->CreateTextFormat(
             L"Segoe UI", nullptr,
             DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-            14.0f * s, AppStrings::CurrentLocale, &m_osdFormat
+            14.0f * s, AppStrings::g.CurrentLocale, &m_osdFormat
         );
         if (m_osdFormat) {
             m_osdFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
@@ -641,7 +667,7 @@ void UIRenderer::EnsureTextFormats() {
         m_dwriteFactory->CreateTextFormat(
             L"Consolas", nullptr,
             DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-            12.0f, AppStrings::CurrentLocale, &m_debugFormat
+            12.0f, AppStrings::g.CurrentLocale, &m_debugFormat
         );
         if (m_debugFormat) {
             m_debugFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -658,7 +684,7 @@ void UIRenderer::EnsureTextFormats() {
         m_dwriteFactory->CreateTextFormat(
             L"Segoe UI", nullptr,
             DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-            11.0f * currentPanelScale, AppStrings::CurrentLocale, &m_panelFormat
+            11.0f * currentPanelScale, AppStrings::g.CurrentLocale, &m_panelFormat
         );
         if (m_panelFormat) {
             m_panelFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
@@ -670,7 +696,7 @@ void UIRenderer::EnsureTextFormats() {
       m_dwriteFactory->CreateTextFormat(
           L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD,
           DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 24.0f * s,
-          AppStrings::CurrentLocale, &m_welcomeTitleFormat);
+          AppStrings::g.CurrentLocale, &m_welcomeTitleFormat);
       if (m_welcomeTitleFormat) {
         m_welcomeTitleFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         m_welcomeTitleFormat->SetParagraphAlignment(
@@ -682,7 +708,7 @@ void UIRenderer::EnsureTextFormats() {
       m_dwriteFactory->CreateTextFormat(
           L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
           DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 13.0f * s,
-          AppStrings::CurrentLocale, &m_welcomeSubtitleFormat);
+          AppStrings::g.CurrentLocale, &m_welcomeSubtitleFormat);
       if (m_welcomeSubtitleFormat) {
         m_welcomeSubtitleFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         m_welcomeSubtitleFormat->SetParagraphAlignment(
@@ -694,7 +720,7 @@ void UIRenderer::EnsureTextFormats() {
       m_dwriteFactory->CreateTextFormat(
           L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_MEDIUM,
           DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f * s,
-          AppStrings::CurrentLocale, &m_welcomeBtnFormat);
+          AppStrings::g.CurrentLocale, &m_welcomeBtnFormat);
       if (m_welcomeBtnFormat) {
         m_welcomeBtnFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
         m_welcomeBtnFormat->SetParagraphAlignment(
@@ -741,7 +767,9 @@ bool UIRenderer::RenderAll(HWND hwnd, float deltaTime) {
     if (m_isStaticDirty) {
         ID2D1DeviceContext* dc = m_compEngine->BeginLayerUpdate(UILayer::Static, nullptr);
         if (dc) {
+            QuickView::UI::GeekWidgets::BeginMarqueePass();
             RenderStaticLayer(dc, hwnd);
+            m_marqueeStaticActive = QuickView::UI::GeekWidgets::EndMarqueePass();
             m_compEngine->EndLayerUpdate(UILayer::Static);
             m_isStaticDirty = false;
             rendered = true;
@@ -762,7 +790,7 @@ bool UIRenderer::RenderAll(HWND hwnd, float deltaTime) {
     // ===== Dynamic Layer (Topmost, High Freq) =====
     if (m_isDynamicDirty) {
         // Smart Dirty Rects: Only use local updates when OSD changes
-        bool useOSDDirtyRect = m_osdDirty && !m_dynamicFullDirty && !m_tooltipDirty && !AppContext::GetInstance().Loupe.active;
+        bool useOSDDirtyRect = m_osdDirty && !m_dynamicFullDirty && !m_tooltipDirty && !AppContext::GetInstance().Loupe.active && !m_borderGlowActive;
         
         if (useOSDDirtyRect && m_osdOpacity > 0.01f) {
             // Only OSD needs update - use Dirty Rects
@@ -782,7 +810,9 @@ bool UIRenderer::RenderAll(HWND hwnd, float deltaTime) {
             // Full update
             ID2D1DeviceContext* dc = m_compEngine->BeginLayerUpdate(UILayer::Dynamic, nullptr);
             if (dc) {
+                QuickView::UI::GeekWidgets::BeginMarqueePass();
                 RenderDynamicLayer(dc, hwnd);
+                m_marqueeDynamicActive = QuickView::UI::GeekWidgets::EndMarqueePass();
                 m_compEngine->EndLayerUpdate(UILayer::Dynamic);
                 rendered = true;
             }
@@ -793,6 +823,17 @@ bool UIRenderer::RenderAll(HWND hwnd, float deltaTime) {
         m_osdDirty = false;
         m_tooltipDirty = false;
         m_dynamicFullDirty = false;
+    }
+
+    const bool wantMarquee =
+        (m_marqueeStaticActive && (g_settingsOverlay.IsVisible() || QuickView::ExportPanel::GetInstance().IsVisible())) ||
+        (m_marqueeDynamicActive && AppContext::GetInstance().Dialog.IsVisible);
+    if (wantMarquee && !m_marqueeTimerActive) {
+        ::SetTimer(hwnd, 3003, 33, nullptr);
+        m_marqueeTimerActive = true;
+    } else if (!wantMarquee && m_marqueeTimerActive) {
+        ::KillTimer(hwnd, 3003);
+        m_marqueeTimerActive = false;
     }
     
     return rendered;
@@ -809,10 +850,11 @@ void UIRenderer::RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd) {
 
     // [Geek Glass] Initialize lazily here (we have valid context on the UI static layer)
     m_geekGlass.InitializeResources(dc);
+    const auto& themePal = QuickView::UI::Theme::GetThemePalette();
     ComPtr<ID2D1SolidColorBrush> whiteBrush, blackBrush, accentBrush;
     dc->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &whiteBrush);
     dc->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 0.6f), &blackBrush);
-    dc->CreateSolidColorBrush(D2D1::ColorF(0.2f, 0.6f, 1.0f), &accentBrush);
+    dc->CreateSolidColorBrush(themePal.accentFill, &accentBrush);
     
     m_whiteBrush = whiteBrush;
     m_blackBrush = blackBrush;
@@ -820,26 +862,29 @@ void UIRenderer::RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd) {
 
     // Welcome Screen (If no image loaded and gallery not active)
     if (g_imagePath.empty() && !g_gallery.IsVisible()) {
-      DrawWelcomeScreen(dc);
+      extern bool g_isBootingWithImage;
+      if (!g_isBootingWithImage) {
+        DrawWelcomeScreen(dc);
 
-      // Render overlays even on welcome screen if visible
-      if (g_settingsOverlay.IsVisible()) {
-        g_settingsOverlay.SetGeekGlassData(
-            m_bgCommandList.Get(), m_compEngine
-                                       ? m_compEngine->GetScreenTransform()
-                                       : D2D1::Matrix3x2F::Identity());
-        g_settingsOverlay.Render(dc, (float)m_width, (float)m_height);
+        // Render overlays even on welcome screen if visible
+        if (g_settingsOverlay.IsVisible()) {
+          g_settingsOverlay.SetGeekGlassData(
+              m_bgCommandList.Get(), m_compEngine
+                                         ? m_compEngine->GetScreenTransform()
+                                         : D2D1::Matrix3x2F::Identity());
+          g_settingsOverlay.Render(dc, (float)m_width, (float)m_height);
+        }
+        if (g_helpOverlay.IsVisible()) {
+          g_helpOverlay.SetGeekGlassData(m_bgCommandList.Get(),
+                                         m_compEngine
+                                             ? m_compEngine->GetScreenTransform()
+                                             : D2D1::Matrix3x2F::Identity());
+          g_helpOverlay.Render(dc, (float)m_width, (float)m_height);
+        }
+        
+        // [Topmost Guarantee] Window Controls drawn last on welcome screen
+        DrawWindowControls(dc, hwnd);
       }
-      if (g_helpOverlay.IsVisible()) {
-        g_helpOverlay.SetGeekGlassData(m_bgCommandList.Get(),
-                                       m_compEngine
-                                           ? m_compEngine->GetScreenTransform()
-                                           : D2D1::Matrix3x2F::Identity());
-        g_helpOverlay.Render(dc, (float)m_width, (float)m_height);
-      }
-      
-      // [Topmost Guarantee] Window Controls drawn last on welcome screen
-      DrawWindowControls(dc, hwnd);
       return;
     }
 
@@ -864,7 +909,7 @@ void UIRenderer::RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd) {
     // ExportPanel (Save As Panel - Rendered on top of overlay mask and toolbar)
     if (QuickView::ExportPanel::GetInstance().IsVisible()) {
         EnsureTextFormats();
-        QuickView::ExportPanel::GetInstance().Render(dc, (float)m_width, (float)m_height, m_panelFormat.Get());
+        QuickView::ExportPanel::GetInstance().Render(dc, (float)m_width, (float)m_height, m_panelFormat.Get(), m_dwriteFactory);
     }
     bool hudVisible = IsCompareModeActive() && g_runtime.ShowCompareInfo;
 
@@ -889,14 +934,12 @@ void UIRenderer::RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd) {
         }
     }
     
-    // Border Indicators (disabled in Compare Mode and Crop Mode)
-    if (g_config.ShowBorderIndicator != 0 && !isAnyOverlayActive && !IsCompareModeActive() && !g_cropState.IsActive) {
-        DrawBorderIndicators(dc);
-    }
-
     // Minimap / Navigator (disabled in Crop Mode and Overlays)
     if (!isAnyOverlayActive && !g_cropState.IsActive) {
         DrawNavigator(dc);
+    } else {
+        AppContext::GetInstance().Minimaps[0].ClearRects();
+        AppContext::GetInstance().Minimaps[1].ClearRects();
     }
 
     // Settings Overlay
@@ -913,6 +956,12 @@ void UIRenderer::RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd) {
     if (g_helpOverlay.IsVisible()) {
         g_helpOverlay.SetGeekGlassData(m_bgCommandList.Get(), m_compEngine ? m_compEngine->GetScreenTransform() : D2D1::Matrix3x2F::Identity());
         g_helpOverlay.Render(dc, (float)m_width, (float)m_height);
+    }
+
+    // AI Actions HUD Overlay
+    if (QuickView::UI::AiActionOverlay::Instance().IsVisible()) {
+        QuickView::UI::AiActionOverlay::Instance().SetGeekGlassData(m_bgCommandList.Get(), m_compEngine ? m_compEngine->GetScreenTransform() : D2D1::Matrix3x2F::Identity());
+        QuickView::UI::AiActionOverlay::Instance().Render(dc, (float)m_width, (float)m_height);
     }
     
     // [Topmost Guarantee] Window Controls strictly drawn at the very end of Static Layer
@@ -931,7 +980,7 @@ extern int GetEffectiveExifOrientation(int orientation, const EditState& state);
 // Compare mode the same image location is magnified on both panes at once.
 void UIRenderer::DrawLoupe(ID2D1DeviceContext* dc, HWND hwnd) {
     AppContext& app = AppContext::GetInstance();
-    if (!app.Loupe.active || !g_config.LoupeEnabled) return;
+    if (!app.Loupe.active || !g_config.LoupeEnabled || app.Loupe.isViewportMode) return;
 
     RECT rcClient; GetClientRect(hwnd, &rcClient);
     const float winW = (float)(rcClient.right - rcClient.left);
@@ -1003,40 +1052,16 @@ void UIRenderer::DrawLoupe(ID2D1DeviceContext* dc, HWND hwnd) {
             m_compEngine->GetLayerSpecs(m_compEngine->GetActiveLayerIndex(), &w, &h);
             if (w > 0 && h > 0) {
                 const D2D1_SIZE_F rawT = pane.resource.GetSize();
-                // [Loupe Alignment Fix] Adjust for letterbox offsets and DComp surface scaling on large standard images
                 if (!pane.resource.isSvg && !isTitan && rawT.width > 0.0f && rawT.height > 0.0f &&
                     ((float)w != rawT.width || (float)h != rawT.height))
                 {
-                    int orientation = g_renderExifOrientation;
-                    if (!g_config.AutoRotate) orientation = 1;
-
                     float imgW = rawT.width;
                     float imgH = rawT.height;
+                    float drawScale = std::min((float)w / imgW, (float)h / imgH);
 
-                    float scaleCalcW = imgW;
-                    float scaleCalcH = imgH;
-                    if (orientation >= 5 && orientation <= 8) {
-                        std::swap(scaleCalcW, scaleCalcH);
-                    }
-
-                    float drawScaleX = (float)w / scaleCalcW;
-                    float drawScaleY = (float)h / scaleCalcH;
-                    float drawScale = std::min(drawScaleX, drawScaleY);
-
-                    // Reconstruct the exact GPU pre-rotation and centering transform applied in RenderImageToDComp
-                    D2D1::Matrix3x2F fitM = D2D1::Matrix3x2F::Translation(-imgW / 2.0f, -imgH / 2.0f);
-                    switch (orientation) {
-                        case 2: fitM = fitM * D2D1::Matrix3x2F::Scale(-1.0f, 1.0f); break;
-                        case 3: fitM = fitM * D2D1::Matrix3x2F::Rotation(180.0f); break;
-                        case 4: fitM = fitM * D2D1::Matrix3x2F::Scale(1.0f, -1.0f); break;
-                        case 5: fitM = fitM * D2D1::Matrix3x2F::Scale(-1.0f, 1.0f) * D2D1::Matrix3x2F::Rotation(270.0f); break;
-                        case 6: fitM = fitM * D2D1::Matrix3x2F::Rotation(90.0f); break;
-                        case 7: fitM = fitM * D2D1::Matrix3x2F::Scale(-1.0f, 1.0f) * D2D1::Matrix3x2F::Rotation(90.0f); break;
-                        case 8: fitM = fitM * D2D1::Matrix3x2F::Rotation(270.0f); break;
-                        default: break;
-                    }
-                    fitM = fitM * D2D1::Matrix3x2F::Scale(drawScale, drawScale);
-                    fitM = fitM * D2D1::Matrix3x2F::Translation((float)w / 2.0f, (float)h / 2.0f);
+                    D2D1::Matrix3x2F fitM = D2D1::Matrix3x2F::Translation(-imgW / 2.0f, -imgH / 2.0f) *
+                                           D2D1::Matrix3x2F::Scale(drawScale, drawScale) *
+                                           D2D1::Matrix3x2F::Translation((float)w / 2.0f, (float)h / 2.0f);
 
                     st = fitM * st;
                     outRaw = rawT;
@@ -1048,7 +1073,7 @@ void UIRenderer::DrawLoupe(ID2D1DeviceContext* dc, HWND hwnd) {
             }
         }
 
-        const int baseExif = (t.slot == PaneSlot::Primary) ? g_renderExifOrientation : pane.view.ExifOrientation;
+        const int baseExif = pane.view.ExifOrientation;
         const int effExif = GetEffectiveExifOrientation(baseExif, pane.editState);
         const D2D1_SIZE_F osz = orientedSize(outRaw, effExif);
         const float vpW = t.viewport.right - t.viewport.left;
@@ -1116,7 +1141,7 @@ void UIRenderer::DrawLoupe(ID2D1DeviceContext* dc, HWND hwnd) {
         const D2D1_RECT_F box = D2D1::RectF(cx - half, cy - half, cx + half, cy + half);
 
         // Loupe transform: native bitmap -> magnified, centered so tImgPt lands at box center.
-        const int baseExif = (targets[i].slot == PaneSlot::Primary) ? g_renderExifOrientation : pane.view.ExifOrientation;
+        const int baseExif = pane.view.ExifOrientation;
         const int effExif = GetEffectiveExifOrientation(baseExif, pane.editState);
         D2D1::Matrix3x2F L0 = buildForward(rawT, effExif, loupeZoom, cx, cy);
         const D2D1_POINT_2F p = L0.TransformPoint(tImgPt);
@@ -1189,14 +1214,18 @@ void UIRenderer::DrawLoupe(ID2D1DeviceContext* dc, HWND hwnd) {
 
 void UIRenderer::RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd) {
     // Create brushes
+    const auto& themePal = QuickView::UI::Theme::GetThemePalette();
     ComPtr<ID2D1SolidColorBrush> whiteBrush, blackBrush, accentBrush;
     dc->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &whiteBrush);
     dc->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 0.6f), &blackBrush);
-    dc->CreateSolidColorBrush(D2D1::ColorF(0.2f, 0.6f, 1.0f), &accentBrush);
+    dc->CreateSolidColorBrush(themePal.accentFill, &accentBrush);
     
     m_whiteBrush = whiteBrush;
     m_blackBrush = blackBrush;
     m_accentBrush = accentBrush;
+
+    // Edge Overflow Vignette Glow (FPS hit-indicator style, pan/zoom triggered)
+    DrawBorderIndicators(dc, hwnd);
 
     // OSD
     DrawOSD(dc, hwnd);
@@ -1281,7 +1310,7 @@ void UIRenderer::RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd) {
     
     // Modal Dialog (Topmost)
     if (AppContext::GetInstance().DialogCtrl->IsActive()) {
-        AppContext::GetInstance().DialogCtrl->Render(dc);
+        AppContext::GetInstance().DialogCtrl->Render(dc, m_dwriteFactory);
     }
 
     // Draw Top Gallery Hotspot: Vector Icon + Material Ripple (Disabled in Crop Mode)
@@ -1315,7 +1344,7 @@ void UIRenderer::RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd) {
                     float ringAlpha = (1.0f - progress) * 0.6f;
                     
                     D2D1_ELLIPSE ring = D2D1::Ellipse(D2D1::Point2F(cx, iconY + iconSize / 2.0f), rippleRadius, rippleRadius);
-                    m_accentBrush->SetColor(D2D1::ColorF(D2D1::ColorF::DodgerBlue));
+                    m_accentBrush->SetColor(QuickView::UI::Theme::GetThemePalette().accentText);
                     m_accentBrush->SetOpacity(ringAlpha);
                     dc->DrawEllipse(ring, m_accentBrush.Get(), 1.5f * m_uiScale);
                     
@@ -1324,10 +1353,10 @@ void UIRenderer::RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd) {
                 }
             }
             
-            // Icon color: semi-transparent white normally, DodgerBlue opaque when hovered
+            // Icon color: semi-transparent white normally, theme accentText opaque when hovered
             ID2D1SolidColorBrush* pIconBrush = nullptr;
             if (iconHovered) {
-                m_accentBrush->SetColor(D2D1::ColorF(D2D1::ColorF::DodgerBlue));
+                m_accentBrush->SetColor(QuickView::UI::Theme::GetThemePalette().accentText);
                 m_accentBrush->SetOpacity(1.0f);
                 pIconBrush = m_accentBrush.Get();
             } else {
@@ -1403,6 +1432,14 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
             ComPtr<IDWriteTextLayout> layout;
             m_dwriteFactory->CreateTextLayout(text.c_str(), (UINT32)text.length(), m_osdFormat.Get(), 1000.0f*s, 100.0f*s, &layout);
             if (!layout) return;
+
+            if (text.find(L'\u2605') != std::wstring::npos) {
+                ComPtr<ID2D1SolidColorBrush> starAccentBrush;
+                const auto& tp = QuickView::UI::Theme::GetThemePalette();
+                D2D1_COLOR_F accentClr = D2D1::ColorF(tp.accentText.r, tp.accentText.g, tp.accentText.b, m_osdOpacity);
+                dc->CreateSolidColorBrush(accentClr, &starAccentBrush);
+                ApplyStarAccent(layout.Get(), text, starAccentBrush.Get());
+            }
 
             DWRITE_TEXT_METRICS tm; layout->GetMetrics(&tm);
             float padV = 8.0f * s;
@@ -1482,6 +1519,13 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
             m_osdText.c_str(), (UINT32)m_osdText.length(),
             m_osdFormat.Get(), 2000.0f * s, 120.0f * s, &textLayout
         );
+    }
+    if (textLayout && m_osdText.find(L'\u2605') != std::wstring::npos) {
+        ComPtr<ID2D1SolidColorBrush> starAccentBrush;
+        const auto& tp = QuickView::UI::Theme::GetThemePalette();
+        D2D1_COLOR_F accentClr = D2D1::ColorF(tp.accentText.r, tp.accentText.g, tp.accentText.b, m_osdOpacity);
+        dc->CreateSolidColorBrush(accentClr, &starAccentBrush);
+        ApplyStarAccent(textLayout.Get(), m_osdText, starAccentBrush.Get());
     }
     
     float toastW = 300.0f * s, toastH = 50.0f * s;
@@ -1565,6 +1609,44 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
     if (textLayout && textBrush) {
         dc->DrawTextLayout(D2D1::Point2F(x + paddingH, y + paddingV), textLayout.Get(), textBrush.Get());
     }
+
+    // [Glow Progress Underline] Inset 2px luminous sleek progress bar at the bottom inner edge of OSD pill
+    if (m_osdProgress >= 0.0f) {
+        float p = std::clamp(m_osdProgress, 0.0f, 1.0f);
+        float trackInsetH = std::max(16.0f * s, pillRadius * 0.75f);
+        float trackLeft = x + trackInsetH;
+        float trackRight = x + toastW - trackInsetH;
+        float trackW = trackRight - trackLeft;
+        float barH = 2.0f * s;
+        float barY = y + toastH - barH - 3.5f * s;
+
+        if (trackW > 0.0f) {
+            // Track rail (Subtle dark background)
+            D2D1_RECT_F railRect = D2D1::RectF(trackLeft, barY, trackRight, barY + barH);
+            ComPtr<ID2D1SolidColorBrush> railBrush;
+            dc->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.25f * m_osdOpacity), &railBrush);
+            dc->FillRoundedRectangle(D2D1::RoundedRect(railRect, barH * 0.5f, barH * 0.5f), railBrush.Get());
+
+            // Active progress fill with theme-accent luminous glow
+            float fillRight = trackLeft + trackW * p;
+            if (fillRight > trackLeft + 1.0f) {
+                D2D1_RECT_F fillRect = D2D1::RectF(trackLeft, barY, fillRight, barY + barH);
+                D2D1_RECT_F glowRect = D2D1::RectF(trackLeft, barY - 1.0f * s, fillRight, barY + barH + 1.0f * s);
+
+                const auto& tp = QuickView::UI::Theme::GetThemePalette();
+                ComPtr<ID2D1SolidColorBrush> workBrush;
+                D2D1_COLOR_F glowColor = D2D1::ColorF(tp.accentGlow.r, tp.accentGlow.g, tp.accentGlow.b, 0.40f * m_osdOpacity);
+                D2D1_COLOR_F barColor  = D2D1::ColorF(tp.accentFill.r, tp.accentFill.g, tp.accentFill.b, 0.95f * m_osdOpacity);
+
+                dc->CreateSolidColorBrush(glowColor, &workBrush);
+                if (workBrush) {
+                    dc->FillRoundedRectangle(D2D1::RoundedRect(glowRect, (barH + 2.0f * s) * 0.5f, (barH + 2.0f * s) * 0.5f), workBrush.Get());
+                    workBrush->SetColor(barColor);
+                    dc->FillRoundedRectangle(D2D1::RoundedRect(fillRect, barH * 0.5f, barH * 0.5f), workBrush.Get());
+                }
+            }
+        }
+    }
 }
 
 
@@ -1593,6 +1675,7 @@ void UIRenderer::DrawDecodingStatus(ID2D1DeviceContext* dc, HWND hwnd) {
     if (!g_isNavigatingToTitan && !hasTileProgressGap && !baseLoading && !g_isLeftPaneDecoding) {
         decodingActive = false;
     }
+
 
     const DWORD now = GetTickCount();
     if (m_decodeWasActive && !decodingActive) {
@@ -1669,24 +1752,22 @@ void UIRenderer::DrawDecodingStatus(ID2D1DeviceContext* dc, HWND hwnd) {
     D2D1_RECT_F fullBar = D2D1::RectF(0.0f, barY, drawW, barY + barThickness);
     D2D1_RECT_F fullBarShadow = D2D1::RectF(0.0f, barY + 1.0f, drawW, barY + barThickness + 2.0f);
 
-    ComPtr<ID2D1SolidColorBrush> trackBrush;
-    D2D1_COLOR_F trackColor = D2D1::ColorF(0.20f, 0.45f, 0.85f, 0.25f * alpha); // [Fix] Deeper blue track
+    const auto& tp = QuickView::UI::Theme::GetThemePalette();
+    ComPtr<ID2D1SolidColorBrush> workBrush;
+    D2D1_COLOR_F trackColor = D2D1::ColorF(tp.accentFill.r, tp.accentFill.g, tp.accentFill.b, 0.25f * alpha);
     if (alpha > 0.0f) {
-        ComPtr<ID2D1SolidColorBrush> trackShadowBrush;
-        D2D1_COLOR_F trackShadow = D2D1::ColorF(0.08f, 0.15f, 0.25f, 0.90f * alpha); // [Fix] Deeper shadow
-        dc->CreateSolidColorBrush(trackShadow, &trackShadowBrush);
-        dc->FillRectangle(fullBarShadow, trackShadowBrush.Get());
+        dc->CreateSolidColorBrush(D2D1::ColorF(0.06f, 0.10f, 0.16f, 0.90f * alpha), &workBrush);
+        if (!workBrush) return;
+        dc->FillRectangle(fullBarShadow, workBrush.Get());
 
-        dc->CreateSolidColorBrush(trackColor, &trackBrush);
-        dc->FillRectangle(fullBar, trackBrush.Get());
+        workBrush->SetColor(trackColor);
+        dc->FillRectangle(fullBar, workBrush.Get());
 
-        ComPtr<ID2D1SolidColorBrush> trackStrokeBrush;
-        D2D1_COLOR_F trackStroke = D2D1::ColorF(0.40f, 0.65f, 0.95f, 0.40f * alpha); // [Fix] Deeper stroke
-        dc->CreateSolidColorBrush(trackStroke, &trackStrokeBrush);
-        dc->FillRectangle(D2D1::RectF(0.0f, barY, drawW, barY + 1.0f), trackStrokeBrush.Get());
+        workBrush->SetColor(D2D1::ColorF(tp.accentText.r, tp.accentText.g, tp.accentText.b, 0.40f * alpha));
+        dc->FillRectangle(D2D1::RectF(0.0f, barY, drawW, barY + 1.0f), workBrush.Get());
     }
 
-    if (alpha > 0.0f && scanningMode) {
+    if (alpha > 0.0f && scanningMode && workBrush) {
         // Electric-arc flow: one-directional packet with trailing streaks.
         m_decodeScanPhase += 0.005f; // [Fix] Slower scanning mode (was 0.012f)
         if (m_decodeScanPhase >= 1.0f) m_decodeScanPhase -= 1.0f;
@@ -1706,17 +1787,14 @@ void UIRenderer::DrawDecodingStatus(ID2D1DeviceContext* dc, HWND hwnd) {
             D2D1_RECT_F segGlow = D2D1::RectF(left, barY - glowPad, right, barY + barThickness + glowPad);
             D2D1_RECT_F segShadow = D2D1::RectF(left, barY + 1.0f, right, barY + barThickness + 2.0f);
 
-            ComPtr<ID2D1SolidColorBrush> segShadowBrush;
-            dc->CreateSolidColorBrush(D2D1::ColorF(0.08f, 0.15f, 0.25f, 0.90f * alpha), &segShadowBrush);
-            dc->FillRectangle(segShadow, segShadowBrush.Get());
+            workBrush->SetColor(D2D1::ColorF(0.06f, 0.10f, 0.16f, 0.90f * alpha));
+            dc->FillRectangle(segShadow, workBrush.Get());
 
-            ComPtr<ID2D1SolidColorBrush> segGlowBrush;
-            dc->CreateSolidColorBrush(D2D1::ColorF(0.20f, 0.50f, 0.95f, (glowAlpha + 0.06f) * alpha), &segGlowBrush);
-            dc->FillRectangle(segGlow, segGlowBrush.Get());
+            workBrush->SetColor(D2D1::ColorF(tp.accentGlow.r, tp.accentGlow.g, tp.accentGlow.b, (glowAlpha + 0.06f) * alpha));
+            dc->FillRectangle(segGlow, workBrush.Get());
 
-            ComPtr<ID2D1SolidColorBrush> segBrush;
-            dc->CreateSolidColorBrush(D2D1::ColorF(0.40f, 0.70f, 1.0f, (bodyAlpha + 0.04f) * alpha), &segBrush);
-            dc->FillRectangle(seg, segBrush.Get());
+            workBrush->SetColor(D2D1::ColorF(tp.accentText.r, tp.accentText.g, tp.accentText.b, (bodyAlpha + 0.04f) * alpha));
+            dc->FillRectangle(seg, workBrush.Get());
         };
 
         // Head and trailing arc fragments
@@ -1727,7 +1805,7 @@ void UIRenderer::DrawDecodingStatus(ID2D1DeviceContext* dc, HWND hwnd) {
         // Spark fragment near head for "arc" feel.
         float sparkOffset = sinf((float)now * 0.006f) * packetW * 0.08f;
         DrawArcSegment(xHead + packetW * 0.46f + sparkOffset, xHead + packetW * 0.56f + sparkOffset, 0.98f, 0.34f);
-    } else if (alpha > 0.0f) {
+    } else if (alpha > 0.0f && workBrush) {
         float fillW = progress * drawW;
         if (fillW < 0.0f) fillW = 0.0f;
         if (fillW > drawW) fillW = drawW;
@@ -1735,7 +1813,6 @@ void UIRenderer::DrawDecodingStatus(ID2D1DeviceContext* dc, HWND hwnd) {
         D2D1_RECT_F fillRect = D2D1::RectF(0.0f, barY, fillW, barY + barThickness);
         D2D1_RECT_F fillGlow = D2D1::RectF(0.0f, barY - glowPad, fillW, barY + barThickness + glowPad);
         D2D1_RECT_F fillShadow = D2D1::RectF(0.0f, barY + 1.0f, fillW, barY + barThickness + 2.0f);
-        ComPtr<ID2D1SolidColorBrush> fillBrush;
 
         float flashBoost = 0.0f;
         if (finishingMode) {
@@ -1746,25 +1823,19 @@ void UIRenderer::DrawDecodingStatus(ID2D1DeviceContext* dc, HWND hwnd) {
             }
         }
 
-        D2D1_COLOR_F fillColor = D2D1::ColorF(0.30f, 0.60f, 0.95f, alpha + flashBoost); // [Fix] Deeper fill
-        if (fillColor.a > 1.0f) fillColor.a = 1.0f;
-        ComPtr<ID2D1SolidColorBrush> fillGlowBrush;
-        D2D1_COLOR_F glowColor = D2D1::ColorF(0.15f, 0.40f, 0.85f, 0.40f * alpha + flashBoost * 0.40f); // [Fix] Deeper glow
-        if (glowColor.a > 1.0f) glowColor.a = 1.0f;
-        dc->CreateSolidColorBrush(glowColor, &fillGlowBrush);
-        ComPtr<ID2D1SolidColorBrush> fillShadowBrush;
-        D2D1_COLOR_F fillShadowColor = D2D1::ColorF(0.08f, 0.15f, 0.25f, 0.90f * alpha); // [Fix] Deeper shadow
-        dc->CreateSolidColorBrush(fillShadowColor, &fillShadowBrush);
-        dc->FillRectangle(fillShadow, fillShadowBrush.Get());
-        dc->FillRectangle(fillGlow, fillGlowBrush.Get());
-        dc->CreateSolidColorBrush(fillColor, &fillBrush);
-        dc->FillRectangle(fillRect, fillBrush.Get());
+        D2D1_COLOR_F fillColor = D2D1::ColorF(tp.accentFill.r, tp.accentFill.g, tp.accentFill.b, (std::min)(1.0f, alpha + flashBoost));
+        D2D1_COLOR_F glowColor = D2D1::ColorF(tp.accentGlow.r, tp.accentGlow.g, tp.accentGlow.b, (std::min)(1.0f, 0.40f * alpha + flashBoost * 0.40f));
 
-        ComPtr<ID2D1SolidColorBrush> fillStrokeBrush;
-        D2D1_COLOR_F fillStroke = D2D1::ColorF(0.60f, 0.80f, 1.0f, 0.46f * alpha + flashBoost * 0.50f); // [Fix] Deeper stroke
-        if (fillStroke.a > 1.0f) fillStroke.a = 1.0f;
-        dc->CreateSolidColorBrush(fillStroke, &fillStrokeBrush);
-        dc->FillRectangle(D2D1::RectF(0.0f, barY, fillW, barY + 1.0f), fillStrokeBrush.Get());
+        workBrush->SetColor(D2D1::ColorF(0.06f, 0.10f, 0.16f, 0.90f * alpha));
+        dc->FillRectangle(fillShadow, workBrush.Get());
+        workBrush->SetColor(glowColor);
+        dc->FillRectangle(fillGlow, workBrush.Get());
+        workBrush->SetColor(fillColor);
+        dc->FillRectangle(fillRect, workBrush.Get());
+
+        D2D1_COLOR_F fillStroke = D2D1::ColorF(tp.accentText.r, tp.accentText.g, tp.accentText.b, (std::min)(1.0f, 0.46f * alpha + flashBoost * 0.50f));
+        workBrush->SetColor(fillStroke);
+        dc->FillRectangle(D2D1::RectF(0.0f, barY, fillW, barY + 1.0f), workBrush.Get());
 
         // Progress head highlight: improves readability on bright/complex images.
         if (fillW > 1.0f && fillW < drawW) {
@@ -1772,11 +1843,9 @@ void UIRenderer::DrawDecodingStatus(ID2D1DeviceContext* dc, HWND hwnd) {
             if (headW < 2.0f) headW = 2.0f;
             if (headW > 6.0f) headW = 6.0f;
             D2D1_RECT_F headRect = D2D1::RectF(fillW - headW, barY - glowPad * 0.35f, fillW, barY + barThickness + glowPad * 0.35f);
-            ComPtr<ID2D1SolidColorBrush> headBrush;
-            D2D1_COLOR_F headColor = D2D1::ColorF(0.70f, 0.85f, 1.0f, 0.46f * alpha + flashBoost * 0.35f); // [Fix] Deeper highlight
-            if (headColor.a > 1.0f) headColor.a = 1.0f;
-            dc->CreateSolidColorBrush(headColor, &headBrush);
-            dc->FillRectangle(headRect, headBrush.Get());
+            D2D1_COLOR_F headColor = D2D1::ColorF(tp.accentText.r, tp.accentText.g, tp.accentText.b, (std::min)(1.0f, 0.52f * alpha + flashBoost * 0.35f));
+            workBrush->SetColor(headColor);
+            dc->FillRectangle(headRect, workBrush.Get());
         }
     }
 
@@ -1941,7 +2010,7 @@ void UIRenderer::DrawWindowControls(ID2D1DeviceContext* dc, HWND hwnd) {
 
     ComPtr<ID2D1SolidColorBrush> foregroundBrush, accentBrush;
     dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(D2D1::ColorF::Black) : D2D1::ColorF(D2D1::ColorF::White), &foregroundBrush);
-    dc->CreateSolidColorBrush(D2D1::ColorF(0.2f, 0.6f, 1.0f), &accentBrush);
+    dc->CreateSolidColorBrush(QuickView::UI::Theme::GetThemePalette().accentText, &accentBrush);
     
     auto DrawIcon = [&](Icons::IconGlyph icon, D2D1_RECT_F rect, ID2D1Brush* brush, float iconScale) {
         if (!icon) return;
@@ -1971,60 +2040,88 @@ void UIRenderer::DrawWindowControls(ID2D1DeviceContext* dc, HWND hwnd) {
     if (useLayer) dc->PopLayer();
 }
 
-void UIRenderer::DrawBorderIndicators(ID2D1DeviceContext* dc) {
-    if (IsCompareModeActive()) return;
-    if (m_width <= 0 || m_height <= 0) return;
-    D2D1_SIZE_F imgSize = GetEffectiveImageSize();
-    if (imgSize.width <= 0.0f || imgSize.height <= 0.0f) return;
-
-    float winW = (float)m_width;
-    float winH = (float)m_height;
-
-    // Match SyncDCompState: pin-mode filmstrip reduces effective vertical viewport.
-    float galleryH = (g_gallery.IsPinned() && g_gallery.IsVisible())
-        ? g_gallery.GetVisualHeight(winH) : 0.0f;
-    float effWinH = winH - galleryH;
-    if (effWinH < 1.0f) effWinH = 1.0f;
-
-    float baseFit = std::min(winW / imgSize.width, effWinH / imgSize.height);
-
-    // [SVG Lossless] Adjust bounds calculation baseFit just like main.cpp
-    if (g_runtime.LockWindowSize) {
-        if (!g_config.UpscaleSmallImagesWhenLocked && baseFit > 1.0f) {
-            baseFit = 1.0f;
-        }
-    } else {
-        if (imgSize.width < 200.0f && imgSize.height < 200.0f) {
-            if (baseFit > 1.0f) baseFit = 1.0f;
-        }
+float UIRenderer::ComputeBorderGlowAlpha() noexcept {
+    if (!m_borderGlowActive) return 0.0f;
+    if (g_config.ShowBorderIndicator == 0) {
+        m_borderGlowActive = false;
+        return 0.0f;
     }
 
-    // Prefer live smooth-zoom display values when animating (WebView/DComp path).
-    float panX = g_viewState.PanX;
-    float panY = g_viewState.PanY;
-    float targetZoom = baseFit * g_viewState.Zoom;
-    if (AppContext::GetInstance().SmoothZoom.Active) {
-        targetZoom = AppContext::GetInstance().SmoothZoom.CurrentZoom;
-        panX = AppContext::GetInstance().SmoothZoom.CurrentPanX;
-        panY = AppContext::GetInstance().SmoothZoom.CurrentPanY;
-    }
-    float scaledW = imgSize.width * targetZoom;
-    float scaledH = imgSize.height * targetZoom;
+    const uint64_t now = ::GetTickCount64();
+    const auto& app = AppContext::GetInstance();
+    const bool keepLit =
+        app.SmoothZoom.Active ||
+        g_viewState.IsDragging ||
+        g_viewState.IsRightButtonDragZoom ||
+        (app.Loupe.active && app.Loupe.isViewportMode);
 
-    // Image center is shifted down by galleryH/2 when filmstrip is pinned (SyncDCompState).
-    float centerY = (winH * 0.5f) + galleryH * 0.5f;
-    float imgLeft = (winW * 0.5f) - (scaledW * 0.5f) + panX;
-    float imgRight = (winW * 0.5f) + (scaledW * 0.5f) + panX;
-    float imgTop = centerY - (scaledH * 0.5f) + panY;
-    float imgBottom = centerY + (scaledH * 0.5f) + panY;
+    if (keepLit) {
+        m_borderGlowLastTriggerMs = now;
+        return 1.0f;
+    }
+
+    const uint64_t elapsed = (now >= m_borderGlowLastTriggerMs) ? (now - m_borderGlowLastTriggerMs) : 0;
+    constexpr uint64_t kHoldMs = 450;
+    constexpr uint64_t kFadeMs = 350;
+    if (elapsed <= kHoldMs) {
+        return 1.0f;
+    }
+    if (elapsed < kHoldMs + kFadeMs) {
+        const float t = static_cast<float>(elapsed - kHoldMs) / static_cast<float>(kFadeMs);
+        const float inv = 1.0f - t;
+        return inv * inv; // Quadratic ease-out
+    }
+
+    m_borderGlowActive = false;
+    return 0.0f;
+}
+
+void UIRenderer::DrawBorderIndicators(ID2D1DeviceContext* dc, HWND hwnd) {
+    if (g_config.ShowBorderIndicator == 0) {
+        m_borderGlowActive = false;
+        return;
+    }
+    const bool isFullGridGallery = g_gallery.IsVisible() && g_gallery.GetMode() == GalleryMode::FullGrid;
+    if (g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible() || isFullGridGallery ||
+        IsCompareModeActive() || g_cropState.IsActive) {
+        return;
+    }
+
+    const float glowAlpha = ComputeBorderGlowAlpha();
+    if (glowAlpha <= 0.001f) return;
+    if (!dc || m_width <= 0 || m_height <= 0) return;
+
+    const float winW = (float)m_width;
+    const float winH = (float)m_height;
+
+    NavigatorPaneMetrics metrics{};
+    if (!ComputeNavigatorPaneMetrics(PaneSlot::Primary, winW, winH, 1, true, metrics) ||
+        !metrics.valid) {
+        return;
+    }
+
+    // Effective image viewport inside window after subtracting pinned filmstrip insets (top/bottom).
+    const auto insets = g_gallery.GetPinnedViewportInsets(winH);
+    const float vpLeft = 0.0f;
+    const float vpRight = winW;
+    const float vpTop = insets.top;
+    const float vpBottom = winH - insets.bottom;
+    if (vpBottom <= vpTop + 1.0f) return;
+
+    const float centerX = (vpLeft + vpRight) * 0.5f;
+    const float centerY = (vpTop + vpBottom) * 0.5f;
+    const float imgLeft = centerX - (metrics.scaledW * 0.5f) + metrics.panX;
+    const float imgRight = centerX + (metrics.scaledW * 0.5f) + metrics.panX;
+    const float imgTop = centerY - (metrics.scaledH * 0.5f) + metrics.panY;
+    const float imgBottom = centerY + (metrics.scaledH * 0.5f) + metrics.panY;
 
     // Buffer to avoid flickering at exact edge bounds
-    const float edgeBuffer = 1.0f;
+    constexpr float edgeBuffer = 1.0f;
 
-    bool drawLeft = (imgLeft < -edgeBuffer);
-    bool drawRight = (imgRight > winW + edgeBuffer);
-    bool drawTop = (imgTop < -edgeBuffer);
-    bool drawBottom = (imgBottom > winH + edgeBuffer);
+    const bool drawLeft = (imgLeft < vpLeft - edgeBuffer);
+    const bool drawRight = (imgRight > vpRight + edgeBuffer);
+    const bool drawTop = (imgTop < vpTop - edgeBuffer);
+    const bool drawBottom = (imgBottom > vpBottom + edgeBuffer);
 
     if (!drawLeft && !drawRight && !drawTop && !drawBottom) return;
 
@@ -2032,64 +2129,141 @@ void UIRenderer::DrawBorderIndicators(ID2D1DeviceContext* dc) {
     if (g_config.ShowBorderIndicator == 2) {
         indicatorClr = D2D1::ColorF(g_config.BorderIndicatorCustomR, g_config.BorderIndicatorCustomG, g_config.BorderIndicatorCustomB, 1.0f);
     } else {
-        indicatorClr = D2D1::ColorF(g_config.ThemeCustomAccentR, g_config.ThemeCustomAccentG, g_config.ThemeCustomAccentB, 1.0f);
+        indicatorClr = QuickView::UI::Theme::GetThemePalette().accentFill;
     }
 
-    ComPtr<ID2D1SolidColorBrush> borderBrush;
-    dc->CreateSolidColorBrush(indicatorClr, &borderBrush);
-
-    float s = m_uiScale;
-    float thickness = 2.0f * s; // 2.0px thick crisp line, scaled (matched with compare indicator)
-
+    const float s = m_uiScale;
     float padX = 0.0f;
     float padY = 0.0f;
-    extern HWND g_mainHwnd;
-    GetMaximizedWindowPaddings(g_mainHwnd, m_isFullscreen, padX, padY);
+    GetMaximizedWindowPaddings(hwnd, m_isFullscreen, padX, padY);
 
-    bool hasRoundCorner = (!m_isFullscreen && !IsZoomed(g_mainHwnd) && g_config.RoundedCorners);
-    float cornerR = hasRoundCorner ? (8.0f * s) : 0.0f;
+    const float L = padX;
+    const float T = (std::max)(padY, vpTop);
+    const float R = winW - padX;
+    const float B = (std::min)(winH - padY, vpBottom);
+    const float drawW = R - L;
+    const float drawH = B - T;
+    if (drawW < 16.0f || drawH < 16.0f) return;
 
-    if (cornerR > 0.0f) {
-        float inset = thickness * 0.5f;
-        D2D1_RECT_F outerRect = D2D1::RectF(padX + inset, padY + inset, winW - padX - inset, winH - padY - inset);
+    const float glowDepth = (std::min)(32.0f * s, (std::min)(drawW, drawH) * 0.28f);
+    if (glowDepth <= 1.0f) return;
 
-        auto drawClippedEdge = [&](const D2D1_RECT_F& clipRect) {
-            dc->PushAxisAlignedClip(clipRect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-            dc->DrawRoundedRectangle(D2D1::RoundedRect(outerRect, cornerR, cornerR), borderBrush.Get(), thickness);
-            dc->PopAxisAlignedClip();
+    ComPtr<ID2D1Factory> factory;
+    dc->GetFactory(&factory);
+    if (!factory) return;
+
+    const bool brushColorChanged =
+        (m_borderGlowCachedDc != dc) ||
+        (fabsf(m_borderGlowCachedColor.r - indicatorClr.r) > 0.002f) ||
+        (fabsf(m_borderGlowCachedColor.g - indicatorClr.g) > 0.002f) ||
+        (fabsf(m_borderGlowCachedColor.b - indicatorClr.b) > 0.002f);
+
+    if (!m_borderGlowBrush || brushColorChanged) {
+        m_borderGlowBrush.Reset();
+        const D2D1_GRADIENT_STOP stops[5] = {
+            { 0.00f, D2D1::ColorF(indicatorClr.r, indicatorClr.g, indicatorClr.b, 0.42f) },
+            { 0.06f, D2D1::ColorF(indicatorClr.r, indicatorClr.g, indicatorClr.b, 0.30f) },
+            { 0.28f, D2D1::ColorF(indicatorClr.r, indicatorClr.g, indicatorClr.b, 0.14f) },
+            { 0.62f, D2D1::ColorF(indicatorClr.r, indicatorClr.g, indicatorClr.b, 0.035f) },
+            { 1.00f, D2D1::ColorF(indicatorClr.r, indicatorClr.g, indicatorClr.b, 0.00f) },
         };
 
-        if (drawLeft) {
-            drawClippedEdge(D2D1::RectF(padX, padY, padX + thickness + cornerR, winH - padY));
+        ComPtr<ID2D1GradientStopCollection> stopCollection;
+        if (FAILED(dc->CreateGradientStopCollection(stops, 5, D2D1_GAMMA_1_0, D2D1_EXTEND_MODE_CLAMP, &stopCollection)) || !stopCollection) {
+            return;
         }
-        if (drawRight) {
-            drawClippedEdge(D2D1::RectF(winW - padX - thickness - cornerR, padY, winW - padX, winH - padY));
+
+        D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES brushProps = D2D1::LinearGradientBrushProperties(D2D1::Point2F(0, 0), D2D1::Point2F(glowDepth, 0));
+        if (FAILED(dc->CreateLinearGradientBrush(brushProps, stopCollection.Get(), &m_borderGlowBrush)) || !m_borderGlowBrush) {
+            return;
         }
-        if (drawTop) {
-            drawClippedEdge(D2D1::RectF(padX, padY, winW - padX, padY + thickness + cornerR));
-        }
-        if (drawBottom) {
-            drawClippedEdge(D2D1::RectF(padX, winH - padY - thickness - cornerR, winW - padX, winH - padY));
-        }
-    } else {
-        // If an edge is outside the window, draw an indicator along that window edge.
-        if (drawLeft) {
-            D2D1_RECT_F rect = D2D1::RectF(padX, padY, padX + thickness, winH - padY);
-            dc->FillRectangle(rect, borderBrush.Get());
-        }
-        if (drawRight) {
-            D2D1_RECT_F rect = D2D1::RectF(winW - padX - thickness, padY, winW - padX, winH - padY);
-            dc->FillRectangle(rect, borderBrush.Get());
-        }
-        if (drawTop) {
-            D2D1_RECT_F rect = D2D1::RectF(padX, padY, winW - padX, padY + thickness);
-            dc->FillRectangle(rect, borderBrush.Get());
-        }
-        if (drawBottom) {
-            D2D1_RECT_F rect = D2D1::RectF(padX, winH - padY - thickness, winW - padX, winH - padY);
-            dc->FillRectangle(rect, borderBrush.Get());
-        }
+        m_borderGlowCachedDc = dc;
+        m_borderGlowCachedColor = indicatorClr;
     }
+
+    m_borderGlowBrush->SetOpacity(glowAlpha);
+
+    const uint8_t edgeMask =
+        (drawLeft ? 1u : 0u) |
+        (drawRight ? 2u : 0u) |
+        (drawTop ? 4u : 0u) |
+        (drawBottom ? 8u : 0u);
+
+    const bool geoDirty =
+        (m_borderGlowCachedMask != edgeMask) ||
+        (fabsf(m_borderGlowCachedL - L) > 0.1f) ||
+        (fabsf(m_borderGlowCachedT - T) > 0.1f) ||
+        (fabsf(m_borderGlowCachedR - R) > 0.1f) ||
+        (fabsf(m_borderGlowCachedB - B) > 0.1f) ||
+        (fabsf(m_borderGlowCachedDepth - glowDepth) > 0.1f) ||
+        (drawLeft && !m_borderGlowGeos[0]) ||
+        (drawRight && !m_borderGlowGeos[1]) ||
+        (drawTop && !m_borderGlowGeos[2]) ||
+        (drawBottom && !m_borderGlowGeos[3]);
+
+    if (geoDirty) {
+        for (auto& g : m_borderGlowGeos) g.Reset();
+
+        auto buildMiteredEdge = [&](size_t slot, D2D1_POINT_2F p0, D2D1_POINT_2F p1, D2D1_POINT_2F p2, D2D1_POINT_2F p3) {
+            ComPtr<ID2D1PathGeometry> geo;
+            if (FAILED(factory->CreatePathGeometry(&geo)) || !geo) return;
+            ComPtr<ID2D1GeometrySink> sink;
+            if (FAILED(geo->Open(&sink)) || !sink) return;
+            sink->BeginFigure(p0, D2D1_FIGURE_BEGIN_FILLED);
+            sink->AddLine(p1);
+            sink->AddLine(p2);
+            sink->AddLine(p3);
+            sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+            if (SUCCEEDED(sink->Close())) {
+                m_borderGlowGeos[slot] = std::move(geo);
+            }
+        };
+
+        const float miterL = drawLeft ? glowDepth : 0.0f;
+        const float miterR = drawRight ? glowDepth : 0.0f;
+        const float miterT = drawTop ? glowDepth : 0.0f;
+        const float miterB = drawBottom ? glowDepth : 0.0f;
+
+        if (drawLeft) {
+            buildMiteredEdge(0,
+                D2D1::Point2F(L, T), D2D1::Point2F(L + glowDepth, T + miterT),
+                D2D1::Point2F(L + glowDepth, B - miterB), D2D1::Point2F(L, B));
+        }
+        if (drawRight) {
+            buildMiteredEdge(1,
+                D2D1::Point2F(R, T), D2D1::Point2F(R, B),
+                D2D1::Point2F(R - glowDepth, B - miterB), D2D1::Point2F(R - glowDepth, T + miterT));
+        }
+        if (drawTop) {
+            buildMiteredEdge(2,
+                D2D1::Point2F(L, T), D2D1::Point2F(R, T),
+                D2D1::Point2F(R - miterR, T + glowDepth), D2D1::Point2F(L + miterL, T + glowDepth));
+        }
+        if (drawBottom) {
+            buildMiteredEdge(3,
+                D2D1::Point2F(L + miterL, B - glowDepth), D2D1::Point2F(R - miterR, B - glowDepth),
+                D2D1::Point2F(R, B), D2D1::Point2F(L, B));
+        }
+
+        m_borderGlowCachedL = L;
+        m_borderGlowCachedT = T;
+        m_borderGlowCachedR = R;
+        m_borderGlowCachedB = B;
+        m_borderGlowCachedDepth = glowDepth;
+        m_borderGlowCachedMask = edgeMask;
+    }
+
+    auto fillCachedEdge = [&](size_t slot, D2D1_POINT_2F gradStart, D2D1_POINT_2F gradEnd) {
+        if (!m_borderGlowGeos[slot]) return;
+        m_borderGlowBrush->SetStartPoint(gradStart);
+        m_borderGlowBrush->SetEndPoint(gradEnd);
+        dc->FillGeometry(m_borderGlowGeos[slot].Get(), m_borderGlowBrush.Get());
+    };
+
+    if (drawLeft)   fillCachedEdge(0, D2D1::Point2F(L, T), D2D1::Point2F(L + glowDepth, T));
+    if (drawRight)  fillCachedEdge(1, D2D1::Point2F(R, T), D2D1::Point2F(R - glowDepth, T));
+    if (drawTop)    fillCachedEdge(2, D2D1::Point2F(L, T), D2D1::Point2F(L, T + glowDepth));
+    if (drawBottom) fillCachedEdge(3, D2D1::Point2F(L, B), D2D1::Point2F(L, B - glowDepth));
 }
 
 // ============================================================================
@@ -2143,7 +2317,7 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
     ComPtr<ID2D1SolidColorBrush> redBrush, yellowBrush, greenBrush, blueBrush, grayBrush, blackTransBrush, whiteBrush;
     dc->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Red), &redBrush);
     dc->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Yellow), &yellowBrush);
-    dc->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::DodgerBlue), &blueBrush);
+    dc->CreateSolidColorBrush(QuickView::UI::Theme::GetThemePalette().accentText, &blueBrush);
     dc->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Lime), &greenBrush);
     dc->CreateSolidColorBrush(D2D1::ColorF(0.3f, 0.3f, 0.3f), &grayBrush);
     dc->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.8f), &blackTransBrush); // Darker
@@ -2540,19 +2714,37 @@ namespace {
             if (const auto* pairedRaw = g_navigator.GetPairedRaw(FileNavigator::PathToImageID(p))) {
                 displayFname += L" (" + FileNavigator::PairedRawLabel(*pairedRaw) + L")";
             }
+            // [QVX-SR] Append scale badge for super-resolved images
+            if (meta.HasSr && meta.SrScale > 1.0f) {
+                wchar_t srBadge[16];
+                swprintf_s(srBadge, L" \u2605%.0fx", meta.SrScale);
+                displayFname += srBadge;
+            }
             return displayFname;
         }
         else if (key == L"Size") {
             const auto& editState = GetPaneContext(PaneSlot::Primary).editState;
-            UINT displayW = meta.Width;
-            UINT displayH = meta.Height;
+            // [QVX-SR] Use super-resolution dimensions when available
+            UINT displayW = (meta.HasSr && meta.SrWidth > 0) ? meta.SrWidth : meta.Width;
+            UINT displayH = (meta.HasSr && meta.SrHeight > 0) ? meta.SrHeight : meta.Height;
             if (editState.HasCrop) {
-                displayW = (UINT)std::round(editState.CropRight - editState.CropLeft);
-                displayH = (UINT)std::round(editState.CropBottom - editState.CropTop);
+                float cropScale = (meta.HasSr && meta.SrScale > 1.0f) ? meta.SrScale : 1.0f;
+                displayW = (UINT)std::round((editState.CropRight - editState.CropLeft) * cropScale);
+                displayH = (UINT)std::round((editState.CropBottom - editState.CropTop) * cropScale);
+            } else {
+                int baseExif = GetPaneContext(PaneSlot::Primary).view.ExifOrientation;
+                int effExif = GetEffectiveExifOrientation(baseExif, editState);
+                if (effExif >= 5 && effExif <= 8) {
+                    std::swap(displayW, displayH);
+                }
             }
             if (displayW > 0 && displayH > 0) {
                 wchar_t sz[64];
-                swprintf_s(sz, L"%u\u00d7%u", displayW, displayH);
+                if (meta.HasSr && meta.SrScale > 1.0f) {
+                    swprintf_s(sz, L"%u\u00d7%u \u2605%.0fx", displayW, displayH, meta.SrScale);
+                } else {
+                    swprintf_s(sz, L"%u\u00d7%u", displayW, displayH);
+                }
                 return sz;
             }
             return std::nullopt;
@@ -2575,6 +2767,18 @@ namespace {
                 return sz;
             }
             return std::nullopt;
+        }
+        else if (key == L"Rating") {
+            // Only a rated photo takes up room in the compact strip; the
+            // detailed panel is where an unrated one still shows its row.
+            const std::wstring p = path.empty() ? meta.SourcePath : path;
+            if (p.empty()) return std::nullopt;
+            const auto rating = g_ratingStore.TryGet(FileNavigator::PathToImageID(p));
+            if (!rating || rating->stars <= 0) return std::nullopt;
+            const int starCount = std::clamp(rating->stars, 1, 5);
+            wchar_t sz[16];
+            swprintf_s(sz, L"%d\u2605", starCount);
+            return std::wstring(sz);
         }
         else if (key == L"Format") {
             std::wstring fmtStr;
@@ -2748,30 +2952,24 @@ namespace {
             return;
         }
         
-        // 3. Scan directory
-        namespace fs = std::filesystem;
-        std::error_code ec;
-        fs::path p(path);
-        if (!fs::exists(p, ec) || fs::is_directory(p, ec)) return;
-        
-        fs::path dir = p.parent_path();
+        // 3. Scan directory (native Win32 FindFirstFileExW)
+        if (!QuickView::IsExistingRegularFile(path.c_str())) return;
+
+        const std::wstring_view dir = QuickView::ParentPathView(path);
         if (dir.empty()) return;
-        
+
+        const std::wstring pattern = QuickView::JoinPath(dir, L"*");
+        WIN32_FIND_DATAW ffd{};
+        HANDLE hFind = FindFirstFileExW(pattern.c_str(), FindExInfoBasic, &ffd, FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
         std::vector<std::wstring> files;
-        for (const auto& entry : fs::directory_iterator(dir, ec)) {
-            if (entry.is_regular_file(ec)) {
-                std::wstring ext = entry.path().extension().wstring();
-                std::transform(ext.begin(), ext.end(), ext.begin(), [](wchar_t c){ return std::towlower(c); });
-                bool isArchiveExt = (ext == L".cbz" || ext == L".zip" || ext == L".cbr" || ext == L".rar");
-                if (isArchiveExt) continue;
-                
-                for (const auto& supp : QuickView::SUPPORTED_EXTENSIONS) {
-                    if (ext == supp) {
-                        files.push_back(entry.path().wstring());
-                        break;
-                    }
-                }
-            }
+        if (hFind != INVALID_HANDLE_VALUE) {
+            do {
+                if (ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+                const std::wstring_view name(ffd.cFileName);
+                if (!QuickView::IsPlaylistImageExtension(QuickView::ExtensionOf(name))) continue;
+                files.push_back(QuickView::JoinPath(dir, name));
+            } while (FindNextFileW(hFind, &ffd));
+            FindClose(hFind);
         }
         
         std::sort(files.begin(), files.end(), [](const std::wstring& a, const std::wstring& b) {
@@ -2834,12 +3032,36 @@ std::wstring UIRenderer::BuildCompactInfoText(float maxFileW) const {
     uint64_t stateHash = 0;
     CombineHash(stateHash, currentZoom);
     CombineHash(stateHash, g_imagePath);
+    CombineHash(stateHash, g_navigator.Index());
+    CombineHash(stateHash, g_navigator.Count());
+    CombineHash(stateHash, g_navigator.HasPairedRaw(FileNavigator::PathToImageID(g_imagePath)));
     CombineHash(stateHash, g_config.InfoPanelLiteItemsNormal);
+    // [Ratings] Same reason as the full panel: the read lands asynchronously,
+    // so it must be part of the cache key or the strip would never update.
+    if (const auto rating = g_ratingStore.TryGet(FileNavigator::PathToImageID(g_imagePath))) {
+        CombineHash(stateHash, rating->stars);
+    } else {
+        CombineHash(stateHash, -1);
+    }
     CombineHash(stateHash, maxFileW);
+    CombineHash(stateHash, g_currentMetadata.Width);
+    CombineHash(stateHash, g_currentMetadata.Height);
+    CombineHash(stateHash, g_currentMetadata.FileSize);
+    CombineHash(stateHash, g_currentMetadata.Date);
+    CombineHash(stateHash, g_currentMetadata.Make);
+    CombineHash(stateHash, g_currentMetadata.Model);
+    CombineHash(stateHash, g_currentMetadata.Software);
+    CombineHash(stateHash, g_currentMetadata.ColorSpace);
     CombineHash(stateHash, g_currentMetadata.IsFullMetadataLoaded);
     CombineHash(stateHash, g_currentMetadata.HasSharpness);
     CombineHash(stateHash, g_currentMetadata.HasEntropy);
     CombineHash(stateHash, hasHistR);
+    CombineHash(stateHash, g_currentMetadata.HasSr);
+    if (g_currentMetadata.HasSr) {
+        CombineHash(stateHash, g_currentMetadata.SrWidth);
+        CombineHash(stateHash, g_currentMetadata.SrHeight);
+        CombineHash(stateHash, g_currentMetadata.SrScale);
+    }
     const auto& editState = GetPaneContext(PaneSlot::Primary).editState;
     CombineHash(stateHash, editState.HasCrop);
     if (editState.HasCrop) {
@@ -2893,19 +3115,50 @@ static std::wstring FormatBytesWithCommas(UINT64 bytes) {
 
  
 UIRenderer::TooltipInfo UIRenderer::GetTooltipInfo(std::wstring_view label) const {
-    if (label == L"Sharp") return { AppStrings::HUD_Tip_Sharp_Desc, AppStrings::HUD_Tip_Sharp_High, AppStrings::HUD_Tip_Sharp_Low, AppStrings::HUD_Tip_Sharp_Ref };
-    if (label == L"Ent") return { AppStrings::HUD_Tip_Ent_Desc, AppStrings::HUD_Tip_Ent_High, AppStrings::HUD_Tip_Ent_Low, AppStrings::HUD_Tip_Ent_Ref };
-    if (label == L"BPP") return { AppStrings::HUD_Tip_BPP_Desc, AppStrings::HUD_Tip_BPP_High, AppStrings::HUD_Tip_BPP_Low, AppStrings::HUD_Tip_BPP_Ref };
+    if (label == L"Sharp") return { AppStrings::g.HUD_Tip_Sharp_Desc, AppStrings::g.HUD_Tip_Sharp_High, AppStrings::g.HUD_Tip_Sharp_Low, AppStrings::g.HUD_Tip_Sharp_Ref };
+    if (label == L"Ent") return { AppStrings::g.HUD_Tip_Ent_Desc, AppStrings::g.HUD_Tip_Ent_High, AppStrings::g.HUD_Tip_Ent_Low, AppStrings::g.HUD_Tip_Ent_Ref };
+    if (label == L"BPP") return { AppStrings::g.HUD_Tip_BPP_Desc, AppStrings::g.HUD_Tip_BPP_High, AppStrings::g.HUD_Tip_BPP_Low, AppStrings::g.HUD_Tip_BPP_Ref };
     if (label == L"File") return { L"Internal Filename", L"Source path of comparison image", L"N/A", L"N/A" };
     return { L"", L"", L"", L"" };
+}
+
+static void PushInfoRow(std::vector<InfoRow>& rows,
+                        const wchar_t* icon,
+                        const wchar_t* label,
+                        std::wstring_view valueMain,
+                        std::wstring_view valueSub = {},
+                        std::wstring_view fullText = {},
+                        TruncateMode mode = TruncateMode::None,
+                        bool isClickable = false) {
+    InfoRow row;
+    row.icon = icon;
+    row.label = label;
+    row.valueMain.assign(valueMain);
+    row.valueSub.assign(valueSub);
+    row.fullText.assign(fullText);
+    row.mode = mode;
+    row.isClickable = isClickable;
+    rows.push_back(std::move(row));
+}
+
+static bool HasCsvToken(std::wstring_view csv, std::wstring_view token) noexcept {
+    size_t pos = 0;
+    while (pos <= csv.size()) {
+        const size_t comma = csv.find(L',', pos);
+        const std::wstring_view part = (comma == std::wstring_view::npos) ? csv.substr(pos) : csv.substr(pos, comma - pos);
+        if (part == token) return true;
+        if (comma == std::wstring_view::npos) break;
+        pos = comma + 1;
+    }
+    return false;
 }
 
 std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata& metadata, const std::wstring& imagePath, bool showAdvanced, int positionIndex, size_t positionTotal) const {
     std::vector<InfoRow> rows;
     if (imagePath.empty()) return rows;
+    rows.reserve(24);
 
     const std::wstring& allowedItems = g_runtime.ShowCompareInfo ? g_config.InfoPanelFullItemsCompare : g_config.InfoPanelFullItemsNormal;
-    const std::wstring wrappedAllowed = L"," + allowedItems + L",";
 
     // Row 1: Filename
     std::wstring displayPath = imagePath;
@@ -2913,21 +3166,62 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
         displayPath = metadata.SourcePath;
     }
     std::wstring filename = displayPath.substr(displayPath.find_last_of(L"\\/") + 1);
-    rows.push_back({L"\U0001F4C4", L"File", filename, L"", filename, TruncateMode::MiddleEllipsis, true});
+    // [QVX-SR] Append scale badge for super-resolved images
+    if (metadata.HasSr && metadata.SrScale > 1.0f) {
+        wchar_t srBadge[16];
+        swprintf_s(srBadge, L" \u2605%.0fx", metadata.SrScale);
+        filename += srBadge;
+    }
+    PushInfoRow(rows, L"\U0001F4C4", L"File", filename, {}, filename, TruncateMode::MiddleEllipsis, true);
 
     // Position: Folder progress (e.g. 33/999) (Disabled in compare mode via showAdvanced flag)
     if (!showAdvanced) {
         if (positionIndex >= 0 && positionTotal > 0) {
             wchar_t progBuf[64];
             swprintf_s(progBuf, L"%d/%zu", positionIndex + 1, positionTotal);
-            rows.push_back({L"\U0001F4C1", L"Position", progBuf, L"", L"", TruncateMode::None, false});
+            PushInfoRow(rows, L"\U0001F4C1", L"Position", progBuf);
         } else if (g_navigator.Count() > 0) {
             wchar_t progBuf[64];
             swprintf_s(progBuf, L"%d/%zu", g_navigator.Index() + 1, g_navigator.Count());
-            rows.push_back({L"\U0001F4C1", L"Position", progBuf, L"", L"", TruncateMode::None, false});
+            PushInfoRow(rows, L"\U0001F4C1", L"Position", progBuf);
         }
     }
     
+    // [Ratings] Star rating, read off the decode pipeline by RatingStore; the
+    // row only appears once that background read has landed. Icon: glowing
+    // star is taken by HDR, so the plain star (U+2B50) marks this row.
+    // Shown as soon as the read has landed, unrated included, so that enabling
+    // the item does not make the row appear and vanish from photo to photo.
+    if (const auto rating = g_ratingStore.TryGet(FileNavigator::PathToImageID(imagePath))) {
+        static constexpr std::wstring_view FIVE_STAR_BARS[] = {
+            L"\u2606\u2606\u2606\u2606\u2606",
+            L"\u2605\u2606\u2606\u2606\u2606",
+            L"\u2605\u2605\u2606\u2606\u2606",
+            L"\u2605\u2605\u2605\u2606\u2606",
+            L"\u2605\u2605\u2605\u2605\u2606",
+            L"\u2605\u2605\u2605\u2605\u2605"
+        };
+        const int starCount = std::clamp(rating->stars, 0, 5);
+        const std::wstring_view stars = FIVE_STAR_BARS[starCount];
+
+        // The hot path stays silent about a disagreement between the two files
+        // of a pair; the full panel is where it is spelled out.
+        std::wstring detail;
+        if (rating->conflict) {
+            std::wstring_view ext = QuickView::ExtensionOf(imagePath);
+            if (!ext.empty() && ext.front() == L'.') ext.remove_prefix(1);
+            wchar_t detBuf[64];
+            swprintf_s(detBuf, L"(sidecar; %.*s has %d)", static_cast<int>(ext.size()), ext.data(), rating->otherStars);
+            detail = detBuf;
+        }
+        std::wstring full(stars);
+        if (!detail.empty()) {
+            full += L" ";
+            full += detail;
+        }
+        PushInfoRow(rows, L"\u2B50", L"Rating", stars, detail, full);
+    }
+
     // [RAW+JPEG Pairing] Hidden RAW sibling of this photo. Icon: link
     // (U+1F517) = "file paired with this photo"; the film-frames icon is
     // already taken by the Format row.
@@ -2939,7 +3233,7 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
         } else if (pairedRaw->size > 0) {
             swprintf_s(rawSizeBuf, L"%I64u KB", pairedRaw->size / 1024);
         }
-        rows.push_back({L"\U0001F517", L"RAW", rawName, rawSizeBuf, rawName, TruncateMode::MiddleEllipsis, false});
+        PushInfoRow(rows, L"\U0001F517", L"RAW", rawName, rawSizeBuf, rawName, TruncateMode::MiddleEllipsis);
     } else if (std::wstring rendered = g_navigator.GetResolvedPath(imagePath); rendered != imagePath) {
         std::wstring rname = rendered.substr(rendered.find_last_of(L"\\/") + 1);
         const wchar_t* rlabel = L"Pair";
@@ -2964,20 +3258,31 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
         wchar_t rSizeBuf[32] = L"";
         if (const uintmax_t rsize = g_navigator.GetFileSize(ridx); rsize >= 1024 * 1024) {
             swprintf_s(rSizeBuf, L"%.2f MB", rsize / (1024.0 * 1024.0));
-        } else if (g_navigator.GetFileSize(ridx) > 0) {
-            swprintf_s(rSizeBuf, L"%.2f KB", g_navigator.GetFileSize(ridx) / 1024.0);
+        } else if (rsize > 0) {
+            swprintf_s(rSizeBuf, L"%.2f KB", rsize / 1024.0);
         }
         std::wstring rawPairMain = std::wstring(L"[") + rlabel + L"] " + rname;
-        rows.push_back({L"\U0001F517", L"RAW", rawPairMain, rSizeBuf, rawPairMain, TruncateMode::MiddleEllipsis, false});
+        PushInfoRow(rows, L"\U0001F517", L"RAW", rawPairMain, rSizeBuf, rawPairMain, TruncateMode::MiddleEllipsis);
     }
 
     // Row 2: Dimensions + Megapixels
-    const auto& editState = GetPaneContext(PaneSlot::Primary).editState;
-    UINT displayW = metadata.Width;
-    UINT displayH = metadata.Height;
+    const auto& pane = (showAdvanced && imagePath == GetPaneContext(PaneSlot::Left).path)
+                       ? GetPaneContext(PaneSlot::Left)
+                       : GetPaneContext(PaneSlot::Primary);
+    const auto& editState = pane.editState;
+    // [QVX-SR] Use super-resolution dimensions when available
+    UINT displayW = (metadata.HasSr && metadata.SrWidth > 0) ? metadata.SrWidth : metadata.Width;
+    UINT displayH = (metadata.HasSr && metadata.SrHeight > 0) ? metadata.SrHeight : metadata.Height;
     if (editState.HasCrop) {
-        displayW = (UINT)std::round(editState.CropRight - editState.CropLeft);
-        displayH = (UINT)std::round(editState.CropBottom - editState.CropTop);
+        float cropScale = (metadata.HasSr && metadata.SrScale > 1.0f) ? metadata.SrScale : 1.0f;
+        displayW = (UINT)std::round((editState.CropRight - editState.CropLeft) * cropScale);
+        displayH = (UINT)std::round((editState.CropBottom - editState.CropTop) * cropScale);
+    } else {
+        int baseExif = pane.view.ExifOrientation;
+        int effExif = GetEffectiveExifOrientation(baseExif, editState);
+        if (effExif >= 5 && effExif <= 8) {
+            std::swap(displayW, displayH);
+        }
     }
     if (displayW > 0 && displayH > 0) {
         UINT64 totalPixels = (UINT64)displayW * displayH;
@@ -2985,8 +3290,12 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
         wchar_t dimBuf[64];
         swprintf_s(dimBuf, L"%u\u00d7%u", displayW, displayH);
         wchar_t mpBuf[48];
-        swprintf_s(mpBuf, L"(%.1fMP)@%d%%", megapixels, GetCurrentZoomPercent());
-        rows.push_back({L"\U0001F4D0", L"Size", dimBuf, mpBuf, L"", TruncateMode::None, false});
+        if (metadata.HasSr && metadata.SrScale > 1.0f) {
+            swprintf_s(mpBuf, L"(%.1fMP) SR %.0fx", megapixels, metadata.SrScale);
+        } else {
+            swprintf_s(mpBuf, L"(%.1fMP)@%d%%", megapixels, GetCurrentZoomPercent());
+        }
+        PushInfoRow(rows, L"\U0001F4D0", L"Size", dimBuf, mpBuf);
     }
 
     // Row 3: File Size
@@ -3000,11 +3309,11 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
         } else {
             swprintf_s(sizeBuf, L"%llu B", bytes);
         }
-        rows.push_back({L"\U0001F4BE", L"Disk", (std::wstring)sizeBuf, L"", L"", TruncateMode::None, false});
+        PushInfoRow(rows, L"\U0001F4BE", L"Disk", sizeBuf);
     }
 
     if (!metadata.Date.empty()) {
-        rows.push_back({L"\U0001F4C5", L"Date", metadata.Date, L"", L"", TruncateMode::EndEllipsis, false});
+        PushInfoRow(rows, L"\U0001F4C5", L"Date", metadata.Date, {}, {}, TruncateMode::EndEllipsis);
     }
 
     if (!metadata.Make.empty() || !metadata.Model.empty()) {
@@ -3013,25 +3322,36 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
             if (!camera.empty()) camera += L" ";
             camera += metadata.Model;
         }
-        rows.push_back({L"\U0001F4F7", L"Camera", camera, L"", camera, TruncateMode::EndEllipsis, false});
+        PushInfoRow(rows, L"\U0001F4F7", L"Camera", camera, {}, camera, TruncateMode::EndEllipsis);
     }
 
-    if (!metadata.ISO.empty()) {
-        std::wstring exp = L"ISO " + metadata.ISO + L"  " + metadata.Aperture + L"  " + metadata.Shutter;
-        std::wstring sub = metadata.ExposureBias.empty() ? L"" : metadata.ExposureBias;
-        rows.push_back({L"\U000026A1", L"Exp", exp, sub, exp + L" " + sub, TruncateMode::EndEllipsis, false});
+    if (!metadata.ISO.empty() || !metadata.Aperture.empty() || !metadata.Shutter.empty()) {
+        std::wstring exp;
+        auto appendExp = [&](const std::wstring& part) {
+            if (part.empty()) return;
+            if (!exp.empty()) exp += L"  ";
+            exp += part;
+        };
+        if (!metadata.ISO.empty()) {
+            appendExp(L"ISO " + metadata.ISO);
+        }
+        appendExp(metadata.Aperture);
+        appendExp(metadata.Shutter);
+        PushInfoRow(rows, L"\U000026A1", L"Exp", exp, metadata.ExposureBias,
+                    metadata.ExposureBias.empty() ? exp : (exp + L" " + metadata.ExposureBias),
+                    TruncateMode::EndEllipsis);
     }
 
     if (!metadata.Lens.empty()) {
-        rows.push_back({L"\U0001F52D", L"Lens", metadata.Lens, L"", metadata.Lens, TruncateMode::EndEllipsis, false});
+        PushInfoRow(rows, L"\U0001F52D", L"Lens", metadata.Lens, {}, metadata.Lens, TruncateMode::EndEllipsis);
     }
 
     if (!metadata.Focal.empty()) {
-        std::wstring focalSub;
+        std::wstring_view focalSub;
         if (!metadata.Focal35mm.empty() && !metadata.Focal.contains(metadata.Focal35mm)) {
             focalSub = metadata.Focal35mm;
         }
-        rows.push_back({L"\U0001F3AF", L"Focal", metadata.Focal, focalSub, L"", TruncateMode::None, false});
+        PushInfoRow(rows, L"\U0001F3AF", L"Focal", metadata.Focal, focalSub);
     }
 
     {
@@ -3061,8 +3381,7 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
             if (metadata.HasEmbeddedColorProfile.has_value()) {
                 colorText += (*metadata.HasEmbeddedColorProfile) ? L" [ICC]" : L" (Untagged)";
             }
-
-            rows.push_back({L"\U0001F3A8", L"Profile", colorText, L"", L"", TruncateMode::None, false});
+            PushInfoRow(rows, L"\U0001F3A8", L"Profile", colorText);
         }
     }
 
@@ -3078,25 +3397,22 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
         }
 
         if (!hdrSummary.empty() || !hdrDetailTooltip.empty()) {
-            rows.push_back({L"\U0001F31F",
-                L"HDR",
-                hdrSummary.empty() ? L"Metadata" : hdrSummary,
-                g_runtime.ShowHdrDetailsExpanded ? L"" : hdrSummaryDetail, 
+            PushInfoRow(rows, L"\U0001F31F", L"HDR",
+                hdrSummary.empty() ? std::wstring_view(L"Metadata") : std::wstring_view(hdrSummary),
+                g_runtime.ShowHdrDetailsExpanded ? std::wstring_view{} : std::wstring_view(hdrSummaryDetail),
                 hdrSummary + (hdrDetailTooltip.empty() ? L"" : L"\n" + hdrDetailTooltip),
-                TruncateMode::EndEllipsis, false});
+                TruncateMode::EndEllipsis);
         }
-        rows.push_back({L"\U0001F9EA",
-            L"HDR Pro",
+        PushInfoRow(rows, L"\U0001F9EA", L"HDR Pro",
             g_runtime.ShowHdrDetailsExpanded ? L"Hide professional details" : L"Show professional details",
             g_runtime.ShowHdrDetailsExpanded ? L"\u25BE" : L"\u25B8",
-            L"",
-            TruncateMode::EndEllipsis, true});
+            {}, TruncateMode::EndEllipsis, true);
 
         if (g_runtime.ShowHdrDetailsExpanded) {
             const auto& displayState = m_compEngine->GetDisplayColorState();
             const int bitDepth = ExtractNominalBitDepth(metadata);
 
-            rows.push_back({L"\U0001F4CC", L"D.Range", BuildDynamicRangeLabel(metadata), L"", L"", TruncateMode::EndEllipsis, false});
+            PushInfoRow(rows, L"\U0001F4CC", L"D.Range", BuildDynamicRangeLabel(metadata), {}, {}, TruncateMode::EndEllipsis);
             if (bitDepth > 0) {
                 wchar_t bitBuf[48];
                 const bool isFloatFormat = (metadata.FormatDetails.find(L"EXR") != std::wstring::npos ||
@@ -3105,45 +3421,45 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
                                             metadata.FormatDetails.find(L"RAW") != std::wstring::npos ||
                                             metadata.FormatDetails.find(L"DDS") != std::wstring::npos);
                 swprintf_s(bitBuf, (metadata.colorInfo.IsSceneLinear() && isFloatFormat) ? L"%d-bit Float" : L"%d-bit", bitDepth);
-                rows.push_back({L"\U0001F522", L"BitDepth", bitBuf, L"", L"", TruncateMode::None, false});
+                PushInfoRow(rows, L"\U0001F522", L"BitDepth", bitBuf);
             }
             const QuickView::TransferFunction effectiveTransfer =
                 metadata.hdrMetadata.transfer != QuickView::TransferFunction::Unknown
                     ? metadata.hdrMetadata.transfer
                     : metadata.colorInfo.transfer;
-            rows.push_back({L"\U0001F4A0", L"Transfer", QuickView::ToString(effectiveTransfer), L"", L"", TruncateMode::None, false});
+            PushInfoRow(rows, L"\U0001F4A0", L"Transfer", QuickView::ToString(effectiveTransfer));
             if (metadata.ColorSpace.empty()) {
                 const wchar_t* primaries = QuickView::ToString(metadata.hdrMetadata.primaries);
                 if (primaries && wcscmp(primaries, L"Unknown") != 0) {
-                    rows.push_back({L"\U0001F308", L"Gamut", primaries, L"", L"", TruncateMode::None, false});
+                    PushInfoRow(rows, L"\U0001F308", L"Gamut", primaries);
                 }
             }
             if (metadata.hdrMetadata.maxCLLNits > 0.0f) {
-                rows.push_back({L"\U00002600", L"MaxCLL", FormatHdrNits(metadata.hdrMetadata.maxCLLNits), L"", L"", TruncateMode::None, false});
+                PushInfoRow(rows, L"\U00002600", L"MaxCLL", FormatHdrNits(metadata.hdrMetadata.maxCLLNits));
             }
             if (metadata.hdrMetadata.maxFALLNits > 0.0f) {
-                rows.push_back({L"\U0001F525", L"MaxFALL", FormatHdrNits(metadata.hdrMetadata.maxFALLNits), L"", L"", TruncateMode::None, false});
+                PushInfoRow(rows, L"\U0001F525", L"MaxFALL", FormatHdrNits(metadata.hdrMetadata.maxFALLNits));
             }
             const std::wstring mastering = BuildMasteringDisplayLabel(metadata.hdrMetadata);
             if (!mastering.empty()) {
-                rows.push_back({L"\U0001F5A5", L"Mastering", mastering, L"", mastering, TruncateMode::EndEllipsis, false});
+                PushInfoRow(rows, L"\U0001F5A5", L"Mastering", mastering, {}, mastering, TruncateMode::EndEllipsis);
             }
-            rows.push_back({L"\U0001F6E0", L"Pipeline", BuildRenderPathLabel(metadata, displayState), L"", L"", TruncateMode::EndEllipsis, false});
+            PushInfoRow(rows, L"\U0001F6E0", L"Pipeline", BuildRenderPathLabel(metadata, displayState), {}, {}, TruncateMode::EndEllipsis);
             if (metadata.MeasuredPeakNits > 0.0f) {
-                rows.push_back({L"\U00002600", L"ImagePeak", FormatHdrNits(metadata.MeasuredPeakNits), L"", L"Max content luminance detected by SIMD scan", TruncateMode::None, false});
+                PushInfoRow(rows, L"\U00002600", L"ImagePeak", FormatHdrNits(metadata.MeasuredPeakNits), {}, L"Max content luminance detected by SIMD scan");
             }
-            rows.push_back({L"\U0001F4A1", L"Display", BuildDisplayHeadroomLabel(metadata, displayState), L"", L"", TruncateMode::EndEllipsis, false});
+            PushInfoRow(rows, L"\U0001F4A1", L"Display", BuildDisplayHeadroomLabel(metadata, displayState), {}, {}, TruncateMode::EndEllipsis);
 
             if (metadata.hdrMetadata.hasGainMap) {
-                rows.push_back({L"\U0001F5BC", L"Base", L"SDR Base Layer", L"", L"", TruncateMode::EndEllipsis, false});
-                rows.push_back({L"\U0001F4C8", L"GainMap", L"Present (ISO 21496-1)", metadata.hdrMetadata.gainMapApplied ? L"Applied" : L"Detected", L"", TruncateMode::EndEllipsis, false});
+                PushInfoRow(rows, L"\U0001F5BC", L"Base", L"SDR Base Layer", {}, {}, TruncateMode::EndEllipsis);
+                PushInfoRow(rows, L"\U0001F4C8", L"GainMap", L"Present (ISO 21496-1)", metadata.hdrMetadata.gainMapApplied ? L"Applied" : L"Detected", {}, TruncateMode::EndEllipsis);
                 const std::wstring gainRatio = BuildGainRatioLabel(metadata.hdrMetadata);
                 if (!gainRatio.empty()) {
-                    rows.push_back({L"\U00002696", L"GainRatio", gainRatio, L"", gainRatio, TruncateMode::EndEllipsis, false});
+                    PushInfoRow(rows, L"\U00002696", L"GainRatio", gainRatio, {}, gainRatio, TruncateMode::EndEllipsis);
                 }
                 const std::wstring gainWeight = BuildGainBlendWeightLabel(metadata.hdrMetadata, displayState);
                 if (!gainWeight.empty()) {
-                    rows.push_back({L"\U0001F500", L"Blend", gainWeight, L"", gainWeight, TruncateMode::EndEllipsis, false});
+                    PushInfoRow(rows, L"\U0001F500", L"Blend", gainWeight, {}, gainWeight, TruncateMode::EndEllipsis);
                 }
             }
         }
@@ -3151,19 +3467,19 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
 
     // Restore Missing EXIF Rows for Info Panel
     if (!metadata.Flash.empty()) {
-        rows.push_back({L"\U0001F4A1", L"Flash", metadata.Flash, L"", L"", TruncateMode::None, false});
+        PushInfoRow(rows, L"\U0001F4A1", L"Flash", metadata.Flash);
     }
     if (!metadata.WhiteBalance.empty()) {
-        rows.push_back({L"\U0001F321", L"W.Bal", metadata.WhiteBalance, L"", L"", TruncateMode::None, false});
+        PushInfoRow(rows, L"\U0001F321", L"W.Bal", metadata.WhiteBalance);
     }
     if (!metadata.MeteringMode.empty()) {
-        rows.push_back({L"\U000025CE", L"Meter", metadata.MeteringMode, L"", L"", TruncateMode::None, false});
+        PushInfoRow(rows, L"\U000025CE", L"Meter", metadata.MeteringMode);
     }
     if (!metadata.ExposureProgram.empty()) {
-        rows.push_back({L"\U0001F4CA", L"Prog", metadata.ExposureProgram, L"", metadata.ExposureProgram, TruncateMode::EndEllipsis, false});
+        PushInfoRow(rows, L"\U0001F4CA", L"Prog", metadata.ExposureProgram, {}, metadata.ExposureProgram, TruncateMode::EndEllipsis);
     }
     if (!metadata.Software.empty()) {
-        rows.push_back({L"\U0001F4BB", L"Program", metadata.Software, L"", metadata.Software, TruncateMode::EndEllipsis, false});
+        PushInfoRow(rows, L"\U0001F4BB", L"Program", metadata.Software, {}, metadata.Software, TruncateMode::EndEllipsis);
     }
 
 	    if (!metadata.Format.empty() || !metadata.FormatDetails.empty()) {
@@ -3186,24 +3502,24 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
 	        }
 
 	        AppendFormatToken(formatText, formatTokens);
-	        rows.push_back({L"\U0001F39E", L"Format", formatText, L"", metadata.FormatDetails, TruncateMode::EndEllipsis, false});
+	        PushInfoRow(rows, L"\U0001F39E", L"Format", formatText, {}, metadata.FormatDetails, TruncateMode::EndEllipsis);
 	    }
 
     // Advanced Metrics at the very bottom
     if (metadata.HasSharpness) {
         wchar_t buf[32]; swprintf_s(buf, L"%.0f", metadata.Sharpness);
-        rows.push_back({L"\U0001F3AF", L"Sharp", buf, L"", L"", TruncateMode::None, false});
+        PushInfoRow(rows, L"\U0001F3AF", L"Sharp", buf);
     }
     if (metadata.HasEntropy) {
         wchar_t buf[32]; swprintf_s(buf, L"%.2f", metadata.Entropy);
-        rows.push_back({L"\U0001F4CA", L"Ent", buf, L"", L"", TruncateMode::None, false});
+        PushInfoRow(rows, L"\U0001F4CA", L"Ent", buf);
     }
     
     // BPP (Bits Per Pixel)
     if (metadata.Width > 0 && metadata.Height > 0 && metadata.FileSize > 0) {
         double bpp = (double)(metadata.FileSize * 8) / ((double)metadata.Width * metadata.Height);
         wchar_t bppBuf[32]; swprintf_s(bppBuf, L"%.2f bpp", bpp);
-        rows.push_back({L"\U0001F4C8", L"BPP", bppBuf, L"", L"", TruncateMode::None, false});
+        PushInfoRow(rows, L"\U0001F4C8", L"BPP", bppBuf);
     }
 
     // Add extra tooltips based on label
@@ -3227,7 +3543,11 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
     
     auto isHdrItem = [](const wchar_t* lbl) {
         if (!lbl) return false;
-        const wchar_t* hdrItems[] = { L"HDR Pro", L"D.Range", L"BitDepth", L"Transfer", L"Gamut", L"MaxCLL", L"MaxFALL", L"Mastering", L"Pipeline", L"ImagePeak", L"Display", L"Base", L"GainMap", L"GainRatio", L"Blend" };
+        static constexpr const wchar_t* hdrItems[] = {
+            L"HDR Pro", L"D.Range", L"BitDepth", L"Transfer", L"Gamut", L"MaxCLL",
+            L"MaxFALL", L"Mastering", L"Pipeline", L"ImagePeak", L"Display",
+            L"Base", L"GainMap", L"GainRatio", L"Blend"
+        };
         for (const auto* h : hdrItems) {
             if (wcscmp(lbl, h) == 0) return true;
         }
@@ -3235,11 +3555,10 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
     };
 
     rows.erase(std::remove_if(rows.begin(), rows.end(), [&](const InfoRow& r) {
-        // Group all HDR technical details under the "HDR" option.
         if (isHdrItem(r.label)) {
-            return wrappedAllowed.find(L",HDR,") == std::wstring::npos;
+            return !HasCsvToken(allowedItems, L"HDR");
         }
-        return wrappedAllowed.find(std::wstring(L",") + r.label + L",") == std::wstring::npos;
+        return !r.label || !HasCsvToken(allowedItems, r.label);
     }), rows.end());
 
     return rows;
@@ -3410,17 +3729,17 @@ namespace {
         std::wstring text = description;
         if (!highMeaning.empty()) {
             text += L"\n";
-            text += AppStrings::HUD_Label_High;
+            text += AppStrings::g.HUD_Label_High;
             text += highMeaning;
         }
         if (!lowMeaning.empty()) {
             text += L"\n";
-            text += AppStrings::HUD_Label_Low;
+            text += AppStrings::g.HUD_Label_Low;
             text += lowMeaning;
         }
         if (!reference.empty()) {
             text += L"\n";
-            text += AppStrings::HUD_Label_Ref;
+            text += AppStrings::g.HUD_Label_Ref;
             text += reference;
         }
         return text;
@@ -3500,14 +3819,41 @@ void UIRenderer::BuildInfoGrid() {
     uint64_t stateHash = 0;
     CombineHash(stateHash, currentZoom);
     CombineHash(stateHash, g_imagePath);
+    CombineHash(stateHash, g_navigator.Index());
+    CombineHash(stateHash, g_navigator.Count());
+    CombineHash(stateHash, g_navigator.HasPairedRaw(FileNavigator::PathToImageID(g_imagePath)));
     CombineHash(stateHash, g_config.InfoPanelFullItemsNormal);
     CombineHash(stateHash, g_config.InfoPanelFullItemsCompare);
     CombineHash(stateHash, g_runtime.ShowCompareInfo);
     CombineHash(stateHash, g_runtime.ShowHdrDetailsExpanded);
+    CombineHash(stateHash, g_currentMetadata.Width);
+    CombineHash(stateHash, g_currentMetadata.Height);
+    CombineHash(stateHash, g_currentMetadata.FileSize);
+    CombineHash(stateHash, g_currentMetadata.Date);
+    CombineHash(stateHash, g_currentMetadata.Make);
+    CombineHash(stateHash, g_currentMetadata.Model);
+    CombineHash(stateHash, g_currentMetadata.Software);
+    CombineHash(stateHash, g_currentMetadata.ColorSpace);
     CombineHash(stateHash, g_currentMetadata.IsFullMetadataLoaded);
     CombineHash(stateHash, g_currentMetadata.HasSharpness);
     CombineHash(stateHash, g_currentMetadata.HasEntropy);
     CombineHash(stateHash, hasHistR);
+    CombineHash(stateHash, g_currentMetadata.HasSr);
+    if (g_currentMetadata.HasSr) {
+        CombineHash(stateHash, g_currentMetadata.SrWidth);
+        CombineHash(stateHash, g_currentMetadata.SrHeight);
+        CombineHash(stateHash, g_currentMetadata.SrScale);
+    }
+    // [Ratings] The background read lands after the panel has already been
+    // built for this photo, so the rating has to take part in the hash --
+    // otherwise the cached rows would never pick the star row up.
+    if (const auto rating = g_ratingStore.TryGet(FileNavigator::PathToImageID(g_imagePath))) {
+        CombineHash(stateHash, rating->stars);
+        CombineHash(stateHash, rating->conflict);
+        CombineHash(stateHash, (int)rating->source);
+    } else {
+        CombineHash(stateHash, -1); // not read yet
+    }
     const auto& editState = GetPaneContext(PaneSlot::Primary).editState;
     CombineHash(stateHash, editState.HasCrop);
     if (editState.HasCrop) {
@@ -3528,7 +3874,7 @@ void UIRenderer::BuildInfoGrid() {
 void UIRenderer::DrawInfoGrid(ID2D1DeviceContext* dc, float startX, float startY, float width, const AdaptiveUiPalette& palette) {
     if (m_infoGrid.empty() || !m_panelFormat) return;
     const float s = GetInfoPanelScale();
-    ComPtr<ID2D1SolidColorBrush> brushMain, brushDim, brushHover;
+    ComPtr<ID2D1SolidColorBrush> brushMain, brushDim, brushHover, brushStarAccent;
     dc->CreateSolidColorBrush(palette.foreground, &brushMain);
     dc->CreateSolidColorBrush(palette.textDim, &brushDim);
     dc->CreateSolidColorBrush(palette.hoverFill, &brushHover);
@@ -3612,7 +3958,31 @@ void UIRenderer::DrawInfoGrid(ID2D1DeviceContext* dc, float startX, float startY
         
         // Draw main value
         D2D1_RECT_F valueRect = D2D1::RectF(valueColStart, y, valueColStart + mainMaxWidth, y + rowH);
-        dc->DrawText(row.displayText.c_str(), (UINT32)row.displayText.length(), m_panelFormat.Get(), valueRect, brushMain.Get());
+        const bool isRatingRow = (row.label && wcscmp(row.label, L"Rating") == 0);
+        if (row.displayText.find(L'\u2605') != std::wstring::npos || isRatingRow) {
+            ComPtr<IDWriteTextLayout> valLayout;
+            if (m_dwriteFactory && m_panelFormat) {
+                m_dwriteFactory->CreateTextLayout(
+                    row.displayText.c_str(), (UINT32)row.displayText.length(),
+                    m_panelFormat.Get(), mainMaxWidth, rowH, &valLayout
+                );
+            }
+            if (valLayout) {
+                if (!brushStarAccent) {
+                    const D2D1_COLOR_F accentClr = QuickView::UI::Theme::GetThemePalette().accentText;
+                    dc->CreateSolidColorBrush(accentClr, &brushStarAccent);
+                }
+                if (brushStarAccent) {
+                    ApplyStarAccent(valLayout.Get(), row.displayText, brushStarAccent.Get());
+                }
+                ID2D1SolidColorBrush* defaultBrush = isRatingRow ? brushDim.Get() : brushMain.Get();
+                dc->DrawTextLayout(D2D1::Point2F(valueRect.left, valueRect.top), valLayout.Get(), defaultBrush);
+            } else {
+                dc->DrawText(row.displayText.c_str(), (UINT32)row.displayText.length(), m_panelFormat.Get(), valueRect, brushMain.Get());
+            }
+        } else {
+            dc->DrawText(row.displayText.c_str(), (UINT32)row.displayText.length(), m_panelFormat.Get(), valueRect, brushMain.Get());
+        }
         
         // Draw sub value (theme-aware dim)
         if (!row.valueSub.empty()) {
@@ -3838,12 +4208,21 @@ void UIRenderer::DrawCompactInfo(ID2D1DeviceContext* dc) {
     float nonTextW = 70.0f * s;
     float panelW = nonTextW + textW;
     float margin = 8.0f * s;
-    float winCtrlW = GetWindowControlsWidth();
+    float minAllowedLeft = margin;
+    float winCtrlW = (g_runtime.InfoPanelAlignY == 0) ? GetWindowControlsWidth() : 0.0f;
     float maxAllowedRight = (float)m_width - winCtrlW - margin;
 
-    // Check if full panel exceeds available length
-    float targetStartX = (g_runtime.InfoPanelAlignX == 0) ? (g_runtime.InfoPanelX * s) : ((float)m_width - panelW - g_runtime.InfoPanelX * s);
-    float availablePanelW = maxAllowedRight - targetStartX;
+    // Determine available horizontal space based on anchor alignment
+    float availablePanelW = 0.0f;
+    if (g_runtime.InfoPanelAlignX == 0) {
+        // Left-aligned: anchor at startX, expand towards the right up to maxAllowedRight
+        float targetStartX = (std::max)(minAllowedLeft, g_runtime.InfoPanelX * s);
+        availablePanelW = (std::max)(0.0f, maxAllowedRight - targetStartX);
+    } else {
+        // Right-aligned: anchor at targetEndX, expand towards the left down to minAllowedLeft
+        float targetEndX = (std::min)(maxAllowedRight, (float)m_width - g_runtime.InfoPanelX * s);
+        availablePanelW = (std::max)(0.0f, targetEndX - minAllowedLeft);
+    }
 
     if (!m_animState.IsAnimated && panelW > availablePanelW && availablePanelW > 0.0f) {
         auto fullFileOpt = FormatLiteField(L"File", g_currentMetadata, g_imagePath, nullptr, s, this, 0.0f);
@@ -3882,8 +4261,7 @@ void UIRenderer::DrawCompactInfo(ID2D1DeviceContext* dc) {
         startY = (float)m_height - panelH - g_runtime.InfoPanelY * s;
     }
     
-    margin = 8.0f * s;
-    startX = std::clamp(startX, margin, (std::max)(margin, (float)m_width - panelW - margin));
+    startX = std::clamp(startX, minAllowedLeft, (std::max)(minAllowedLeft, maxAllowedRight - panelW));
     startY = std::clamp(startY, topBoundary + margin, (std::max)(topBoundary + margin, (float)m_height - panelH - margin));
     
     // Layout and Geometry
@@ -3980,7 +4358,26 @@ void UIRenderer::DrawCompactInfo(ID2D1DeviceContext* dc) {
     
     // Text drawing
     D2D1_RECT_F textRect = D2D1::RectF(textLeft, startY + paddingTop, textRight, startY + paddingTop + itemHeight);
-    dc->DrawText(info.c_str(), (UINT32)info.length(), m_panelFormat.Get(), textRect, brushText.Get());
+    if (info.find(L'\u2605') != std::wstring::npos) {
+        ComPtr<IDWriteTextLayout> infoLayout;
+        if (m_dwriteFactory && m_panelFormat) {
+            m_dwriteFactory->CreateTextLayout(
+                info.c_str(), (UINT32)info.length(),
+                m_panelFormat.Get(), textRight - textLeft, itemHeight, &infoLayout
+            );
+        }
+        if (infoLayout) {
+            ComPtr<ID2D1SolidColorBrush> starAccentBrush;
+            D2D1_COLOR_F accentClr = QuickView::UI::Theme::GetThemePalette().accentText;
+            dc->CreateSolidColorBrush(accentClr, &starAccentBrush);
+            ApplyStarAccent(infoLayout.Get(), info, starAccentBrush.Get());
+            dc->DrawTextLayout(D2D1::Point2F(textRect.left, textRect.top), infoLayout.Get(), brushText.Get());
+        } else {
+            dc->DrawText(info.c_str(), (UINT32)info.length(), m_panelFormat.Get(), textRect, brushText.Get());
+        }
+    } else {
+        dc->DrawText(info.c_str(), (UINT32)info.length(), m_panelFormat.Get(), textRect, brushText.Get());
+    }
     
     // Draw expand button "+"
     dc->DrawText(L"+", 1, m_panelFormat.Get(), D2D1::RectF(m_panelToggleRect.left + 4.0f * s, m_panelToggleRect.top, m_panelToggleRect.right, m_panelToggleRect.bottom), brushYellow.Get());
@@ -4143,10 +4540,8 @@ UIRenderer::AdaptiveUiPalette UIRenderer::BuildAdaptivePalette(float luminance, 
         D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f),
         D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f),
         blend);
-    palette.accent = LerpColor(
-        D2D1::ColorF(0.25f, 0.68f, 1.0f, 0.98f),
-        D2D1::ColorF(0.12f, 0.36f, 0.70f, 0.96f),
-        blend);
+    const auto& tp = QuickView::UI::Theme::GetThemePalette();
+    palette.accent = tp.isLight ? tp.accentFill : tp.accentText;
     palette.success = LerpColor(
         D2D1::ColorF(0.20f, 0.90f, 0.40f, 1.00f),
         D2D1::ColorF(0.02f, 0.45f, 0.15f, 0.98f),
@@ -4211,7 +4606,9 @@ void UIRenderer::DrawInfoPanel(ID2D1DeviceContext* dc) {
     }
     
     float margin = 8.0f * s;
-    startX = std::clamp(startX, margin, (std::max)(margin, (float)m_width - width - margin));
+    float winCtrlW = (g_runtime.InfoPanelAlignY == 0) ? GetWindowControlsWidth() : 0.0f;
+    float maxAllowedRight = (float)m_width - winCtrlW - margin;
+    startX = std::clamp(startX, margin, (std::max)(margin, maxAllowedRight - width));
     startY = std::clamp(startY, topBoundary + margin, (std::max)(topBoundary + margin, (float)m_height - height - margin));
     
     const std::wstring& allowedItems = g_runtime.ShowCompareInfo ? g_config.InfoPanelFullItemsCompare : g_config.InfoPanelFullItemsNormal;
@@ -4531,46 +4928,91 @@ void UIRenderer::DrawComparePaneIndicator(ID2D1DeviceContext* dc, HWND hwnd) {
     bool isWipe = false;
     if (!GetCompareIndicatorState(pane, splitRatio, isWipe)) return;
 
-    if (splitRatio <= 0.05f || splitRatio >= 0.95f) splitRatio = 0.5f;
-    const float s = m_uiScale;
-    const float thickness = 2.0f * s;
-    const float inset = thickness * 0.5f;
     if (m_width < 20.0f || m_height < 20.0f) return;
 
+    const float s = m_uiScale;
     float padX = 0.0f;
     float padY = 0.0f;
     GetMaximizedWindowPaddings(hwnd, m_isFullscreen, padX, padY);
 
-    const float drawWidth = m_width - padX * 2.0f;
-    const float drawHeight = m_height - padY * 2.0f;
-    const float splitX = isWipe ? (padX + drawWidth * splitRatio) : (padX + drawWidth * 0.5f);
+    const float drawWidth = (float)m_width - padX * 2.0f;
+    const float drawHeight = (float)m_height - padY * 2.0f;
+    const auto insets = g_gallery.GetPinnedViewportInsets((float)m_height);
+    const float effTop = (std::max)(padY, insets.top);
+    const float effBottom = (std::min)(padY + drawHeight, (float)m_height - insets.bottom);
+    const float effHeight = effBottom - effTop;
+    if (drawWidth < 40.0f || effHeight < 40.0f) return;
 
-    D2D1_COLOR_F accentClr = D2D1::ColorF(g_config.ThemeCustomAccentR, g_config.ThemeCustomAccentG, g_config.ThemeCustomAccentB, 1.0f);
+    const float margin = (std::min)(5.0f * s, (std::min)(drawWidth, effHeight) * 0.1f);
+    const float thickness = 3.0f * s;
+    const float armLen = (std::min)(11.0f * s, (std::min)(drawWidth, effHeight) * 0.25f);
+
+    const bool hasRoundCorner = (!m_isFullscreen && !IsZoomed(hwnd) && g_config.RoundedCorners);
+    const float cornerR = (std::min)(hasRoundCorner ? (5.0f * s) : (3.0f * s), armLen * 0.6f);
+
+    D2D1_COLOR_F accentClr = QuickView::UI::Theme::GetThemePalette().accentFill;
     ComPtr<ID2D1SolidColorBrush> brush;
     dc->CreateSolidColorBrush(accentClr, &brush);
     if (!brush) return;
 
-    bool hasRoundCorner = (!m_isFullscreen && !IsZoomed(hwnd) && g_config.RoundedCorners);
-    float cornerR = hasRoundCorner ? (8.0f * s) : 0.0f;
+    ComPtr<ID2D1Factory> factory;
+    dc->GetFactory(&factory);
+    if (!factory) return;
 
-    D2D1_RECT_F fullRect = D2D1::RectF(padX + inset, padY + inset, padX + drawWidth - inset, padY + drawHeight - inset);
+    if (!m_roundStrokeStyle) {
+        D2D1_STROKE_STYLE_PROPERTIES strokeProps = D2D1::StrokeStyleProperties(
+            D2D1_CAP_STYLE_ROUND,
+            D2D1_CAP_STYLE_ROUND,
+            D2D1_CAP_STYLE_ROUND,
+            D2D1_LINE_JOIN_ROUND);
+        factory->CreateStrokeStyle(strokeProps, nullptr, 0, &m_roundStrokeStyle);
+    }
 
-    D2D1_RECT_F clipRect{};
+    auto drawCornerBracket = [&](float x0, float y0, float dirX, float dirY) {
+        ComPtr<ID2D1PathGeometry> geo;
+        if (FAILED(factory->CreatePathGeometry(&geo)) || !geo) return;
+        ComPtr<ID2D1GeometrySink> sink;
+        if (FAILED(geo->Open(&sink)) || !sink) return;
+
+        const D2D1_POINT_2F pStart = D2D1::Point2F(x0 + dirX * armLen, y0);
+        const D2D1_POINT_2F pArcStart = D2D1::Point2F(x0 + dirX * cornerR, y0);
+        const D2D1_POINT_2F pArcEnd = D2D1::Point2F(x0, y0 + dirY * cornerR);
+        const D2D1_POINT_2F pEnd = D2D1::Point2F(x0, y0 + dirY * armLen);
+
+        const D2D1_SWEEP_DIRECTION sweep = (dirX * dirY > 0.0f)
+            ? D2D1_SWEEP_DIRECTION_COUNTER_CLOCKWISE
+            : D2D1_SWEEP_DIRECTION_CLOCKWISE;
+
+        sink->BeginFigure(pStart, D2D1_FIGURE_BEGIN_HOLLOW);
+        sink->AddLine(pArcStart);
+        sink->AddArc(D2D1::ArcSegment(
+            pArcEnd,
+            D2D1::SizeF(cornerR, cornerR),
+            0.0f,
+            sweep,
+            D2D1_ARC_SIZE_SMALL));
+        sink->AddLine(pEnd);
+        sink->EndFigure(D2D1_FIGURE_END_OPEN);
+        if (FAILED(sink->Close())) return;
+
+        dc->DrawGeometry(geo.Get(), brush.Get(), thickness, m_roundStrokeStyle.Get());
+    };
+
+    const float topY = effTop + margin;
+    const float botY = effBottom - margin;
+
     if (pane == 0) {
-        clipRect = D2D1::RectF(padX, padY, splitX + inset, padY + drawHeight);
+        const float leftX = padX + margin;
+        drawCornerBracket(leftX, topY, 1.0f, 1.0f);   // Top-left inset corner
+        drawCornerBracket(leftX, botY, 1.0f, -1.0f);  // Bottom-left inset corner
     } else {
-        clipRect = D2D1::RectF(splitX - inset, padY, padX + drawWidth, padY + drawHeight);
+        const float rightX = padX + drawWidth - margin;
+        const bool controlsVisible = (m_showControls || m_winCtrlHover != -1);
+        if (!controlsVisible) {
+            drawCornerBracket(rightX, topY, -1.0f, 1.0f); // Top-right inset corner (hidden when WindowControls pill is shown)
+        }
+        drawCornerBracket(rightX, botY, -1.0f, -1.0f);     // Bottom-right inset corner
     }
-
-    if (clipRect.right <= clipRect.left || clipRect.bottom <= clipRect.top) return;
-
-    dc->PushAxisAlignedClip(clipRect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-    if (cornerR > 0.0f) {
-        dc->DrawRoundedRectangle(D2D1::RoundedRect(fullRect, cornerR, cornerR), brush.Get(), thickness);
-    } else {
-        dc->DrawRectangle(fullRect, brush.Get(), thickness);
-    }
-    dc->PopAxisAlignedClip();
 }
 
 namespace {
@@ -4733,7 +5175,9 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
                 if (valOpt.has_value()) {
                     bool win = false;
                     if (itemKey == L"Size") {
-                        win = (m.Width * m.Height) > (other.Width * other.Height);
+                        UINT64 myArea = (m.HasSr && m.SrWidth > 0) ? ((UINT64)m.SrWidth * m.SrHeight) : ((UINT64)m.Width * m.Height);
+                        UINT64 otherArea = (other.HasSr && other.SrWidth > 0) ? ((UINT64)other.SrWidth * other.SrHeight) : ((UINT64)other.Width * other.Height);
+                        win = myArea > otherArea;
                     }
                     else if (itemKey == L"Disk") {
                         win = m.FileSize > other.FileSize;
@@ -4743,6 +5187,17 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
                     }
                     else if (itemKey == L"Ent") {
                         win = m.HasEntropy && other.HasEntropy && (m.Entropy > other.Entropy);
+                    }
+                    else if (itemKey == L"Rating") {
+                        auto getStars = [](const std::wstring& p, const CImageLoader::ImageMetadata& meta) {
+                            const std::wstring realPath = p.empty() ? meta.SourcePath : p;
+                            if (realPath.empty()) return 0;
+                            const auto r = g_ratingStore.TryGet(FileNavigator::PathToImageID(realPath));
+                            return r ? r->stars : 0;
+                        };
+                        int myStars = getStars(path, m);
+                        int otherStars = getStars(other.SourcePath, other);
+                        win = (myStars > otherStars && myStars > 0);
                     }
                     v.push_back({ L"", *valOpt, win });
                 }
@@ -4930,7 +5385,26 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
                 D2D1_RECT_F r = D2D1::RectF(currentX, y + paddingTop, currentX + tw, y + paddingTop + itemHeight);
                 ID2D1SolidColorBrush* b = m.isWinner ? winBrush : textBrush;
                 
-                dc->DrawText(m.val.c_str(), (UINT32)m.val.length(), m_panelFormat.Get(), r, b);
+                if (m.val.find(L'\u2605') != std::wstring::npos) {
+                    ComPtr<IDWriteTextLayout> metricLayout;
+                    if (m_dwriteFactory && m_panelFormat) {
+                        m_dwriteFactory->CreateTextLayout(
+                            m.val.c_str(), (UINT32)m.val.length(),
+                            m_panelFormat.Get(), tw, itemHeight, &metricLayout
+                        );
+                    }
+                    if (metricLayout) {
+                        ComPtr<ID2D1SolidColorBrush> starAccentBrush;
+                        D2D1_COLOR_F accentClr = QuickView::UI::Theme::GetThemePalette().accentText;
+                        dc->CreateSolidColorBrush(accentClr, &starAccentBrush);
+                        ApplyStarAccent(metricLayout.Get(), m.val, starAccentBrush.Get());
+                        dc->DrawTextLayout(D2D1::Point2F(r.left, r.top), metricLayout.Get(), b);
+                    } else {
+                        dc->DrawText(m.val.c_str(), (UINT32)m.val.length(), m_panelFormat.Get(), r, b);
+                    }
+                } else {
+                    dc->DrawText(m.val.c_str(), (UINT32)m.val.length(), m_panelFormat.Get(), r, b);
+                }
                 currentX += tw;
 
                 if (i < metrics.size() - 1) {
@@ -4985,7 +5459,33 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
     CombineHash(stateHash, rightMeta.HasSharpness);
     CombineHash(stateHash, leftMeta.HasEntropy);
     CombineHash(stateHash, rightMeta.HasEntropy);
+    CombineHash(stateHash, leftMeta.HasSr);
+    if (leftMeta.HasSr) {
+        CombineHash(stateHash, leftMeta.SrWidth);
+        CombineHash(stateHash, leftMeta.SrHeight);
+        CombineHash(stateHash, leftMeta.SrScale);
+    }
+    CombineHash(stateHash, rightMeta.HasSr);
+    if (rightMeta.HasSr) {
+        CombineHash(stateHash, rightMeta.SrWidth);
+        CombineHash(stateHash, rightMeta.SrHeight);
+        CombineHash(stateHash, rightMeta.SrScale);
+    }
     CombineHash(stateHash, g_runtime.ShowHdrDetailsExpanded);
+    if (const auto r = g_ratingStore.TryGet(FileNavigator::PathToImageID(leftMeta.SourcePath))) {
+        CombineHash(stateHash, r->stars);
+        CombineHash(stateHash, r->conflict);
+        CombineHash(stateHash, (int)r->source);
+    } else {
+        CombineHash(stateHash, -1);
+    }
+    if (const auto r = g_ratingStore.TryGet(FileNavigator::PathToImageID(rightMeta.SourcePath))) {
+        CombineHash(stateHash, r->stars);
+        CombineHash(stateHash, r->conflict);
+        CombineHash(stateHash, (int)r->source);
+    } else {
+        CombineHash(stateHash, -1);
+    }
     
     if (m_compareLeftRows.empty() || m_lastCompareStateHash != stateHash) {
         
@@ -5068,16 +5568,16 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
 	    if (hudMode == 0) {
 	        // Lite Mode
 	        hudGroups = {
-	            { L"LITE MODE", { L"File", L"RAW", L"Size", L"Disk", L"Sharp", L"Ent", L"BPP", L"Date", L"HDR" } }
+	            { L"LITE MODE", { L"File", L"RAW", L"Rating", L"Size", L"Disk", L"Sharp", L"Ent", L"BPP", L"Date", L"HDR" } }
 	        };
 	    } else {
 	        hudGroups = {
-	            { AppStrings::HUD_Group_Physical, { L"File", L"RAW", L"Size", L"Disk", L"Date", L"Format" } },
-	            { AppStrings::HUD_Group_Scientific, { L"Sharp", L"Ent", L"BPP" } }
+	            { AppStrings::g.HUD_Group_Physical, { L"File", L"RAW", L"Rating", L"Size", L"Disk", L"Date", L"Format" } },
+	            { AppStrings::g.HUD_Group_Scientific, { L"Sharp", L"Ent", L"BPP" } }
 	        };
 	        if (hudMode == 2) {
 	            // Full mode includes optics plus richer encoding/color information.
-	            hudGroups.push_back({ AppStrings::HUD_Group_Encoding, { L"Camera", L"Exp", L"Lens", L"Focal", L"Profile", L"Flash", L"W.Bal", L"Meter", L"Prog", L"Program" } });
+	            hudGroups.push_back({ AppStrings::g.HUD_Group_Encoding, { L"Camera", L"Exp", L"Lens", L"Focal", L"Profile", L"Flash", L"W.Bal", L"Meter", L"Prog", L"Program" } });
 	            hudGroups.push_back({ L"HDR & GainMap", { L"HDR Pro", L"D.Range", L"BitDepth", L"Transfer", L"Gamut", L"MaxCLL", L"MaxFALL", L"Mastering", L"Pipeline", L"ImagePeak", L"Display", L"Base", L"GainMap", L"GainRatio", L"Blend" } });
 	        }
 	    }
@@ -5158,9 +5658,10 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
     float hudLuma = IsLightThemeActive() ? 1.0f : 0.0f;
     const AdaptiveUiPalette basePalette = BuildAdaptivePalette(hudLuma, nullptr);
 
+    const auto& tp = QuickView::UI::Theme::GetThemePalette();
     ComPtr<ID2D1SolidColorBrush> brushBg, brushBorder, brushText, brushLabel, brushGood, brushBad, brushWarn, brushWinner;
     dc->CreateSolidColorBrush(D2D1::ColorF(0.005f, 0.005f, 0.008f, g_config.GlassPanelsOpacity / 100.0f), &brushBg); // [HUD Adjust] Apply User Alpha
-    dc->CreateSolidColorBrush(D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.6f), &brushBorder);
+    dc->CreateSolidColorBrush(D2D1::ColorF(tp.accentText.r, tp.accentText.g, tp.accentText.b, 0.55f), &brushBorder);
     dc->CreateSolidColorBrush(basePalette.foreground, &brushText);
     dc->CreateSolidColorBrush(basePalette.textDim, &brushLabel);
     dc->CreateSolidColorBrush(basePalette.success, &brushGood);
@@ -5344,6 +5845,16 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
                             UINT64 rSize = (UINT64)rightMeta.Width * rightMeta.Height;
                             if (isLeft && lSize > rSize) winnerMark = L" ↑";
                             if (!isLeft && rSize > lSize) winnerMark = L" ↑";
+                        } else if (label == L"Rating") {
+                            auto getStars = [](const std::wstring& p) {
+                                if (p.empty()) return 0;
+                                const auto r = g_ratingStore.TryGet(FileNavigator::PathToImageID(p));
+                                return r ? r->stars : 0;
+                            };
+                            int lStars = getStars(leftMeta.SourcePath);
+                            int rStars = getStars(rightMeta.SourcePath);
+                            if (isLeft && lStars > rStars) winnerMark = L" ↑";
+                            if (!isLeft && rStars > lStars) winnerMark = L" ↑";
                         } else {
 	                            if (isLeft && IsBetter(label, GetHudRowText(lRow), GetHudRowText(rRow))) winnerMark = L" ↑";
 	                            if (!isLeft && IsBetter(label, GetHudRowText(rRow), GetHudRowText(lRow))) winnerMark = L" ↑";
@@ -5352,15 +5863,28 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
 	                }
 
 		                std::wstring originalVal = GetHudRowText(row);
-		                if (label == L"File") {
-		                    std::wstring fullPath = isLeft ? leftMeta.SourcePath : rightMeta.SourcePath;
-		                    size_t lastSlash = fullPath.find_last_of(L"\\/");
-		                    originalVal = (lastSlash != std::wstring::npos) ? fullPath.substr(lastSlash + 1) : fullPath;
-		                }
-
+		                std::wstring val;
 		                float arrowWidth = winnerMark.empty() ? 0.0f : MeasureTextWidth(winnerMark, m_panelFormat.Get());
 		                float textMaxW = winnerMark.empty() ? w : (std::max)(0.0f, w - arrowWidth - 2.0f * s);
-		                std::wstring val = MakeMiddleEllipsis(textMaxW, originalVal, m_panelFormat.Get());
+
+		                if (label == L"File") {
+		                    const auto& meta = isLeft ? leftMeta : rightMeta;
+		                    std::wstring badge = L"";
+		                    if (meta.HasSr && meta.SrScale > 1.0f) {
+		                        wchar_t badgeBuf[16];
+		                        swprintf_s(badgeBuf, L" \u2605%.0fx", meta.SrScale);
+		                        badge = badgeBuf;
+		                    }
+		                    std::wstring fullPath = isLeft ? leftMeta.SourcePath : rightMeta.SourcePath;
+		                    size_t lastSlash = fullPath.find_last_of(L"\\/");
+		                    std::wstring baseName = (lastSlash != std::wstring::npos) ? fullPath.substr(lastSlash + 1) : fullPath;
+		                    originalVal = baseName + badge;
+		                    float badgeW = badge.empty() ? 0.0f : MeasureTextWidth(badge, m_panelFormat.Get());
+		                    float fnameMaxW = (std::max)(0.0f, textMaxW - badgeW);
+		                    val = MakeMiddleEllipsis(fnameMaxW, baseName, m_panelFormat.Get()) + badge;
+		                } else {
+		                    val = MakeMiddleEllipsis(textMaxW, originalVal, m_panelFormat.Get());
+		                }
 		                
 	                D2D1_RECT_F rect = D2D1::RectF(x, y, x + w, y + rowH);
 	                
@@ -5386,6 +5910,37 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
                 // Draw logic with separate arrow color
 	                m_panelFormat->SetTextAlignment(isLeft ? DWRITE_TEXT_ALIGNMENT_TRAILING : DWRITE_TEXT_ALIGNMENT_LEADING);
 	                
+	                if (val.find(L'\u2605') != std::wstring::npos || label == L"Rating") {
+	                    float valWidth = MeasureTextWidth(val, m_panelFormat.Get());
+	                    D2D1_RECT_F valRect = rect;
+	                    if (!winnerMark.empty()) {
+	                        if (isLeft) valRect.right -= arrowWidth;
+	                        else valRect.right = (std::min)(rect.right, rect.left + valWidth);
+	                    }
+	                    float layoutW = (std::max)(0.0f, valRect.right - valRect.left);
+	                    ComPtr<IDWriteTextLayout> valLayout;
+	                    if (m_dwriteFactory && m_panelFormat && layoutW > 0.0f) {
+	                        m_dwriteFactory->CreateTextLayout(val.c_str(), (UINT32)val.length(), m_panelFormat.Get(), layoutW, rowH, &valLayout);
+	                    }
+	                    if (valLayout) {
+	                        valLayout->SetTextAlignment(isLeft ? DWRITE_TEXT_ALIGNMENT_TRAILING : DWRITE_TEXT_ALIGNMENT_LEADING);
+	                        ComPtr<ID2D1SolidColorBrush> starAccentBrush;
+	                        D2D1_COLOR_F accentClr = QuickView::UI::Theme::GetThemePalette().accentText;
+	                        dc->CreateSolidColorBrush(accentClr, &starAccentBrush);
+	                        if (starAccentBrush) {
+	                            ApplyStarAccent(valLayout.Get(), val, starAccentBrush.Get());
+	                        }
+	                        dc->DrawTextLayout(D2D1::Point2F(valRect.left, valRect.top), valLayout.Get(), brush);
+	                        if (!winnerMark.empty()) {
+	                            D2D1_RECT_F arrowRect = rect;
+	                            if (isLeft) arrowRect.left = rect.right - arrowWidth;
+	                            else arrowRect.left = valRect.right;
+	                            dc->DrawText(winnerMark.c_str(), (UINT32)winnerMark.length(), m_panelFormat.Get(), arrowRect, winBrush);
+	                        }
+	                        return;
+	                    }
+	                }
+
 	                if (!winnerMark.empty()) {
 	                    float valWidth = MeasureTextWidth(val, m_panelFormat.Get());
 	                    
@@ -5482,24 +6037,24 @@ static void GetCleanButtonText(const wchar_t *src, wchar_t *dest,
 }
 
 static const wchar_t *GetWelcomeSubtitle() {
-  if (AppStrings::Context_OpenFolder) {
-    if (wcscmp(AppStrings::Context_OpenFolder, L"打开文件夹") == 0) {
+  if (AppStrings::g.Context_OpenFolder) {
+    if (wcscmp(AppStrings::g.Context_OpenFolder, L"打开文件夹") == 0) {
       return L"极致性能的现代图像浏览器";
     }
-    if (wcscmp(AppStrings::Context_OpenFolder, L"開啟資料夾") == 0) {
+    if (wcscmp(AppStrings::g.Context_OpenFolder, L"開啟資料夾") == 0) {
       return L"極致性能的現代圖像瀏覽器";
     }
-    if (wcscmp(AppStrings::Context_OpenFolder, L"フォルダーを開く") == 0) {
+    if (wcscmp(AppStrings::g.Context_OpenFolder, L"フォルダーを開く") == 0) {
       return L"極限性能の現代的な画像ビューア";
     }
-    if (wcscmp(AppStrings::Context_OpenFolder, L"Открыть папку") == 0) {
+    if (wcscmp(AppStrings::g.Context_OpenFolder, L"Открыть папку") == 0) {
       return L"Современный просмотрщик изображений с экстремальной "
              L"производительностью";
     }
-    if (wcscmp(AppStrings::Context_OpenFolder, L"Ordner öffnen") == 0) {
+    if (wcscmp(AppStrings::g.Context_OpenFolder, L"Ordner öffnen") == 0) {
       return L"Moderner Bildbetrachter mit extremer Leistung";
     }
-    if (wcscmp(AppStrings::Context_OpenFolder, L"Abrir carpeta") == 0) {
+    if (wcscmp(AppStrings::g.Context_OpenFolder, L"Abrir carpeta") == 0) {
       return L"Visor de imágenes moderno con rendimiento extremo";
     }
   }
@@ -5510,6 +6065,9 @@ void UIRenderer::DrawWelcomeScreen(ID2D1DeviceContext *dc) {
   // Ensure DWrite text formats are initialized with current UI scale
   EnsureTextFormats();
 
+  const auto& tp = QuickView::UI::Theme::GetThemePalette();
+  const D2D1_COLOR_F af = tp.accentFill;
+
   // 1. Draw Smooth Linear Gradient Window Background (No Color Banding)
   {
     ComPtr<ID2D1LinearGradientBrush> bgBrush;
@@ -5517,21 +6075,17 @@ void UIRenderer::DrawWelcomeScreen(ID2D1DeviceContext *dc) {
     std::array<D2D1_GRADIENT_STOP, 3> bgStops;
     if (IsLightThemeActive()) {
       bgStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(0.98f, 0.98f, 0.99f, 1.0f)};
-      bgStops[1] = D2D1_GRADIENT_STOP{0.75f, D2D1::ColorF(0.95f, 0.96f, 0.98f, 1.0f)};
-      bgStops[2] = D2D1_GRADIENT_STOP{1.0f, D2D1::ColorF(0.92f, 0.94f, 0.97f, 1.0f)};
+      bgStops[1] = D2D1_GRADIENT_STOP{0.72f, D2D1::ColorF(0.955f + af.r * 0.01f, 0.960f + af.g * 0.01f, 0.975f + af.b * 0.01f, 1.0f)};
+      bgStops[2] = D2D1_GRADIENT_STOP{1.0f, D2D1::ColorF(0.92f + af.r * 0.03f, 0.93f + af.g * 0.03f, 0.95f + af.b * 0.03f, 1.0f)};
     } else {
-      // Smooth space blue-black gradient
-      bgStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(0.006f, 0.006f, 0.008f,
-                                       1.0f)}; // Top: pitch black space
-      bgStops[1] = D2D1_GRADIENT_STOP{0.75f, D2D1::ColorF(0.015f, 0.02f, 0.035f,
-                                        1.0f)}; // Mid: fading space blue
-      bgStops[2] = D2D1_GRADIENT_STOP{1.0f,
-                    D2D1::ColorF(0.03f, 0.06f, 0.12f,
-                                 1.0f)}; // Bottom: ambient atmosphere blue
+      // Deep space void softly tinted by subtle ambient accent atmosphere
+      bgStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(0.006f, 0.006f, 0.008f, 1.0f)};
+      bgStops[1] = D2D1_GRADIENT_STOP{0.72f, D2D1::ColorF(0.008f + af.r * 0.014f, 0.009f + af.g * 0.014f, 0.012f + af.b * 0.014f, 1.0f)};
+      bgStops[2] = D2D1_GRADIENT_STOP{1.0f, D2D1::ColorF(0.012f + af.r * 0.060f, 0.014f + af.g * 0.060f, 0.018f + af.b * 0.060f, 1.0f)};
     }
 
     if (SUCCEEDED(
-            dc->CreateGradientStopCollection(bgStops.data(), static_cast<UINT32>(bgStops.size()), &bgStopCollection))) {
+            dc->CreateGradientStopCollection(bgStops.data(), static_cast<UINT32>(bgStops.size()), D2D1_GAMMA_1_0, D2D1_EXTEND_MODE_CLAMP, &bgStopCollection))) {
       if (SUCCEEDED(dc->CreateLinearGradientBrush(
               D2D1::LinearGradientBrushProperties(
                   D2D1::Point2F(m_width / 2.0f, 0.0f),
@@ -5543,42 +6097,53 @@ void UIRenderer::DrawWelcomeScreen(ID2D1DeviceContext *dc) {
     }
   }
 
-  // 2. Draw Space Station Horizon Glow (Cyberpunk/Fluent style glowing Bezier
-  // horizon)
+  // 2. Draw Space Station Horizon Glow (Smooth Gaussian falloff with linear gamma blending)
   {
     float w = (float)m_width;
     float h = (float)m_height;
     float s = m_uiScale;
 
-    // --- 1. Atmospheric Glow Brush (Soft radial gradient to fill the
-    // crescents) ---
-    float curvePeakY =
-        h - 57.5f * s; // The actual physical peak of the bezier curve
+    float curvePeakY = h - 57.5f * s;
+    const D2D1_COLOR_F skyGlowBase = tp.isLight ? tp.accentFill : tp.accentText;
+    const D2D1_COLOR_F horizonGlowColor = tp.isLight ? tp.accentFill : tp.accentGlow;
 
-    ComPtr<ID2D1RadialGradientBrush> glowBrush;
-    ComPtr<ID2D1GradientStopCollection> glowStopsCol;
-    std::array<D2D1_GRADIENT_STOP, 3> glowStops;
-
-    if (IsLightThemeActive()) {
-      glowStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(0.6f, 0.85f, 1.0f, 1.0f)};
-      glowStops[1] = D2D1_GRADIENT_STOP{0.2f, D2D1::ColorF(0.6f, 0.85f, 1.0f, 0.5f)};
-      glowStops[2] = D2D1_GRADIENT_STOP{1.0f, D2D1::ColorF(0.6f, 0.85f, 1.0f, 0.0f)};
-    } else {
-      // Paler cyan core, not too blue
-      glowStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(0.4f, 0.9f, 1.0f, 0.95f)}; 
-      // Strengthened core density (+20%)
-      glowStops[1] = D2D1_GRADIENT_STOP{0.20f, D2D1::ColorF(0.2f, 0.7f, 0.95f, 0.35f)}; 
-      // Long, sparsely foggy tail fading to transparent
-      glowStops[2] = D2D1_GRADIENT_STOP{1.0f, D2D1::ColorF(0.1f, 0.4f, 0.7f, 0.0f)}; 
+    // Smooth 6-stop Gaussian-like falloff in linear light (D2D1_GAMMA_1_0) to eliminate banding & edge cutoff
+    ComPtr<ID2D1RadialGradientBrush> upGlowBrush;
+    {
+      ComPtr<ID2D1GradientStopCollection> upStopsCol;
+      const float peakA = tp.isLight ? 0.24f : 0.34f;
+      const std::array<D2D1_GRADIENT_STOP, 6> upStops = {{
+          { 0.00f, D2D1::ColorF(skyGlowBase.r, skyGlowBase.g, skyGlowBase.b, peakA) },
+          { 0.16f, D2D1::ColorF(horizonGlowColor.r, horizonGlowColor.g, horizonGlowColor.b, peakA * 0.62f) },
+          { 0.34f, D2D1::ColorF(af.r, af.g, af.b, peakA * 0.28f) },
+          { 0.56f, D2D1::ColorF(af.r, af.g, af.b, peakA * 0.10f) },
+          { 0.78f, D2D1::ColorF(af.r, af.g, af.b, peakA * 0.025f) },
+          { 1.00f, D2D1::ColorF(af.r, af.g, af.b, 0.0f) }
+      }};
+      if (SUCCEEDED(dc->CreateGradientStopCollection(upStops.data(), static_cast<UINT32>(upStops.size()), D2D1_GAMMA_1_0, D2D1_EXTEND_MODE_CLAMP, &upStopsCol))) {
+        dc->CreateRadialGradientBrush(
+            D2D1::RadialGradientBrushProperties(D2D1::Point2F(w * 0.5f, curvePeakY), D2D1::Point2F(0.0f, 0.0f), w * 0.50f, 68.0f * s),
+            upStopsCol.Get(), &upGlowBrush);
+      }
     }
 
-    if (SUCCEEDED(dc->CreateGradientStopCollection(glowStops.data(), static_cast<UINT32>(glowStops.size()), &glowStopsCol))) {
-      // Increased vertical thickness by exactly 20% (ry = 42s)
-      dc->CreateRadialGradientBrush(
-          D2D1::RadialGradientBrushProperties(D2D1::Point2F(w / 2.0f, curvePeakY),
-                                              D2D1::Point2F(0.0f, 0.0f), 
-                                              w / 2.0f, 42.0f * s),
-          glowStopsCol.Get(), &glowBrush);
+    ComPtr<ID2D1RadialGradientBrush> downGlowBrush;
+    {
+      ComPtr<ID2D1GradientStopCollection> downStopsCol;
+      const float peakA = tp.isLight ? 0.48f : 0.65f;
+      const std::array<D2D1_GRADIENT_STOP, 6> downStops = {{
+          { 0.00f, D2D1::ColorF(skyGlowBase.r, skyGlowBase.g, skyGlowBase.b, peakA) },
+          { 0.16f, D2D1::ColorF(horizonGlowColor.r, horizonGlowColor.g, horizonGlowColor.b, peakA * 0.58f) },
+          { 0.34f, D2D1::ColorF(af.r, af.g, af.b, peakA * 0.26f) },
+          { 0.56f, D2D1::ColorF(af.r, af.g, af.b, peakA * 0.09f) },
+          { 0.78f, D2D1::ColorF(af.r, af.g, af.b, peakA * 0.02f) },
+          { 1.00f, D2D1::ColorF(af.r, af.g, af.b, 0.0f) }
+      }};
+      if (SUCCEEDED(dc->CreateGradientStopCollection(downStops.data(), static_cast<UINT32>(downStops.size()), D2D1_GAMMA_1_0, D2D1_EXTEND_MODE_CLAMP, &downStopsCol))) {
+        dc->CreateRadialGradientBrush(
+            D2D1::RadialGradientBrushProperties(D2D1::Point2F(w * 0.5f, curvePeakY), D2D1::Point2F(0.0f, 0.0f), w * 0.50f, 48.0f * s),
+            downStopsCol.Get(), &downGlowBrush);
+      }
     }
 
     // --- 2. Linear Gradient Brush for fading out at left/right ends with
@@ -5587,12 +6152,8 @@ void UIRenderer::DrawWelcomeScreen(ID2D1DeviceContext *dc) {
     ComPtr<ID2D1GradientStopCollection> linearStopsCol;
     std::array<D2D1_GRADIENT_STOP, 7> linearStops;
 
-    D2D1_COLOR_F coreColor = IsLightThemeActive()
-                                 ? D2D1::ColorF(0.2f, 0.6f, 1.0f, 1.0f)
-                                 : D2D1::ColorF(0.0f, 0.63f, 1.0f, 1.0f);
-    D2D1_COLOR_F highlightColor = IsLightThemeActive()
-                                      ? D2D1::ColorF(0.7f, 0.88f, 1.0f, 1.0f)
-                                      : D2D1::ColorF(0.8f, 0.95f, 1.0f, 1.0f);
+    D2D1_COLOR_F coreColor = D2D1::ColorF(tp.accentFill.r, tp.accentFill.g, tp.accentFill.b, 1.0f);
+    D2D1_COLOR_F highlightColor = D2D1::ColorF(tp.accentText.r, tp.accentText.g, tp.accentText.b, 1.0f);
     D2D1_COLOR_F fadeColor = coreColor;
     fadeColor.a = 0.0f;
 
@@ -5620,6 +6181,11 @@ void UIRenderer::DrawWelcomeScreen(ID2D1DeviceContext *dc) {
       float horizonBaseY = h - 20.0f * s;
       float horizonCurveY = h - 95.0f * s;
 
+      // Render upward atmospheric scatter BEFORE Earth core so the upper edge has zero geometry clipping
+      if (upGlowBrush) {
+        dc->FillEllipse(D2D1::Ellipse(D2D1::Point2F(w * 0.5f, curvePeakY), w * 0.50f, 68.0f * s), upGlowBrush.Get());
+      }
+
       // Draw Earth dark core (solid block strictly below horizon curve)
       ComPtr<ID2D1PathGeometry> earthGeometry;
       if (SUCCEEDED(factory->CreatePathGeometry(&earthGeometry))) {
@@ -5636,57 +6202,29 @@ void UIRenderer::DrawWelcomeScreen(ID2D1DeviceContext *dc) {
           sink->Close();
         }
         ComPtr<ID2D1SolidColorBrush> earthBrush;
-        dc->CreateSolidColorBrush(
-            IsLightThemeActive() ? D2D1::ColorF(0.92f, 0.94f, 0.97f, 1.0f)
-                                 : D2D1::ColorF(0.003f, 0.006f, 0.012f, 1.0f),
-            &earthBrush);
+        const D2D1_COLOR_F earthColor = IsLightThemeActive()
+            ? D2D1::ColorF(0.92f + af.r * 0.025f, 0.93f + af.g * 0.025f, 0.95f + af.b * 0.025f, 1.0f)
+            : D2D1::ColorF(0.004f + af.r * 0.008f, 0.004f + af.g * 0.008f, 0.006f + af.b * 0.008f, 1.0f);
+        dc->CreateSolidColorBrush(earthColor, &earthBrush);
         dc->FillGeometry(earthGeometry.Get(), earthBrush.Get());
-      }
 
-      // Downward Glow Area (Using bezier geometry to pinch the ends, filled
-      // with radial soft gradient)
-      ComPtr<ID2D1PathGeometry> downGeo;
-      if (SUCCEEDED(factory->CreatePathGeometry(&downGeo))) {
-        ComPtr<ID2D1GeometrySink> sink;
-        if (SUCCEEDED(downGeo->Open(&sink))) {
-          sink->BeginFigure(D2D1::Point2F(0.0f, horizonBaseY),
-                            D2D1_FIGURE_BEGIN_FILLED);
-          sink->AddQuadraticBezier(D2D1::QuadraticBezierSegment(
-              D2D1::Point2F(w / 2.0f, horizonCurveY),
-              D2D1::Point2F(w, horizonBaseY)));
-          // Strengthened downward thickness (+20%)
-          sink->AddQuadraticBezier(D2D1::QuadraticBezierSegment(
-              D2D1::Point2F(w / 2.0f, horizonCurveY + 85.0f * s),
-              D2D1::Point2F(0.0f, horizonBaseY)));
-          sink->EndFigure(D2D1_FIGURE_END_CLOSED);
-          sink->Close();
-        }
-        if (glowBrush) {
-          glowBrush->SetOpacity(0.7f);
-          dc->FillGeometry(downGeo.Get(), glowBrush.Get());
-        }
-      }
-
-      // Upward Glow Area (Using bezier geometry to pinch the ends)
-      ComPtr<ID2D1PathGeometry> upGeo;
-      if (SUCCEEDED(factory->CreatePathGeometry(&upGeo))) {
-        ComPtr<ID2D1GeometrySink> sink;
-        if (SUCCEEDED(upGeo->Open(&sink))) {
-          sink->BeginFigure(D2D1::Point2F(0.0f, horizonBaseY),
-                            D2D1_FIGURE_BEGIN_FILLED);
-          // Strengthened upward thickness (+20%)
-          sink->AddQuadraticBezier(D2D1::QuadraticBezierSegment(
-              D2D1::Point2F(w / 2.0f, horizonCurveY - 60.0f * s),
-              D2D1::Point2F(w, horizonBaseY)));
-          sink->AddQuadraticBezier(D2D1::QuadraticBezierSegment(
-              D2D1::Point2F(w / 2.0f, horizonCurveY),
-              D2D1::Point2F(0.0f, horizonBaseY)));
-          sink->EndFigure(D2D1_FIGURE_END_CLOSED);
-          sink->Close();
-        }
-        if (glowBrush) {
-          glowBrush->SetOpacity(0.3f); // Upward sky glow is softer
-          dc->FillGeometry(upGeo.Get(), glowBrush.Get());
+        // Inner planetary glow strictly inside Earth geometry (generous ry ensures fade completes before bottom clip)
+        if (downGlowBrush) {
+          ComPtr<ID2D1PathGeometry> downGeo;
+          if (SUCCEEDED(factory->CreatePathGeometry(&downGeo))) {
+            ComPtr<ID2D1GeometrySink> downSink;
+            if (SUCCEEDED(downGeo->Open(&downSink))) {
+              downSink->BeginFigure(D2D1::Point2F(0.0f, horizonBaseY), D2D1_FIGURE_BEGIN_FILLED);
+              downSink->AddQuadraticBezier(D2D1::QuadraticBezierSegment(
+                  D2D1::Point2F(w * 0.5f, horizonCurveY),
+                  D2D1::Point2F(w, horizonBaseY)));
+              downSink->AddLine(D2D1::Point2F(w, h));
+              downSink->AddLine(D2D1::Point2F(0.0f, h));
+              downSink->EndFigure(D2D1_FIGURE_END_CLOSED);
+              downSink->Close();
+            }
+            dc->FillGeometry(downGeo.Get(), downGlowBrush.Get());
+          }
         }
       }
 
@@ -5728,17 +6266,16 @@ void UIRenderer::DrawWelcomeScreen(ID2D1DeviceContext *dc) {
   {
     ComPtr<ID2D1RadialGradientBrush> glowBrush;
     ComPtr<ID2D1GradientStopCollection> glowStopsCol;
-    std::array<D2D1_GRADIENT_STOP, 2> glowStops;
-    if (IsLightThemeActive()) {
-      glowStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.12f)};
-      glowStops[1] = D2D1_GRADIENT_STOP{1.0f, D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.0f)};
-    } else {
-      glowStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.18f)};
-      glowStops[1] = D2D1_GRADIENT_STOP{1.0f, D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.0f)};
-    }
+    std::array<D2D1_GRADIENT_STOP, 4> glowStops;
+    const D2D1_COLOR_F iconGlow = tp.isLight ? tp.accentFill : tp.accentText;
+    const float iconPeakAlpha = IsLightThemeActive() ? 0.14f : 0.20f;
+    glowStops[0] = D2D1_GRADIENT_STOP{0.00f, D2D1::ColorF(iconGlow.r, iconGlow.g, iconGlow.b, iconPeakAlpha)};
+    glowStops[1] = D2D1_GRADIENT_STOP{0.35f, D2D1::ColorF(af.r, af.g, af.b, iconPeakAlpha * 0.45f)};
+    glowStops[2] = D2D1_GRADIENT_STOP{0.70f, D2D1::ColorF(af.r, af.g, af.b, iconPeakAlpha * 0.10f)};
+    glowStops[3] = D2D1_GRADIENT_STOP{1.00f, D2D1::ColorF(af.r, af.g, af.b, 0.0f)};
 
     if (SUCCEEDED(
-            dc->CreateGradientStopCollection(glowStops.data(), static_cast<UINT32>(glowStops.size()), &glowStopsCol))) {
+            dc->CreateGradientStopCollection(glowStops.data(), static_cast<UINT32>(glowStops.size()), D2D1_GAMMA_1_0, D2D1_EXTEND_MODE_CLAMP, &glowStopsCol))) {
       float glowCenterX = iconX + iconSize / 2.0f;
       float glowCenterY = iconY + iconSize / 2.0f;
       float glowRadius = iconSize * 1.5f;
@@ -5806,14 +6343,14 @@ void UIRenderer::DrawWelcomeScreen(ID2D1DeviceContext *dc) {
 
   // Extract clean localized text without keyboard shortcuts and ellipsis
   std::array<wchar_t, 64> cleanOpenText = {};
-  if (AppStrings::Context_Open) {
-    GetCleanButtonText(AppStrings::Context_Open, cleanOpenText.data(), cleanOpenText.size());
+  if (AppStrings::g.Context_Open) {
+    GetCleanButtonText(AppStrings::g.Context_Open, cleanOpenText.data(), cleanOpenText.size());
   } else {
     wcscpy_s(cleanOpenText.data(), cleanOpenText.size(), L"Open");
   }
 
-  const wchar_t *openFolderText = AppStrings::Context_OpenFolder
-                                      ? AppStrings::Context_OpenFolder
+  const wchar_t *openFolderText = AppStrings::g.Context_OpenFolder
+                                      ? AppStrings::g.Context_OpenFolder
                                       : L"Open Folder";
 
   DrawWelcomeButton(dc, m_welcomeOpenFileRect, cleanOpenText.data(), Icons::OpenVector,
@@ -5833,16 +6370,19 @@ void UIRenderer::DrawWelcomeButton(ID2D1DeviceContext *dc, const D2D1_RECT_F &r,
   std::array<D2D1_GRADIENT_STOP, 2> bgStops;
   const float s = m_uiScale;
 
+  const auto& tp = QuickView::UI::Theme::GetThemePalette();
+  const D2D1_COLOR_F af = tp.accentFill;
+
   if (hoverState != 0) {
-    if (IsLightThemeActive()) {
-      bgStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.28f)};
-      bgStops[1] = D2D1_GRADIENT_STOP{1.0f, D2D1::ColorF(0.12f, 0.48f, 0.9f, 0.38f)};
+    if (tp.isLight) {
+      bgStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(af.r, af.g, af.b, 0.24f)};
+      bgStops[1] = D2D1_GRADIENT_STOP{1.0f, D2D1::ColorF(af.r, af.g, af.b, 0.34f)};
     } else {
-      bgStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.42f)};
-      bgStops[1] = D2D1_GRADIENT_STOP{1.0f, D2D1::ColorF(0.12f, 0.48f, 0.9f, 0.52f)};
+      bgStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(af.r, af.g, af.b, 0.38f)};
+      bgStops[1] = D2D1_GRADIENT_STOP{1.0f, D2D1::ColorF(af.r, af.g, af.b, 0.48f)};
     }
   } else {
-    if (IsLightThemeActive()) {
+    if (tp.isLight) {
       bgStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.03f)};
       bgStops[1] = D2D1_GRADIENT_STOP{1.0f, D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.07f)};
     } else {
@@ -5865,24 +6405,24 @@ void UIRenderer::DrawWelcomeButton(ID2D1DeviceContext *dc, const D2D1_RECT_F &r,
                              btnBgBrush.Get());
   } else {
     ComPtr<ID2D1SolidColorBrush> fallbackBrush;
-    D2D1_COLOR_F fallbackColor = IsLightThemeActive()
+    D2D1_COLOR_F fallbackColor = tp.isLight
                                      ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.05f)
                                      : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f);
     if (hoverState != 0)
-      fallbackColor = IsLightThemeActive()
-                          ? D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.2f)
-                          : D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.35f);
+      fallbackColor = tp.isLight
+                          ? D2D1::ColorF(af.r, af.g, af.b, 0.20f)
+                          : D2D1::ColorF(af.r, af.g, af.b, 0.35f);
     dc->CreateSolidColorBrush(fallbackColor, &fallbackBrush);
     dc->FillRoundedRectangle(D2D1::RoundedRect(r, pillRadius, pillRadius),
                              fallbackBrush.Get());
   }
 
   // Button border
-  D2D1_COLOR_F btnBorderColor = IsLightThemeActive()
+  D2D1_COLOR_F btnBorderColor = tp.isLight
                                     ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.1f)
                                     : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f);
   if (hoverState != 0) {
-    btnBorderColor = D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.6f);
+    btnBorderColor = D2D1::ColorF(af.r, af.g, af.b, 0.65f);
   }
   ComPtr<ID2D1SolidColorBrush> borderBrush;
   dc->CreateSolidColorBrush(btnBorderColor, &borderBrush);
@@ -5892,12 +6432,11 @@ void UIRenderer::DrawWelcomeButton(ID2D1DeviceContext *dc, const D2D1_RECT_F &r,
   // Interactive Micro-displacement (0-overhead elastic touch)
   float hoverOffset = (hoverState != 0) ? (1.0f * s) : 0.0f;
 
-  D2D1_COLOR_F contentColor = IsLightThemeActive()
+  D2D1_COLOR_F contentColor = tp.isLight
                                   ? D2D1::ColorF(0.15f, 0.15f, 0.15f, 0.9f)
                                   : D2D1::ColorF(0.9f, 0.9f, 0.9f, 0.95f);
   if (hoverState != 0) {
-    contentColor = IsLightThemeActive() ? D2D1::ColorF(0.0f, 0.45f, 0.9f, 1.0f)
-                                        : D2D1::ColorF(0.4f, 0.75f, 1.0f, 1.0f);
+    contentColor = tp.accentText;
   }
   ComPtr<ID2D1SolidColorBrush> contentBrush;
   dc->CreateSolidColorBrush(contentColor, &contentBrush);
@@ -5955,79 +6494,47 @@ void UIRenderer::DrawWelcomeButton(ID2D1DeviceContext *dc, const D2D1_RECT_F &r,
 }
 
 void UIRenderer::DrawNavigator(ID2D1DeviceContext* dc) {
+    auto& app = AppContext::GetInstance();
+    app.Minimaps[0].ClearRects();
+    app.Minimaps[1].ClearRects();
+
     if (m_width <= 0 || m_height <= 0) return;
     const float s = m_uiScale;
-    
-    int numPanes = 1;
-    bool isCompare = IsCompareModeActive();
-    if (isCompare && g_toolbar.IsComicMode()) {
-        numPanes = 2;
-    } else if (isCompare) {
-        if (AppContext::GetInstance().Compare.mode == ViewMode::CompareSideBySide) {
-            numPanes = 2;
-        } else {
-            // CompareWipe mode: no minimap
-            return;
-        }
-    }
-    
+
+    const int numPanes = GetNavigatorPaneCount();
+    if (numPanes <= 0) return;
+
     for (int i = 0; i < numPanes; ++i) {
         PaneSlot slot = (i == 0 && numPanes == 2) ? PaneSlot::Left : PaneSlot::Primary;
         int minimapIdx = (slot == PaneSlot::Left) ? 1 : 0;
-        
-        auto& minimap = AppContext::GetInstance().Minimaps[minimapIdx];
-        
+
+        auto& minimap = app.Minimaps[minimapIdx];
         auto& pane = GetPaneContext(slot);
-        if (!pane.resource) continue;
-        if (slot == PaneSlot::Left && !pane.valid) continue;
-        
-        D2D1_RECT_F vpRect;
-        if (numPanes == 2) {
-            float splitX = 0.5f * (float)m_width;
-            if (slot == PaneSlot::Left) {
-                vpRect = D2D1::RectF(0.0f, 0.0f, splitX, (float)m_height);
-            } else {
-                vpRect = D2D1::RectF(splitX, 0.0f, (float)m_width, (float)m_height);
-            }
-        } else {
-            vpRect = D2D1::RectF(0.0f, 0.0f, (float)m_width, (float)m_height);
+
+        NavigatorPaneMetrics metrics;
+        if (!ComputeNavigatorPaneMetrics(slot, (float)m_width, (float)m_height, numPanes, true, metrics)) {
+            continue;
         }
-        
-        const float vpW = vpRect.right - vpRect.left;
-        const float vpH = vpRect.bottom - vpRect.top;
-        if (vpW <= 1.0f || vpH <= 1.0f) continue;
-        
-        int baseExif = (slot == PaneSlot::Primary) ? g_renderExifOrientation : pane.view.ExifOrientation;
-        int exifOrientation = GetEffectiveExifOrientation(baseExif, pane.editState);
-        const D2D1_SIZE_F orientedSize = GetOrientedSize(pane.resource, exifOrientation);
-        if (orientedSize.width <= 0.0f || orientedSize.height <= 0.0f) continue;
-        
-        float fitScale = std::min(vpW / orientedSize.width, vpH / orientedSize.height);
-        if (orientedSize.width < 200.0f && orientedSize.height < 200.0f && fitScale > 1.0f) {
-            fitScale = 1.0f;
-        }
-        const float clampedZoom = (std::max)(0.02f, pane.view.Zoom);
-        const float totalScale = fitScale * clampedZoom;
-        const float scaledW = orientedSize.width * totalScale;
-        const float scaledH = orientedSize.height * totalScale;
-        
-        bool isOverflow = (scaledW > vpW + 1.0f || scaledH > vpH + 1.0f);
+
         bool shouldShow = false;
-        if (isOverflow) {
+        if (metrics.isOverflow) {
             if (minimap.overrideState == MinimapOverride::Show) {
                 shouldShow = true;
             } else if (minimap.overrideState == MinimapOverride::Hide) {
                 shouldShow = false;
-            } else {
-                if (g_config.ShowNavigator == 0) {
-                    shouldShow = (scaledW > vpW * 1.5f || scaledH > vpH * 1.5f);
-                } else if (g_config.ShowNavigator == 1) {
-                    shouldShow = true;
-                }
+            } else if (g_config.ShowNavigator == 0) {
+                shouldShow = metrics.shouldShowByDefault;
+            } else if (g_config.ShowNavigator == 1) {
+                shouldShow = true;
             }
         }
-        
+
         if (!shouldShow) continue;
+
+        const D2D1_RECT_F vpRect = metrics.vpRect;
+        const D2D1_SIZE_F orientedSize = metrics.orientedSize;
+        const float totalScale = metrics.totalScale;
+        const int exifOrientation = GetEffectiveExifOrientation(pane.view.ExifOrientation, pane.editState);
         
         float maxDim = 150.0f * s;
         float minimapW = maxDim;
@@ -6134,13 +6641,18 @@ void UIRenderer::DrawNavigator(ID2D1DeviceContext* dc) {
             const float imgW = pane.resource.GetSize().width;
             const float imgH = pane.resource.GetSize().height;
             const bool rotated = (exifOrientation >= 2 && exifOrientation <= 8);
+            const bool swapped90 = (exifOrientation >= 5 && exifOrientation <= 8);
+            const float bmpOrientedW = swapped90 ? imgH : imgW;
+            const float bmpOrientedH = swapped90 ? imgW : imgH;
             
             D2D1_INTERPOLATION_MODE interpMode = D2D1_INTERPOLATION_MODE_LINEAR;
             
             if (!rotated) {
                 D2D1_RECT_F dest = D2D1::RectF(geo.imgDrawX, geo.imgDrawY, geo.imgDrawX + geo.drawW, geo.imgDrawY + geo.drawH);
                 dc->DrawBitmap(pane.resource.bitmap.Get(), &dest, 1.0f, interpMode);
-            } else {
+            } else if (bmpOrientedW > 0.0f && bmpOrientedH > 0.0f) {
+                const float thumbScaleX = geo.drawW / bmpOrientedW;
+                const float thumbScaleY = geo.drawH / bmpOrientedH;
                 D2D1::Matrix3x2F m = D2D1::Matrix3x2F::Translation(-imgW * 0.5f, -imgH * 0.5f);
                 switch (exifOrientation) {
                     case 2: m = m * D2D1::Matrix3x2F::Scale(-1.0f, 1.0f); break;
@@ -6152,7 +6664,7 @@ void UIRenderer::DrawNavigator(ID2D1DeviceContext* dc) {
                     case 8: m = m * D2D1::Matrix3x2F::Rotation(270.0f); break;
                     default: break;
                 }
-                m = m * D2D1::Matrix3x2F::Scale(geo.fitScale, geo.fitScale);
+                m = m * D2D1::Matrix3x2F::Scale(thumbScaleX, thumbScaleY);
                 m = m * D2D1::Matrix3x2F::Translation(minimapCenterX, minimapCenterY);
                 dc->SetTransform(m * oldTransform);
                 D2D1_RECT_F src = D2D1::RectF(0.0f, 0.0f, imgW, imgH);
@@ -6161,10 +6673,10 @@ void UIRenderer::DrawNavigator(ID2D1DeviceContext* dc) {
             }
         }
         
-        float vpCenterX = orientedSize.width * 0.5f - pane.view.PanX / totalScale;
-        float vpCenterY = orientedSize.height * 0.5f - pane.view.PanY / totalScale;
-        float vpWInImg = vpW / totalScale;
-        float vpHInImg = vpH / totalScale;
+        float vpCenterX = orientedSize.width * 0.5f - metrics.panX / totalScale;
+        float vpCenterY = orientedSize.height * 0.5f - metrics.panY / totalScale;
+        float vpWInImg = metrics.effVpW / totalScale;
+        float vpHInImg = metrics.effVpH / totalScale;
         
         D2D1_RECT_F viewRect = D2D1::RectF(
             geo.imgDrawX + (vpCenterX - vpWInImg * 0.5f) * geo.fitScale,
@@ -6173,10 +6685,11 @@ void UIRenderer::DrawNavigator(ID2D1DeviceContext* dc) {
             geo.imgDrawY + (vpCenterY + vpHInImg * 0.5f) * geo.fitScale
         );
         
+        const auto& tp = QuickView::UI::Theme::GetThemePalette();
         ComPtr<ID2D1SolidColorBrush> viewRectBgBrush;
-        dc->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.47f, 0.83f, 0.15f), &viewRectBgBrush);
+        dc->CreateSolidColorBrush(D2D1::ColorF(tp.accentFill.r, tp.accentFill.g, tp.accentFill.b, 0.15f), &viewRectBgBrush);
         ComPtr<ID2D1SolidColorBrush> viewRectBorderBrush;
-        dc->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.47f, 0.83f, 0.85f), &viewRectBorderBrush);
+        dc->CreateSolidColorBrush(D2D1::ColorF(tp.accentFill.r, tp.accentFill.g, tp.accentFill.b, 0.85f), &viewRectBorderBrush);
         
         dc->FillRectangle(viewRect, viewRectBgBrush.Get());
         dc->DrawRectangle(viewRect, viewRectBorderBrush.Get(), 1.5f * s);
@@ -6228,35 +6741,162 @@ void UIRenderer::DrawCropOverlay(ID2D1DeviceContext* dc, HWND hwnd) {
     // Hide crop overlay when Ctrl is held down while not dragging, providing clean raw image view before drawing new region
     if ((GetKeyState(VK_CONTROL) & 0x8000) != 0 && !g_cropState.IsDragging) return;
 
-    auto& pane = GetPaneContext(PaneSlot::Primary);
-    if (!pane.resource) return;
+    extern bool GetPrimaryImageDisplayMetrics(HWND hwnd, ImageDisplayMetrics& out);
+    ImageDisplayMetrics metrics{};
+    if (!GetPrimaryImageDisplayMetrics(hwnd, metrics) || !metrics.valid) return;
 
-    int baseExif = g_renderExifOrientation;
-    int exifOrientation = GetEffectiveExifOrientation(baseExif, pane.editState);
-    D2D1_SIZE_F orientedSize = GetOrientedSize(pane.resource, exifOrientation);
-    if (orientedSize.width <= 0.0f || orientedSize.height <= 0.0f) return;
+    const float vpW = metrics.winW;
+    const float vpH = metrics.winH;
+    const float totalScale = metrics.totalScale;
+    const float imgDrawX = metrics.imgDrawX;
+    const float imgDrawY = metrics.imgDrawY;
 
-    RECT rc; GetClientRect(hwnd, &rc);
-    float vpW = (float)(rc.right - rc.left);
-    float vpH = (float)(rc.bottom - rc.top);
-    
-    float fitScale = std::min(vpW / orientedSize.width, vpH / orientedSize.height);
-    if (orientedSize.width < 200.0f && orientedSize.height < 200.0f && fitScale > 1.0f) {
-        fitScale = 1.0f;
-    }
-    const float clampedZoom = (std::max)(0.02f, pane.view.Zoom);
-    const float totalScale = fitScale * clampedZoom;
-    
-    float imgDrawX = vpW * 0.5f + pane.view.PanX - (orientedSize.width * 0.5f * totalScale);
-    float imgDrawY = vpH * 0.5f + pane.view.PanY - (orientedSize.height * 0.5f * totalScale);
-    
-    float sLeft = g_cropState.CropLeft * totalScale + imgDrawX;
-    float sTop = g_cropState.CropTop * totalScale + imgDrawY;
-    float sRight = g_cropState.CropRight * totalScale + imgDrawX;
-    float sBottom = g_cropState.CropBottom * totalScale + imgDrawY;
-    
+    float sLeft = static_cast<float>((std::min)(g_cropState.CropLeft, g_cropState.CropRight)) * totalScale + imgDrawX;
+    float sTop = static_cast<float>((std::min)(g_cropState.CropTop, g_cropState.CropBottom)) * totalScale + imgDrawY;
+    float sRight = static_cast<float>((std::max)(g_cropState.CropLeft, g_cropState.CropRight)) * totalScale + imgDrawX;
+    float sBottom = static_cast<float>((std::max)(g_cropState.CropTop, g_cropState.CropBottom)) * totalScale + imgDrawY;
+
     D2D1_RECT_F cropRect = D2D1::RectF(sLeft, sTop, sRight, sBottom);
+    bool hasSelection = (sRight - sLeft > 2.0f && sBottom - sTop > 2.0f);
 
+    // --- Mode Branch: AI Inpaint Mode vs Traditional Crop Mode ---
+    if (g_cropState.Mode == RegionInteractionMode::AiInpaint) {
+        g_cropState.WidthCapsuleRect = {};
+        g_cropState.HeightCapsuleRect = {};
+        g_cropState.InpaintCapsuleRect = {};
+        g_cropState.InpaintExecuteBtnRect = {};
+        g_cropState.InpaintCancelBtnRect = {};
+
+        if (!hasSelection) {
+            return;
+        }
+
+        // 1. Semi-transparent dimming outside selection
+        ComPtr<ID2D1SolidColorBrush> dimBrush;
+        dc->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.45f), &dimBrush);
+        dc->FillRectangle(D2D1::RectF(0, 0, vpW, sTop), dimBrush.Get());
+        dc->FillRectangle(D2D1::RectF(0, sBottom, vpW, vpH), dimBrush.Get());
+        dc->FillRectangle(D2D1::RectF(0, sTop, sLeft, sBottom), dimBrush.Get());
+        dc->FillRectangle(D2D1::RectF(sRight, sTop, vpW, sBottom), dimBrush.Get());
+
+        // 2. Selection border & soft tint
+        const auto& tp = QuickView::UI::Theme::GetThemePalette();
+        ComPtr<ID2D1SolidColorBrush> inpaintBorderBrush, inpaintFillBrush;
+        dc->CreateSolidColorBrush(D2D1::ColorF(tp.accentText.r, tp.accentText.g, tp.accentText.b, 0.95f), &inpaintBorderBrush);
+        dc->CreateSolidColorBrush(D2D1::ColorF(tp.accentFill.r, tp.accentFill.g, tp.accentFill.b, 0.08f), &inpaintFillBrush);
+        dc->FillRectangle(cropRect, inpaintFillBrush.Get());
+        dc->DrawRectangle(cropRect, inpaintBorderBrush.Get(), 1.5f * m_uiScale);
+
+        // 3. Handles for fine-tuning (only when not creating initial box drag)
+        if (!g_cropState.IsDragging || g_cropState.ActiveHandle != 9) {
+            float cw = (sRight - sLeft) / 3.0f;
+            float ch = (sBottom - sTop) / 3.0f;
+            auto drawInpaintHandle = [&](float hx, float hy, int handleId) {
+                float hSize = 4.0f * m_uiScale;
+                D2D1_RECT_F hr = D2D1::RectF(hx - hSize, hy - hSize, hx + hSize, hy + hSize);
+                ID2D1SolidColorBrush* b = (g_cropState.ActiveHandle == handleId) ? m_accentBrush.Get() : inpaintBorderBrush.Get();
+                dc->FillRectangle(hr, b);
+                dc->DrawRectangle(hr, m_blackBrush.Get(), 1.0f);
+            };
+            drawInpaintHandle(sLeft, sTop, 0); // TopLeft
+            drawInpaintHandle(sRight, sTop, 1); // TopRight
+            drawInpaintHandle(sLeft, sBottom, 2); // BottomLeft
+            drawInpaintHandle(sRight, sBottom, 3); // BottomRight
+            drawInpaintHandle(sLeft + cw * 1.5f, sTop, 5); // Top
+            drawInpaintHandle(sLeft + cw * 1.5f, sBottom, 6); // Bottom
+            drawInpaintHandle(sLeft, sTop + ch * 1.5f, 7); // Left
+            drawInpaintHandle(sRight, sTop + ch * 1.5f, 8); // Right
+        }
+
+        // 4. Interactive Action Capsule (Minimalist Geek Capsule: [ ✨ 开始重绘 (Enter) ] [ ✕ 取消 (Esc) ])
+        float selW = sRight - sLeft;
+        float selH = sBottom - sTop;
+        if (!g_cropState.IsDragging && selW > 15.0f && selH > 15.0f) {
+            float execBtnW = 120.0f * m_uiScale;
+            float closeBtnW = 68.0f * m_uiScale;
+            float padH = 6.0f * m_uiScale;
+            float capW = execBtnW + closeBtnW + padH * 3.0f;
+            float capH = 36.0f * m_uiScale;
+            float capX = sLeft + (selW - capW) * 0.5f;
+            const float marginX = 15.0f * m_uiScale;
+            const float maxCapX = vpW - capW - marginX;
+            capX = (maxCapX >= marginX) ? std::clamp(capX, marginX, maxCapX) : (std::max)(0.0f, (vpW - capW) * 0.5f);
+
+            float capY = sBottom + 10.0f * m_uiScale;
+            if (capY + capH > vpH - 15.0f * m_uiScale) {
+                capY = sTop - capH - 10.0f * m_uiScale;
+                if (capY < 10.0f * m_uiScale) {
+                    capY = sBottom - capH - 8.0f * m_uiScale;
+                }
+            }
+
+            D2D1_RECT_F capRect = D2D1::RectF(capX, capY, capX + capW, capY + capH);
+            g_cropState.InpaintCapsuleRect = capRect;
+
+            const auto& tp = QuickView::UI::Theme::GetThemePalette();
+            ComPtr<ID2D1SolidColorBrush> capBg, capBorder, btnBg, btnHover;
+            dc->CreateSolidColorBrush(D2D1::ColorF(0.09f, 0.10f, 0.13f, 0.94f), &capBg);
+            dc->CreateSolidColorBrush(D2D1::ColorF(0.25f, 0.30f, 0.40f, 0.85f), &capBorder);
+            dc->CreateSolidColorBrush(tp.accentFill, &btnBg);
+            dc->CreateSolidColorBrush(D2D1::ColorF(tp.accentFill.r, tp.accentFill.g, tp.accentFill.b, 0.85f), &btnHover);
+
+            D2D1_ROUNDED_RECT roundCap = D2D1::RoundedRect(capRect, 8.0f * m_uiScale, 8.0f * m_uiScale);
+            dc->FillRoundedRectangle(roundCap, capBg.Get());
+            dc->DrawRoundedRectangle(roundCap, capBorder.Get(), 1.0f * m_uiScale);
+
+            // Execute Button
+            D2D1_RECT_F execBtnRect = D2D1::RectF(capRect.left + padH, capRect.top + padH * 0.7f,
+                                                 capRect.left + padH + execBtnW, capRect.bottom - padH * 0.7f);
+            g_cropState.InpaintExecuteBtnRect = execBtnRect;
+
+            D2D1_ROUNDED_RECT roundExec = D2D1::RoundedRect(execBtnRect, 5.0f * m_uiScale, 5.0f * m_uiScale);
+            dc->FillRoundedRectangle(roundExec, g_cropState.InpaintHoverExecute ? btnHover.Get() : btnBg.Get());
+            dc->DrawRoundedRectangle(roundExec, m_accentBrush.Get(), 1.0f * m_uiScale);
+
+            const wchar_t* execText = L"✨ 开始重绘 ↵";
+            ComPtr<IDWriteTextLayout> execLayout;
+            if (m_dwriteFactory && m_osdFormat) {
+                m_dwriteFactory->CreateTextLayout(execText, static_cast<UINT32>(wcslen(execText)), m_osdFormat.Get(), execBtnW, execBtnRect.bottom - execBtnRect.top, &execLayout);
+            }
+            if (execLayout) {
+                execLayout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                execLayout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                ComPtr<ID2D1SolidColorBrush> onAccentBrush;
+                dc->CreateSolidColorBrush(tp.onAccentText, &onAccentBrush);
+                dc->DrawTextLayout(D2D1::Point2F(execBtnRect.left, execBtnRect.top), execLayout.Get(), onAccentBrush ? onAccentBrush.Get() : m_whiteBrush.Get());
+            }
+
+            // Close Button (✕ 取消)
+            D2D1_RECT_F closeBtnRect = D2D1::RectF(execBtnRect.right + padH, execBtnRect.top,
+                                                  execBtnRect.right + padH + closeBtnW, execBtnRect.bottom);
+            g_cropState.InpaintCancelBtnRect = closeBtnRect;
+
+            D2D1_ROUNDED_RECT roundClose = D2D1::RoundedRect(closeBtnRect, 5.0f * m_uiScale, 5.0f * m_uiScale);
+            if (g_cropState.InpaintHoverCancel) {
+                ComPtr<ID2D1SolidColorBrush> redHover;
+                dc->CreateSolidColorBrush(D2D1::ColorF(0.85f, 0.25f, 0.25f, 0.9f), &redHover);
+                dc->FillRoundedRectangle(roundClose, redHover.Get());
+            } else {
+                ComPtr<ID2D1SolidColorBrush> cancelBg;
+                dc->CreateSolidColorBrush(D2D1::ColorF(0.18f, 0.20f, 0.25f, 0.85f), &cancelBg);
+                dc->FillRoundedRectangle(roundClose, cancelBg.Get());
+            }
+            dc->DrawRoundedRectangle(roundClose, capBorder.Get(), 0.8f * m_uiScale);
+            const wchar_t* cancelText = L"✕ 取消";
+            ComPtr<IDWriteTextLayout> closeLayout;
+            if (m_dwriteFactory && m_osdFormat) {
+                m_dwriteFactory->CreateTextLayout(cancelText, static_cast<UINT32>(wcslen(cancelText)), m_osdFormat.Get(), closeBtnW, closeBtnRect.bottom - closeBtnRect.top, &closeLayout);
+            }
+            if (closeLayout) {
+                closeLayout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                closeLayout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                dc->DrawTextLayout(D2D1::Point2F(closeBtnRect.left, closeBtnRect.top), closeLayout.Get(), m_whiteBrush.Get());
+            }
+        }
+        return;
+    }
+
+    // --- Standard Crop Mode Rendering ---
     // 1. Darken outside
     dc->FillRectangle(D2D1::RectF(0, 0, vpW, sTop), m_blackBrush.Get());
     dc->FillRectangle(D2D1::RectF(0, sBottom, vpW, vpH), m_blackBrush.Get());
@@ -6278,25 +6918,23 @@ void UIRenderer::DrawCropOverlay(ID2D1DeviceContext* dc, HWND hwnd) {
     dc->DrawLine(D2D1::Point2F(sLeft, sTop + 2*ch), D2D1::Point2F(sRight, sTop + 2*ch), gridBrush.Get(), 1.0f * m_uiScale);
 
     // 4. Handles
-    auto drawHandle = [&](float hx, float hy, int handleId) {
+    auto drawCropHandle = [&](float hx, float hy, int handleId) {
         float hSize = 5.0f * m_uiScale;
         D2D1_RECT_F hr = D2D1::RectF(hx - hSize, hy - hSize, hx + hSize, hy + hSize);
         ID2D1SolidColorBrush* b = (g_cropState.ActiveHandle == handleId) ? m_accentBrush.Get() : m_whiteBrush.Get();
         dc->FillRectangle(hr, b);
         dc->DrawRectangle(hr, m_blackBrush.Get(), 1.0f);
     };
-    drawHandle(sLeft, sTop, 0); // TopLeft
-    drawHandle(sRight, sTop, 1); // TopRight
-    drawHandle(sLeft, sBottom, 2); // BottomLeft
-    drawHandle(sRight, sBottom, 3); // BottomRight
+    drawCropHandle(sLeft, sTop, 0); // TopLeft
+    drawCropHandle(sRight, sTop, 1); // TopRight
+    drawCropHandle(sLeft, sBottom, 2); // BottomLeft
+    drawCropHandle(sRight, sBottom, 3); // BottomRight
+    drawCropHandle(sLeft + cw * 1.5f, sTop, 5); // Top
+    drawCropHandle(sLeft + cw * 1.5f, sBottom, 6); // Bottom
+    drawCropHandle(sLeft, sTop + ch * 1.5f, 7); // Left
+    drawCropHandle(sRight, sTop + ch * 1.5f, 8); // Right
 
-    // Edge handles
-    drawHandle(sLeft + cw * 1.5f, sTop, 5); // Top
-    drawHandle(sLeft + cw * 1.5f, sBottom, 6); // Bottom
-    drawHandle(sLeft, sTop + ch * 1.5f, 7); // Left
-    drawHandle(sRight, sTop + ch * 1.5f, 8); // Right
-
-    // 5. Dimension Label Input Badge (Interactive Width & Height Capsules)
+    // 5. Dimension Label Input Badge (Interactive Width & Height Capsules for Crop Mode)
     int cropW = (int)std::round(g_cropState.CropRight - g_cropState.CropLeft);
     int cropH = (int)std::round(g_cropState.CropBottom - g_cropState.CropTop);
     
@@ -6317,10 +6955,12 @@ void UIRenderer::DrawCropOverlay(ID2D1DeviceContext* dc, HWND hwnd) {
     }
 
     ComPtr<IDWriteTextLayout> wLayout, hLayout, timesLayout, unitLayout;
-    m_dwriteFactory->CreateTextLayout(wStr, (UINT32)wcslen(wStr), m_osdFormat.Get(), 200.0f * m_uiScale, 30.0f * m_uiScale, &wLayout);
-    m_dwriteFactory->CreateTextLayout(hStr, (UINT32)wcslen(hStr), m_osdFormat.Get(), 200.0f * m_uiScale, 30.0f * m_uiScale, &hLayout);
-    m_dwriteFactory->CreateTextLayout(L"×", 1, m_osdFormat.Get(), 50.0f * m_uiScale, 30.0f * m_uiScale, &timesLayout);
-    m_dwriteFactory->CreateTextLayout(L"px", 2, m_osdFormat.Get(), 50.0f * m_uiScale, 30.0f * m_uiScale, &unitLayout);
+    if (m_dwriteFactory && m_osdFormat) {
+        m_dwriteFactory->CreateTextLayout(wStr, (UINT32)wcslen(wStr), m_osdFormat.Get(), 200.0f * m_uiScale, 30.0f * m_uiScale, &wLayout);
+        m_dwriteFactory->CreateTextLayout(hStr, (UINT32)wcslen(hStr), m_osdFormat.Get(), 200.0f * m_uiScale, 30.0f * m_uiScale, &hLayout);
+        m_dwriteFactory->CreateTextLayout(L"×", 1, m_osdFormat.Get(), 50.0f * m_uiScale, 30.0f * m_uiScale, &timesLayout);
+        m_dwriteFactory->CreateTextLayout(L"px", 2, m_osdFormat.Get(), 50.0f * m_uiScale, 30.0f * m_uiScale, &unitLayout);
+    }
 
     if (wLayout && hLayout) {
         DWRITE_TEXT_METRICS wTm{}, hTm{}, xTm{}, uTm{};

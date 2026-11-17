@@ -22,7 +22,6 @@
 #include <string>
 #include <memory>
 #include <chrono>
-#include <functional>
 
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "dcomp.lib")
@@ -30,6 +29,63 @@
 namespace QuickView::UI::Menu {
 
 using Microsoft::WRL::ComPtr;
+
+// ============================================================
+// Chunked Wide String Pool (Paged Arena for dynamic menu strings)
+// Guarantees absolute pointer stability across expansions while
+// eradicating per-item std::make_unique<std::wstring> heap fragmentation.
+// ============================================================
+class LinearWideStringPool {
+public:
+    LinearWideStringPool() = default;
+    ~LinearWideStringPool() = default;
+
+    LinearWideStringPool(const LinearWideStringPool&) = delete;
+    LinearWideStringPool& operator=(const LinearWideStringPool&) = delete;
+    LinearWideStringPool(LinearWideStringPool&&) noexcept = default;
+    LinearWideStringPool& operator=(LinearWideStringPool&&) noexcept = default;
+
+    const wchar_t* Store(std::wstring_view sv) {
+        if (sv.empty()) return L"";
+        size_t len = sv.size() + 1; // include null terminator
+        if (m_chunks.empty() || m_chunks.back()->used + len > m_chunks.back()->capacity) {
+            size_t cap = (std::max)(size_t(4096), len);
+            m_chunks.push_back(std::make_unique<Chunk>(cap));
+        }
+        Chunk* cur = m_chunks.back().get();
+        wchar_t* ptr = cur->data.get() + cur->used;
+        std::memcpy(ptr, sv.data(), sv.size() * sizeof(wchar_t));
+        ptr[sv.size()] = L'\0';
+        cur->used += len;
+        return ptr;
+    }
+
+    void Reserve(size_t chars) {
+        if (m_chunks.empty() && chars > 0) {
+            size_t cap = (std::max)(size_t(4096), chars);
+            m_chunks.push_back(std::make_unique<Chunk>(cap));
+        }
+    }
+
+    void Clear() noexcept {
+        m_chunks.clear();
+    }
+
+    bool Empty() const noexcept {
+        return m_chunks.empty() || (m_chunks.size() == 1 && m_chunks[0]->used == 0);
+    }
+
+private:
+    struct Chunk {
+        std::unique_ptr<wchar_t[]> data;
+        size_t capacity = 0;
+        size_t used = 0;
+
+        explicit Chunk(size_t cap)
+            : data(std::make_unique<wchar_t[]>(cap)), capacity(cap), used(0) {}
+    };
+    std::vector<std::unique_ptr<Chunk>> m_chunks;
+};
 
 // ============================================================
 // Menu Data Types
@@ -105,7 +161,7 @@ public:
                          std::vector<ActionButton> actions,
                          std::vector<GeekMenuItem> items,
                          bool isTouch = false,
-                         std::vector<std::unique_ptr<std::wstring>> stringCache = {});
+                         LinearWideStringPool stringCache = {});
     static void ShowSubmenuPopup(HWND parent, int screenX, int screenY,
                                  std::vector<GeekMenuItem> items,
                                  GeekContextMenu* parentMenu);
@@ -234,7 +290,7 @@ private:
     float m_scrollOffset = 0.0f;
     float m_maxBodyH = 0.0f;
     float m_totalBodyH = 0.0f;
-    std::vector<std::unique_ptr<std::wstring>> m_stringCache;
+    LinearWideStringPool m_stringCache;
 
     // --- Static ---
     static std::unique_ptr<GeekContextMenu> s_root;

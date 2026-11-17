@@ -29,6 +29,9 @@ public:
 
     /// Return true if the decoder produces valid partial frame updates (dirty rects)
     virtual bool SupportsDirtyRect() const { return false; }
+
+    /// Return true if this decoder holds AI super-resolved frames
+    virtual bool IsSrDecoder() const { return false; }
 };
 
 // Factory to spawn the appropriate decoder implementation

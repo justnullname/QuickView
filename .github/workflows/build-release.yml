@@ -64,7 +64,7 @@ jobs:
       - name: Prepare Portable Version
         shell: pwsh
         run: |
-          $archUpper = if ("${{ matrix.platform }}" -eq "x64") { "X64" } else { "ARM64" }
+          $archUpper = if ("${{ matrix.platform }}" -eq "x64") { "AMD64" } else { "ARM64" }
           
           # Path for CMake build artifact (Ninja puts it in root)
           $exePath = "${{ github.workspace }}/out/build/${{ matrix.preset }}/QuickView.exe"
@@ -86,11 +86,25 @@ jobs:
           $zipName = "QuickView_${tag}_${archUpper}.zip"
           Compress-Archive -Path $exePath -DestinationPath "Release/dist/$zipName" -Force
 
+          # Package standalone QVX plugin artifact (sr_ncnn_vulkan + models)
+          $pluginDir = "${{ github.workspace }}/out/build/${{ matrix.preset }}/plugins/sr/sr_ncnn_vulkan"
+          Write-Host "[CI-Package] Checking plugin directory: $pluginDir"
+          if (Test-Path "$pluginDir/sr_ncnn_vulkan.qvx") {
+              $pluginZip = "Release/dist/sr_ncnn_vulkan_${archUpper}.zip"
+              Write-Host "[CI-Package] Packaging plugin $pluginDir -> $pluginZip"
+              Compress-Archive -Path "$pluginDir/*" -DestinationPath $pluginZip -Force
+          } else {
+              Write-Warning "[CI-Package] Warning: sr_ncnn_vulkan.qvx not found at $pluginDir!"
+          }
+
+          Write-Host "[CI-Package] Staging contents in Release/dist:"
+          Get-ChildItem "Release/dist" | Format-Table Name, Length
+
       - name: Build Inno Setup Installer
         shell: pwsh
         run: |
           $arch = "${{ matrix.platform }}".ToLower()
-          $archUpper = if ("${{ matrix.platform }}" -eq "x64") { "X64" } else { "ARM64" }
+          $archUpper = if ("${{ matrix.platform }}" -eq "x64") { "AMD64" } else { "ARM64" }
           $tag = "${{ env.DETECTED_TAG }}"
           $version = $tag.TrimStart('v')
           
@@ -99,11 +113,26 @@ jobs:
           $outputName = "QuickView_Installer_${tag}_${archUpper}"
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=$version /DAppArch=$arch /DOutputName=$outputName /DExePath="$absExePath" /O"Release\dist" installer\QuickView.iss
 
+      - name: Build Unsigned Store MSIX
+        shell: pwsh
+        run: |
+          $arch = "${{ matrix.platform }}".ToLower()
+          $tag = "${{ env.DETECTED_TAG }}"
+          $buildDir = "${{ github.workspace }}/out/build/${{ matrix.preset }}"
+          $msixOut = "${{ github.workspace }}/Release/msix/QuickView_${tag}_${arch}.msix"
+          & "${{ github.workspace }}/packaging/msix/build_msix.ps1" -Arch $arch -BuildDir $buildDir -OutputPath $msixOut -Version $tag
+
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: QuickView-Staging-${{ matrix.platform }}
           path: Release/dist/*
+
+      - name: Upload Unsigned Store MSIX Staging
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuickView-MSIX-Staging-${{ matrix.platform }}
+          path: Release/msix/*.msix
 
   publish-final:
     needs: build-and-release
@@ -112,6 +141,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -119,18 +151,67 @@ jobs:
           path: final-dist
           merge-multiple: true
 
+      - name: List Release Assets
+        shell: pwsh
+        run: |
+          Write-Host "[CI-Release] Final release assets in final-dist:"
+          Get-ChildItem -Path final-dist -Recurse | Format-Table Name, Length, FullName
+
       - name: Upload Consolidated Artifact
         uses: actions/upload-artifact@v4
         with:
           name: QuickView-Standard-Distribution
           path: final-dist/*
 
-      - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Download MSIX Arch Staging
+        uses: actions/download-artifact@v4
         with:
-          files: final-dist/*
-          draft: true
-          generate_release_notes: true
+          pattern: QuickView-MSIX-Staging-*
+          path: msix-staging
+          merge-multiple: true
+
+      - name: Bundle Unsigned Store MSIXBundle
+        shell: pwsh
+        run: |
+          $msixFiles = Get-ChildItem -Path msix-staging -Filter "*.msix" | ForEach-Object { $_.FullName }
+          if ($msixFiles.Count -lt 1) {
+            Write-Error "No MSIX files found in msix-staging!"
+            exit 1
+          }
+          New-Item -ItemType Directory -Force -Path "store-dist" | Out-Null
+          $firstMsix = [System.IO.Path]::GetFileNameWithoutExtension($msixFiles[0])
+          $verPart = if ($firstMsix -match 'QuickView_v?(\d+\.\d+\.\d+)') { $Matches[1] } else { "0.0.0" }
+          $bundlePath = "store-dist/QuickView_v${verPart}.msixbundle"
+          & "${{ github.workspace }}/packaging/msix/build_msix.ps1" -CreateBundle -MsixInputs $msixFiles -BundleOutputPath $bundlePath -Version $verPart
+
+      - name: Upload Unsigned Store Bundle Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuickView-Store-MSIXBundle
+          path: store-dist/*.msixbundle
+
+      - name: Upload to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $repo = "${{ github.repository }}"
+          Write-Host "[CI-Release] Uploading assets for repo: $repo, tag: $tag"
+          $files = Get-ChildItem -Path final-dist -File | ForEach-Object { $_.FullName }
+          Write-Host "[CI-Release] Found $($files.Count) assets to upload:"
+          $files | ForEach-Object { Write-Host "  -> $_" }
+          
+          # Check if draft release already exists
+          gh release view "$tag" --repo "$repo" > $null 2>&1
+          if ($LASTEXITCODE -ne 0) {
+              Write-Host "[CI-Release] Creating draft release for $tag..."
+              gh release create "$tag" --repo "$repo" --draft --title "QuickView $tag" --generate-notes
+          }
+          
+          # Upload / Overwrite all files to the release
+          Write-Host "[CI-Release] Uploading all assets with --clobber..."
+          gh release upload "$tag" $files --repo "$repo" --clobber
+          Write-Host "[CI-Release] Release upload finished successfully!"

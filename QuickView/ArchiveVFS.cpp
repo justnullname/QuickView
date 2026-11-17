@@ -1,5 +1,7 @@
 #include "pch.h"
 #include "ArchiveVFS.h"
+#include "StringUtils.h"
+#include "SupportedExtensions.h"
 #include "QuickViewETW.h"
 #include "../third_party/unrar-mini/rar.hpp"
 
@@ -17,11 +19,11 @@ namespace QuickView {
 
         if (g_archiveCache.size() >= 8) g_archiveCache.clear();
 
-        ::std::wstring ext = ::std::filesystem::path(path).extension().wstring();
-        ::std::transform(ext.begin(), ext.end(), ext.begin(), [](wchar_t c) { return (wchar_t)::towlower(c); });
+        const std::wstring_view ext = QuickView::ExtensionOf(path);
 
         ::std::shared_ptr<IArchive> res;
-        if (ext == L".cbr" || ext == L".rar") res = ::std::make_shared<RarArchive>(path);
+        if (QuickView::ExtEqualsIgnoreCase(ext, L".cbr") || QuickView::ExtEqualsIgnoreCase(ext, L".rar"))
+            res = ::std::make_shared<RarArchive>(path);
         else res = ::std::make_shared<ZipArchive>(path);
 
         if (res && res->IsValid()) {
@@ -31,6 +33,110 @@ namespace QuickView {
     }
 
 
+
+    static bool EnsureParentDirectory(const ::std::wstring& filePath) {
+        size_t lastSlash = filePath.find_last_of(L"\\/");
+        if (lastSlash == ::std::wstring::npos) return true;
+        ::std::wstring dir = filePath.substr(0, lastSlash);
+        for (size_t i = 0; i < dir.length(); ++i) {
+            if (dir[i] == L'\\' || dir[i] == L'/') {
+                ::std::wstring sub = dir.substr(0, i);
+                if (!sub.empty() && sub.back() != L':') {
+                    CreateDirectoryW(sub.c_str(), nullptr);
+                }
+            }
+        }
+        CreateDirectoryW(dir.c_str(), nullptr);
+        return true;
+    }
+
+    bool IArchive::ExtractZipToDirectory(
+        const ::std::wstring& zipPath,
+        const ::std::wstring& destDir,
+        void (*progressCb)(float progress, void* userData),
+        void* userData
+    ) {
+        ZipArchive zip(zipPath);
+        if (!zip.IsValid()) {
+            return false;
+        }
+
+        constexpr size_t kMaxEntries = 4096;
+        constexpr uint64_t kMaxEntryBytes = 512ull * 1024 * 1024;
+        constexpr uint64_t kMaxTotalBytes = 1024ull * 1024 * 1024;
+        size_t totalEntries = zip.GetEntryCount();
+        if (totalEntries > kMaxEntries) return false;
+        if (totalEntries == 0) return true;
+
+        EnsureParentDirectory(destDir + L"\\dummy.tmp");
+
+        ::std::vector<uint8_t> buffer;
+
+        uint64_t totalUncompressed = 0;
+        for (size_t i = 0; i < totalEntries; ++i) {
+            ::std::wstring relName = zip.GetEntryName(i);
+            if (relName.empty()) continue;
+
+            for (auto& ch : relName) {
+                if (ch == L'/') ch = L'\\';
+            }
+
+            // Security: Prevent Directory Traversal
+            if (relName.front() == L'\\' || relName.find(L':') != ::std::wstring::npos ||
+                relName.find(L"..\\") != ::std::wstring::npos || relName == L".." || relName.find(L"\\..") != ::std::wstring::npos) {
+                continue;
+            }
+
+            ::std::wstring outPath = destDir + L"\\" + relName;
+            if (relName.back() == L'\\') {
+                EnsureParentDirectory(outPath + L"\\dummy.tmp");
+                continue;
+            }
+            EnsureParentDirectory(outPath);
+
+            const ArchiveEntry& entry = zip.GetEntry(i);
+            if (entry.uncompSize > kMaxEntryBytes || totalUncompressed > kMaxTotalBytes - entry.uncompSize) return false;
+            totalUncompressed += entry.uncompSize;
+
+            if (buffer.size() < entry.uncompSize) {
+                buffer.resize(entry.uncompSize);
+            }
+
+            size_t extractedSize = zip.ExtractEntry(i, buffer.data(), buffer.size());
+            if (extractedSize != entry.uncompSize) {
+                return false;
+            }
+
+            SetFileAttributesW(outPath.c_str(), FILE_ATTRIBUTE_NORMAL);
+            HANDLE hFile = CreateFileW(outPath.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (hFile == INVALID_HANDLE_VALUE) {
+                DeleteFileW(outPath.c_str());
+                hFile = CreateFileW(outPath.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+                if (hFile == INVALID_HANDLE_VALUE) {
+                    return false;
+                }
+            }
+
+            DWORD written = 0;
+            BOOL writeOk = TRUE;
+            if (entry.uncompSize > 0) {
+                writeOk = WriteFile(hFile, buffer.data(), static_cast<DWORD>(entry.uncompSize), &written, nullptr);
+            }
+            CloseHandle(hFile);
+
+            if (!writeOk || written != entry.uncompSize) {
+                DeleteFileW(outPath.c_str());
+                return false;
+            }
+
+            if (progressCb) {
+                float progress = static_cast<float>(i + 1) / static_cast<float>(totalEntries);
+                progressCb(progress, userData);
+            }
+        }
+
+        return true;
+    }
 
     ZipArchive::ZipArchive(const ::std::wstring& path) : m_mappedFile(path) {
         if (m_mappedFile.IsValid()) {
@@ -139,14 +245,7 @@ namespace QuickView {
         if (entry.nameOffset + entry.nameLen > size) return L"";
 
         const char* namePtr = (const char*)(data + entry.nameOffset);
-
-        // Lazy UTF-8 to UTF-16 conversion
-        int size_needed = MultiByteToWideChar(CP_UTF8, 0, namePtr, (int)entry.nameLen, NULL, 0);
-        if (size_needed <= 0) return L"";
-
-        ::std::wstring wstrTo(size_needed, 0);
-        MultiByteToWideChar(CP_UTF8, 0, namePtr, (int)entry.nameLen, &wstrTo[0], size_needed);
-        return wstrTo;
+        return Utf8ToWide(std::string_view(namePtr, entry.nameLen));
     }
 
     ::std::string_view ZipArchive::GetEntryNameView(size_t index) const {
@@ -206,12 +305,21 @@ namespace QuickView {
                 if (inflateInit2(m_zstream.get(), -MAX_WBITS) != Z_OK) return 0;
                 m_zstream_init = true;
             } else {
-                if (inflateReset(m_zstream.get()) != Z_OK) return 0;
+                if (inflateReset(m_zstream.get()) != Z_OK) {
+                    inflateEnd(m_zstream.get());
+                    m_zstream_init = false;
+                    if (inflateInit2(m_zstream.get(), -MAX_WBITS) != Z_OK) return 0;
+                    m_zstream_init = true;
+                }
             }
 
             int ret = inflate(m_zstream.get(), Z_FINISH);
 
-            if (ret != Z_STREAM_END && ret != Z_OK) return 0;
+            if (ret != Z_STREAM_END && ret != Z_OK) {
+                inflateEnd(m_zstream.get());
+                m_zstream_init = false;
+                return 0;
+            }
         } else {
             // Unsupported compression method
             return false;
@@ -291,12 +399,11 @@ namespace QuickView {
                 
                 // Convert FileName to UTF-8 and store in m_namesBuffer
                 if (!wideName.empty()) {
-                    int utf8Len = WideCharToMultiByte(CP_UTF8, 0, wideName.c_str(), (int)wideName.length(), nullptr, 0, nullptr, nullptr);
-                    if (utf8Len > 0) {
+                    std::string u8 = WideToUtf8(wideName);
+                    if (!u8.empty()) {
                         entry.nameOffset = (uint32_t)m_namesBuffer.size();
-                        entry.nameLen = (uint16_t)utf8Len;
-                        m_namesBuffer.resize(m_namesBuffer.size() + utf8Len);
-                        WideCharToMultiByte(CP_UTF8, 0, wideName.c_str(), (int)wideName.length(), &m_namesBuffer[entry.nameOffset], utf8Len, nullptr, nullptr);
+                        entry.nameLen = (uint16_t)u8.size();
+                        m_namesBuffer.insert(m_namesBuffer.end(), u8.begin(), u8.end());
                     } else {
                         entry.nameOffset = 0;
                         entry.nameLen = 0;
@@ -321,12 +428,7 @@ namespace QuickView {
         if (entry.nameLen == 0) return L"";
 
         ::std::string_view utf8Name(m_namesBuffer.data() + entry.nameOffset, entry.nameLen);
-        int wideLen = MultiByteToWideChar(CP_UTF8, 0, utf8Name.data(), (int)utf8Name.length(), nullptr, 0);
-        if (wideLen <= 0) return L"";
-
-        ::std::wstring res(wideLen, L'\0');
-        MultiByteToWideChar(CP_UTF8, 0, utf8Name.data(), (int)utf8Name.length(), &res[0], wideLen);
-        return res;
+        return Utf8ToWide(utf8Name);
     }
 
     ::std::string_view RarArchive::GetEntryNameView(size_t index) const {

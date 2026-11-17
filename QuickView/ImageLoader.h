@@ -13,6 +13,7 @@
 #include <type_traits>
 
 namespace QuickView {
+class MappedFile;
 namespace Codec {
 struct DecodeContext;
 struct DecodeResult;
@@ -56,6 +57,10 @@ public:
 
     UINT Width = 0;
     UINT Height = 0;
+    UINT SrWidth = 0;           // [QVX-SR] Super-resolution pixel width
+    UINT SrHeight = 0;          // [QVX-SR] Super-resolution pixel height
+    float SrScale = 1.0f;       // [QVX-SR] Active super-resolution scale
+    bool HasSr = false;         // [QVX-SR] True if super-resolution metadata is present
     double DpiX = 96.0;         // [v10.5] Embedded Physical Resolution
     double DpiY = 96.0;
     bool hasAlpha = true;       // [Titan Perf] Alpha mode for Zero-Blend
@@ -83,6 +88,7 @@ public:
 
     // [v5.3] Split Strategy: True if Aux data (EXIF strings) is loaded
     bool IsFullMetadataLoaded = false;
+    uint64_t OwnerImageId = 0;
 
     // [v5.3] File Timestamps (for Sorting/Details)
     FILETIME CreationTime = {};
@@ -203,6 +209,7 @@ public:
     std::wstring format; // JPEG/PNG/WEBP/RAW/JXL/AVIF
     int width = 0;
     int height = 0;
+    int exifOrientation = 1;
     uintmax_t fileSize = 0;
     bool hasEmbeddedThumb = false;
     ImageType type = ImageType::Invalid;
@@ -228,6 +235,11 @@ public:
   /// Fast header peek (reads ~512 bytes) to classify image without full decode.
   /// </summary>
   ImageHeaderInfo PeekHeader(LPCWSTR filePath);
+
+  /// <summary>
+  /// Fast header peek from an already mapped in-memory buffer (zero file open).
+  /// </summary>
+  ImageHeaderInfo PeekHeaderFromMemory(LPCWSTR filePath, const uint8_t *data, size_t size);
 
   /// <summary>
   /// Read metadata from file using WIC
@@ -330,7 +342,9 @@ public:
                       ImageMetadata *pMetadata = nullptr,
                       bool allowFakeBase = true, bool isTitanMode = false,
                       float targetHdrHeadroomStops = -1.0f,
-                      QuickView::ColorPrimaries targetPrimaries = QuickView::ColorPrimaries::SRGB);
+                      QuickView::ColorPrimaries targetPrimaries = QuickView::ColorPrimaries::SRGB,
+                      std::shared_ptr<QuickView::MappedFile> existingMmf = nullptr,
+                      bool preserveFloat = true);
 
   /// <summary>
   /// Load a frame directly from a mapped/in-memory buffer via the unified
@@ -342,7 +356,9 @@ public:
                                 int targetWidth = 0, int targetHeight = 0,
                                 std::wstring *pLoaderName = nullptr,
                                 ImageMetadata *pMetadata = nullptr,
-                                float targetHdrHeadroomStops = -1.0f);
+                                float targetHdrHeadroomStops = -1.0f,
+                                std::shared_ptr<QuickView::MappedFile> sourceMmf = nullptr,
+                                bool preserveFloat = true);
 
   // ============================================================================
   // [Titan Engine] Region Decoding API
@@ -394,6 +410,7 @@ public:
   struct ImageInfo {
     uint32_t width = 0;
     uint32_t height = 0;
+    int exifOrientation = 1;
     uint64_t fileSize = 0;
     std::wstring format; // "JPEG", "PNG", "WebP", "AVIF", "JXL", "RAW", etc.
     std::wstring colorSpace; // Optional: "sRGB", "Display P3", etc.
@@ -408,6 +425,7 @@ public:
   /// Only reads first ~64KB of file, uses format-specific optimized parsers.
   /// </summary>
   HRESULT GetImageInfoFast(LPCWSTR filePath, ImageInfo *pInfo);
+  HRESULT GetImageInfoFastFromMemory(const uint8_t *data, size_t size, ImageInfo *pInfo, LPCWSTR filePath = nullptr);
 
   /// <summary>
   /// Get image size without full decode (Legacy, uses WIC)
@@ -534,6 +552,7 @@ private:
 };
 
 namespace QuickView {
+class MappedFile;
 namespace Codec {
 
 struct DecodeContext {
@@ -560,7 +579,8 @@ struct DecodeContext {
   bool isTitanMode = false;
   bool preserveFloat = false;
 
-  QuickView::AuxLayerCallback onAuxLayerReady;
+  std::shared_ptr<QuickView::MappedFile> sourceMmf;
+  mutable QuickView::AuxLayerCallback onAuxLayerReady;
 };
 
 struct DecodeResult {

@@ -4,6 +4,7 @@
 #include "AppStrings.h"
 #include "EditState.h"
 #include "GeekIconRenderer.h"
+#include "ThemePalette.h"
 
 extern AppConfig g_config;
 
@@ -27,25 +28,22 @@ void HelpOverlay::SetUIScale(float scale) {
     if (fabsf(m_uiScale - scale) < 0.001f) return;
     m_uiScale = scale;
     m_fmtHeader.Reset();
-    m_fmtKey.Reset();
-    m_fmtDesc.Reset();
     m_fmtTip.Reset();
 }
 
 
 void HelpOverlay::CreateResources(ID2D1RenderTarget* pRT) {
     if (!m_brushBg) {
-        bool isLight = IsLightThemeActive();
+        const auto& tp = QuickView::UI::Theme::GetThemePalette();
+        bool isLight = tp.isLight;
         D2D1_COLOR_F bgClr = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 1.0f) : D2D1::ColorF(0.08f, 0.08f, 0.10f, 1.0f);
         D2D1_COLOR_F txtClr = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f, 1.0f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
-        D2D1_COLOR_F headClr = isLight ? D2D1::ColorF(0.0f, 0.45f, 0.9f, 1.0f) : D2D1::ColorF(0.2f, 0.6f, 1.0f, 1.0f);
-        D2D1_COLOR_F keyClr = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f, 0.7f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.7f);
+        D2D1_COLOR_F headClr = tp.accentText;
         D2D1_COLOR_F bordClr = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.15f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f);
 
         pRT->CreateSolidColorBrush(bgClr, &m_brushBg);
         pRT->CreateSolidColorBrush(txtClr, &m_brushText);
         pRT->CreateSolidColorBrush(headClr, &m_brushHeader);
-        pRT->CreateSolidColorBrush(keyClr, &m_brushKey);
         pRT->CreateSolidColorBrush(bordClr, &m_brushBorder);
         pRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f), &m_brushScrollBg);
         pRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.3f), &m_brushScrollThumb);
@@ -53,11 +51,11 @@ void HelpOverlay::CreateResources(ID2D1RenderTarget* pRT) {
     }
 
     if (m_brushBg) {
-        bool isLight = IsLightThemeActive();
+        const auto& tp = QuickView::UI::Theme::GetThemePalette();
+        bool isLight = tp.isLight;
         D2D1_COLOR_F bgClr = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 1.0f) : D2D1::ColorF(0.08f, 0.08f, 0.10f, 1.0f);
         D2D1_COLOR_F txtClr = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f, 1.0f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
-        D2D1_COLOR_F headClr = isLight ? D2D1::ColorF(0.0f, 0.45f, 0.9f, 1.0f) : D2D1::ColorF(0.2f, 0.6f, 1.0f, 1.0f);
-        D2D1_COLOR_F keyClr = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f, 0.7f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.7f);
+        D2D1_COLOR_F headClr = tp.accentText;
         D2D1_COLOR_F bordClr = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.15f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f);
         D2D1_COLOR_F scrlBg = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.05f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f);
         D2D1_COLOR_F scrlTh = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.2f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.3f);
@@ -65,7 +63,6 @@ void HelpOverlay::CreateResources(ID2D1RenderTarget* pRT) {
         m_brushBg->SetColor(bgClr);
         m_brushText->SetColor(txtClr);
         m_brushHeader->SetColor(headClr);
-        m_brushKey->SetColor(keyClr);
         m_brushBorder->SetColor(bordClr);
         m_brushScrollBg->SetColor(scrlBg);
         m_brushScrollThumb->SetColor(scrlTh);
@@ -77,10 +74,8 @@ void HelpOverlay::CreateResources(ID2D1RenderTarget* pRT) {
     }
 
     if (!m_dwriteFactory) return;
-    if (!m_fmtHeader || !m_fmtKey || !m_fmtDesc || !m_fmtTip) {
+    if (!m_fmtHeader || !m_fmtTip) {
         m_dwriteFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 16.0f * m_uiScale, L"", &m_fmtHeader);
-        m_dwriteFactory->CreateTextFormat(L"Consolas", nullptr, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f * m_uiScale, L"", &m_fmtKey);
-        m_dwriteFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 13.0f * m_uiScale, L"", &m_fmtDesc);
         m_dwriteFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f * m_uiScale, L"", &m_fmtTip);
     }
 }
@@ -88,96 +83,18 @@ void HelpOverlay::CreateResources(ID2D1RenderTarget* pRT) {
 void HelpOverlay::RebuildList() {
     m_items.clear();
 
-    // 1. Prepare dynamic localized strings in class-level caches
-    m_strCtrlLeft = L"Ctrl + " + std::wstring(AppStrings::Settings_Label_LeftDrag);
-    
-    m_strHudText = AppStrings::Context_HUDGallery;
-    size_t tabPos = m_strHudText.find(L'\t');
-    if (tabPos != std::wstring::npos) {
-        m_strHudText = m_strHudText.substr(0, tabPos);
-    }
-    
-    m_strHudTopCombined = m_strHudText + L" / " + AppStrings::Settings_Label_AlwaysOnTop;
-    
-    m_strOverlayText = AppStrings::Context_OverlayMode;
-    size_t oTab = m_strOverlayText.find(L'\t');
-    if (oTab != std::wstring::npos) {
-        m_strOverlayText = m_strOverlayText.substr(0, oTab);
-    }
-    
-    m_strOverlayAlpha = std::wstring(AppStrings::Toolbar_Tooltip_OverlayAlphaUp) + L" / " + AppStrings::Toolbar_Tooltip_OverlayAlphaDown;
-    
-    m_strOpenText = AppStrings::Context_Open;
-    size_t openTab = m_strOpenText.find(L'\t');
-    if (openTab != std::wstring::npos) {
-        m_strOpenText = m_strOpenText.substr(0, openTab);
-    }
+    // Top notice directing users to customizable Controls & future online help docs
+    m_items.push_back({ false, AppStrings::g.Help_Tip_ContextScope, L"" });
 
-    // 2. Build list with safe pointer assignments
-    m_items.push_back({ false, AppStrings::Help_Tip_ContextScope, L"" });
-
-    m_items.push_back({ true, AppStrings::Help_Header_Mouse, L"" });
-    m_items.push_back({ false, L"\x2190 / \x2192 (Space)", AppStrings::Help_Action_NextPrev });
-    m_items.push_back({ false, L"Home / End", AppStrings::Help_Item_FirstLast });
-    bool wheelPrimaryNavigate = (g_config.WheelActionMode == 1);
-    m_items.push_back({ false, AppStrings::Help_Mouse_Wheel, wheelPrimaryNavigate ? AppStrings::Help_Action_NextPrev : AppStrings::Help_Action_Zoom });
-    m_items.push_back({ false, L"Ctrl + Scroll", AppStrings::Help_Action_LockWindowZoom });
-    m_items.push_back({ false, L"Alt + Scroll", AppStrings::Help_Action_AdjustZoomSpeed });
-    m_items.push_back({ false, AppStrings::Help_Mouse_RightVerticalDrag, AppStrings::Help_Action_Zoom });
-    m_items.push_back({ false, AppStrings::Help_Mouse_Right, AppStrings::Help_Action_ContextMenu });
-    m_items.push_back({ false, AppStrings::Settings_Label_LeftDrag, AppStrings::Help_Action_MoveWindow });
-    m_items.push_back({ false, AppStrings::Settings_Label_MiddleDrag, AppStrings::Help_Action_PanImage });
-    m_items.push_back({ false, m_strCtrlLeft.c_str(), L"Same as Middle Drag" });
-    
-    m_items.push_back({ false, L"Double Click", AppStrings::Help_Action_SmartZoom });
-    m_items.push_back({ false, L"Middle Click", AppStrings::Help_Item_Close });
-
-    m_items.push_back({ true, AppStrings::Context_View, L"" });
-    m_items.push_back({ false, L"F1", L"Help" });
-    m_items.push_back({ false, L"F11 / Enter", AppStrings::Help_Item_Fullscreen });
-    m_items.push_back({ false, L"F12", L"Debug HUD (Enable in Settings)" });
-    
-    m_items.push_back({ false, L"T / Ctrl+T", m_strHudTopCombined.c_str() });
-    m_items.push_back({ false, L"1 / Z", AppStrings::OSD_Zoom100 });
-    m_items.push_back({ false, L"0 / F", AppStrings::OSD_ZoomFit });
-    m_items.push_back({ false, L"+ (\x2191) / - (\x2193)", L"Zoom (+/- 10%)" });
-    m_items.push_back({ false, L"Ctrl + (+/-)", L"Zoom (+/- 1%)" });
-    
-    m_items.push_back({ false, L"I / Tab", L"Info Panel (Full / Lite)" });
-    m_items.push_back({ false, L"C", AppStrings::Help_Item_Compare });
-    m_items.push_back({ false, L"Ctrl + F11", AppStrings::Settings_Label_SpanDisplays });
-
-    m_items.push_back({ true, m_strOverlayText.c_str(), L"" });
-    m_items.push_back({ false, L"Ctrl + Shift + O", m_strOverlayText.c_str() });
-    m_items.push_back({ false, L"Alt + \x2191 / \x2193", m_strOverlayAlpha.c_str() });
-    m_items.push_back({ false, L"Shift + Esc", AppStrings::Menu_ExitPassthrough });
-
-    m_items.push_back({ true, L"File Operations", L"" });
-    
-    m_items.push_back({ false, L"O / Ctrl+O", m_strOpenText.c_str() });
-    m_items.push_back({ false, L"F2", L"Rename" });
-    m_items.push_back({ false, L"Del", L"Delete" });
-    m_items.push_back({ false, L"Ctrl + C", AppStrings::Help_Desc_Copy });
-    m_items.push_back({ false, L"Ctrl+Alt+C", L"Copy File Path" });
-    m_items.push_back({ false, L"Ctrl+P", L"Print" });
-
-    m_items.push_back({ true, AppStrings::Context_Transform, L"" });
-    m_items.push_back({ false, L"R / Shift+R", L"Rotate 90\u00B0 CW / CCW" });
-    m_items.push_back({ false, L"H", L"Flip Horizontal" });
-    m_items.push_back({ false, L"V", L"Flip Vertical" });
-    m_items.push_back({ false, L"E", AppStrings::Help_Desc_Edit });
-
-    m_items.push_back({ true, L"Interface", L"" });
-    m_items.push_back({ false, L"Esc", AppStrings::Help_Item_Close });
-
-    m_items.push_back({ true, AppStrings::Help_Header_Tips, L"" });
-    m_items.push_back({ false, AppStrings::Help_Tip_Rotation, L"" });
-    m_items.push_back({ false, AppStrings::Help_Tip_VideoWall, L"" });
-    m_items.push_back({ false, AppStrings::Help_Tip_DesignerMode, L"" });
-    m_items.push_back({ false, AppStrings::Help_Tip_GamutDetection, L"" });
-    m_items.push_back({ false, AppStrings::Help_Tip_Raw, L"" });
-    m_items.push_back({ false, AppStrings::Help_Tip_JpegQ, L"" });
-    m_items.push_back({ false, AppStrings::Help_Tip_SoftProofCompare, L"" });
+    // Tips & Glossary
+    m_items.push_back({ true, AppStrings::g.Help_Header_Tips, L"" });
+    m_items.push_back({ false, AppStrings::g.Help_Tip_Rotation, L"" });
+    m_items.push_back({ false, AppStrings::g.Help_Tip_VideoWall, L"" });
+    m_items.push_back({ false, AppStrings::g.Help_Tip_DesignerMode, L"" });
+    m_items.push_back({ false, AppStrings::g.Help_Tip_GamutDetection, L"" });
+    m_items.push_back({ false, AppStrings::g.Help_Tip_Raw, L"" });
+    m_items.push_back({ false, AppStrings::g.Help_Tip_JpegQ, L"" });
+    m_items.push_back({ false, AppStrings::g.Help_Tip_SoftProofCompare, L"" });
 }
 
 void HelpOverlay::SetVisible(bool visible) {
@@ -212,7 +129,6 @@ void HelpOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
     const float s = m_uiScale;
     const float panelW = WIDTH * s;
     const float panelH = MAX_HEIGHT * s;
-    const float rowH = ROW_HEIGHT * s;
 
     // Dimmer
     if (g_config.EnableAmbientDimmer) {
@@ -318,65 +234,27 @@ void HelpOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
 
     for (const auto& item : m_items) {
         const wchar_t* kStr = item.key ? item.key : L"";
-        UINT32 kLen = (UINT32)wcslen(kStr);
-        bool isDescEmpty = (!item.desc || item.desc[0] == L'\0');
+        const UINT32 kLen = (UINT32)wcslen(kStr);
 
         if (item.isHeader) {
             contentY += 20;
-            pRT->DrawText(kStr, kLen, m_fmtHeader.Get(), D2D1::RectF(x + 24.0f * s, contentY, x + panelW - 24.0f * s, contentY + 30.0f * s), m_brushHeader.Get());
+            if (m_fmtHeader && m_brushHeader) {
+                pRT->DrawText(kStr, kLen, m_fmtHeader.Get(), D2D1::RectF(x + 24.0f * s, contentY, x + panelW - 24.0f * s, contentY + 30.0f * s), m_brushHeader.Get());
+            }
             contentY += 28.0f * s;
-        } 
-        else if (isDescEmpty) {
+        } else if (m_dwriteFactory && m_fmtTip && m_brushText) {
             // Full Width Text (Tip)
             ComPtr<IDWriteTextLayout> layout;
-            IDWriteTextFormat* pFmt = m_fmtTip.Get();
-            FLOAT maxWidth = (WIDTH - 48.0f) * s; // Account for left and right padding (24.0f * 2)
-            FLOAT maxHeight = 1000.0f;
-            
-            HRESULT hr = m_dwriteFactory->CreateTextLayout(kStr, kLen, pFmt, maxWidth, maxHeight, layout.GetAddressOf());
-            
-            if (SUCCEEDED(hr)) {
-                DWRITE_TEXT_METRICS metrics;
+            const FLOAT maxWidth = (WIDTH - 48.0f) * s; // Account for left and right padding (24.0f * 2)
+            constexpr FLOAT maxHeight = 1000.0f;
+
+            HRESULT hr = m_dwriteFactory->CreateTextLayout(kStr, kLen, m_fmtTip.Get(), maxWidth, maxHeight, layout.GetAddressOf());
+            if (SUCCEEDED(hr) && layout) {
+                DWRITE_TEXT_METRICS metrics{};
                 layout->GetMetrics(&metrics);
-                float h = metrics.height;
                 pRT->DrawTextLayout(D2D1::Point2F(x + 24.0f * s, contentY), layout.Get(), m_brushText.Get());
-                contentY += h + 10.0f * s; // Padding
+                contentY += metrics.height + 10.0f * s;
             }
-        }
-        else {
-            // Key - Value Pair
-            float keyW = 180.0f * s;
-            // Key (Left Aligned in Col 1)
-            pRT->DrawText(kStr, kLen, m_fmtKey.Get(), D2D1::RectF(x + 40.0f * s, contentY, x + 40.0f * s + keyW, contentY + rowH), m_brushKey.Get());
-            
-            // Value
-            ComPtr<IDWriteTextLayout> layout;
-            float descX = x + 50.0f * s + keyW;
-            FLOAT maxWidth = x + panelW - 24.0f * s - descX;
-            FLOAT maxHeight = 1000.0f;
-
-            const wchar_t* dStr = item.desc;
-            UINT32 dLen = (UINT32)wcslen(dStr);
-
-            HRESULT hr = m_dwriteFactory->CreateTextLayout(
-                dStr, dLen, m_fmtDesc.Get(),
-                maxWidth, maxHeight, layout.GetAddressOf()
-            );
-
-            float itemHeight = 24.0f * s; // default min height
-            if (SUCCEEDED(hr)) {
-                DWRITE_TEXT_METRICS metrics;
-                layout->GetMetrics(&metrics);
-                pRT->DrawTextLayout(D2D1::Point2F(descX, contentY), layout.Get(), m_brushText.Get());
-                if (metrics.height > itemHeight) {
-                    itemHeight = metrics.height + 4.0f * s; // add some padding if multiline
-                }
-            } else {
-                // fallback
-                pRT->DrawText(dStr, dLen, m_fmtDesc.Get(), D2D1::RectF(descX, contentY, descX + maxWidth, contentY + rowH), m_brushText.Get());
-            }
-            
-            contentY += itemHeight;
         }
     }
     
@@ -454,3 +332,4 @@ void HelpOverlay::OnLButtonDown(float x, float y) {
         SetVisible(false); // Close on click outside
     }
 }
+

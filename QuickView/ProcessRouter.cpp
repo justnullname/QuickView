@@ -7,6 +7,8 @@
 
 #include "pch.h"
 #include "ProcessRouter.h"
+#include "FileAssociationManager.h"
+#include "SystemInfo.h"
 #include <vector>
 #include <mutex>
 #include <thread>
@@ -14,23 +16,33 @@
 #include <algorithm>
 #include <shellapi.h>
 #include <shlwapi.h>
+
 #pragma comment(lib, "Shlwapi.lib")
 
 namespace QuickView::ProcessRouter {
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-static constexpr wchar_t kMutexName[]     = L"Local\\QuickView_Master_v1";
+static constexpr wchar_t kMutexNameUnpackaged[] = L"Local\\QuickView_Master_v1";
+static constexpr wchar_t kMutexNamePackaged[]   = L"Local\\QuickView_Master_MSIX_v1";
 static constexpr wchar_t kViewerChildArg[] = L"--viewer-child";
 static constexpr DWORD   kPipeBufferSize  = 8192;   // bytes
 static constexpr DWORD   kRouteTimeoutMs  = 2000;   // max wait for pipe connect
 static constexpr int     kRouteRetryCount = 3;
 static constexpr DWORD   kRouteRetryMs    = 150;
 
-// Pipe name includes session ID for Terminal Services isolation.
+static const wchar_t* GetMasterMutexName() {
+    return SystemInfo::IsPackagedApp() ? kMutexNamePackaged : kMutexNameUnpackaged;
+}
+
+// Pipe name includes session ID for Terminal Services isolation,
+// and an MSIX tag so Store and portable instances never hijack each other.
 static std::wstring BuildPipeName() {
     DWORD sessionId = 0;
     ProcessIdToSessionId(GetCurrentProcessId(), &sessionId);
+    if (SystemInfo::IsPackagedApp()) {
+        return L"\\\\.\\pipe\\QuickView_Route_MSIX_S" + std::to_wstring(sessionId);
+    }
     return L"\\\\.\\pipe\\QuickView_Route_S" + std::to_wstring(sessionId);
 }
 
@@ -186,7 +198,7 @@ RouteResult TryRoute(bool singleInstanceEnabled) {
     s_pipeName = BuildPipeName();
 
     // Attempt to claim the Master mutex.
-    s_mutex = CreateMutexW(nullptr, TRUE, kMutexName);
+    s_mutex = CreateMutexW(nullptr, TRUE, GetMasterMutexName());
     if (!s_mutex) {
         return RouteResult::Independent; // OS error, fallback
     }
@@ -239,6 +251,10 @@ RouteResult TryRoute(bool singleInstanceEnabled) {
         // Core fix: The router process currently still holds the foreground focus permission granted by Explorer
         // Before exiting, delegate it to all processes that are about to request foreground permissions (e.g. main process or newly spawned child processes)
         AllowSetForegroundWindow(ASFW_ANY);
+
+        // Clear OS startup feedback cursor (IDC_APPSTARTING) before short-lived router exits
+        MSG msg{};
+        PeekMessageW(&msg, nullptr, 0, 0, PM_NOREMOVE);
 
         return RouteResult::RoutedToMaster;
     }
@@ -325,7 +341,7 @@ void SpawnViewer(const std::wstring& imagePath, HWND hFgCaller) {
 
     STARTUPINFOW si{};
     si.cb = sizeof(si);
-    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.dwFlags = STARTF_USESHOWWINDOW | STARTF_FORCEOFFFEEDBACK;
     si.wShowWindow = SW_SHOWNORMAL;
 
     PROCESS_INFORMATION pi{};
@@ -417,26 +433,10 @@ std::wstring ParseImagePath() {
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (!argv) return {};
 
-    std::wstring result;
-
-    // Pattern 1: --viewer-child "path"
-    for (int i = 1; i + 1 < argc; ++i) {
-        if (argv[i] && _wcsicmp(argv[i], kViewerChildArg) == 0) {
-            if (argv[i + 1]) result = argv[i + 1];
-            LocalFree(argv);
-            return result;
-        }
-    }
-
-    // Pattern 2: Normal launch — first non-flag argument is the image path.
-    for (int i = 1; i < argc; ++i) {
-        if (argv[i] && argv[i][0] != L'-') {
-            result = argv[i];
-            break;
-        }
-    }
+    std::wstring result = QuickView::ReconstructPathFromArgs(argc, argv);
     LocalFree(argv);
     return result;
 }
 
 } // namespace QuickView::ProcessRouter
+

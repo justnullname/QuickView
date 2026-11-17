@@ -4,10 +4,12 @@
 #include "ImageExporter.h"
 #include "UIRenderer.h"
 #include "AppContext.h"
+#include "CompareController.h"
 #include "CompositionEngine.h"
 #include "EditState.h"
 #include "HeavyLanePool.h"
 #include "GeekWidgets.h"
+#include "ThemePalette.h"
 #include "ImageLoader.h"
 #include "RenderEngine.h"
 #include <commdlg.h>
@@ -18,6 +20,7 @@
 #include "PaneContext.h"
 #include "ImageEngine.h"
 #include <thread>
+#include "AsyncJob.h"
 
 extern std::unique_ptr<ImageEngine> g_imageEngine;
 
@@ -35,6 +38,8 @@ extern void ReloadCurrentImage(HWND hwnd);
 extern void ReleaseImageResources();
 extern HCURSOR g_currentCursor;
 extern void AdjustWindowForOverlay(HWND hwnd, bool isClosed);
+extern CRenderEngine* g_pRenderEngine;
+extern int GetEffectiveExifOrientation(int baseExif, const EditState& editState);
 
 namespace {
 inline float MeasureStringWidth(const wchar_t* text, float fontSize) {
@@ -47,6 +52,7 @@ inline float MeasureStringWidth(const wchar_t* text, float fontSize) {
 }
 }
 extern bool IsImageModified();
+extern bool IsCompareModeActive();
 extern std::vector<std::wstring>& GetSystemIccProfiles();
 
 namespace QuickView {
@@ -71,10 +77,13 @@ PanelLayout ExportPanel::ComputeLayout(float canvasWidth, float canvasHeight) co
     float contentW = panelWidth - padX * 2.0f;
 
     // Dynamic panel height computation:
-    // TopPadding (20) + Title (26) + Gap (12) + WH (28) + Gap (12) + Format (28) + [Lossless/Quality (36)] + ICC (24) + Gap (16) + Buttons (36) + BottomPadding (18)
+    // TopPadding (20) + Title (26) + Gap (12) + WH (28) + Gap (12) + Format (28) + [Lossless/Quality (36)] + [SR Checkbox (32)] + ICC (24) + Gap (16) + Buttons (36) + BottomPadding (18)
     float baseHeight = 232.0f * s;
     if (showLossless || showQuality) {
         baseHeight += 36.0f * s;
+    }
+    if (m_hasSrBitmap) {
+        baseHeight += 32.0f * s;
     }
 
     float panelHeight = baseHeight;
@@ -133,6 +142,15 @@ PanelLayout ExportPanel::ComputeLayout(float canvasWidth, float canvasHeight) co
         l.showQualitySlider = false;
     }
 
+    // 3.5 Super-Resolution Checkbox (Conditional)
+    if (m_hasSrBitmap) {
+        curY += 32.0f * s;
+        l.showSrCheckbox = true;
+        l.srCheckboxRect = D2D1::RectF(startX + padX, curY + 2.0f * s, startX + panelWidth - padX, curY + 26.0f * s);
+    } else {
+        l.showSrCheckbox = false;
+    }
+
     // 4. Preserve EXIF Checkbox & Embed ICC Checkbox & Dropdown & Size Label (Multi-language Dynamic Flow Layout)
     curY += 38.0f * s;
     float boxSize = 16.0f * s;
@@ -146,7 +164,7 @@ PanelLayout ExportPanel::ComputeLayout(float canvasWidth, float canvasHeight) co
     // 4.2 Embed ICC Checkbox (8px gap after EXIF)
     float gap1 = 8.0f * s;
     float iccLeft = l.preserveMetadataCheckboxRect.right + gap1;
-    const wchar_t* embedIccStr = (AppStrings::Dialog_EmbedICC && *AppStrings::Dialog_EmbedICC) ? AppStrings::Dialog_EmbedICC : L"Embed ICC";
+    const wchar_t* embedIccStr = (AppStrings::g.Dialog_EmbedICC && *AppStrings::g.Dialog_EmbedICC) ? AppStrings::g.Dialog_EmbedICC : L"Embed ICC";
     float iccTextW = MeasureStringWidth(embedIccStr, 13.0f * s);
     float iccTotalW = boxSize + textMargin + iccTextW;
     l.checkboxRect = D2D1::RectF(iccLeft, curY, iccLeft + iccTotalW, curY + 24.0f * s);
@@ -218,12 +236,32 @@ PanelLayout ExportPanel::ComputeLayout(float canvasWidth, float canvasHeight) co
     return l;
 }
 
-void ExportPanel::Show(HWND hwnd, int initialWidth, int initialHeight, const std::wstring& originalPath, PendingAction pending) {
+void ExportPanel::Show(HWND hwnd, int initialWidth, int initialHeight, const std::wstring& originalPath, 
+                       PendingAction pending, PaneSlot targetSlot, std::shared_ptr<RawImageFrame> sourceFrame,
+                       ExportMode mode) {
     m_hwnd = hwnd;
     m_isVisible = true;
     m_pendingAction = pending;
-    m_isModified = IsImageModified();
-    m_exportMode = (pending != PendingAction::None) ? ExportMode::UnsavedLeave : ExportMode::NormalExport;
+    m_targetSlot = targetSlot;
+    m_customSourceFrame = sourceFrame;
+
+    auto& targetPane = GetPaneContext(m_targetSlot);
+    if (!m_customSourceFrame && targetPane.editState.HasModifiedFrame && targetPane.currentFrame) {
+        m_customSourceFrame = targetPane.currentFrame;
+    }
+    m_isModified = IsImageModified() || targetPane.editState.IsDirty || (m_customSourceFrame != nullptr) || targetPane.editState.HasModifiedFrame;
+    m_exportMode = (mode == ExportMode::UnsavedLeave || pending != PendingAction::None) ? ExportMode::UnsavedLeave : ExportMode::NormalExport;
+
+    // Only fall back to in-memory source frame dimensions if caller did not provide valid visual dimensions
+    if ((initialWidth <= 0 || initialHeight <= 0) && m_customSourceFrame && m_customSourceFrame->width > 0 && m_customSourceFrame->height > 0) {
+        int rot = 0;
+        bool fh = false, fv = false;
+        CalculateNetTransform(rot, fh, fv);
+        bool isRot90 = (rot == 90 || rot == 270);
+        initialWidth = static_cast<int>(isRot90 ? m_customSourceFrame->height : m_customSourceFrame->width);
+        initialHeight = static_cast<int>(isRot90 ? m_customSourceFrame->width : m_customSourceFrame->height);
+    }
+
     m_cropWidth = initialWidth;
     m_cropHeight = initialHeight;
     m_targetWidth = initialWidth;
@@ -233,6 +271,35 @@ void ExportPanel::Show(HWND hwnd, int initialWidth, int initialHeight, const std
     m_focusedState = HoverState::None;
     m_inputStarted = false;
     m_lockAspectRatio = true;
+
+    // Check if target viewport has active super-resolution bitmap
+    m_hasSrBitmap = (targetPane.resource.promotedSrBitmap != nullptr || 
+                     targetPane.resource.promotedSrTexture != nullptr || 
+                     targetPane.resource.currentSrLevel > 1.0f ||
+                     targetPane.metadata.HasSr);
+    if (m_hasSrBitmap) {
+        m_exportSr = true;
+        m_isModified = true; // [QVX-SR] Super-resolution content can overwrite original or be saved as new
+        
+        float actualScale = 1.0f;
+        if (targetPane.resource.promotedSrScale > 1.0f) {
+            actualScale = targetPane.resource.promotedSrScale;
+        } else if (targetPane.metadata.SrScale > 1.0f) {
+            actualScale = targetPane.metadata.SrScale;
+        } else if (targetPane.resource.srScale > 1.0f) {
+            actualScale = targetPane.resource.srScale;
+        } else if (targetPane.resource.currentSrLevel > 1.0f) {
+            actualScale = targetPane.resource.currentSrLevel;
+        }
+        if (actualScale <= 1.0f) actualScale = 2.0f;
+        m_srScale = actualScale;
+
+        m_targetWidth = (int)std::round(m_cropWidth * m_srScale);
+        m_targetHeight = (int)std::round(m_cropHeight * m_srScale);
+    } else {
+        m_exportSr = false;
+        m_srScale = 1.0f;
+    }
     
     // Expand window if needed to accommodate ExportPanel
     if (m_hwnd) {
@@ -477,7 +544,8 @@ void ExportPanel::Hide() {
 bool ExportPanel::CanOverwriteOriginal() const {
     if (m_originalPath.empty()) return false;
     
-    if (!m_isModified) return false;
+    bool hasModifications = m_isModified || (m_exportSr && m_hasSrBitmap);
+    if (!hasModifications) return false;
     
     DWORD attr = GetFileAttributesW(m_originalPath.c_str());
     if (attr == INVALID_FILE_ATTRIBUTES || (attr & FILE_ATTRIBUTE_READONLY)) return false;
@@ -486,41 +554,57 @@ bool ExportPanel::CanOverwriteOriginal() const {
 }
 
 void ExportPanel::CalculateNetTransform(int& outRotation, bool& outFlipH, bool& outFlipV) const {
-    const auto& primaryPane = GetPaneContext(PaneSlot::Primary);
-    int baseExif = primaryPane.metadata.ExifOrientation;
-    if (baseExif < 1 || baseExif > 8) baseExif = 1;
-
-    Transform2D exifT = Transform2D::FromExif(baseExif);
-
-    Transform2D editT;
-    editT.Rotation = (primaryPane.editState.TotalRotation % 360 + 360) % 360;
-    editT.FlipH = primaryPane.editState.FlippedH;
-
-    Transform2D netT = Transform2D::Combine(exifT, editT);
-
-    outRotation = netT.Rotation;
-    outFlipH = netT.FlipH;
-    outFlipV = primaryPane.editState.FlippedV;
+    const auto& targetPane = GetPaneContext(m_targetSlot);
+    int effExif = GetEffectiveExifOrientation(targetPane.view.ExifOrientation, targetPane.editState);
+    Transform2D t = Transform2D::FromExif(effExif);
+    outRotation = t.Rotation;
+    outFlipH = t.FlipH;
+    outFlipV = false;
 }
 
 void ExportPanel::TriggerAsyncEstimate() {
     if (!m_isVisible) return; // Only estimate when ExportPanel is visible!
 
-    m_estimatedSizeStr = AppStrings::Dialog_SizeEstimating;
+    m_estimatedSizeStr = AppStrings::g.Dialog_SizeEstimating;
     uint64_t currentGen = ++m_estimateGeneration;
     
     ExportOptions opts;
     opts.InputPath = m_originalPath;
-    opts.CropX = (int)g_cropState.CropLeft;
-    opts.CropY = (int)g_cropState.CropTop;
-    opts.CropWidth = (int)std::round(g_cropState.CropRight - g_cropState.CropLeft);
-    opts.CropHeight = (int)std::round(g_cropState.CropBottom - g_cropState.CropTop);
+    CalculateNetTransform(opts.Rotation, opts.FlipH, opts.FlipV);
+
+    const auto& targetPane = GetPaneContext(m_targetSlot);
+    if (m_customSourceFrame && m_customSourceFrame->pixels && m_customSourceFrame->width > 0) {
+        opts.SourceFrame = m_customSourceFrame;
+    } else if (targetPane.editState.HasModifiedFrame && targetPane.currentFrame && targetPane.currentFrame->pixels && targetPane.currentFrame->width > 0) {
+        opts.SourceFrame = targetPane.currentFrame;
+    }
+
+    // TriggerAsyncEstimate decodes the 1x source (disk file or 1x modified frame),
+    // never the GPU SR texture; crop coordinates must stay in 1x visual pixel space.
+    constexpr float srScale = 1.0f;
+
+    if (g_cropState.IsActive) {
+        opts.CropX = (int)std::round(g_cropState.CropLeft * srScale);
+        opts.CropY = (int)std::round(g_cropState.CropTop * srScale);
+        opts.CropWidth = (int)std::round((g_cropState.CropRight - g_cropState.CropLeft) * srScale);
+        opts.CropHeight = (int)std::round((g_cropState.CropBottom - g_cropState.CropTop) * srScale);
+    } else if (targetPane.editState.HasCrop) {
+        opts.CropX = (int)std::round(targetPane.editState.CropLeft * srScale);
+        opts.CropY = (int)std::round(targetPane.editState.CropTop * srScale);
+        opts.CropWidth = (int)std::round((targetPane.editState.CropRight - targetPane.editState.CropLeft) * srScale);
+        opts.CropHeight = (int)std::round((targetPane.editState.CropBottom - targetPane.editState.CropTop) * srScale);
+    } else {
+        opts.CropX = 0;
+        opts.CropY = 0;
+        opts.CropWidth = 0;
+        opts.CropHeight = 0;
+    }
+
     opts.TargetWidth = m_targetWidth;
     opts.TargetHeight = m_targetHeight;
     opts.JpegQuality = m_jpegQuality;
     opts.Lossless = m_isLossless;
     opts.PreserveMetadata = m_preserveMetadata;
-    CalculateNetTransform(opts.Rotation, opts.FlipH, opts.FlipV);
 
     if (m_embedIcc && m_selectedIccIndex >= 0 && m_selectedIccIndex < (int)m_iccProfiles.size()) {
         const auto& item = m_iccProfiles[m_selectedIccIndex];
@@ -537,7 +621,7 @@ void ExportPanel::TriggerAsyncEstimate() {
         opts.OutputPath = L"dummy.jpg";
     }
 
-    std::thread([opts, currentGen, hwnd = m_hwnd, pThis = this]() {
+    QuickView::PostThreadPool([opts, currentGen, hwnd = m_hwnd, pThis = this]() {
         HRESULT hrCo = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
         
         if (pThis->m_estimateGeneration.load() != currentGen) {
@@ -556,7 +640,7 @@ void ExportPanel::TriggerAsyncEstimate() {
         PostMessageW(hwnd, WM_APP_ESTIMATE_READY, (WPARAM)currentGen, (LPARAM)bytes);
         
         if (SUCCEEDED(hrCo)) CoUninitialize();
-    }).detach();
+    });
 }
 
 void ExportPanel::OnEstimateReady(uint64_t gen, uint64_t bytes) {
@@ -687,6 +771,21 @@ bool ExportPanel::OnLButtonDown(float x, float y) {
             m_iccDropdownOpen = false;
         } else if (m_focusedState == HoverState::EmbedIccCheckbox) {
             m_embedIcc = !m_embedIcc;
+            TriggerAsyncEstimate();
+            m_focusedState = HoverState::None;
+            m_formatDropdownOpen = false;
+            m_iccDropdownOpen = false;
+        } else if (layout.showSrCheckbox && (m_focusedState == HoverState::SrCheckbox || hit(layout.srCheckboxRect))) {
+            m_exportSr = !m_exportSr;
+            if (m_exportSr) {
+                m_targetWidth = (int)std::round(m_cropWidth * m_srScale);
+                m_targetHeight = (int)std::round(m_cropHeight * m_srScale);
+                m_isModified = true;
+            } else {
+                m_targetWidth = m_cropWidth;
+                m_targetHeight = m_cropHeight;
+                m_isModified = IsImageModified();
+            }
             TriggerAsyncEstimate();
             m_focusedState = HoverState::None;
             m_formatDropdownOpen = false;
@@ -828,6 +927,7 @@ bool ExportPanel::OnMouseMove(float x, float y) {
         else if (hit(layout.lockRect)) newState = HoverState::LockBtn;
         else if (hit(layout.formatDropdownRect)) newState = HoverState::FormatDropdownBtn;
         else if (layout.showLosslessCheckbox && hit(layout.losslessCheckboxRect)) newState = HoverState::LosslessCheckbox;
+        else if (layout.showSrCheckbox && hit(layout.srCheckboxRect)) newState = HoverState::SrCheckbox;
         else if (layout.showQualitySlider && hit(layout.qualityRect)) {
             newState = HoverState::QualitySlider;
             qualitySubPart = QuickView::UI::GeekWidgets::HitTestSliderPill(layout.qualityRect, x, y, m_uiScale);
@@ -994,6 +1094,42 @@ void ExportPanel::CommitSave(bool overwrite) {
   ++m_estimateGeneration; // Cancel any running background estimate so real save
                           // gets 100% CPU & IO
 
+  auto& targetPane = GetPaneContext(m_targetSlot);
+
+  // [QVX-SR / AI] Extract in-memory source frame BEFORE ReleaseImageResources() destroys resources
+  std::shared_ptr<RawImageFrame> capturedFrame = nullptr;
+  bool isSrExtracted = false;
+
+  if (m_exportSr && m_hasSrBitmap) {
+      capturedFrame = std::make_shared<RawImageFrame>();
+      HRESULT hrExtract = E_FAIL;
+      if (g_pRenderEngine) {
+          if (targetPane.resource.promotedSrTexture) {
+              hrExtract = g_pRenderEngine->ExtractTexturePixels(targetPane.resource.promotedSrTexture.Get(), capturedFrame.get());
+          } else if (targetPane.resource.promotedSrBitmap) {
+              hrExtract = g_pRenderEngine->ExtractBitmapPixels(targetPane.resource.promotedSrBitmap.Get(), capturedFrame.get());
+          }
+      }
+      if (SUCCEEDED(hrExtract) && capturedFrame->pixels && capturedFrame->width > 0) {
+          isSrExtracted = true;
+      } else {
+          capturedFrame.reset(); // Extraction failed; fall back to normal path
+      }
+  }
+
+  if (!capturedFrame) {
+      if (m_customSourceFrame && m_customSourceFrame->pixels && m_customSourceFrame->width > 0) {
+          capturedFrame = m_customSourceFrame;
+      } else if (targetPane.editState.HasModifiedFrame && targetPane.currentFrame && targetPane.currentFrame->pixels && targetPane.currentFrame->width > 0) {
+          capturedFrame = targetPane.currentFrame;
+      } else if (targetPane.editState.HasModifiedFrame && targetPane.resource.bitmap) {
+          capturedFrame = std::make_shared<RawImageFrame>();
+          if (!(g_pRenderEngine && SUCCEEDED(g_pRenderEngine->ExtractBitmapPixels(targetPane.resource.bitmap.Get(), capturedFrame.get())) && capturedFrame->pixels)) {
+              capturedFrame.reset();
+          }
+      }
+  }
+
   // Release image locks and clear engine caches BEFORE export thread runs
   ::ReleaseImageResources();
   if (g_imageEngine && !m_originalPath.empty()) {
@@ -1002,30 +1138,59 @@ void ExportPanel::CommitSave(bool overwrite) {
 
   ExportOptions opts;
   opts.InputPath = m_originalPath;
+  CalculateNetTransform(opts.Rotation, opts.FlipH, opts.FlipV);
 
-  auto &primaryPane = GetPaneContext(PaneSlot::Primary);
+  float srScale = isSrExtracted ? m_srScale : 1.0f;
+
   if (g_cropState.IsActive) {
-    opts.CropX = (int)g_cropState.CropLeft;
-    opts.CropY = (int)g_cropState.CropTop;
-    opts.CropWidth =
-        (int)std::round(g_cropState.CropRight - g_cropState.CropLeft);
-    opts.CropHeight =
-        (int)std::round(g_cropState.CropBottom - g_cropState.CropTop);
-  } else if (primaryPane.editState.HasCrop) {
-    opts.CropX = (int)primaryPane.editState.CropLeft;
-    opts.CropY = (int)primaryPane.editState.CropTop;
-    opts.CropWidth = (int)std::round(primaryPane.editState.CropRight -
-                                     primaryPane.editState.CropLeft);
-    opts.CropHeight = (int)std::round(primaryPane.editState.CropBottom -
-                                      primaryPane.editState.CropTop);
+    opts.CropX = (int)std::round(g_cropState.CropLeft * srScale);
+    opts.CropY = (int)std::round(g_cropState.CropTop * srScale);
+    opts.CropWidth = (int)std::round((g_cropState.CropRight - g_cropState.CropLeft) * srScale);
+    opts.CropHeight = (int)std::round((g_cropState.CropBottom - g_cropState.CropTop) * srScale);
+  } else if (targetPane.editState.HasCrop) {
+    opts.CropX = (int)std::round(targetPane.editState.CropLeft * srScale);
+    opts.CropY = (int)std::round(targetPane.editState.CropTop * srScale);
+    opts.CropWidth = (int)std::round((targetPane.editState.CropRight - targetPane.editState.CropLeft) * srScale);
+    opts.CropHeight = (int)std::round((targetPane.editState.CropBottom - targetPane.editState.CropTop) * srScale);
+  } else {
+    opts.CropX = 0;
+    opts.CropY = 0;
+    opts.CropWidth = 0;
+    opts.CropHeight = 0;
   }
-    
-    opts.TargetWidth = m_targetWidth;
-    opts.TargetHeight = m_targetHeight;
-    opts.JpegQuality = m_jpegQuality;
-    opts.Lossless = m_isLossless;
-    opts.PreserveMetadata = m_preserveMetadata;
-    CalculateNetTransform(opts.Rotation, opts.FlipH, opts.FlipV);
+
+  // Apply captured in-memory frame (AI generated frame or SR frame)
+  if (capturedFrame && capturedFrame->pixels && capturedFrame->width > 0) {
+      opts.SourceFrame = capturedFrame;
+      
+      // Calculate true visual dimensions of the captured frame after rotation
+      bool isRot90 = (opts.Rotation == 90 || opts.Rotation == 270);
+      int frameVisualW = isRot90 ? (int)capturedFrame->height : (int)capturedFrame->width;
+      int frameVisualH = isRot90 ? (int)capturedFrame->width : (int)capturedFrame->height;
+
+      int expectedVisualW = (opts.CropWidth > 0) ? opts.CropWidth : frameVisualW;
+      int expectedVisualH = (opts.CropHeight > 0) ? opts.CropHeight : frameVisualH;
+
+      if (m_targetWidth == expectedVisualW && m_targetHeight == expectedVisualH) {
+          opts.TargetWidth = 0;
+          opts.TargetHeight = 0;
+      } else {
+          opts.TargetWidth = m_targetWidth;
+          opts.TargetHeight = m_targetHeight;
+      }
+  } else {
+      if (m_targetWidth == m_cropWidth && m_targetHeight == m_cropHeight) {
+          opts.TargetWidth = 0;
+          opts.TargetHeight = 0;
+      } else {
+          opts.TargetWidth = m_targetWidth;
+          opts.TargetHeight = m_targetHeight;
+      }
+  }
+
+  opts.JpegQuality = m_jpegQuality;
+  opts.Lossless = m_isLossless;
+  opts.PreserveMetadata = m_preserveMetadata;
 
     if (m_embedIcc && m_selectedIccIndex >= 0 && m_selectedIccIndex < (int)m_iccProfiles.size()) {
         const auto& item = m_iccProfiles[m_selectedIccIndex];
@@ -1101,7 +1266,7 @@ void ExportPanel::CommitSave(bool overwrite) {
     }
 
     m_estimatedSizeStr =
-        AppStrings::Dialog_SizeEstimating; // Reuse as "Saving..." indicator
+        AppStrings::g.Dialog_SizeEstimating; // Reuse as "Saving..." indicator
     RequestRepaint(PaintLayer::All);
 
     // Dispatch export to background worker thread
@@ -1143,6 +1308,7 @@ void ExportPanel::OnExportDone(bool success, const std::wstring &errorMsg,
     TryExitCropMode(m_hwnd, true);
     primaryPane.editState.IsDirty = false;
     primaryPane.editState.HasCrop = false;
+    primaryPane.editState.HasModifiedFrame = false;
     primaryPane.editState.PendingTransforms.clear();
     primaryPane.editState.TotalRotation = 0;
     primaryPane.editState.FlippedH = false;
@@ -1154,6 +1320,29 @@ void ExportPanel::OnExportDone(bool success, const std::wstring &errorMsg,
       g_imageEngine->InvalidateCache(savePath);
     }
     primaryPane.editState.HasCrop = false;
+
+    bool isOverwrite = (!m_originalPath.empty() && _wcsicmp(savePath.c_str(), m_originalPath.c_str()) == 0);
+
+    if (IsCompareModeActive()) {
+        if (isOverwrite) {
+            // Overwriting the original replaces the file -> exit compare mode to view single image
+            if (AppContext::GetInstance().CompareCtrl) {
+                AppContext::GetInstance().CompareCtrl->ExitMode(m_hwnd);
+            }
+        } else {
+            // Save As creates a new file -> KEEP compare mode active (Left = original, Right = new SR image)
+            GetPaneContext(PaneSlot::Left).view.Zoom = 1.0f;
+            GetPaneContext(PaneSlot::Left).view.PanX = 0.0f;
+            GetPaneContext(PaneSlot::Left).view.PanY = 0.0f;
+            primaryPane.view.Zoom = 1.0f;
+            primaryPane.view.PanX = 0.0f;
+            primaryPane.view.PanY = 0.0f;
+            if (AppContext::GetInstance().CompareCtrl) {
+                AppContext::GetInstance().CompareCtrl->MarkDirty();
+            }
+        }
+    }
+
     if (!savePath.empty()) {
       primaryPane.path = savePath;
       ::ReloadCurrentImage(m_hwnd);
@@ -1189,8 +1378,9 @@ void ExportPanel::ForceAbortExport() {
   m_isExporting.store(false);
 }
 
-void ExportPanel::Render(ID2D1DeviceContext* dc, float width, float height, IDWriteTextFormat* textFormat) {
+void ExportPanel::Render(ID2D1DeviceContext* dc, float width, float height, IDWriteTextFormat* textFormat, IDWriteFactory* dwriteFactory) {
     if (!m_isVisible || !dc) return;
+    m_dwriteFactory = dwriteFactory;
 
     m_uiScale = g_uiScale;
     float s = m_uiScale;
@@ -1246,10 +1436,8 @@ void ExportPanel::Render(ID2D1DeviceContext* dc, float width, float height, IDWr
     }
 
     // 3. Accent Color Border Outline
-    D2D1_COLOR_F accentClr = AppContext::GetInstance().Dialog.AccentColor;
-    if (accentClr.a <= 0.01f) {
-        accentClr = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f);
-    }
+    const auto& tp = QuickView::UI::Theme::GetThemePalette();
+    D2D1_COLOR_F accentClr = tp.accentFill;
     ComPtr<ID2D1SolidColorBrush> pBorderBrush;
     dc->CreateSolidColorBrush(accentClr, &pBorderBrush);
     dc->DrawRoundedRectangle(D2D1::RoundedRect(m_panelRect, 10.0f * s, 10.0f * s), pBorderBrush.Get(), 2.0f * s);
@@ -1258,11 +1446,11 @@ void ExportPanel::Render(ID2D1DeviceContext* dc, float width, float height, IDWr
     float curY = m_panelRect.top + 20.0f * s;
     std::wstring titleText;
     if (m_exportMode == ExportMode::UnsavedLeave) {
-        titleText = AppStrings::Dialog_CropUnsavedTitle;
+        titleText = AppStrings::g.Dialog_CropUnsavedTitle;
     } else if (!m_isModified) {
-        titleText = AppStrings::Dialog_SaveAsTitle;
+        titleText = AppStrings::g.Dialog_SaveAsTitle;
     } else {
-        titleText = AppStrings::Dialog_ExportTitle;
+        titleText = AppStrings::g.Dialog_ExportTitle;
     }
 
     if (textFormat) {
@@ -1281,6 +1469,7 @@ void ExportPanel::Render(ID2D1DeviceContext* dc, float width, float height, IDWr
     widgetPal.text = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f) : D2D1::ColorF(0.95f, 0.95f, 0.98f);
     widgetPal.textDim = isLight ? D2D1::ColorF(0.35f, 0.35f, 0.40f) : D2D1::ColorF(0.75f, 0.75f, 0.80f);
     widgetPal.white = D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
+    widgetPal.onAccentText = tp.onAccentText;
 
     // 5. Width & Height Capsules + Reset Buttons ([↺] [W] [🔒] [H] [↺])
     QuickView::UI::GeekWidgets::DrawResetButton(dc, layout.widthResetRect, m_hoverState == HoverState::WidthResetBtn, textFormat, s, widgetPal);
@@ -1320,9 +1509,14 @@ void ExportPanel::Render(ID2D1DeviceContext* dc, float width, float height, IDWr
         DrawQualitySlider(dc, layout.qualityRect, layout.qualityTrackRect, textFormat);
     }
 
+    // 6.8 Super-Resolution Checkbox (Conditional)
+    if (layout.showSrCheckbox) {
+        DrawCheckbox(dc, layout.srCheckboxRect, AppStrings::g.Export_Checkbox_SuperResolution, m_exportSr, HoverState::SrCheckbox, textFormat);
+    }
+
     // 7. Preserve EXIF Checkbox & Embed ICC Checkbox & ICC Dropdown & Size
     DrawCheckbox(dc, layout.preserveMetadataCheckboxRect, L"EXIF", m_preserveMetadata, HoverState::PreserveMetadataCheckbox, textFormat);
-    DrawCheckbox(dc, layout.checkboxRect, AppStrings::Dialog_EmbedICC,
+    DrawCheckbox(dc, layout.checkboxRect, AppStrings::g.Dialog_EmbedICC,
                  m_embedIcc, HoverState::EmbedIccCheckbox, textFormat);
 
     ComPtr<ID2D1SolidColorBrush> dimTextBrush;
@@ -1340,16 +1534,16 @@ void ExportPanel::Render(ID2D1DeviceContext* dc, float width, float height, IDWr
     D2D1_COLOR_F secondaryBtnColor = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.08f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f);
 
     if (layout.overwriteRect.right > layout.overwriteRect.left) {
-        DrawButton(dc, layout.overwriteRect, AppStrings::Dialog_ButtonOverwrite, HoverState::OverwriteBtn, overwriteBtnColor, textFormat);
+        DrawButton(dc, layout.overwriteRect, AppStrings::g.Dialog_ButtonOverwrite, HoverState::OverwriteBtn, overwriteBtnColor, textFormat);
     }
     if (layout.saveAsRect.right > layout.saveAsRect.left) {
-        DrawButton(dc, layout.saveAsRect, AppStrings::Dialog_ButtonSaveAs, HoverState::SaveAsBtn, primaryBtnColor, textFormat);
+        DrawButton(dc, layout.saveAsRect, AppStrings::g.Dialog_ButtonSaveAs, HoverState::SaveAsBtn, primaryBtnColor, textFormat);
     }
     if (layout.cancelRect.right > layout.cancelRect.left) {
-        DrawButton(dc, layout.cancelRect, AppStrings::Dialog_Cancel, HoverState::CancelBtn, secondaryBtnColor, textFormat);
+        DrawButton(dc, layout.cancelRect, AppStrings::g.Dialog_Cancel, HoverState::CancelBtn, secondaryBtnColor, textFormat);
     }
     if (layout.discardRect.right > layout.discardRect.left) {
-        DrawButton(dc, layout.discardRect, AppStrings::Dialog_ButtonDiscard, HoverState::DiscardBtn, discardBtnColor, textFormat);
+        DrawButton(dc, layout.discardRect, AppStrings::g.Dialog_ButtonDiscard, HoverState::DiscardBtn, discardBtnColor, textFormat);
     }
 
     // 9. Floating Dropdown Popups (Render active popup LAST for topmost Z-order)
@@ -1374,10 +1568,7 @@ void ExportPanel::DrawCapsule(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, [
     bool isFocused = (m_focusedState == id);
     bool isLight = IsLightThemeActive();
 
-    D2D1_COLOR_F accentClr = AppContext::GetInstance().Dialog.AccentColor;
-    if (accentClr.a <= 0.01f) {
-        accentClr = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f);
-    }
+    D2D1_COLOR_F accentClr = QuickView::UI::Theme::GetThemePalette().accentFill;
 
     float pillRadius = (rect.bottom - rect.top) * 0.5f;
     ComPtr<ID2D1SolidColorBrush> brush;
@@ -1441,14 +1632,15 @@ void DrawDropdownPopupInternal(
         textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     }
 
+    const auto& tp = QuickView::UI::Theme::GetThemePalette();
     for (int i = 0; i < visibleCount && i < static_cast<int>(itemNames.size()); ++i) {
         D2D1_RECT_F itemRect = { popupRect.left + 2.0f * s, popupY + i * itemH, popupRect.right - 2.0f * s, popupY + (i + 1) * itemH };
 
         if (i == hoverIndex) {
-            brush->SetColor(isLight ? D2D1::ColorF(0.0f, 0.48f, 0.8f, 0.18f) : D2D1::ColorF(0.0f, 0.48f, 0.8f, 0.35f));
+            brush->SetColor(D2D1::ColorF(tp.accentFill.r, tp.accentFill.g, tp.accentFill.b, isLight ? 0.18f : 0.35f));
             dc->FillRoundedRectangle(D2D1::RoundedRect(itemRect, 4.0f * s, 4.0f * s), brush.Get());
         } else if (i == selectedIndex) {
-            brush->SetColor(isLight ? D2D1::ColorF(0.0f, 0.48f, 0.8f, 0.08f) : D2D1::ColorF(0.0f, 0.48f, 0.8f, 0.18f));
+            brush->SetColor(D2D1::ColorF(tp.accentFill.r, tp.accentFill.g, tp.accentFill.b, isLight ? 0.08f : 0.18f));
             dc->FillRoundedRectangle(D2D1::RoundedRect(itemRect, 4.0f * s, 4.0f * s), brush.Get());
         }
 
@@ -1478,9 +1670,10 @@ void ExportPanel::DrawFormatDropdown(ID2D1DeviceContext* dc, const D2D1_RECT_F& 
         label = m_availableFormats[m_selectedFormatIndex].DisplayName;
     }
 
+    const auto& tp = QuickView::UI::Theme::GetThemePalette();
     QuickView::UI::WidgetPalette pal = {};
-    pal.accent = AppContext::GetInstance().Dialog.AccentColor;
-    if (pal.accent.a <= 0.01f) pal.accent = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f);
+    pal.accent = tp.accentFill;
+    pal.onAccentText = tp.onAccentText;
     pal.controlBg = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.05f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.06f);
     pal.border = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.18f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f);
     pal.text = isLight ? D2D1::ColorF(0.15f, 0.15f, 0.18f, 1.0f) : D2D1::ColorF(0.88f, 0.88f, 0.92f, 1.0f);
@@ -1488,7 +1681,7 @@ void ExportPanel::DrawFormatDropdown(ID2D1DeviceContext* dc, const D2D1_RECT_F& 
 
     QuickView::UI::GeekWidgets::DrawPillComboBox(
         dc, rect, label, m_formatDropdownOpen, (m_hoverState == HoverState::FormatDropdownBtn), false,
-        textFormat, s, pal);
+        textFormat, s, pal, m_dwriteFactory);
 
     // 2. Draw Floating Popup if Opened
     if (m_formatDropdownOpen && !m_availableFormats.empty()) {
@@ -1514,9 +1707,10 @@ void ExportPanel::DrawIccDropdown(ID2D1DeviceContext* dc, const D2D1_RECT_F& rec
         label = m_iccProfiles[m_selectedIccIndex].displayName;
     }
 
+    const auto& tp = QuickView::UI::Theme::GetThemePalette();
     QuickView::UI::WidgetPalette pal = {};
-    pal.accent = AppContext::GetInstance().Dialog.AccentColor;
-    if (pal.accent.a <= 0.01f) pal.accent = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f);
+    pal.accent = tp.accentFill;
+    pal.onAccentText = tp.onAccentText;
     pal.controlBg = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.05f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.06f);
     pal.border = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.18f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f);
     pal.text = isLight ? D2D1::ColorF(0.15f, 0.15f, 0.18f, 1.0f) : D2D1::ColorF(0.88f, 0.88f, 0.92f, 1.0f);
@@ -1524,7 +1718,7 @@ void ExportPanel::DrawIccDropdown(ID2D1DeviceContext* dc, const D2D1_RECT_F& rec
 
     QuickView::UI::GeekWidgets::DrawPillComboBox(
         dc, rect, label, m_iccDropdownOpen, (m_hoverState == HoverState::IccDropdownBtn), false,
-        textFormat, s, pal);
+        textFormat, s, pal, m_dwriteFactory);
 
     // 2. Draw Floating Popup if Opened
     if (m_iccDropdownOpen && !m_iccProfiles.empty()) {
@@ -1544,11 +1738,10 @@ void ExportPanel::DrawCheckbox(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, 
     bool isHovered = (m_hoverState == id);
     bool isLight = IsLightThemeActive();
 
+    const auto& tp = QuickView::UI::Theme::GetThemePalette();
     QuickView::UI::WidgetPalette pal = {};
-    pal.accent = AppContext::GetInstance().Dialog.AccentColor;
-    if (pal.accent.a <= 0.01f) {
-        pal.accent = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f);
-    }
+    pal.accent = tp.accentFill;
+    pal.onAccentText = tp.onAccentText;
     pal.controlBg = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.06f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f);
     pal.border = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.35f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.45f);
     pal.text = isLight ? D2D1::ColorF(0.15f, 0.15f, 0.18f, 1.0f) : D2D1::ColorF(0.92f, 0.92f, 0.95f, 1.0f);
@@ -1571,6 +1764,7 @@ void ExportPanel::DrawButton(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, co
 
     WidgetPalette pal = {};
     pal.accent = baseColor;
+    pal.onAccentText = QuickView::UI::Theme::ComputeOnAccentText(baseColor);
     pal.controlBg = baseColor;
     pal.border = IsLightThemeActive() ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.15f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f);
     pal.text = IsLightThemeActive() ? D2D1::ColorF(0.12f, 0.12f, 0.15f) : D2D1::ColorF(0.95f, 0.95f, 0.98f);
@@ -1614,9 +1808,10 @@ void ExportPanel::DrawQualitySlider(ID2D1DeviceContext* dc, const D2D1_RECT_F& r
         swprintf_s(dispBuf, L"Quality: %d%%", m_jpegQuality);
     }
 
+    const auto& tp = QuickView::UI::Theme::GetThemePalette();
     QuickView::UI::WidgetPalette pal = {};
-    pal.accent = AppContext::GetInstance().Dialog.AccentColor;
-    if (pal.accent.a <= 0.01f) pal.accent = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f);
+    pal.accent = tp.accentFill;
+    pal.onAccentText = tp.onAccentText;
     pal.controlBg = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.05f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.06f);
     pal.border = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.18f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f);
     pal.text = isLight ? D2D1::ColorF(0.15f, 0.15f, 0.18f, 1.0f) : D2D1::ColorF(0.88f, 0.88f, 0.92f, 1.0f);
@@ -1632,3 +1827,4 @@ void ExportPanel::DrawQualitySlider(ID2D1DeviceContext* dc, const D2D1_RECT_F& r
 }
 
 } // namespace QuickView
+

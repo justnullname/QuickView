@@ -55,40 +55,15 @@ namespace QuickView {
         int CalculateBestLOD(float zoom, float basePreviewRatio = 0.0f);
         
         // [Refactor] Replacement for GetLoadedTiles
-        // Allows CompositionEngine to iterate potentially visible tiles without exposing internal structures
+        // Non-template core loop to prevent template bloat across compilation units
+        void ForEachReadyTile(const RegionRect& rect, void (*callback)(const TileKey& key, TileState* tile, void* userCtx), void* userCtx);
+
         template<typename Func>
-        void ForEachReadyTile(const RegionRect& rect, Func func) {
-            std::lock_guard lock(m_mutex);
-            // [Fix3] Only iterate current LOD — VirtualSurface shows one LOD at a time.
-            // Iterating all layers wastes time and extends lock duration during pan/drag.
-            int l = m_currentLOD;
-            if (l < 0 || l >= (int)m_layers.size() || !m_layers[l]) return;
-            {
-                int tileSize = TILE_SIZE << l;
-                int startX = rect.x / tileSize;
-                int startY = rect.y / tileSize;
-                int endX = (rect.x + rect.w + tileSize - 1) / tileSize;
-                int endY = (rect.y + rect.h + tileSize - 1) / tileSize;
-
-                // Clamp
-                if (startX < 0) startX = 0;
-                if (startY < 0) startY = 0;
-                int w = m_layers[l]->GetWidth();
-                int h = m_layers[l]->GetHeight();
-                if (endX > w) endX = w;
-                if (endY > h) endY = h;
-
-                for (int y = startY; y < endY; ++y) {
-                    for (int x = startX; x < endX; ++x) {
-                         TileEntry* entry = m_layers[l]->GetEntry(x, y);
-                         if (entry && entry->state.load(std::memory_order_relaxed) == TileStateCode::Ready) {
-                             if (entry->data) {
-                                 func(TileKey::From(x, y, l), entry->data.get());
-                             }
-                         }
-                    }
-                }
-            }
+        void ForEachReadyTile(const RegionRect& rect, Func&& func) {
+            auto wrapper = [](const TileKey& key, TileState* tile, void* userCtx) {
+                (*static_cast<std::remove_reference_t<Func>*>(userCtx))(key, tile);
+            };
+            ForEachReadyTile(rect, wrapper, const_cast<void*>(static_cast<const void*>(std::addressof(func))));
         }
         
         // Helper to get total count

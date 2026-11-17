@@ -60,6 +60,7 @@ public:
     bool IsTitanMode() const { return m_isTitanMode.load(std::memory_order_relaxed); }
     void SetTargetHdrHeadroomStops(float stops) { m_targetHdrHeadroomStops.store(stops, std::memory_order_relaxed); }
     void SetTargetColorPrimaries(QuickView::ColorPrimaries primaries) { m_targetPrimaries.store(primaries, std::memory_order_relaxed); }
+    void EnsureMasterWarmup(const std::wstring& path, ImageID imageId, std::shared_ptr<QuickView::MappedFile> mmf, PaneSlot targetSlot, uint64_t generationId);
     void Flush(); // Clears queue and increments GenID
     
     // [Titan] Concurrency Control
@@ -484,12 +485,16 @@ private:
 
     // [Phase-2] Background warmup for heavy non-ROI formats (PNG/TIFF/AVIF/HEIC).
     // Builds master MMF backing store right after image open to avoid first tile hard stall.
+    std::mutex m_masterWarmupMutex;
     std::jthread m_masterWarmupThread;
+    std::atomic<bool> m_masterWarmupRunning{ false };
     std::atomic<ImageID> m_masterWarmupImageId{ 0 };
     std::atomic<bool> m_masterWarmupReady{ false };  // [Direct-to-MMF] Set true when warmup decode is complete
     bool ShouldWarmupMasterBacking() const;
-    void EnsureMasterWarmup(const std::wstring& path, ImageID imageId, std::shared_ptr<QuickView::MappedFile> mmf, PaneSlot targetSlot, uint64_t generationId);
     void StopMasterWarmup();
+private:
+    void StopMasterWarmupLocked();
+public:
     
     // ============================================================================
     // [Optimization] Full Image Cache (RAM Preload)

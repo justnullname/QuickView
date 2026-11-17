@@ -203,23 +203,93 @@ float SrgbToLinear(float v) {
     return powf((v + 0.055f) / 1.055f, 2.4f);
 }
 
-bool IsEffectivelyPixelArtMode(float totalScale, float origW, float origH, int pixelArtModeOverride, int zoomModeIn, int zoomModeOut) {
+bool IsEffectivelyPixelArtMode(
+    float totalScale, float origW, float origH,
+    int pixelArtModeOverride, int zoomModeIn, int zoomModeOut,
+    double entropy, bool hasEntropy) {
     // 1. Temporary Override wins all
     if (pixelArtModeOverride == 1) return true;
     if (pixelArtModeOverride == 2) return false;
 
-    // 2. Setting
+    // 2. Explicit setting
     int mode = (totalScale >= 1.0f) ? zoomModeIn : zoomModeOut;
-    if (mode == 2) return true;
+    if (mode == 2) return true; // Nearest
 
     // 3. Auto Mode (0) heuristics
     if (mode == 0 && totalScale >= 1.0f) {
+        // High zoom inspection threshold (>= 3.0x) or small icon threshold (<= 256x256)
         if ((origW > 0 && origW <= 256 && origH > 0 && origH <= 256) || totalScale >= 3.0f) {
+            return true;
+        }
+
+        // Content-Aware: Pixel Art / Paletted Graphics detection (Shannon Entropy <= 5.8 bit/pixel)
+        if (hasEntropy && entropy <= 5.8 && totalScale >= 1.25f) {
             return true;
         }
     }
 
     return false;
+}
+
+float GetAdaptiveFsrSharpness(
+    float baseSharpness,
+    double sharpness,
+    double entropy,
+    bool hasMetrics) {
+    if (!hasMetrics) {
+        return std::clamp(baseSharpness, 0.0f, 1.0f);
+    }
+
+    // 1. High ISO / Grainy / Raw noisy image -> suppress RCAS to prevent grain enlargement
+    if (sharpness >= 800.0 && entropy >= 7.3) {
+        return std::min(baseSharpness * 0.25f, 0.05f);
+    }
+
+    // 2. Soft / Slightly blurry photo -> moderately boost RCAS to recover weak edges
+    if (sharpness <= 120.0 && entropy >= 6.0) {
+        return std::clamp(baseSharpness * 1.5f + 0.10f, 0.0f, 0.40f);
+    }
+
+    // 3. Standard clean photography / CG -> use base user sharpness
+    return std::clamp(baseSharpness, 0.0f, 1.0f);
+}
+
+SurfaceSize2D ComputeBoundedBitmapSurfaceSize(
+    float originalW,
+    float originalH,
+    float desiredScale,
+    uint32_t maxAxis,
+    uint64_t maxPixels) {
+    if (!(originalW > 0.0f) || !(originalH > 0.0f) || !(desiredScale > 0.0f) ||
+        maxAxis == 0 || maxPixels == 0) {
+        return {};
+    }
+
+    double w = static_cast<double>(originalW) * static_cast<double>(desiredScale);
+    double h = static_cast<double>(originalH) * static_cast<double>(desiredScale);
+    if (!std::isfinite(w) || !std::isfinite(h) || !(w > 0.0) || !(h > 0.0)) {
+        return {};
+    }
+
+    const double axisLimit = static_cast<double>(maxAxis);
+    if (w > axisLimit || h > axisLimit) {
+        const double axisRatio = std::min(axisLimit / w, axisLimit / h);
+        w *= axisRatio;
+        h *= axisRatio;
+    }
+
+    const double pixelBudget = static_cast<double>(maxPixels);
+    const double totalPixels = w * h;
+    if (totalPixels > pixelBudget) {
+        const double pixelRatio = std::sqrt(pixelBudget / totalPixels);
+        w *= pixelRatio;
+        h *= pixelRatio;
+    }
+
+    const long long maxAxisSigned = static_cast<long long>(maxAxis);
+    const uint32_t outW = static_cast<uint32_t>(std::clamp(std::llround(w), 1LL, maxAxisSigned));
+    const uint32_t outH = static_cast<uint32_t>(std::clamp(std::llround(h), 1LL, maxAxisSigned));
+    return { outW, outH };
 }
 
 } // namespace ColorMath

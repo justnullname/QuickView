@@ -5,6 +5,7 @@ static constexpr const char* CURRENT_MODULE = "HeavyLanePool";
 #include "ImageLoaderSimd.h"
 #include "TileManager.h"
 #include "ToolProcessProtocol.h"
+#include "AsyncJob.h"
 #include <condition_variable>
 #include <semaphore>
 #include <algorithm>
@@ -205,33 +206,13 @@ void HeavyLanePool::ResetBenchState() {
         bag.masterCache = std::move(m_masterLOD0Cache);
         m_masterLOD0Cache = {};
     }
-    {
-        std::lock_guard lock(m_masterBackingMutex);
-        // [Fix Race Condition] libjxl's runner threads may still be writing to backing.view.
-        // We MUST NOT return it to the pool immediately if the thread is still active.
-        bool threadActive = m_masterWarmupThread.joinable();
-
-        if (m_masterBacking.isPooled && !threadActive) {
-            // [Instant Reuse] Only safe to return to pool if no thread is writing to it.
-            RelinquishToPool(std::move(m_masterBacking));
-        } else {
-            // If thread is active, we MUST move the store to the TrashBag so the GC 
-            // thread joins the worker BEFORE unmapping/deleting the file.
-            bag.backing = std::move(m_masterBacking);
-        }
+    if (bag.lodCache.pixels || bag.masterCache.pixels) {
+        EnqueueTrash(std::move(bag));
     }
 
-    // [Fix] Move warmup thread INTO the TrashBag so GC joins it
-    if (m_masterWarmupThread.joinable()) {
-        m_masterWarmupThread.request_stop();   // Signal decode to abort
-        bag.warmupThread = std::move(m_masterWarmupThread);
-    }
-    m_masterWarmupImageId.store(0, std::memory_order_release);
-    m_masterWarmupReady.store(false, std::memory_order_release);
-    m_lodCacheCond.notify_all();
-    
-    // Async cleanup: GC thread will join warmup, then destroy MMF + caches
-    EnqueueTrash(std::move(bag));
+    // [Fix] Safely stop warmup thread and retire associated backing store under mutex protection
+    StopMasterWarmup();
+
     m_isProgressiveJPEG = false;
     m_isProgressiveJXL = false;
     m_lodCacheFailCount.store(0); // [B4] Reset fail counter on new image
@@ -597,7 +578,20 @@ void HeavyLanePool::Submit(const std::wstring& path, ImageID imageId, std::share
 
 void HeavyLanePool::SubmitFullDecode(const std::wstring& path, ImageID imageId, std::shared_ptr<QuickView::MappedFile> mmf, PaneSlot targetSlot, uint64_t generationId) {
     std::lock_guard lock(m_poolMutex);
-    
+
+    for (auto& existing : m_pendingJobs) {
+        if (existing.type == JobType::Standard && existing.isFullDecode &&
+            existing.imageId == imageId && existing.targetSlot == targetSlot) {
+            if (existing.generationId != generationId) {
+                existing.generationId = generationId;
+                existing.targetHdrHeadroomStops = m_targetHdrHeadroomStops.load(std::memory_order_relaxed);
+                existing.targetPrimaries = m_targetPrimaries.load(std::memory_order_relaxed);
+                existing.genID = m_generationID.load();
+            }
+            return;
+        }
+    }
+
     JobInfo job;
     job.type = JobType::Standard;
     job.path = path;
@@ -742,56 +736,68 @@ void HeavyLanePool::SubmitTileBatch(const std::wstring& path, ImageID imageId, s
 // ============================================================================
 
 void HeavyLanePool::CancelOthers(ImageID currentId, PaneSlot targetSlot) {
-    std::lock_guard lock(m_poolMutex);
-    
-// 1. Clear Job Queue of non-matching IDs
-    auto it = m_pendingJobs.begin();
-    int removedTiles = 0;
-    while (it != m_pendingJobs.end()) {
-        if (it->targetSlot == targetSlot && it->imageId != currentId) {
-            if (it->type == JobType::Tile) {
-                removedTiles++;
-                // [Dedup] Remove from in-flight set
-                m_inFlightTiles.erase(MakeTileHash(it->tileCoord.col, it->tileCoord.row, it->tileCoord.lod));
+    {
+        std::lock_guard lock(m_poolMutex);
+        
+        // 1. Clear Job Queue of non-matching IDs
+        auto it = m_pendingJobs.begin();
+        int removedTiles = 0;
+        while (it != m_pendingJobs.end()) {
+            if (it->targetSlot == targetSlot && it->imageId != currentId) {
+                if (it->type == JobType::Tile) {
+                    removedTiles++;
+                    // [Dedup] Remove from in-flight set
+                    m_inFlightTiles.erase(MakeTileHash(it->tileCoord.col, it->tileCoord.row, it->tileCoord.lod));
+                }
+                it = m_pendingJobs.erase(it);
+                m_cancelCount++;
+            } else {
+                ++it;
             }
-            it = m_pendingJobs.erase(it);
-            m_cancelCount++;
-        } else {
-            ++it;
+        }
+        if (removedTiles > 0) m_activeTileJobs.fetch_sub(removedTiles);
+        
+        // 2. Stop BUSY workers working on old IDs
+        for (auto& w : m_workers) {
+            if (w.state == WorkerState::BUSY && w.currentId != currentId) {
+                w.stopSource.request_stop();
+                // [Phase 4.1] Kill any active subprocess for this worker immediately
+                if (w.activeWorkerProcess) {
+                    TerminateProcess(w.activeWorkerProcess, static_cast<UINT>(E_ABORT));
+                    // Do not close handle here, the thread's wait loop will close it or we close it on reuse
+                }
+            }
         }
     }
-    if (removedTiles > 0) m_activeTileJobs.fetch_sub(removedTiles);
-    
-    // 2. Stop BUSY workers working on old IDs
-    for (auto& w : m_workers) {
-        if (w.state == WorkerState::BUSY && w.currentId != currentId) {
-            w.stopSource.request_stop();
-            // [Phase 4.1] Kill any active subprocess for this worker immediately
-            if (w.activeWorkerProcess) {
-                TerminateProcess(w.activeWorkerProcess, static_cast<UINT>(E_ABORT));
-                // Do not close handle here, the thread's wait loop will close it or we close it on reuse
-            }
-        }
+
+    // 3. Immediately abort any master warmup belonging to the old image
+    if (m_masterWarmupRunning.load(std::memory_order_relaxed) &&
+        m_masterWarmupImageId.load(std::memory_order_relaxed) != currentId) {
+        StopMasterWarmup();
     }
 }
 
 void HeavyLanePool::CancelAll() {
-    std::lock_guard lock(m_poolMutex);
-    
-    int discardedTiles = 0;
-    for (const auto& job : m_pendingJobs) {
-        if (job.type == JobType::Tile) discardedTiles++;
-    }
-    if (discardedTiles > 0) m_activeTileJobs.fetch_sub(discardedTiles);
-    
-    m_pendingJobs.clear();
-    m_inFlightTiles.clear(); // [Dedup] Reset in-flight tracking
-    for (auto& w : m_workers) {
-        w.stopSource.request_stop();
-        if (w.activeWorkerProcess) {
-            TerminateProcess(w.activeWorkerProcess, static_cast<UINT>(E_ABORT));
+    {
+        std::lock_guard lock(m_poolMutex);
+        
+        int discardedTiles = 0;
+        for (const auto& job : m_pendingJobs) {
+            if (job.type == JobType::Tile) discardedTiles++;
+        }
+        if (discardedTiles > 0) m_activeTileJobs.fetch_sub(discardedTiles);
+        
+        m_pendingJobs.clear();
+        m_inFlightTiles.clear(); // [Dedup] Reset in-flight tracking
+        for (auto& w : m_workers) {
+            w.stopSource.request_stop();
+            if (w.activeWorkerProcess) {
+                TerminateProcess(w.activeWorkerProcess, static_cast<UINT>(E_ABORT));
+            }
         }
     }
+
+    StopMasterWarmup();
 }
 
 // ============================================================================
@@ -829,6 +835,17 @@ void HeavyLanePool::ResumeDeferredJobs(ImageID imageId, int lod) {
 }
 
 void HeavyLanePool::WorkerLoop(int workerId, std::stop_token st) {
+    // Initialize COM for background codecs (WIC for HEIC/TIFF etc.)
+    struct ComInitScope {
+        bool succeeded = false;
+        ComInitScope() {
+            succeeded = SUCCEEDED(CoInitializeEx(nullptr, COINIT_MULTITHREADED));
+        }
+        ~ComInitScope() {
+            if (succeeded) CoUninitialize();
+        }
+    } comScope;
+
     Worker& self = m_workers[workerId];
     
     QV_LOG("Worker_Lifecycle",
@@ -1191,7 +1208,14 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
         }
     } guard{ this, job.tileCoord, job.type == JobType::Tile };
 
-    if (job.path.empty()) return;
+    if (job.path.empty()) {
+        if (job.type == JobType::Tile) {
+            if (auto tm = m_parent->GetTileManager()) {
+                tm->OnTileCancelled(TileKey::From(job.tileCoord.col, job.tileCoord.row, job.tileCoord.lod));
+            }
+        }
+        return;
+    }
     
     auto start = std::chrono::high_resolution_clock::now();
 
@@ -1207,7 +1231,14 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
         return cc->st->stop_requested() || cc->src->stop_requested();
     };
 
-    if (cancelPred()) return;
+    if (cancelPred()) {
+        if (job.type == JobType::Tile) {
+            if (auto tm = m_parent->GetTileManager()) {
+                tm->OnTileCancelled(TileKey::From(job.tileCoord.col, job.tileCoord.row, job.tileCoord.lod));
+            }
+        }
+        return;
+    }
 
     // [Phase 4.1] Bug 3: Visibility Culling - Drop stale jobs instantly
     if (job.type == JobType::Tile) {
@@ -1223,35 +1254,12 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
         }
     }
 
-    // [Unified Architecture] Always use the Back Arena for new decoding jobs
-    // Note: For Tiles, we should ideally use SlabAllocator.
-    // For now, reuse the heavy arena (it resets anyway).
-    QuantumArena& arena = m_pool->GetBackHeavyArena();
-    
-    // RAII guard for concurrent jobs
-    struct ArenaJobGuard {
-        QuantumArena& a;
-        ArenaJobGuard(QuantumArena& arena) : a(arena) {
-            a.m_activeJobs.fetch_add(1, std::memory_order_acq_rel);
-        }
-        ~ArenaJobGuard() {
-            a.m_activeJobs.fetch_sub(1, std::memory_order_acq_rel);
-        }
-    } jobGuard(arena);
-    
     QuickView::RawImageFrame rawFrame;
     std::wstring loaderName;
     CImageLoader::ImageMetadata meta;
     HRESULT hr = E_FAIL;
     
     auto decodeStart = std::chrono::high_resolution_clock::now();
-
-    // Only reset the arena if we are the first and only job running on it right now.
-    // (e.g. all background tile decoding for previous image finished).
-    // Since we already incremented it, it will be exactly 1.
-    if (arena.m_activeJobs.load(std::memory_order_acquire) == 1) {
-        arena.Reset();
-    }
 
          if (job.type == JobType::Standard) {
               // --- Standard Decode (Full/Scaled) ---
@@ -1275,9 +1283,75 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                    targetW = (targetW + 7) & ~7;
                    targetH = (targetH + 7) & ~7;
                }
-              
-              // [Phase 3] Titan Mode: Route Base Layer to killable subprocess
+
+              bool animProbed = false;
+              auto tryHijackMmfAnimation = [&]() -> bool {
+                  if (animProbed || !job.mmf || !job.mmf->IsValid()) return false;
+                  animProbed = true;
+                  const uint8_t* d = job.mmf->data();
+                  size_t sz = job.mmf->size();
+                  std::unique_ptr<IAnimationDecoder> animDecoder;
+
+                  // Magic-byte format detection (mirrors DetectFormatFromContent)
+                  if (sz >= 12 && memcmp(d, "RIFF", 4) == 0 && memcmp(d + 8, "WEBP", 4) == 0)
+                      animDecoder = CreateWebPAnimator();
+                  else if (sz >= 6 && (memcmp(d, "GIF87a", 6) == 0 || memcmp(d, "GIF89a", 6) == 0))
+                      animDecoder = CreateWuffsAnimator();
+                  else if (sz >= 8 && d[0] == 0x89 && d[1] == 'P' && d[2] == 'N' && d[3] == 'G')
+                      animDecoder = CreateWuffsAnimator();
+                  else if (sz >= 2 && d[0] == 0xFF && d[1] == 0x0A)
+                      animDecoder = CreateJxlAnimator(); // JXL naked codestream
+                  else if (sz >= 12 && d[0] == 0 && d[1] == 0 && d[2] == 0 && d[3] == 0x0C &&
+                           d[4] == 'J' && d[5] == 'X' && d[6] == 'L' && d[7] == ' ')
+                      animDecoder = CreateJxlAnimator(); // JXL ISOBMFF container
+                  else if (sz >= 12 && (memcmp(d + 4, "ftypavif", 8) == 0 || memcmp(d + 4, "ftypavis", 8) == 0))
+                      animDecoder = CreateAvifAnimator(); // AVIF / AVIS container
+
+                  if (animDecoder && animDecoder->Initialize(job.mmf, PixelFormat::BGRA8888) && animDecoder->IsAnimated()) {
+                      auto firstFrame = animDecoder->GetNextFrame();
+                      if (firstFrame && firstFrame->pixels) {
+                          rawFrame.pixels = firstFrame->pixels;
+                          rawFrame.width = firstFrame->width;
+                          rawFrame.height = firstFrame->height;
+                          rawFrame.stride = firstFrame->stride;
+                          rawFrame.format = firstFrame->format;
+                          rawFrame.quality = QuickView::DecodeQuality::Full;
+                          rawFrame.exifOrientation = firstFrame->exifOrientation;
+                          rawFrame.iccProfile = std::move(firstFrame->iccProfile);
+                          rawFrame.colorInfo = firstFrame->colorInfo;
+                          rawFrame.hdrMetadata = firstFrame->hdrMetadata;
+                          rawFrame.dpiX = firstFrame->dpiX;
+                          rawFrame.dpiY = firstFrame->dpiY;
+                          rawFrame.frameMeta = firstFrame->frameMeta;
+                          rawFrame.memoryDeleter = std::move(firstFrame->memoryDeleter);
+                          firstFrame->pixels = nullptr;
+                          firstFrame->memoryDeleter.Clear();
+
+                          rawFrame.animator = std::move(animDecoder);
+                          meta.Width = rawFrame.width;
+                          meta.Height = rawFrame.height;
+                          meta.ExifOrientation = rawFrame.exifOrientation;
+                          meta.colorInfo = rawFrame.colorInfo;
+                          meta.hdrMetadata = rawFrame.hdrMetadata;
+                          if (!rawFrame.iccProfile.empty()) {
+                              meta.HasEmbeddedColorProfile = true;
+                              meta.iccProfileData.assign(rawFrame.iccProfile.begin(), rawFrame.iccProfile.end());
+                          }
+
+                          hr = S_OK;
+                          loaderName = L"Animator (MMF)";
+                          QV_LOG("Anim_Probe", TraceLoggingString("Hijacked to Animator", "Action"));
+                          return true;
+                      }
+                  }
+                  return false;
+              };
+
+              // [Phase 3] Titan Mode: Route Base Layer to killable subprocess unless file is animated
               if (m_isTitanMode && !job.isFullDecode && targetW > 0 && targetH > 0) {
+                   tryHijackMmfAnimation();
+              }
+              if (FAILED(hr) && m_isTitanMode && !job.isFullDecode && targetW > 0 && targetH > 0) {
                    bool expectsMasterCache = ShouldWarmupMasterBacking();
                    bool warmupResolved = false;
 
@@ -1371,75 +1445,31 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
               const auto fmt = m_titanFormat.load();
               bool supportsMmfDecode = QuickView::SupportsTitanMemoryDecode(fmt);
                                         
-              if (job.mmf && job.mmf->IsValid() && supportsMmfDecode) {
+              if (job.mmf && job.mmf->IsValid()) {
                    // [Fix] Animation probe for MMF path: animated files need an Animator
-                   // lifecycle that LoadToFrameFromMemory cannot provide.
-                   // This mirrors the ShouldProbeAnimatedBufferCodec pattern in LoadImageUnified.
+                   // lifecycle that LoadBufferUnified cannot provide.
                    // NOTE: m_titanFormat is unreliable for non-Titan jobs (defaults to Other),
-                   // so we detect format directly from MMF magic bytes.
-                   bool animResolved = false;
-                   {
-                       const uint8_t* d = job.mmf->data();
-                       size_t sz = job.mmf->size();
-                       std::unique_ptr<IAnimationDecoder> animDecoder;
+                   // so we probe magic bytes before checking supportsMmfDecode.
+                   bool animResolved = tryHijackMmfAnimation();
 
-                       // Magic-byte format detection (mirrors DetectFormatFromContent)
-                       if (sz >= 12 && memcmp(d, "RIFF", 4) == 0 && memcmp(d + 8, "WEBP", 4) == 0)
-                           animDecoder = CreateWebPAnimator();
-                       else if (sz >= 6 && (memcmp(d, "GIF87a", 6) == 0 || memcmp(d, "GIF89a", 6) == 0))
-                           animDecoder = CreateWuffsAnimator();
-                       else if (sz >= 8 && d[0] == 0x89 && d[1] == 'P' && d[2] == 'N' && d[3] == 'G')
-                           animDecoder = CreateWuffsAnimator();
-                       else if (sz >= 2 && d[0] == 0xFF && d[1] == 0x0A)
-                           animDecoder = CreateJxlAnimator(); // JXL naked codestream
-                       else if (sz >= 12 && d[0] == 0 && d[1] == 0 && d[2] == 0 && d[3] == 0x0C &&
-                                d[4] == 'J' && d[5] == 'X' && d[6] == 'L' && d[7] == ' ')
-                           animDecoder = CreateJxlAnimator(); // JXL ISOBMFF container
-                       else if (sz >= 12 && memcmp(d + 4, "ftypavif", 8) == 0)
-                           animDecoder = CreateAvifAnimator(); // AVIF container
-
-                       if (animDecoder && animDecoder->Initialize(job.mmf, PixelFormat::BGRA8888)) {
-                           if (animDecoder->IsAnimated()) {
-                               auto firstFrame = animDecoder->GetNextFrame();
-                               if (firstFrame && firstFrame->pixels) {
-                                   // Steal first frame data (manual field copy preserves onAuxLayerReady)
-                                   rawFrame.pixels = firstFrame->pixels;
-                                   rawFrame.width = firstFrame->width;
-                                   rawFrame.height = firstFrame->height;
-                                   rawFrame.stride = firstFrame->stride;
-                                   rawFrame.format = firstFrame->format;
-                                   rawFrame.quality = firstFrame->quality;
-                                   rawFrame.frameMeta = firstFrame->frameMeta;
-                                   rawFrame.memoryDeleter = std::move(firstFrame->memoryDeleter);
-                                   firstFrame->pixels = nullptr; // Transfer ownership
-
-                                   // Attach animator for subsequent frame pumping by ImageEngine
-                                   rawFrame.animator = std::move(animDecoder);
-
-                                   meta.Width = rawFrame.width;
-                                   meta.Height = rawFrame.height;
-
-                                   hr = S_OK;
-                                   animResolved = true;
-                                   loaderName = L"Animator (MMF)";
-                                   QV_LOG("Anim_Probe", TraceLoggingString("Hijacked to Animator", "Action"));
-                               }
-                           }
-                       }
-                   }
-
+                   QuantumArena* effectiveArena = nullptr;
                    if (!animResolved) {
-                       hr = m_loader->LoadToFrameFromMemory(job.mmf->data(), job.mmf->size(), &rawFrame, &arena, targetW, targetH, &loaderName, &meta);
-                       if (FAILED(hr)) {
-                           // Fallback to file if MMF decode fails
-                           hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, &arena, targetW, targetH, &loaderName, cancelPred, &meta, !job.isFullDecode, m_isTitanMode, job.targetHdrHeadroomStops, job.targetPrimaries);
+                       if (supportsMmfDecode) {
+                           hr = m_loader->LoadToFrameFromMemory(job.mmf->data(), job.mmf->size(), &rawFrame, effectiveArena, targetW, targetH, &loaderName, &meta, -1.0f, job.mmf);
+                           if (FAILED(hr)) {
+                               // Fallback to file if MMF decode fails
+                               hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, effectiveArena, targetW, targetH, &loaderName, cancelPred, &meta, !job.isFullDecode, m_isTitanMode, job.targetHdrHeadroomStops, job.targetPrimaries, job.mmf);
+                           } else {
+                               // MMF Decode Success -> Trigger Touch-Up Prefetch!
+                               TriggerPrefetch(job.mmf);
+                           }
                        } else {
-                           // MMF Decode Success -> Trigger Touch-Up Prefetch!
-                           TriggerPrefetch(job.mmf);
+                           hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, effectiveArena, targetW, targetH, &loaderName, cancelPred, &meta, !job.isFullDecode, m_isTitanMode, job.targetHdrHeadroomStops, job.targetPrimaries, job.mmf);
                        }
                    }
               } else {
-                   hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, &arena, targetW, targetH, &loaderName, cancelPred, &meta, !job.isFullDecode, m_isTitanMode, job.targetHdrHeadroomStops, job.targetPrimaries);
+                   QuantumArena* effectiveArena = nullptr;
+                   hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, effectiveArena, targetW, targetH, &loaderName, cancelPred, &meta, !job.isFullDecode, m_isTitanMode, job.targetHdrHeadroomStops, job.targetPrimaries, job.mmf);
               }
               } // end FAILED(hr) inline fallback
               // [Baseline Benchmark] Measure performance from Standard (base layer) decode
@@ -1727,6 +1757,7 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
 tile_decode_done: ; // [P14] Jump target for fast path (skip legacy TJ decode)
           auto decodeEnd = std::chrono::high_resolution_clock::now();
           int decodeMs = (int)std::chrono::duration_cast<std::chrono::milliseconds>(decodeEnd - decodeStart).count();
+
           
           // [Dynamic Regulation] Feedback loop
           if (job.type == JobType::Tile) {
@@ -1809,77 +1840,33 @@ tile_decode_done: ; // [P14] Jump target for fast path (skip legacy TJ decode)
                 }
                 
                 evt.type = EventType::FullReady;
-                evt.isScaled = !job.isFullDecode;
+                evt.isScaled = !job.isFullDecode && !rawFrame.animator;
 
-                // [Standard] Deep Copy to Heap (since Arena is reused/reset)
-                auto safeFrame = std::make_shared<QuickView::RawImageFrame>();
-                safeFrame->quality = rawFrame.quality;
-                
-                size_t bufferSize = 0;
-
-                if (rawFrame.IsSvg() || rawFrame.IsWebView()) {
-                    safeFrame->format = rawFrame.format;
-                    safeFrame->width = rawFrame.width;
-                    safeFrame->height = rawFrame.height;
-                    safeFrame->svg = std::make_unique<QuickView::RawImageFrame::SvgData>();
-                    safeFrame->svg->xmlData = rawFrame.svg->xmlData;
-                    safeFrame->svg->viewBoxW = rawFrame.svg->viewBoxW;
-                    safeFrame->svg->viewBoxH = rawFrame.svg->viewBoxH;
-                } else {
-                    bufferSize = rawFrame.GetBufferSize();
-                    uint8_t* heapPixels = new uint8_t[bufferSize];
-                    memcpy(heapPixels, rawFrame.pixels, bufferSize);
-                    safeFrame->pixels = heapPixels;
-                    safeFrame->width = rawFrame.width;
-                    safeFrame->height = rawFrame.height;
-                    safeFrame->stride = rawFrame.stride;
-                    safeFrame->format = rawFrame.format;
-                    safeFrame->formatDetails = rawFrame.formatDetails;
-                    safeFrame->srcWidth = rawFrame.srcWidth;   // [v10.1] Preserve original resolution
-                    safeFrame->srcHeight = rawFrame.srcHeight;
-                    safeFrame->exifOrientation = rawFrame.exifOrientation; // [Fix] Propagate Orientation to cache
-                    safeFrame->memoryDeleter = QuickView::MemoryDeleter::FromDeleteArray();
-
-                    // [CMS] Propagate color profile and HDR metadata
-                    safeFrame->iccProfile = std::move(rawFrame.iccProfile);
-                    safeFrame->colorInfo = rawFrame.colorInfo;
-                    safeFrame->hdrMetadata = rawFrame.hdrMetadata;
-
-                    // [v10.5] Animation Meta propagation
-                    safeFrame->animator = rawFrame.animator;
-                    safeFrame->frameMeta = rawFrame.frameMeta;
-
-                    // [GPU Pipeline] Deep copy blend operation and payload
-                    safeFrame->blendOp = rawFrame.blendOp;
-                    safeFrame->shaderPayload = rawFrame.shaderPayload;
-                    if (rawFrame.auxLayer && rawFrame.auxLayer->pixels) {
-                        auto safeAux = std::make_unique<QuickView::AuxLayer>();
-                        safeAux->width = rawFrame.auxLayer->width;
-                        safeAux->height = rawFrame.auxLayer->height;
-                        safeAux->stride = rawFrame.auxLayer->stride;
-                        safeAux->bytesPerPixel = rawFrame.auxLayer->bytesPerPixel;
-                        
-                        size_t auxSize = (size_t)safeAux->stride * safeAux->height;
-                        uint8_t* auxHeap = new uint8_t[auxSize];
-                        memcpy(auxHeap, rawFrame.auxLayer->pixels, auxSize);
-                        safeAux->pixels = auxHeap;
-                        safeAux->deleter = QuickView::MemoryDeleter::FromDeleteArray();
-                        safeFrame->auxLayer = std::move(safeAux);
-                    }
+                // Preserve true source dimensions on cached frames so Titan revisits retain full metadata.
+                if (meta.Width > 0 && rawFrame.srcWidth <= 0) {
+                    rawFrame.srcWidth = static_cast<int>(meta.Width);
                 }
-                
-                evt.rawFrame = safeFrame;
-                
-                QV_LOG("Worker_StdJobDone",
-                    TraceLoggingInt32(safeFrame->width, "Width"),
-                    TraceLoggingInt32(safeFrame->height, "Height"),
-                    TraceLoggingInt32(safeFrame->stride, "Stride"),
-                    TraceLoggingUInt64((uint64_t)bufferSize, "BufferSize"));
-            }
+                if (meta.Height > 0 && rawFrame.srcHeight <= 0) {
+                    rawFrame.srcHeight = static_cast<int>(meta.Height);
+                }
 
-            // [Fix] Compute histogram for HeavyLane results
-            if (evt.rawFrame && evt.rawFrame->IsValid() && !evt.rawFrame->IsSvg() && job.type == JobType::Standard) {
-                m_loader->ComputeHistogramFromFrame(*evt.rawFrame, &meta);
+                // Promote decoded frame to standalone heap ownership (zero-copy when deleter is set).
+                const uint64_t sourceSize = (meta.FileSize > 0) ? meta.FileSize : (job.mmf ? (uint64_t)job.mmf->size() : 0);
+                rawFrame.sourceFileSize = sourceSize;
+                if (rawFrame.IsSvg() || rawFrame.IsWebView()) {
+                    rawFrame.sourceFormat = !meta.Format.empty() ? meta.Format : L"SVG";
+                } else {
+                    rawFrame.sourceFormat = !meta.Format.empty() ? meta.Format : rawFrame.sourceFormat;
+                }
+                const size_t bufferSize = (!rawFrame.IsSvg() && !rawFrame.IsWebView()) ? rawFrame.GetBufferSize() : 0;
+                auto safeFrame = rawFrame.PromoteToStandalone();
+                evt.rawFrame = safeFrame;
+
+                QV_LOG("Worker_StdJobDone",
+                    TraceLoggingInt32(safeFrame ? safeFrame->width : 0, "Width"),
+                    TraceLoggingInt32(safeFrame ? safeFrame->height : 0, "Height"),
+                    TraceLoggingInt32(safeFrame ? safeFrame->stride : 0, "Stride"),
+                    TraceLoggingUInt64((uint64_t)bufferSize, "BufferSize"));
             }
 
             evt.metadata = std::move(meta);
@@ -1979,7 +1966,7 @@ HeavyLanePool::PoolStats HeavyLanePool::GetStats() const {
     stats.lastDecodeTimeMs = m_lastDecodeTimeMs.load();
     stats.lastDecodeId = m_lastDecodeId.load();
     // [Fix] Only report as active if it's actually running and not finished
-    stats.masterWarmupActive = m_masterWarmupThread.joinable() && !m_masterWarmupReady.load();
+    stats.masterWarmupActive = m_masterWarmupRunning.load(std::memory_order_relaxed) && !m_masterWarmupReady.load(std::memory_order_relaxed);
     stats.activeTileJobs = m_activeTileJobs.load();
     
     for (const auto& w : m_workers) {
@@ -2041,8 +2028,8 @@ void HeavyLanePool::GetWorkerSnapshots(WorkerSnapshot* outBuffer, int capacity, 
 
 bool HeavyLanePool::IsIdle() const {
     std::lock_guard lock(m_poolMutex);
-    // [Fix] Background warmup is only "busy" if it's joinable AND not yet ready.
-    bool warmingUp = m_masterWarmupThread.joinable() && !m_masterWarmupReady.load();
+    // [Fix] Background warmup is only "busy" if it's running AND not yet ready.
+    bool warmingUp = m_masterWarmupRunning.load(std::memory_order_relaxed) && !m_masterWarmupReady.load(std::memory_order_relaxed);
     return m_busyCount.load() == 0 && m_pendingJobs.empty() && !warmingUp;
 }
 
@@ -2055,13 +2042,12 @@ void HeavyLanePool::TriggerPrefetch(std::shared_ptr<QuickView::MappedFile> mmf) 
     
     // [Touch-Up] Async Prefetch
     // This brings the REST of the file into valid RAM
-    std::thread([mmf]() {
+    QuickView::PostThreadPool([mmf]() {
          // Prefetch entire file? Or just likely next region?
          // For JPEG, data is sequential. Prefetch all.
          // Windows manages the specific pages.
          mmf->Prefetch(0, mmf->size());
-         
-    }).detach();
+    });
 }
 
 // ============================================================================
@@ -2107,32 +2093,38 @@ bool HeavyLanePool::ShouldWarmupMasterBacking() const {
             fmt == QuickView::TitanFormat::JXL);
 }
 
-void HeavyLanePool::StopMasterWarmup() {
+void HeavyLanePool::StopMasterWarmupLocked() {
+    TrashBag bag;
     if (m_masterWarmupThread.joinable()) {
         m_masterWarmupThread.request_stop();
         
         // [Fix Bug #85] NO SYNC JOIN HERE! 
         // Synchronous join() blocks the main dispatcher/UI thread during rapid scrolling.
         // Instead, we move the thread ownership into a TrashBag and let GC handle it.
-        TrashBag bag;
         bag.warmupThread = std::move(m_masterWarmupThread);
-        
-        // [Safety Fix] Move the backing store associated with this thread into the trash bag.
-        // This ensures the MMF view remains mapped until the thread is joined in the GC thread.
-        {
-            std::lock_guard lock(m_masterBackingMutex);
-            // If the backing store belongs to the image we are stopping, or is incomplete (imageId=0)
-            if (m_masterBacking.view && 
-                (m_masterBacking.imageId == m_masterWarmupImageId.load() || m_masterBacking.imageId == 0)) {
-                bag.backing = std::move(m_masterBacking);
-                m_masterBacking = {}; // Ensure m_masterBacking is clear
-            }
-        }
-        EnqueueTrash(std::move(bag));
     }
+    m_masterWarmupRunning.store(false, std::memory_order_release);
     m_masterWarmupImageId.store(0, std::memory_order_release);
     m_masterWarmupReady.store(false, std::memory_order_release);
     m_lodCacheCond.notify_all(); // Wake any waiters so they can re-check
+
+    // [Safety Fix] Move the backing store associated with this thread into the trash bag.
+    // This ensures the MMF view remains mapped until the thread is joined in the GC thread.
+    {
+        std::lock_guard lock(m_masterBackingMutex);
+        if (m_masterBacking.view) {
+            bag.backing = std::move(m_masterBacking);
+            m_masterBacking = {}; // Ensure m_masterBacking is clear
+        }
+    }
+    if (bag.warmupThread.joinable() || bag.backing.view) {
+        EnqueueTrash(std::move(bag));
+    }
+}
+
+void HeavyLanePool::StopMasterWarmup() {
+    std::lock_guard lock(m_masterWarmupMutex);
+    StopMasterWarmupLocked();
 }
 
 void HeavyLanePool::EnsureMasterWarmup(const std::wstring& path, ImageID imageId, std::shared_ptr<QuickView::MappedFile> mmf, PaneSlot targetSlot, uint64_t generationId) {
@@ -2144,23 +2136,37 @@ void HeavyLanePool::EnsureMasterWarmup(const std::wstring& path, ImageID imageId
         return;
     }
 
+    std::lock_guard lock(m_masterWarmupMutex);
+
     // Already warming up this image.
     if (m_masterWarmupThread.joinable() &&
         m_masterWarmupImageId.load(std::memory_order_acquire) == imageId) {
         return;
     }
 
-    StopMasterWarmup();
+    StopMasterWarmupLocked();
     m_masterWarmupImageId.store(imageId, std::memory_order_release);
     m_masterWarmupReady.store(false, std::memory_order_release);
+    m_masterWarmupRunning.store(true, std::memory_order_release);
     const uint32_t warmupGen = m_generationID.load(std::memory_order_acquire);
 
     m_masterWarmupThread = std::jthread([this, path, imageId, mmf, warmupGen, targetSlot, generationId](std::stop_token st) {
-        // [Fix] Ensure the UI marquee stops even if we exit early (failure/stop)
+        // Only publish completion/stop for the active warmup imageId under lock so stale
+        // superseded threads in TrashBag cannot corrupt a newer image's state or miss wakeups.
         struct Finalizer {
-            std::atomic<bool>* ready;
-            ~Finalizer() { ready->store(true, std::memory_order_release); }
-        } finalizer{ &m_masterWarmupReady };
+            HeavyLanePool* pool;
+            ImageID targetId;
+            ~Finalizer() {
+                {
+                    std::lock_guard lock(pool->m_lodCacheMutex);
+                    if (pool->m_masterWarmupImageId.load(std::memory_order_acquire) == targetId) {
+                        pool->m_masterWarmupReady.store(true, std::memory_order_release);
+                        pool->m_masterWarmupRunning.store(false, std::memory_order_release);
+                    }
+                }
+                pool->m_lodCacheCond.notify_all();
+            }
+        } finalizer{ this, imageId };
 
         // [Refix Bug #85] IO Throttling
         // Warmup tasks (especially massive JXL decodes) MUST respect concurrency limits.
@@ -2407,21 +2413,26 @@ void HeavyLanePool::EnqueueTrash(TrashBag&& bag) {
         std::vector<TrashBag> localBatch;
         {
             std::lock_guard lock(m_gcMutex);
-            if (m_gcQueue.size() > (pressure ? 0 : 8)) {
-                localBatch.swap(m_gcQueue);
+            // [Safety Rule] Only synchronously reclaim pure-memory bags without active threads.
+            // NEVER call join() on warmupThread from the caller/UI thread (causes 30s-1min UI freeze).
+            auto it = m_gcQueue.begin();
+            while (it != m_gcQueue.end()) {
+                if (!it->warmupThread.joinable()) {
+                    localBatch.push_back(std::move(*it));
+                    it = m_gcQueue.erase(it);
+                } else {
+                    ++it;
+                }
             }
         }
         if (!localBatch.empty()) {
-            QV_LOG("GC_Lifecycle", TraceLoggingString("CRITICAL TrashBacklog SyncRecovery", "Action"));
-            for (auto& bag : localBatch) {
-                bag.warmupThread = {};
-            }
+            QV_LOG("GC_Lifecycle", TraceLoggingString("PureMemory SyncRecovery", "Action"));
             for (auto& bag : localBatch) {
                 if (bag.backing.isPooled) {
                     RelinquishToPool(std::move(bag.backing));
                 }
             }
-            localBatch.clear(); // RAII destruction of MMFs and Threads happens HERE.
+            localBatch.clear(); // Pure memory deallocation (zero stall)
         }
     }
 }
@@ -3094,10 +3105,14 @@ HRESULT HeavyLanePool::LaunchDecodeWorker(
         }
     }
 
-    // Propagate EXIF orientation from child
+    // Propagate EXIF orientation and true source dimensions from child
     outMeta.ExifOrientation = static_cast<int>(header->exifOrientation);
     outMeta.Width  = static_cast<int>(header->originalWidth);
     outMeta.Height = static_cast<int>(header->originalHeight);
+    if (header->originalWidth > 0 && header->originalHeight > 0) {
+        outFrame.srcWidth  = static_cast<int>(header->originalWidth);
+        outFrame.srcHeight = static_cast<int>(header->originalHeight);
+    }
 
     {
         QV_LOG("DecodeWorker_Result",
@@ -3179,7 +3194,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
     
     // [P15] Decode full image — format-aware dispatch
     QuickView::RawImageFrame fullFrame;
-    HRESULT hr;
+    HRESULT hr = E_FAIL; // [Fix] Explicitly initialize to E_FAIL (prevents undefined behavior in Release-LTO)
     
     if (m_titanFormat.load() == QuickView::TitanFormat::JPEG) {
         // JPEG: use TurboJPEG with IDCT scaling (scale parameter is used)
@@ -3305,6 +3320,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
             bool expectsMasterCache = ShouldWarmupMasterBacking();
             bool warmupResolved = false;  // Set true when warmup-wait path produces final result
             
+
             if (expectsMasterCache && m_masterWarmupImageId.load(std::memory_order_acquire) == job.imageId) {
                 // Warmup is building the Master Cache — wait for it
                 QV_LOG("Worker_Route", TraceLoggingString("Phase4 WaitMasterWarmup DirectToMMF", "Action"));
@@ -3415,7 +3431,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                         fullFrame.onAuxLayerReady.ctxDeleter = [](void* c) { delete static_cast<AuxLayerReadyCtx*>(c); };
                     }
                 }
-                hr = m_loader->LoadToFrame(job.path.c_str(), &fullFrame, nullptr, targetW, targetH, &loader, checkCancel, nullptr, true, false, job.targetHdrHeadroomStops);
+                hr = m_loader->LoadToFrame(job.path.c_str(), &fullFrame, nullptr, targetW, targetH, &loader, checkCancel, nullptr, true, false, job.targetHdrHeadroomStops, QuickView::ColorPrimaries::SRGB, nullptr, false);
                 if (SUCCEEDED(hr)) {
                     loader = L"WIC(LOD-Fallback)";
                     QV_LOG("Worker_Route", TraceLoggingString("Phase4 InlineWIC FallbackSuccess", "Action"));
@@ -3431,7 +3447,11 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                 
                 std::shared_ptr<uint8_t[]> frameSharedPtr;
                 if (deleter) {
-                    frameSharedPtr = std::shared_ptr<uint8_t[]>(rawPixels, [deleter](uint8_t* p) { deleter(p); });
+                    frameSharedPtr = std::shared_ptr<uint8_t[]>(rawPixels, [deleter](uint8_t* p) mutable {
+                        deleter(p);
+                        deleter.DestroyCtx();
+                        deleter.Clear();
+                    });
                 } else {
                     frameSharedPtr = std::shared_ptr<uint8_t[]>(rawPixels, [](uint8_t* p) { _aligned_free(p); });
                 }
@@ -3540,7 +3560,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
         QV_LOG("P14_FullDecode",
             TraceLoggingString("FAILED", "Action"),
             TraceLoggingUInt32((uint32_t)hr, "HR"));
-        return hr;
+        return FAILED(hr) ? hr : E_FAIL; // [Fix] Never leak spurious S_OK when fullFrame is invalid!
     }
 
     // Guard against undersized fallback buffers (e.g. 1x1 fake base).
@@ -3578,7 +3598,11 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
         uint8_t* rawPixels = fullFrame.Detach();
         
         if (deleter) {
-            m_lodCache.pixels = std::shared_ptr<uint8_t[]>(rawPixels, [deleter](uint8_t* p) { deleter(p); });
+            m_lodCache.pixels = std::shared_ptr<uint8_t[]>(rawPixels, [deleter](uint8_t* p) mutable {
+                deleter(p);
+                deleter.DestroyCtx();
+                deleter.Clear();
+            });
         } else {
             m_lodCache.pixels = std::shared_ptr<uint8_t[]>(rawPixels, [](uint8_t* p) { _aligned_free(p); });
         }

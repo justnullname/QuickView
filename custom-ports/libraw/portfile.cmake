@@ -6,6 +6,20 @@ vcpkg_from_github(
     HEAD_REF master
 )
 
+# Strip 256KB .data bloat: replace AAHD::gammaLUT[0x10000] with lazy-allocated float* pointer
+vcpkg_replace_string("${SOURCE_PATH}/src/demosaic/aahd_demosaic.cpp"
+    "static float gammaLUT[0x10000];"
+    "static float *gammaLUT;"
+)
+vcpkg_replace_string("${SOURCE_PATH}/src/demosaic/aahd_demosaic.cpp"
+    "float AAHD::gammaLUT[0x10000] = {-1.f};"
+    "float *AAHD::gammaLUT = nullptr;"
+)
+vcpkg_replace_string("${SOURCE_PATH}/src/demosaic/aahd_demosaic.cpp"
+    "if (gammaLUT[0] < -0.1f)\n  {"
+    "if (!gammaLUT)\n  {\n    gammaLUT = (float *)malloc(0x10000 * sizeof(float));"
+)
+
 vcpkg_from_github(
     OUT_SOURCE_PATH LIBRAW_CMAKE_SOURCE_PATH
     REPO LibRaw/LibRaw-cmake

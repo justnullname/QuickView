@@ -5,6 +5,7 @@
 #include "OSDState.h"
 #include "AppStrings.h"
 #include "GeekWidgets.h"
+#include "ThemePalette.h"
 #include <dwrite.h>
 #include <dwmapi.h>
 #include <wrl/client.h>
@@ -12,30 +13,15 @@
 #include <algorithm>
 #include <string>
 #include <thread>
+#include "AsyncJob.h"
 
-static bool ReadAppsUseLightThemeRegistry(bool defaultValue) {
-    DWORD value = defaultValue ? 1u : 0u;
-    DWORD size = sizeof(value);
-    const LONG status = RegGetValueW(
-        HKEY_CURRENT_USER,
-        L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-        L"AppsUseLightTheme",
-        RRF_RT_REG_DWORD,
-        nullptr,
-        &value,
-        &size);
-    if (status != ERROR_SUCCESS) return defaultValue;
-    return value != 0;
-}
+extern int GetEffectiveExifOrientation(int baseExif, const EditState& editState);
 
 extern AppConfig g_config;
 extern float g_uiScale;
 
 static bool IsLightTheme() {
-    if (g_config.ThemeMode == 2) return true;
-    if (g_config.ThemeMode == 1) return false;
-    if (g_config.ThemeMode == 0) return ReadAppsUseLightThemeRegistry(false);
-    return g_config.ThemeCustomTextR < 0.5f;
+    return IsLightThemeActive();
 }
 
 struct PrintStrings {
@@ -68,7 +54,7 @@ struct PrintStrings {
 };
 
 static PrintStrings GetPrintStrings() {
-    std::wstring loc = AppStrings::CurrentLocale ? AppStrings::CurrentLocale : L"en-us";
+    std::wstring loc = AppStrings::g.CurrentLocale ? AppStrings::g.CurrentLocale : L"en-us";
     std::transform(loc.begin(), loc.end(), loc.begin(), ::towlower);
     
     if (loc.find(L"zh") != std::wstring::npos) {
@@ -184,20 +170,22 @@ void PrintPreviewUI::Show(HWND hwnd, const std::wstring& imagePath, float imageW
     m_settings.imagePath = imagePath;
     m_settings.copies = 1;
     const auto& pane = GetPaneContext(PaneSlot::Primary);
+    // PrintManager::ExecutePrintJob always decodes the original file dimensions from disk,
+    // so keep print source layout dimensions tied to the base image size even when SR is cached.
     m_settings.sourceWidthPx = imageWidth;
     m_settings.sourceHeightPx = imageHeight;
     m_settings.imageDpiX = pane.metadata.DpiX > 0 ? pane.metadata.DpiX : 96.0;
     m_settings.imageDpiY = pane.metadata.DpiY > 0 ? pane.metadata.DpiY : 96.0;
-    int exif = pane.metadata.ExifOrientation;
+    int exif = GetEffectiveExifOrientation(pane.view.ExifOrientation, pane.editState);
     m_settings.exifOrientation = (exif >= 1 && exif <= 8) ? exif : 1;
 
-    float orientedW = imageWidth;
-    float orientedH = imageHeight;
+    float orientedW = m_settings.sourceWidthPx;
+    float orientedH = m_settings.sourceHeightPx;
     if (m_settings.exifOrientation >= 5 && m_settings.exifOrientation <= 8) {
         std::swap(orientedW, orientedH);
     }
-    m_imageWidth = imageWidth;
-    m_imageHeight = imageHeight;
+    m_imageWidth = m_settings.sourceWidthPx;
+    m_imageHeight = m_settings.sourceHeightPx;
 
     m_settings.isLandscape = (orientedW > orientedH);
     m_settings.layoutMode = PrintLayoutMode::Fit;
@@ -243,8 +231,10 @@ void PrintPreviewUI::DrawButton(ID2D1DeviceContext* ctx, const D2D1_RECT_F& rect
     ButtonStyle style = isSelected ? ButtonStyle::Primary : ButtonStyle::Secondary;
     ButtonState state = isHovered ? ButtonState::Hovered : ButtonState::Normal;
 
+    const auto& tp = QuickView::UI::Theme::GetThemePalette();
     WidgetPalette pal = {};
-    pal.accent = D2D1::ColorF(g_config.ThemeCustomAccentR, g_config.ThemeCustomAccentG, g_config.ThemeCustomAccentB, 1.0f);
+    pal.accent = tp.accentFill;
+    pal.onAccentText = tp.onAccentText;
     pal.controlBg = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.95f, 1.0f) : D2D1::ColorF(0.18f, 0.18f, 0.20f, 1.0f);
     pal.border = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.15f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f);
     pal.text = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f) : D2D1::ColorF(0.95f, 0.95f, 0.98f);
@@ -255,7 +245,7 @@ void PrintPreviewUI::DrawButton(ID2D1DeviceContext* ctx, const D2D1_RECT_F& rect
     static ComPtr<IDWriteTextFormat> fmt;
     if (!pDW) DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(pDW.GetAddressOf()));
     if (pDW && !fmt) {
-        pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f, AppStrings::CurrentLocale, &fmt);
+        pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f, AppStrings::g.CurrentLocale, &fmt);
     }
 
     GeekWidgets::DrawPillButton(ctx, rect, text, style, state, fmt.Get(), 1.0f, pal);
@@ -373,8 +363,10 @@ void PrintPreviewUI::RenderNumericCapsule(
     }
 
     bool isLight = IsLightTheme();
+    const auto& tp = QuickView::UI::Theme::GetThemePalette();
     QuickView::UI::WidgetPalette pal = {};
-    pal.accent = D2D1::ColorF(g_config.ThemeCustomAccentR, g_config.ThemeCustomAccentG, g_config.ThemeCustomAccentB, 1.0f);
+    pal.accent = tp.accentFill;
+    pal.onAccentText = tp.onAccentText;
     pal.controlBg = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.95f, 1.0f) : D2D1::ColorF(0.15f, 0.15f, 0.15f, 1.0f);
     pal.border = isLight ? D2D1::ColorF(0.8f, 0.8f, 0.8f, 1.0f) : D2D1::ColorF(0.3f, 0.3f, 0.3f, 1.0f);
     pal.text = isLight ? D2D1::ColorF(0.1f, 0.1f, 0.1f, 1.0f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
@@ -555,8 +547,12 @@ void PrintPreviewUI::Render(ID2D1DeviceContext* ctx, float winW, float winH) {
                     ComPtr<ID2D1Effect> grayscaleEffect;
                     if (SUCCEEDED(ctx->CreateEffect(CLSID_D2D1Grayscale, &grayscaleEffect))) {
                         grayscaleEffect->SetInput(0, pane.resource.bitmap.Get());
-                        D2D1_RECT_F srcRect = D2D1::RectF(0.0f, 0.0f, m_imageWidth, m_imageHeight);
-                        ctx->DrawImage(grayscaleEffect.Get(), nullptr, &srcRect);
+                        // Scale effect output from actual bitmap dimensions (may be SR-upscaled) into m_imageWidth x m_imageHeight.
+                        const D2D1_SIZE_F bmpSize = pane.resource.bitmap->GetSize();
+                        if (bmpSize.width > 0.0f && bmpSize.height > 0.0f) {
+                            ctx->SetTransform(D2D1::Matrix3x2F::Scale(m_imageWidth / bmpSize.width, m_imageHeight / bmpSize.height) * cellTransform * oldTransform);
+                        }
+                        ctx->DrawImage(grayscaleEffect.Get());
                     } else {
                         ctx->DrawBitmap(pane.resource.bitmap.Get(), D2D1::RectF(0, 0, m_imageWidth, m_imageHeight));
                     }
@@ -614,12 +610,12 @@ void PrintPreviewUI::Render(ID2D1DeviceContext* ctx, float winW, float winH) {
         ComPtr<IDWriteFactory> pDW;
         DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(pDW.GetAddressOf()));
         ComPtr<IDWriteTextFormat> fmtPage;
-        pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 36.0f, AppStrings::CurrentLocale, &fmtPage);
+        pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 36.0f, AppStrings::g.CurrentLocale, &fmtPage);
         fmtPage->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         fmtPage->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         
         ComPtr<IDWriteTextFormat> fmtCheck;
-        pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 20.0f, AppStrings::CurrentLocale, &fmtCheck);
+        pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 20.0f, AppStrings::g.CurrentLocale, &fmtCheck);
         fmtCheck->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         fmtCheck->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         
@@ -645,7 +641,7 @@ void PrintPreviewUI::Render(ID2D1DeviceContext* ctx, float winW, float winH) {
                 
                 m_posterCells.push_back({ pageIdx, cellRect });
 
-                bool isDisabled = m_settings.disabledPages.count(pageIdx) > 0;
+                bool isDisabled = m_settings.IsPageDisabled(pageIdx);
                 if (isDisabled) {
                     ctx->FillRectangle(cellRect, disabledBrush.Get());
                 } else {
@@ -678,7 +674,7 @@ void PrintPreviewUI::Render(ID2D1DeviceContext* ctx, float winW, float winH) {
         for (int c = 0; c < cols; ++c) {
             int pageIdx = r * cols + c;
             
-            bool isDisabled = m_settings.disabledPages.count(pageIdx) > 0;
+            bool isDisabled = m_settings.IsPageDisabled(pageIdx);
             if (isDisabled) continue;
 
             float cellLeft = paperRect.left + c * cellW;
@@ -703,10 +699,10 @@ void PrintPreviewUI::Render(ID2D1DeviceContext* ctx, float winW, float winH) {
     ComPtr<IDWriteFactory> pDW;
     DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(pDW.GetAddressOf()));
     ComPtr<IDWriteTextFormat> fmtHeader;
-    pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 14.0f, AppStrings::CurrentLocale, &fmtHeader);
+    pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 14.0f, AppStrings::g.CurrentLocale, &fmtHeader);
 
     ComPtr<IDWriteTextFormat> fmtCapsule;
-    pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 11.0f, AppStrings::CurrentLocale, &fmtCapsule);
+    pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 11.0f, AppStrings::g.CurrentLocale, &fmtCapsule);
 
     auto strs = GetPrintStrings();
 
@@ -727,8 +723,10 @@ void PrintPreviewUI::Render(ID2D1DeviceContext* ctx, float winW, float winH) {
     DrawButton(ctx, m_ui.btnRotate, rotText.c_str(), false);
     cy += 35;
 
+    const auto& tp = QuickView::UI::Theme::GetThemePalette();
     QuickView::UI::WidgetPalette pal = {};
-    pal.accent = D2D1::ColorF(g_config.ThemeCustomAccentR, g_config.ThemeCustomAccentG, g_config.ThemeCustomAccentB, 1.0f);
+    pal.accent = tp.accentFill;
+    pal.onAccentText = tp.onAccentText;
     pal.controlBg = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.95f, 1.0f) : D2D1::ColorF(0.18f, 0.18f, 0.20f, 1.0f);
     pal.border = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.15f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f);
     pal.text = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f) : D2D1::ColorF(0.95f, 0.95f, 0.98f);
@@ -736,7 +734,7 @@ void PrintPreviewUI::Render(ID2D1DeviceContext* ctx, float winW, float winH) {
     pal.white = D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
 
     ComPtr<IDWriteTextFormat> fmtBtn;
-    pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f, AppStrings::CurrentLocale, &fmtBtn);
+    pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f, AppStrings::g.CurrentLocale, &fmtBtn);
 
     // 3. Orientation Row (Portrait / Landscape) as Pill Segment Group
     D2D1_RECT_F orientRect = D2D1::RectF(cx, cy, cx + panelWidth, cy + 28);
@@ -808,7 +806,7 @@ void PrintPreviewUI::Render(ID2D1DeviceContext* ctx, float winW, float winH) {
         ctx->DrawRectangle(dropRect, borderBrush.Get(), 1.0f);
         
         ComPtr<IDWriteTextFormat> fmtList;
-        pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f, AppStrings::CurrentLocale, &fmtList);
+        pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f, AppStrings::g.CurrentLocale, &fmtList);
 
         for (size_t i = 0; i < m_printers.size(); ++i) {
             D2D1_RECT_F itemRect = D2D1::RectF(dropRect.left, dropRect.top + i * 26.0f, dropRect.right, dropRect.top + (i + 1) * 26.0f);
@@ -898,11 +896,7 @@ bool PrintPreviewUI::OnLButtonUp(float x, float y) {
     if (m_settings.printMultiPage) {
         for (const auto& cell : m_posterCells) {
             if (PointInRect(x, y, cell.rect)) {
-                if (m_settings.disabledPages.count(cell.pageIdx)) {
-                    m_settings.disabledPages.erase(cell.pageIdx);
-                } else {
-                    m_settings.disabledPages.insert(cell.pageIdx);
-                }
+                m_settings.ToggleDisabledPage(cell.pageIdx);
                 if (m_hwnd) InvalidateRect(m_hwnd, NULL, FALSE);
                 return true;
             }
@@ -914,10 +908,10 @@ bool PrintPreviewUI::OnLButtonUp(float x, float y) {
     } else if (PointInRect(x, y, m_ui.btnPrint)) {
         Hide();
         
-        g_osd.Show(m_hwnd, AppStrings::OSD_PrintJobStarted, false, false, D2D1::ColorF(D2D1::ColorF::White), OSDPosition::Bottom, 5000);
+        g_osd.Show(m_hwnd, AppStrings::g.OSD_PrintJobStarted, false, false, D2D1::ColorF(D2D1::ColorF::White), OSDPosition::Bottom, 5000);
 
         PrintManager::GetInstance().IncrementActiveJobs();
-        std::thread([settings = m_settings, hwnd = m_hwnd]() {
+        QuickView::RunDetached([settings = m_settings, hwnd = m_hwnd]() {
             CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
             HRESULT hr = S_OK;
             auto result = PrintManager::GetInstance().ExecutePrintJob(settings);
@@ -927,7 +921,7 @@ bool PrintPreviewUI::OnLButtonUp(float x, float y) {
             CoUninitialize();
             PrintManager::GetInstance().DecrementActiveJobs();
             PostMessage(hwnd, WM_APP + 98, static_cast<WPARAM>(hr), 0); // WM_PRINT_FINISHED
-        }).detach();
+        });
     } else if (PointInRect(x, y, m_ui.rectCombo)) {
         m_isComboOpen = true;
     } else if (PointInRect(x, y, m_ui.btnProperties)) {
@@ -1134,3 +1128,4 @@ bool PrintPreviewUI::OnKeyDown(WPARAM key) {
 }
 
 } // namespace QuickView
+

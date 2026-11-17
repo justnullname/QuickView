@@ -4841,6 +4841,7 @@ const VectorIcon Logo_st2Vector = { DATA_Logo_st2, sizeof(DATA_Logo_st2) / sizeo
         { 'Z', 0, 0, 0, 0, 0, 0 },
     };
     const VectorIcon KeyboardVector = { DATA_Keyboard, sizeof(DATA_Keyboard) / sizeof(IconPathCommand) };
+    const VectorIcon AiActionVector = { nullptr, 0 }; // Zero-size placeholder for dynamic Unicode 3-star sparkles (✨)
 } // namespace GeekIcons
 
 

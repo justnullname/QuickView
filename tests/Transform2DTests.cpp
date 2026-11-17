@@ -21,7 +21,7 @@ TEST(Transform2DTest, FromExifMapping) {
     EXPECT_TRUE(t4.FlipH);
 
     auto t5 = Transform2D::FromExif(5);
-    EXPECT_EQ(t5.Rotation, 90);
+    EXPECT_EQ(t5.Rotation, 270);
     EXPECT_TRUE(t5.FlipH);
 
     auto t6 = Transform2D::FromExif(6);
@@ -29,7 +29,7 @@ TEST(Transform2DTest, FromExifMapping) {
     EXPECT_FALSE(t6.FlipH);
 
     auto t7 = Transform2D::FromExif(7);
-    EXPECT_EQ(t7.Rotation, 270);
+    EXPECT_EQ(t7.Rotation, 90);
     EXPECT_TRUE(t7.FlipH);
 
     auto t8 = Transform2D::FromExif(8);
@@ -81,4 +81,181 @@ TEST(JpegExifResetTest, ScanAndResetOrientation) {
     bool resetSuccess = CLosslessTransform::ResetJpegExifOrientationTo1(jpegData, size);
     EXPECT_TRUE(resetSuccess);
     EXPECT_EQ(jpegData[30], 1); // Value reset to 1
+}
+
+TEST(OrientationMathTest, AllOrientationsDimensionSwap) {
+    auto IsDimensionSwapped = [](int orientation) -> bool {
+        return orientation >= 5 && orientation <= 8;
+    };
+
+    EXPECT_FALSE(IsDimensionSwapped(1));
+    EXPECT_FALSE(IsDimensionSwapped(2));
+    EXPECT_FALSE(IsDimensionSwapped(3));
+    EXPECT_FALSE(IsDimensionSwapped(4));
+    EXPECT_TRUE(IsDimensionSwapped(5));
+    EXPECT_TRUE(IsDimensionSwapped(6));
+    EXPECT_TRUE(IsDimensionSwapped(7));
+    EXPECT_TRUE(IsDimensionSwapped(8));
+}
+
+TEST(SuperResolutionDimensionTest, Exif8DimensionAndCropMapping) {
+    // Physical file 1800x1200 with EXIF 8 (270° CW)
+    int physicalW = 1800;
+    int physicalH = 1200;
+    int exif = 8;
+    bool isRot90 = (exif >= 5 && exif <= 8);
+
+    // 1. Visual Base Dimensions (Display Size on screen)
+    int visualW = isRot90 ? physicalH : physicalW; // 1200
+    int visualH = isRot90 ? physicalW : physicalH; // 1800
+    EXPECT_EQ(visualW, 1200);
+    EXPECT_EQ(visualH, 1800);
+
+    // 2. Super Resolution (2x)
+    float srScale = 2.0f;
+    int srPhysicalW = static_cast<int>(physicalW * srScale); // 3600
+    int srPhysicalH = static_cast<int>(physicalH * srScale); // 2400
+    EXPECT_EQ(srPhysicalW, 3600);
+    EXPECT_EQ(srPhysicalH, 2400);
+
+    // 3. Export Dialog Expected Visual Target Dimensions
+    int targetVisualW = static_cast<int>(visualW * srScale); // 2400
+    int targetVisualH = static_cast<int>(visualH * srScale); // 3600
+    EXPECT_EQ(targetVisualW, 2400);
+    EXPECT_EQ(targetVisualH, 3600);
+
+    // 4. Net Transform for Exif 8
+    Transform2D t = Transform2D::FromExif(exif);
+    EXPECT_EQ(t.Rotation, 270);
+    EXPECT_FALSE(t.FlipH);
+
+    // 5. Crop in visual space (e.g. 100x100 to 500x700 -> size 400x600)
+    int cropVisualW = 400;
+    int cropVisualH = 600;
+    int srCropW = static_cast<int>(std::round(cropVisualW * srScale)); // 800
+    int srCropH = static_cast<int>(std::round(cropVisualH * srScale)); // 1200
+    EXPECT_EQ(srCropW, 800);
+    EXPECT_EQ(srCropH, 1200);
+}
+
+
+
+TEST(Transform2DTest, LoupeViewportAnchorZoomPrecision) {
+    // Simulates the exact anchor zoom math used in HotkeyAction::Loupe & WM_MOUSEWHEEL
+    const float vpW = 1920.0f;
+    const float vpH = 1080.0f;
+    const float imgW = 3840.0f;
+    const float imgH = 2160.0f;
+
+    const float fitScale = std::min(vpW / imgW, vpH / imgH); // 0.5f
+    const float baseZoom = 1.0f;
+    const float initialTotalScale = fitScale * baseZoom; // 0.5f
+    const float initialPanX = 50.0f;
+    const float initialPanY = -30.0f;
+
+    // Pick an arbitrary cursor screen position
+    const float cursorX = 1200.0f;
+    const float cursorY = 700.0f;
+
+    // 1. ScreenToImage mapping:
+    // imgDrawX = vpW * 0.5f + PanX - (imgW * 0.5f * totalScale)
+    float imgDrawX = vpW * 0.5f + initialPanX - (imgW * 0.5f * initialTotalScale);
+    float imgDrawY = vpH * 0.5f + initialPanY - (imgH * 0.5f * initialTotalScale);
+    float imgX = (cursorX - imgDrawX) / initialTotalScale;
+    float imgY = (cursorY - imgDrawY) / initialTotalScale;
+
+    // 2. Perform Loupe Viewport Zoom to targetTotalScale (e.g. 2.5x magnification)
+    const float targetTotalScale = 2.5f;
+    float newPanX = cursorX - vpW * 0.5f + (imgW * 0.5f - imgX) * targetTotalScale;
+    float newPanY = cursorY - vpH * 0.5f + (imgH * 0.5f - imgY) * targetTotalScale;
+
+    // 3. Project imgX back to screen with newPan and targetTotalScale
+    float newImgDrawX = vpW * 0.5f + newPanX - (imgW * 0.5f * targetTotalScale);
+    float newImgDrawY = vpH * 0.5f + newPanY - (imgH * 0.5f * targetTotalScale);
+    float reprojectedScreenX = newImgDrawX + imgX * targetTotalScale;
+    float reprojectedScreenY = newImgDrawY + imgY * targetTotalScale;
+
+    EXPECT_NEAR(reprojectedScreenX, cursorX, 1e-4f);
+    EXPECT_NEAR(reprojectedScreenY, cursorY, 1e-4f);
+}
+
+TEST(Transform2DTest, ToRotateFirstParamsEquivalenceAllOrientations) {
+    // Verify FlipH-first Transform2D + post-rotation visual FlipV matches WIC Rotate-then-Flip order
+    constexpr int W = 12;
+    constexpr int H = 8;
+
+    auto applyFlipH = [](int& x, int& y, int w, int h) { (void)h; x = (w - 1) - x; };
+    auto applyFlipV = [](int& x, int& y, int w, int h) { (void)w; y = (h - 1) - y; };
+    auto applyRotCW = [](int& x, int& y, int& w, int& h, int rot) {
+        for (int s = 0; s < (rot / 90) % 4; ++s) {
+            int nx = (h - 1) - y;
+            int ny = x;
+            x = nx;
+            y = ny;
+            std::swap(w, h);
+        }
+    };
+
+    const int rots[] = { 0, 90, 180, 270 };
+    for (int r : rots) {
+        for (bool fH : { false, true }) {
+            for (bool fV : { false, true }) {
+                Transform2D t{ r, fH };
+                int wicRot = 0;
+                bool wicFlipH = false, wicFlipV = false;
+                t.ToRotateFirstParams(fV, wicRot, wicFlipH, wicFlipV);
+
+                // Point under FlipH -> Rot(r) -> FlipV
+                int x1 = 2, y1 = 1, w1 = W, h1 = H;
+                if (fH) applyFlipH(x1, y1, w1, h1);
+                applyRotCW(x1, y1, w1, h1, r);
+                if (fV) applyFlipV(x1, y1, w1, h1);
+
+                // Point under Rot(wicRot) -> FlipH(wicFlipH) -> FlipV(wicFlipV)
+                int x2 = 2, y2 = 1, w2 = W, h2 = H;
+                applyRotCW(x2, y2, w2, h2, wicRot);
+                if (wicFlipH) applyFlipH(x2, y2, w2, h2);
+                if (wicFlipV) applyFlipV(x2, y2, w2, h2);
+
+                EXPECT_EQ(w1, w2);
+                EXPECT_EQ(h1, h2);
+                EXPECT_EQ(x1, x2);
+                EXPECT_EQ(y1, y2);
+            }
+        }
+    }
+}
+
+TEST(Transform2DTest, MapVisualRectToPhysicalRectRoundTrip) {
+    const D2D1_SIZE_F physSize = D2D1::SizeF(400.0f, 300.0f);
+    // Asymmetric crop box in visual space: [20, 40, 120, 160]
+    const D2D1_RECT_F visRect = D2D1::RectF(20.0f, 40.0f, 120.0f, 160.0f);
+
+    const int rots[] = { 0, 90, 180, 270 };
+    for (int rot : rots) {
+        for (bool flipX : { false, true }) {
+            for (bool flipY : { false, true }) {
+                D2D1_RECT_F physRect = MapVisualRectToPhysicalRect(visRect, physSize, rot, flipX, flipY);
+                EXPECT_GE(physRect.left, 0.0f);
+                EXPECT_GE(physRect.top, 0.0f);
+                EXPECT_LE(physRect.right, physSize.width);
+                EXPECT_LE(physRect.bottom, physSize.height);
+
+                const float physCropW = physRect.right - physRect.left;
+                const float physCropH = physRect.bottom - physRect.top;
+                const bool swapped = (rot == 90 || rot == 270);
+                EXPECT_NEAR(physCropW, swapped ? 120.0f : 100.0f, 1e-3f);
+                EXPECT_NEAR(physCropH, swapped ? 100.0f : 120.0f, 1e-3f);
+            }
+        }
+    }
+
+    // Specific check for EXIF 6 (90 CW, no flip):
+    // Physical (400x300) -> Visual (300x400).
+    // Visual top-left (20, 40) came from Physical x=40, y=300-120=180..
+    D2D1_RECT_F r90 = MapVisualRectToPhysicalRect(visRect, physSize, 90, false, false);
+    EXPECT_NEAR(r90.left, 40.0f, 1e-3f);
+    EXPECT_NEAR(r90.top, 180.0f, 1e-3f);
+    EXPECT_NEAR(r90.right, 160.0f, 1e-3f);
+    EXPECT_NEAR(r90.bottom, 280.0f, 1e-3f);
 }

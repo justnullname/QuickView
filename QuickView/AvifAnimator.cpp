@@ -22,25 +22,26 @@ public:
     }
 
     bool Initialize(std::shared_ptr<QuickView::MappedFile> file, QuickView::PixelFormat /*preferredFormat*/) override {
+        if (!m_decoder || !file || !file->IsValid()) return false;
         m_mappedFile = file;
-        
+        if (m_rgb.pixels) {
+            avifRGBImageFreePixels(&m_rgb);
+            m_rgb = {};
+        }
+        m_totalFrames = 0;
+
         if (avifDecoderSetIOMemory(m_decoder, file->data(), file->size()) != AVIF_RESULT_OK) return false;
         if (avifDecoderParse(m_decoder) != AVIF_RESULT_OK) return false;
 
         m_totalFrames = m_decoder->imageCount;
         if (m_totalFrames <= 1) return false; // Not animated
 
-        avifRGBImageSetDefaults(&m_rgb, m_decoder->image);
-        m_rgb.format = AVIF_RGB_FORMAT_BGRA;
-        m_rgb.depth = 8;
-        m_rgb.alphaPremultiplied = AVIF_TRUE;
-        
-        if (avifRGBImageAllocatePixels(&m_rgb) != AVIF_RESULT_OK) return false;
-        
+        if (!EnsureRgbBuffer()) return false;
         return true;
     }
 
     std::shared_ptr<RawImageFrame> GetNextFrame() override {
+        if (!m_decoder || m_totalFrames == 0) return nullptr;
         avifResult res = avifDecoderNextImage(m_decoder);
         if (res == AVIF_RESULT_NO_IMAGES_REMAINING) return nullptr;
         if (res != AVIF_RESULT_OK) return nullptr;
@@ -49,6 +50,7 @@ public:
     }
 
     std::shared_ptr<RawImageFrame> SeekToFrame(uint32_t targetIndex) override {
+        if (!m_decoder || m_totalFrames == 0) return nullptr;
         if (targetIndex >= m_totalFrames) targetIndex = m_totalFrames - 1;
         
         if (avifDecoderNthImage(m_decoder, targetIndex) != AVIF_RESULT_OK) return nullptr;
@@ -60,7 +62,26 @@ public:
     bool IsAnimated() const override { return m_totalFrames > 1; }
 
 private:
+    bool EnsureRgbBuffer() {
+        if (!m_decoder || !m_decoder->image) return false;
+        if (m_rgb.pixels &&
+            m_rgb.width == m_decoder->image->width &&
+            m_rgb.height == m_decoder->image->height) {
+            return true;
+        }
+        if (m_rgb.pixels) {
+            avifRGBImageFreePixels(&m_rgb);
+            m_rgb = {};
+        }
+        avifRGBImageSetDefaults(&m_rgb, m_decoder->image);
+        m_rgb.format = AVIF_RGB_FORMAT_BGRA;
+        m_rgb.depth = 8;
+        m_rgb.alphaPremultiplied = AVIF_TRUE;
+        return avifRGBImageAllocatePixels(&m_rgb) == AVIF_RESULT_OK;
+    }
+
     std::shared_ptr<RawImageFrame> BuildFrame() {
+        if (!EnsureRgbBuffer()) return nullptr;
         if (avifImageYUVToRGB(m_decoder->image, &m_rgb) != AVIF_RESULT_OK) return nullptr;
         
         auto frame = std::make_shared<RawImageFrame>();
@@ -73,6 +94,7 @@ private:
         
         size_t bufSize = (size_t)frame->stride * frame->height;
         frame->pixels = (uint8_t*)_aligned_malloc(bufSize, 64);
+        if (!frame->pixels) return nullptr;
         frame->memoryDeleter = QuickView::MemoryDeleter::FromAlignedFree();
         memcpy(frame->pixels, m_rgb.pixels, bufSize);
         

@@ -4,9 +4,83 @@
 #include <d2d1_2.h>
 #include <optional>
 #include <string>
-#include <functional>
+#include <type_traits>
+#include <utility>
 #include "AppContext.h"
 #include "CoroutineTypes.h"
+
+struct CompareSlotCallback {
+    void* userCtx = nullptr;
+    void (*pfn)(void* userCtx, bool success) = nullptr;
+    void (*cleanup)(void* userCtx) = nullptr;
+
+    constexpr CompareSlotCallback() noexcept = default;
+
+    template <typename F>
+        requires std::is_convertible_v<F, void (*)(bool)>
+    constexpr CompareSlotCallback(F fn) noexcept {
+        void (*simpleFn)(bool) = fn;
+        if (simpleFn) {
+            userCtx = reinterpret_cast<void*>(simpleFn);
+            pfn = [](void* u, bool success) {
+                if (u) {
+                    reinterpret_cast<void (*)(bool)>(u)(success);
+                }
+            };
+            cleanup = nullptr;
+        }
+    }
+
+    constexpr CompareSlotCallback(void (*pfn_)(void*, bool), void* ctx, void (*cleanup_)(void*) = nullptr) noexcept
+        : userCtx(ctx), pfn(pfn_), cleanup(cleanup_) {}
+
+    ~CompareSlotCallback() {
+        Reset();
+    }
+
+    CompareSlotCallback(CompareSlotCallback&& other) noexcept
+        : userCtx(other.userCtx), pfn(other.pfn), cleanup(other.cleanup) {
+        other.userCtx = nullptr;
+        other.pfn = nullptr;
+        other.cleanup = nullptr;
+    }
+
+    CompareSlotCallback(const CompareSlotCallback&) = delete;
+
+    CompareSlotCallback& operator=(CompareSlotCallback&& other) noexcept {
+        if (this != &other) {
+            Reset();
+            userCtx = other.userCtx;
+            pfn = other.pfn;
+            cleanup = other.cleanup;
+            other.userCtx = nullptr;
+            other.pfn = nullptr;
+            other.cleanup = nullptr;
+        }
+        return *this;
+    }
+
+    CompareSlotCallback& operator=(const CompareSlotCallback&) = delete;
+
+    void Invoke(bool success) const {
+        if (pfn) {
+            pfn(userCtx, success);
+        }
+    }
+
+    void Reset() noexcept {
+        if (cleanup && userCtx) {
+            cleanup(userCtx);
+            userCtx = nullptr;
+        }
+        pfn = nullptr;
+        cleanup = nullptr;
+    }
+
+    explicit operator bool() const noexcept {
+        return pfn != nullptr;
+    }
+};
 
 class CompareController {
 public:
@@ -19,6 +93,7 @@ public:
     bool RenderComposite(HWND hwnd);
     void MarkDirty();
     void EnterMode(HWND hwnd);
+    void EnterSrCompareMode(HWND hwnd);
     void ExitMode(HWND hwnd);
     bool IsActive() const;
     
@@ -27,7 +102,7 @@ public:
     float GetSplitRatio() const;
 
     void CaptureCurrentImageAsLeft();
-    FireAndForget LoadImageIntoLeftSlot(HWND hwnd, std::wstring path, std::function<void(bool)> callback = nullptr);
+    FireAndForget LoadImageIntoLeftSlot(HWND hwnd, std::wstring path, CompareSlotCallback callback = {});
     void ReloadPaneForDisplayChange(HWND hwnd, ComparePane pane);
     
     void UpdateRawButton();

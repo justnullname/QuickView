@@ -23,9 +23,14 @@
 extern HCURSOR g_currentCursor;
 
 // Dihedral Group D4 2D Rigid Transformation for precise EXIF & Edit composition
+// Convention: Horizontal Flip (FlipH) FIRST, then Clockwise Rotation (Rotation).
+// Under this convention:
+//   EXIF 5 (Transpose: (x,y)->(y,x))      = FlipH then Rot270CW
+//   EXIF 7 (Transverse: (x,y)->(H-y,W-x)) = FlipH then Rot90CW
+// This matches GetVisualState(), GetEffectiveExifOrientation(), and LosslessTransform::TransformJPEG().
 struct Transform2D {
-    int Rotation = 0;   // 0, 90, 180, 270
-    bool FlipH = false; // Horizontal Flip
+    int Rotation = 0;   // 0, 90, 180, 270 CW
+    bool FlipH = false; // Horizontal Flip applied BEFORE Rotation
 
     static constexpr Transform2D FromExif(int exifOrientation) {
         switch (exifOrientation) {
@@ -33,9 +38,9 @@ struct Transform2D {
             case 2: return { 0,   true  };
             case 3: return { 180, false };
             case 4: return { 180, true  };
-            case 5: return { 90,  true  };
+            case 5: return { 270, true  };
             case 6: return { 90,  false };
-            case 7: return { 270, true  };
+            case 7: return { 90,  true  };
             case 8: return { 270, false };
             default: return { 0,  false };
         }
@@ -52,7 +57,87 @@ struct Transform2D {
         }
         return result;
     }
+
+    // Converts FlipH-first (R_rot * F_H) plus optional post-rotation Visual FlipV
+    // into WIC IWICBitmapFlipRotator order (Rotate first, then Flip).
+    constexpr void ToRotateFirstParams(bool visualFlipV, int& outRotCW, bool& outFlipH, bool& outFlipV) const {
+        const int r = ((Rotation % 360) + 360) % 360;
+        if (FlipH && visualFlipV) {
+            // F_V * R_r * F_H = R_{180 - r} (no flip)
+            outRotCW = ((180 - r) % 360 + 360) % 360;
+            outFlipH = false;
+            outFlipV = false;
+        } else if (FlipH) {
+            // R_r * F_H = F_H * R_{-r}
+            outRotCW = ((360 - r) % 360 + 360) % 360;
+            outFlipH = true;
+            outFlipV = false;
+        } else {
+            // R_r (followed by optional F_V)
+            outRotCW = r;
+            outFlipH = false;
+            outFlipV = visualFlipV;
+        }
+    }
 };
+
+struct ImageDisplayMetrics {
+    float imgDrawX = 0.0f;
+    float imgDrawY = 0.0f;
+    float totalScale = 1.0f;
+    float visualW = 0.0f;
+    float visualH = 0.0f;
+    float winW = 0.0f;
+    float winH = 0.0f;
+    float effWinH = 0.0f;
+    float galleryH = 0.0f;
+    bool valid = false;
+};
+
+// Inverse-maps a rectangle in 1x visual (post-Flip*Rotate) space [0..visualW, 0..visualH]
+// back to 1x physical (pre-Flip*Rotate) space [0..physSize.width, 0..physSize.height].
+inline D2D1_RECT_F MapVisualRectToPhysicalRect(
+    const D2D1_RECT_F& visualRect,
+    const D2D1_SIZE_F& uncroppedPhysicalSize,
+    int totalRotationCW,
+    bool physicalFlipX,
+    bool physicalFlipY) {
+    const float physW = uncroppedPhysicalSize.width;
+    const float physH = uncroppedPhysicalSize.height;
+    if (physW <= 0.0f || physH <= 0.0f) {
+        return D2D1::RectF(0.0f, 0.0f, 0.0f, 0.0f);
+    }
+
+    int rot = ((totalRotationCW % 360) + 360) % 360;
+    const bool swapped = (rot == 90 || rot == 270);
+    const float visW = swapped ? physH : physW;
+    const float visH = swapped ? physW : physH;
+
+    const float fx = physicalFlipX ? -1.0f : 1.0f;
+    const float fy = physicalFlipY ? -1.0f : 1.0f;
+
+    auto mapPt = [&](float vx, float vy) -> D2D1_POINT_2F {
+        const float dx = vx - visW * 0.5f;
+        const float dy = vy - visH * 0.5f;
+        float rx = dx;
+        float ry = dy;
+        switch (rot) {
+            case 90:  rx = dy;  ry = -dx; break;
+            case 180: rx = -dx; ry = -dy; break;
+            case 270: rx = -dy; ry = dx;  break;
+            default:  break;
+        }
+        return D2D1::Point2F(fx * rx + physW * 0.5f, fy * ry + physH * 0.5f);
+    };
+
+    const D2D1_POINT_2F p0 = mapPt(visualRect.left, visualRect.top);
+    const D2D1_POINT_2F p1 = mapPt(visualRect.right, visualRect.bottom);
+    const float l = std::clamp((std::min)(p0.x, p1.x), 0.0f, physW);
+    const float t = std::clamp((std::min)(p0.y, p1.y), 0.0f, physH);
+    const float r = std::clamp((std::max)(p0.x, p1.x), l, physW);
+    const float b = std::clamp((std::max)(p0.y, p1.y), t, physH);
+    return D2D1::RectF(l, t, r, b);
+}
 
 
 struct EditState {
@@ -63,6 +148,7 @@ struct EditState {
     int TotalRotation = 0;              // Cumulative rotation (0/90/180/270)
     bool FlippedH = false;              // Horizontal flip state
     bool FlippedV = false;              // Vertical flip state
+    bool HasModifiedFrame = false;      // True when currentFrame holds an in-memory generated/modified image (e.g. AI action)
     
     // [Visual Rotation] Queue of pending operations to be applied on Save
     std::vector<TransformType> PendingTransforms;
@@ -80,6 +166,7 @@ struct EditState {
         TotalRotation = 0;
         FlippedH = false;
         FlippedV = false;
+        HasModifiedFrame = false;
         Quality = EditQuality::Lossless;
         PendingTransforms.clear();
         HasCrop = false;
@@ -120,6 +207,177 @@ struct EditState {
 enum class MouseAction {
     None, WindowDrag, PanImage, ExitApp, FitWindow
 };
+
+// ============================================================================
+// Mouse Gesture & Input Action System
+// ============================================================================
+enum class MouseModifier : uint8_t {
+    None = 0,
+    Ctrl = 1,
+    Shift = 2,
+    Alt = 3
+};
+
+namespace MouseModMask {
+    constexpr uint8_t None  = 0;
+    constexpr uint8_t Ctrl  = 1;
+    constexpr uint8_t Shift = 2;
+    constexpr uint8_t Alt   = 4;
+}
+
+enum class MouseTrigger : uint8_t {
+    LeftDrag = 0,
+    MiddleDrag,
+    RightDrag,
+    LeftDblClick,
+    MiddleClick,
+    RightClick,
+    XButton1Click,   // Mouse Back (Button 4)
+    XButton2Click,   // Mouse Forward (Button 5)
+    VerticalWheel,   // Standard Wheel
+    HorizontalWheel, // Tilt / Thumb Wheel
+    RightHoldWheel,  // Wheel while holding Right Button
+    Count
+};
+
+enum class MouseActionTarget : int {
+    None = 0,
+    WindowDrag,          // Drag Window
+    PanImage,            // Pan Image
+    Zoom,                // Zoom (Drag or Wheel depending on trigger)
+    ZoomDrag = Zoom,     // Backward compatibility alias
+    ZoomWheel = Zoom,    // Backward compatibility alias
+    ContextMenu,         // Show Context Menu
+    ExitApp,             // Exit QuickView
+    SmartZoom,           // Smart Zoom (Fit / 100%)
+    Navigate,            // Navigate Next/Prev (Wheel or Button)
+    NavWheel = Navigate, // Backward compatibility alias
+    LockWindowZoomWheel, // Zoom while locking window size
+    AdjustZoomSpeedWheel,// Scroll to adjust zoom speed
+    CropRegionDrag,      // Define/drag crop region
+    
+    // Command Shortcuts (Aligned with HotkeyAction)
+    NavNext,             // Next Image
+    NavPrev,             // Previous Image
+    NavFirst,            // First Image
+    NavLast,             // Last Image
+    ZoomIn,              // Zoom In
+    ZoomOut,             // Zoom Out
+    Zoom100,             // Zoom 100%
+    ZoomFit,             // Zoom to Fit
+    ZoomFitWindow,       // Zoom Fit (Keep Window)
+    ZoomFill,            // Zoom Fill (Keep Window)
+    RotateCW,            // Rotate 90 CW
+    RotateCCW,           // Rotate 90 CCW
+    FlipH,               // Flip Horizontal
+    FlipV,               // Flip Vertical
+    ToggleFullscreen,    // Toggle Fullscreen
+    ToggleGallery,       // Toggle Gallery
+    ToggleFilmstrip,     // Toggle Filmstrip
+    ToggleInfoPanel,     // Toggle Info Panel
+    ToggleExifPanel,     // Toggle EXIF Panel
+    ToggleCompare,       // Toggle Compare Mode
+    OpenFile,            // Open File
+    EditFile,            // Edit in external editor
+    CopyPixels,          // Copy Pixels to Clipboard
+    CopyFilePath,        // Copy File Path
+    ShowInExplorer,      // Reveal in Explorer
+    EnterCropMode,       // Enter Crop Mode
+    Loupe,               // Magnifier Loupe
+    Count
+};
+
+struct MouseGestureRule {
+    uint8_t mod1 = 0;    // 0=None, 1=Ctrl, 2=Shift, 3=Alt
+    uint8_t mod2 = 0;    // 0=None, 1=Ctrl, 2=Shift, 3=Alt
+    uint8_t trigger = 0; // MouseTrigger
+    int action = 0;      // MouseActionTarget
+
+    bool operator==(const MouseGestureRule& other) const noexcept = default;
+
+    uint8_t GetModifiers() const noexcept {
+        uint8_t m = 0;
+        auto mapMod = [](uint8_t v) -> uint8_t {
+            if (v == static_cast<uint8_t>(MouseModifier::Ctrl)) return MouseModMask::Ctrl;
+            if (v == static_cast<uint8_t>(MouseModifier::Shift)) return MouseModMask::Shift;
+            if (v == static_cast<uint8_t>(MouseModifier::Alt)) return MouseModMask::Alt;
+            return MouseModMask::None;
+        };
+        m |= mapMod(mod1);
+        m |= mapMod(mod2);
+        return m;
+    }
+
+    static void ModifiersToMods(uint8_t mask, uint8_t& m1, uint8_t& m2) noexcept {
+        m1 = 0; m2 = 0;
+        if (mask & MouseModMask::Ctrl) {
+            m1 = static_cast<uint8_t>(MouseModifier::Ctrl);
+            if (mask & MouseModMask::Shift) m2 = static_cast<uint8_t>(MouseModifier::Shift);
+            else if (mask & MouseModMask::Alt) m2 = static_cast<uint8_t>(MouseModifier::Alt);
+        } else if (mask & MouseModMask::Shift) {
+            m1 = static_cast<uint8_t>(MouseModifier::Shift);
+            if (mask & MouseModMask::Alt) m2 = static_cast<uint8_t>(MouseModifier::Alt);
+        } else if (mask & MouseModMask::Alt) {
+            m1 = static_cast<uint8_t>(MouseModifier::Alt);
+        }
+    }
+};
+
+inline std::vector<MouseGestureRule> GetDefaultMouseGestures() {
+    return {
+        // Default unmodified operations (100% QuickView signature feel)
+        { 0, 0, (uint8_t)MouseTrigger::LeftDrag,        (int)MouseActionTarget::WindowDrag },
+        { 0, 0, (uint8_t)MouseTrigger::MiddleDrag,      (int)MouseActionTarget::PanImage },
+        { 0, 0, (uint8_t)MouseTrigger::RightDrag,       (int)MouseActionTarget::Zoom },
+        { 0, 0, (uint8_t)MouseTrigger::LeftDblClick,    (int)MouseActionTarget::SmartZoom },
+        { 0, 0, (uint8_t)MouseTrigger::MiddleClick,     (int)MouseActionTarget::ExitApp },
+        { 0, 0, (uint8_t)MouseTrigger::RightClick,      (int)MouseActionTarget::ContextMenu },
+        { 0, 0, (uint8_t)MouseTrigger::VerticalWheel,   (int)MouseActionTarget::Zoom },
+        { 0, 0, (uint8_t)MouseTrigger::HorizontalWheel, (int)MouseActionTarget::Navigate },
+        { 0, 0, (uint8_t)MouseTrigger::XButton1Click,   (int)MouseActionTarget::NavPrev },
+        { 0, 0, (uint8_t)MouseTrigger::XButton2Click,   (int)MouseActionTarget::NavNext },
+        
+        // Modifier gestures (Resolve historical conflicts cleanly)
+        { 1, 0, (uint8_t)MouseTrigger::LeftDrag,        (int)MouseActionTarget::CropRegionDrag },
+        { 1, 0, (uint8_t)MouseTrigger::VerticalWheel,   (int)MouseActionTarget::LockWindowZoomWheel },
+        { 2, 0, (uint8_t)MouseTrigger::VerticalWheel,   (int)MouseActionTarget::Navigate },
+        { 3, 0, (uint8_t)MouseTrigger::VerticalWheel,   (int)MouseActionTarget::AdjustZoomSpeedWheel },
+    };
+}
+
+inline std::vector<MouseGestureRule> GetStandardViewerMouseGestures() {
+    return {
+        { 0, 0, (uint8_t)MouseTrigger::LeftDrag,        (int)MouseActionTarget::PanImage },
+        { 0, 0, (uint8_t)MouseTrigger::MiddleDrag,      (int)MouseActionTarget::WindowDrag },
+        { 0, 0, (uint8_t)MouseTrigger::RightDrag,       (int)MouseActionTarget::Zoom },
+        { 0, 0, (uint8_t)MouseTrigger::LeftDblClick,    (int)MouseActionTarget::ToggleFullscreen },
+        { 0, 0, (uint8_t)MouseTrigger::MiddleClick,     (int)MouseActionTarget::ZoomFit },
+        { 0, 0, (uint8_t)MouseTrigger::RightClick,      (int)MouseActionTarget::ContextMenu },
+        { 0, 0, (uint8_t)MouseTrigger::VerticalWheel,   (int)MouseActionTarget::Navigate },
+        { 0, 0, (uint8_t)MouseTrigger::HorizontalWheel, (int)MouseActionTarget::Navigate },
+        { 0, 0, (uint8_t)MouseTrigger::XButton1Click,   (int)MouseActionTarget::NavPrev },
+        { 0, 0, (uint8_t)MouseTrigger::XButton2Click,   (int)MouseActionTarget::NavNext },
+        { 1, 0, (uint8_t)MouseTrigger::LeftDrag,        (int)MouseActionTarget::CropRegionDrag },
+        { 1, 0, (uint8_t)MouseTrigger::VerticalWheel,   (int)MouseActionTarget::Zoom },
+        { 2, 0, (uint8_t)MouseTrigger::VerticalWheel,   (int)MouseActionTarget::Zoom },
+    };
+}
+
+inline std::vector<MouseGestureRule> GetMinimalBrowserMouseGestures() {
+    return {
+        { 0, 0, (uint8_t)MouseTrigger::LeftDrag,        (int)MouseActionTarget::PanImage },
+        { 0, 0, (uint8_t)MouseTrigger::MiddleDrag,      (int)MouseActionTarget::WindowDrag },
+        { 0, 0, (uint8_t)MouseTrigger::RightDrag,       (int)MouseActionTarget::Zoom },
+        { 0, 0, (uint8_t)MouseTrigger::LeftDblClick,    (int)MouseActionTarget::SmartZoom },
+        { 0, 0, (uint8_t)MouseTrigger::MiddleClick,     (int)MouseActionTarget::ExitApp },
+        { 0, 0, (uint8_t)MouseTrigger::RightClick,      (int)MouseActionTarget::ContextMenu },
+        { 0, 0, (uint8_t)MouseTrigger::VerticalWheel,   (int)MouseActionTarget::Navigate },
+        { 0, 0, (uint8_t)MouseTrigger::HorizontalWheel, (int)MouseActionTarget::Navigate },
+        { 0, 0, (uint8_t)MouseTrigger::XButton1Click,   (int)MouseActionTarget::NavPrev },
+        { 0, 0, (uint8_t)MouseTrigger::XButton2Click,   (int)MouseActionTarget::NavNext },
+        { 1, 0, (uint8_t)MouseTrigger::VerticalWheel,   (int)MouseActionTarget::Zoom },
+    };
+}
 
 // Overlay (Tracing) Mode state machine
 enum class OverlayState {
@@ -191,6 +449,12 @@ enum class HotkeyAction : uint8_t {
     ToggleSlideshow,   // Toggle Slideshow Mode
     ToggleSettings,    // Toggle Settings Overlay (Hotkey S)
     RenderRaw,         // Toggle RAW decode / switch to the paired RAW
+    Rate0,             // Clear the star rating
+    Rate1,             // Rate the photo 1..5 stars
+    Rate2,
+    Rate3,
+    Rate4,
+    Rate5,
     OpenFile,          // Open File Dialog
     EditFile,          // Edit with External Editor
     RenameFile,        // Rename File Dialog
@@ -211,6 +475,8 @@ enum class HotkeyAction : uint8_t {
     OverlayAlphaDown,  // Adjust Overlay Alpha Down
     OverlayTogglePassthrough, // Toggle Passthrough Mode
     Help,              // Toggle Help Overlay
+    SuperResolution,   // AI Super-Resolution (Default: Shift+S)
+    AiAction,          // AI Actions Palette & Execution (Default: A)
     Exit,              // Exit App / Restore Screen
     Undo,              // Undo last operation (Ctrl+Z)
     PanUp,
@@ -265,6 +531,12 @@ inline std::wstring_view HotkeyActionToString(HotkeyAction action) noexcept {
         case HotkeyAction::ShowInExplorer: return L"ShowInExplorer";
         case HotkeyAction::ToggleCompare: return L"ToggleCompare";
         case HotkeyAction::ComparePair: return L"ComparePair";
+        case HotkeyAction::Rate0: return L"Rate0";
+        case HotkeyAction::Rate1: return L"Rate1";
+        case HotkeyAction::Rate2: return L"Rate2";
+        case HotkeyAction::Rate3: return L"Rate3";
+        case HotkeyAction::Rate4: return L"Rate4";
+        case HotkeyAction::Rate5: return L"Rate5";
         case HotkeyAction::AlwaysOnTop: return L"AlwaysOnTop";
         case HotkeyAction::ToggleDebugHud: return L"ToggleDebugHud";
         case HotkeyAction::Print: return L"Print";
@@ -275,6 +547,8 @@ inline std::wstring_view HotkeyActionToString(HotkeyAction action) noexcept {
         case HotkeyAction::OverlayAlphaDown: return L"OverlayAlphaDown";
         case HotkeyAction::OverlayTogglePassthrough: return L"OverlayTogglePassthrough";
         case HotkeyAction::Help: return L"Help";
+        case HotkeyAction::SuperResolution: return L"SuperResolution";
+        case HotkeyAction::AiAction: return L"AiAction";
         case HotkeyAction::ToggleSlideshow: return L"ToggleSlideshow";
         case HotkeyAction::ToggleSettings: return L"ToggleSettings";
         case HotkeyAction::Exit: return L"Exit";
@@ -303,6 +577,8 @@ inline HotkeyAction StringToHotkeyAction(std::wstring_view sv) noexcept {
     if (sv == L"ZoomOutFine") return HotkeyAction::ZoomOutFine;
     if (sv == L"Zoom100") return HotkeyAction::Zoom100;
     if (sv == L"ZoomFit") return HotkeyAction::ZoomFit;
+    if (sv == L"ZoomFitWindow") return HotkeyAction::ZoomFitWindow;
+    if (sv == L"ZoomFill") return HotkeyAction::ZoomFill;
     if (sv == L"RotateCW") return HotkeyAction::RotateCW;
     if (sv == L"RotateCCW") return HotkeyAction::RotateCCW;
     if (sv == L"FlipH") return HotkeyAction::FlipH;
@@ -328,6 +604,14 @@ inline HotkeyAction StringToHotkeyAction(std::wstring_view sv) noexcept {
     if (sv == L"ShowInExplorer") return HotkeyAction::ShowInExplorer;
     if (sv == L"ToggleCompare") return HotkeyAction::ToggleCompare;
     if (sv == L"ComparePair") return HotkeyAction::ComparePair;
+    if (sv == L"SuperResolution") return HotkeyAction::SuperResolution;
+    if (sv == L"AiAction") return HotkeyAction::AiAction;
+    if (sv == L"Rate0") return HotkeyAction::Rate0;
+    if (sv == L"Rate1") return HotkeyAction::Rate1;
+    if (sv == L"Rate2") return HotkeyAction::Rate2;
+    if (sv == L"Rate3") return HotkeyAction::Rate3;
+    if (sv == L"Rate4") return HotkeyAction::Rate4;
+    if (sv == L"Rate5") return HotkeyAction::Rate5;
     if (sv == L"AlwaysOnTop") return HotkeyAction::AlwaysOnTop;
     if (sv == L"ToggleDebugHud") return HotkeyAction::ToggleDebugHud;
     if (sv == L"Print") return HotkeyAction::Print;
@@ -552,6 +836,121 @@ inline std::wstring KeyComboToString(const KeyCombo& combo) {
     return s;
 }
 
+struct HotkeyRule {
+    HotkeyAction action = HotkeyAction::None;
+    KeyCombo combo = { 0, 0 };
+
+    bool operator==(const HotkeyRule& other) const noexcept {
+        return action == other.action && combo == other.combo;
+    }
+};
+
+inline std::vector<HotkeyRule> GetDefaultHotkeyRules() {
+    return {
+        // Exit (Preserve Esc, and add issue requested modern combos: Ctrl+W, Alt+F4, MButton)
+        { HotkeyAction::Exit,                     { VK_ESCAPE, 0 } },
+        { HotkeyAction::Exit,                     { 'W', 1 /* Ctrl */ } },
+        { HotkeyAction::Exit,                     { VK_F4, 4 /* Alt */ } },
+        { HotkeyAction::Exit,                     { VK_MBUTTON, 0 } },
+
+        // Navigation (Strictly match b2d9198: Right/Left arrow, PageDown/PageUp, Home/End)
+        { HotkeyAction::NavNext,                  { VK_RIGHT, 0 } },
+        { HotkeyAction::NavNext,                  { VK_NEXT, 0 /* PageDown */ } },
+        { HotkeyAction::NavPrev,                  { VK_LEFT, 0 } },
+        { HotkeyAction::NavPrev,                  { VK_PRIOR, 0 /* PageUp */ } },
+        { HotkeyAction::NavFirst,                 { VK_HOME, 0 } },
+        { HotkeyAction::NavLast,                  { VK_END, 0 } },
+
+        // Zoom (Strictly match b2d9198: +/-, Numpad +/-, Up/Down, Z for 100%, F for Fit)
+        { HotkeyAction::ZoomIn,                   { VK_OEM_PLUS, 0 } },
+        { HotkeyAction::ZoomIn,                   { VK_ADD, 0 } },
+        { HotkeyAction::ZoomIn,                   { VK_UP, 0 } },
+        { HotkeyAction::ZoomInFine,               { VK_OEM_PLUS, 1 /* Ctrl */ } },
+        { HotkeyAction::ZoomOut,                  { VK_OEM_MINUS, 0 } },
+        { HotkeyAction::ZoomOut,                  { VK_SUBTRACT, 0 } },
+        { HotkeyAction::ZoomOut,                  { VK_DOWN, 0 } },
+        { HotkeyAction::ZoomOutFine,              { VK_OEM_MINUS, 1 /* Ctrl */ } },
+        { HotkeyAction::Zoom100,                  { 'Z', 0 } },
+        { HotkeyAction::ZoomFit,                  { 'F', 0 } },
+        { HotkeyAction::ZoomFitWindow,            { 0, 0 } },
+        { HotkeyAction::ZoomFill,                 { 0, 0 } },
+        { HotkeyAction::Loupe,                    { 'L', 0 } },
+
+        // Transform (Strictly match b2d9198: R, Shift+R, H, V)
+        { HotkeyAction::RotateCW,                 { 'R', 0 } },
+        { HotkeyAction::RotateCCW,                { 'R', 2 /* Shift */ } },
+        { HotkeyAction::FlipH,                    { 'H', 0 } },
+        { HotkeyAction::FlipV,                    { 'V', 0 } },
+
+        // Animation (Strictly match b2d9198: Space, Alt+Right, Alt+Left)
+        { HotkeyAction::ToggleAnimation,          { VK_SPACE, 0 } },
+        { HotkeyAction::AnimNextFrame,            { VK_RIGHT, 4 /* Alt */ } },
+        { HotkeyAction::AnimPrevFrame,            { VK_LEFT, 4 /* Alt */ } },
+
+        // View Modes (Strictly match b2d9198: T, Shift+T, Tab, I, M, F11, Ctrl+F11, F10, S, D)
+        { HotkeyAction::ToggleGallery,            { 'T', 0 } },
+        { HotkeyAction::ToggleFilmstrip,          { 'T', 2 /* Shift */ } },
+        { HotkeyAction::ToggleInfoPanel,          { VK_TAB, 0 } },
+        { HotkeyAction::ToggleExifPanel,          { 'I', 0 } },
+        { HotkeyAction::ToggleMinimap,            { 'M', 0 } },
+        { HotkeyAction::ToggleFullscreen,         { VK_F11, 0 } },
+        { HotkeyAction::ToggleSpan,               { VK_F11, 1 /* Ctrl */ } },
+        { HotkeyAction::ToggleSlideshow,          { VK_F10, 0 } },
+        { HotkeyAction::ToggleSettings,           { 'S', 0 } },
+        { HotkeyAction::RenderRaw,                { 'D', 0 } },
+
+        // Ratings (Numpad 0..5 and Main Keyboard 0..5)
+        { HotkeyAction::Rate0,                    { VK_NUMPAD0, 0 } },
+        { HotkeyAction::Rate1,                    { VK_NUMPAD1, 0 } },
+        { HotkeyAction::Rate2,                    { VK_NUMPAD2, 0 } },
+        { HotkeyAction::Rate3,                    { VK_NUMPAD3, 0 } },
+        { HotkeyAction::Rate4,                    { VK_NUMPAD4, 0 } },
+        { HotkeyAction::Rate5,                    { VK_NUMPAD5, 0 } },
+        { HotkeyAction::Rate0,                    { '0', 0 } },
+        { HotkeyAction::Rate1,                    { '1', 0 } },
+        { HotkeyAction::Rate2,                    { '2', 0 } },
+        { HotkeyAction::Rate3,                    { '3', 0 } },
+        { HotkeyAction::Rate4,                    { '4', 0 } },
+        { HotkeyAction::Rate5,                    { '5', 0 } },
+
+        // File Operations (Strictly match b2d9198: O, E, F2, Del, Ctrl+C, Ctrl+Shift+C, Ctrl+Alt+C, Ctrl+Enter, Ctrl+S, Ctrl+P, Ctrl+Z)
+        { HotkeyAction::OpenFile,                 { 'O', 0 } },
+        { HotkeyAction::EditFile,                 { 'E', 0 } },
+        { HotkeyAction::RenameFile,               { VK_F2, 0 } },
+        { HotkeyAction::DeleteFile,               { VK_DELETE, 0 } },
+        { HotkeyAction::CopyPixels,               { 'C', 1 /* Ctrl */ } },
+        { HotkeyAction::CopyFileItem,             { 'C', 3 /* Ctrl+Shift */ } },
+        { HotkeyAction::CopyPath,                 { 'C', 5 /* Ctrl+Alt */ } },
+        { HotkeyAction::ShowInExplorer,           { VK_RETURN, 1 /* Ctrl */ } },
+        { HotkeyAction::SaveAs,                   { 'S', 1 /* Ctrl */ } },
+        { HotkeyAction::Print,                    { 'P', 1 /* Ctrl */ } },
+        { HotkeyAction::Undo,                     { 'Z', 1 /* Ctrl */ } },
+
+        // Crop, Tools, Plugins (Strictly match b2d9198: X, C, Shift+C, Ctrl+T, F1, Shift+S, A)
+        { HotkeyAction::EnterCropMode,            { 'X', 0 } },
+        { HotkeyAction::ToggleCompare,            { 'C', 0 } },
+        { HotkeyAction::ComparePair,              { 'C', 2 /* Shift */ } },
+        { HotkeyAction::AlwaysOnTop,              { 'T', 1 /* Ctrl */ } },
+        { HotkeyAction::ToggleDebugHud,           { VK_F12, 0 } },
+        { HotkeyAction::ToggleOverlay,            { 'O', 3 /* Ctrl+Shift */ } },
+        { HotkeyAction::OverlayAlphaUp,           { VK_UP, 4 /* Alt */ } },
+        { HotkeyAction::OverlayAlphaDown,         { VK_DOWN, 4 /* Alt */ } },
+        { HotkeyAction::OverlayTogglePassthrough, { VK_ESCAPE, 2 /* Shift */ } },
+        { HotkeyAction::Help,                     { VK_F1, 0 } },
+        { HotkeyAction::SuperResolution,          { 'S', 2 /* Shift */ } },
+        { HotkeyAction::AiAction,                 { 'A', 0 } },
+
+        // Panning (Strictly match b2d9198: Ctrl + Arrows, Ctrl+Shift + Arrows)
+        { HotkeyAction::PanUp,                    { VK_UP, 1 /* Ctrl */ } },
+        { HotkeyAction::PanDown,                  { VK_DOWN, 1 /* Ctrl */ } },
+        { HotkeyAction::PanLeft,                  { VK_LEFT, 1 /* Ctrl */ } },
+        { HotkeyAction::PanRight,                 { VK_RIGHT, 1 /* Ctrl */ } },
+        { HotkeyAction::PanUpFast,                { VK_UP, 3 /* Ctrl+Shift */ } },
+        { HotkeyAction::PanDownFast,              { VK_DOWN, 3 /* Ctrl+Shift */ } },
+        { HotkeyAction::PanLeftFast,              { VK_LEFT, 3 /* Ctrl+Shift */ } },
+        { HotkeyAction::PanRightFast,             { VK_RIGHT, 3 /* Ctrl+Shift */ } },
+    };
+}
 
 /// <summary>
 /// Application configuration (for future settings menu)
@@ -562,6 +961,7 @@ struct AppConfig {
     bool SingleInstance = false;
     bool CheckUpdates = true;
     int UpdateChannel = 0;              // 0=Stable, 1=Pre-release
+    std::wstring LastUpdateChannelCheckVer; // App version calibrated against remote channels
     bool NavLoop = true;                // Loop at limits (Global or Folder)
     bool NavTraverse = false;           // Reach outside current folder (Subfolders)
     int SortOrder = 0;                  // 0=Auto(Name), 1=Name, 2=Modified, 3=DateTaken, 4=Size, 5=Type
@@ -572,11 +972,13 @@ struct AppConfig {
     int UIScalePreset = 0;               // 0=Auto(DPI), 1=75%, 2=90%, 3=100%, 4=110%, 5=125%, 6=150%, 7=175%, 8=200%, 9=225%, 10=250%, 11=300%
 
     // --- View ---
-    int ThemeMode = 0;                  // 0=Auto, 1=Dark, 2=Light, 3=Custom
-    float ThemeCustomAccentR = 0.00f;   // Custom Accent Color
+    int ThemeMode = 0;                  // 0=Auto, 1=Dark, 2=Light
+    int AccentMode = 0;                 // 0=System, 1=Custom
+    int WindowBorderAccentMode = 0;     // 0=Follow System (ColorPrevalence), 1=Follow Theme Accent, 2=Off (Gray)
+    float ThemeCustomAccentR = 0.00f;   // Custom Accent Color (used when AccentMode == 1)
     float ThemeCustomAccentG = 0.47f;
     float ThemeCustomAccentB = 0.84f;
-    float ThemeCustomTextR = 1.0f;      // Custom Text Color
+    float ThemeCustomTextR = 1.0f;      // Legacy Custom Text Color (kept for .ini/.qvtheme migration)
     float ThemeCustomTextG = 1.0f;
     float ThemeCustomTextB = 1.0f;
     int MenuBackdropStyle = 0;          // 0=Acrylic, 1=Mica, 2=Mica Alt
@@ -640,7 +1042,7 @@ struct AppConfig {
     bool RememberLastWindowSizeAndPosition = false;
     bool UpscaleSmallImagesWhenLocked = false;
 
-    int ShowBorderIndicator = 1; // 0=Off, 1=On (Accent Color), 2=Custom Color
+    int ShowBorderIndicator = 1; // 0=Off, 1=Accent (Follow Theme Accent), 2=Custom Color
     float BorderIndicatorCustomR = 0.20f;
     float BorderIndicatorCustomG = 0.60f;
     float BorderIndicatorCustomB = 1.00f;
@@ -657,15 +1059,18 @@ struct AppConfig {
     int InfoPanelAlignY = 0; // 0=Top, 1=Bottom
 
     // --- Control ---
-    int ZoomModeIn = 0;                 // 0=Auto, 1=Linear, 2=Nearest, 3=High Quality Cubic
+    int ZoomModeIn = 0;                 // 0=Auto, 1=Linear, 2=Nearest, 3=High Quality Cubic, 4=AMD FSR 1.0
     int ZoomModeOut = 0;                // 0=Auto, 1=Linear, 2=Nearest, 3=High Quality Cubic
+    float FsrSharpness = 0.20f;         // 0.0f to 1.0f (RCAS sharpness for AMD FSR 1.0)
+    int SrDebounceDelayMs = 3000;       // 0ms to 5000ms delay after zoom settle before neural SR triggers (Default 3s)
+    float SrAutoTriggerMaxSourceMp = 1.0f; // 0.1MP to 16.0MP max source image size for auto SR trigger (16.0 = unlimited, Default 1.0MP)
+    int SrAutoTriggerMaxWidth = 1080;      // 0 to 8192 px max source width for auto SR trigger (0 = unlimited, Default 1080)
+    int SrAutoTriggerMaxHeight = 1080;     // 0 to 8192 px max source height for auto SR trigger (0 = unlimited, Default 1080)
     bool InvertWheel = false;
     int WheelActionMode = 0;            // 0=Zoom, 1=Navigate
     int ThumbWheelMode = 0;             // 0=Navigate, 1=Zoom
     int DoubleClickMode = 0;            // 0=Smart, 1=WheelMode1, 2=WheelMode2, 3=None
     bool InvertXButton = false;          // Invert mouse forward/back buttons for navigation
-    // [v3.2.2] Zoom Snap Damping (Time Lock)
-    bool EnableZoomSnapDamping = true;
     bool MouseAnchoredWindowZoom = false; // Expand window toward the mouse position during zoom
     bool RightButtonDragZoom = true;      // Hold right button and drag vertically to zoom
     float WheelZoomSpeed = 10.0f;         // 5.0f to 50.0f (percentage)
@@ -674,20 +1079,130 @@ struct AppConfig {
     // --- Loupe (hold-key magnifier; e.g. for checking focus while culling) ---
     // The activation key is the rebindable HotkeyAction::Loupe binding.
     bool LoupeEnabled = true;             // Master toggle for the loupe
-    int LoupeShape = 0;                   // Magnifier shape: 0 = Square (with rounded corners), 1 = Circle
+    int LoupeShape = 0;                   // Magnifier shape: 0 = Square (with rounded corners), 1 = Circle, 2 = Whole Viewport
     float LoupeSizeRatio = 0.25f;         // Loupe box edge as a fraction of the viewport's short side (resolution-adaptive)
     float LoupeZoom = 1.0f;               // Magnification vs actual image pixels (1.0 = 100%)
     MouseAction LeftDragAction = MouseAction::WindowDrag;
     MouseAction MiddleDragAction = MouseAction::PanImage;
     MouseAction MiddleClickAction = MouseAction::ExitApp;
-    // Helper indices for Segment controls (synced with actual enum values)
-    int LeftDragIndex = 0;   // 0=Window, 1=Pan
-    int MiddleDragIndex = 1; // 0=Window, 1=Pan
-    int MiddleClickIndex = 1; // 0=None, 1=Exit (default Exit)
+
+    // --- Mouse Gesture Rules Customization ---
+    std::vector<MouseGestureRule> MouseGestures = GetDefaultMouseGestures();
+
+    const MouseGestureRule* FindMouseGesture(uint8_t modifiers, MouseTrigger trigger) const noexcept {
+        for (const auto& rule : MouseGestures) {
+            if (rule.trigger == (uint8_t)trigger && rule.GetModifiers() == modifiers) {
+                return &rule;
+            }
+        }
+        return nullptr;
+    }
+
+    MouseActionTarget GetMouseGestureAction(uint8_t modifiers, MouseTrigger trigger) const noexcept {
+        const auto* rule = FindMouseGesture(modifiers, trigger);
+        return rule ? static_cast<MouseActionTarget>(rule->action) : MouseActionTarget::None;
+    }
+
+    std::vector<MouseGestureRule> GetGesturesForAction(MouseActionTarget act) const {
+        std::vector<MouseGestureRule> res;
+        for (const auto& r : MouseGestures) {
+            if (r.action == static_cast<int>(act)) res.push_back(r);
+        }
+        return res;
+    }
+
+    void SetMouseGesture(uint8_t mod1, uint8_t mod2, MouseTrigger trigger, MouseActionTarget action) {
+        MouseGestureRule newRule{ mod1, mod2, static_cast<uint8_t>(trigger), static_cast<int>(action) };
+        uint8_t mods = newRule.GetModifiers();
+        for (auto& r : MouseGestures) {
+            if (r.trigger == static_cast<uint8_t>(trigger) && r.GetModifiers() == mods) {
+                r = newRule;
+                return;
+            }
+        }
+        MouseGestures.push_back(newRule);
+    }
+
+    void ResetMouseGesturesToDefault() {
+        MouseGestures = GetDefaultMouseGestures();
+    }
+
+    void LoadMouseGesturePreset(int presetIndex) {
+        if (presetIndex == 1) {
+            MouseGestures = GetStandardViewerMouseGestures();
+        } else if (presetIndex == 2) {
+            MouseGestures = GetMinimalBrowserMouseGestures();
+        } else {
+            MouseGestures = GetDefaultMouseGestures();
+        }
+    }
+
+    // --- Dynamic Multi-Binding Hotkey Rules Customization ---
+    std::vector<HotkeyRule> HotkeyRules = GetDefaultHotkeyRules();
+
+    std::vector<KeyCombo> GetCombosForAction(HotkeyAction act) const {
+        std::vector<KeyCombo> res;
+        for (const auto& r : HotkeyRules) {
+            if (r.action == act && !r.combo.IsEmpty()) res.push_back(r.combo);
+        }
+        return res;
+    }
+
+    void AddHotkeyRule(HotkeyAction act, const KeyCombo& combo) {
+        if (combo.IsEmpty()) return;
+        for (const auto& r : HotkeyRules) {
+            if (r.action == act && r.combo == combo) return; // Already exists
+        }
+        HotkeyRules.push_back({ act, combo });
+    }
+
+    void RemoveHotkeyRule(HotkeyAction act, const KeyCombo& combo) {
+        for (auto it = HotkeyRules.begin(); it != HotkeyRules.end(); ) {
+            if (it->action == act && it->combo == combo) {
+                it = HotkeyRules.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    void ResetHotkeyRulesToDefault() {
+        HotkeyRules = GetDefaultHotkeyRules();
+    }
+
+    bool HasMouseGesture(uint8_t modifiers, MouseTrigger trigger) const noexcept {
+        return FindMouseGesture(modifiers, trigger) != nullptr;
+    }
+
+    template <typename HotkeysArray>
+    void SyncLegacyHotkeysArray(HotkeysArray& hotkeys) const noexcept {
+        for (size_t i = 1; i < hotkeys.size(); ++i) {
+            HotkeyAction act = hotkeys[i].action;
+            KeyCombo first{};
+            for (const auto& r : HotkeyRules) {
+                if (r.action == act && !r.combo.IsEmpty()) {
+                    first = r.combo;
+                    break;
+                }
+            }
+            hotkeys[i].combo = first;
+        }
+    }
+
+    void SyncMiddleClickHotkeyFromGestures() {
+        // Keep Exit VK_MBUTTON hotkey rule synchronized with unmodified MiddleClick mouse gesture
+        const auto* mClick = FindMouseGesture(MouseModMask::None, MouseTrigger::MiddleClick);
+        if (mClick && mClick->action == static_cast<int>(MouseActionTarget::ExitApp)) {
+            AddHotkeyRule(HotkeyAction::Exit, { VK_MBUTTON, 0 });
+        } else {
+            RemoveHotkeyRule(HotkeyAction::Exit, { VK_MBUTTON, 0 });
+        }
+    }
     bool EdgeNavClick = false;
     bool DisableEdgeNavInCompare = true;
     int NavIndicator = 0;               // 0=Arrow
     int GalleryTriggerMode = 1;         // 0=Hover Auto, 1=Hover Hotspot Delay, 2=Click Hotspot
+    bool GalleryExpandOnClickOnly = true; // Require click on expand arrow to avoid accidental hover
     bool GalleryKeepVisibleOnThumbnailClick = false;
     float GalleryTriggerAreaHeight = 20.0f; // Auto hover trigger zone height in logical pixels (5 ~ 100)
     float GalleryDwellTime = 0.18f;        // Dwell time for hotspot hover / expand hotspot in seconds (0.05 ~ 2.0)
@@ -705,7 +1220,6 @@ struct AppConfig {
     
     // --- Image & Edit ---
     bool AutoRotate = true;
-    bool EnableSmoothScaling = false;    // New: Smooth Zoom toggle
     bool ColorManagement = true;         // Master toggle for Color Management System
     int CmsRenderingIntent = 1;          // 0=Perceptual, 1=Relative Colorimetric
     int HdrToneMappingMode = 0;          // 0=Spline, 1=Colorimetric, 2=Legacy Reinhard
@@ -734,14 +1248,20 @@ struct AppConfig {
     // --- Customizable Info Panel Lite ---
     std::wstring InfoPanelLiteItemsNormal = L"Zoom,Progress,File,Size,Disk,Format";
     std::wstring InfoPanelLiteItemsCompare = L"File,Size,Disk,Sharp,Ent,BPP,Date";
-    std::wstring InfoPanelFullItemsNormal = L"Histogram,File,Position,RAW,Size,Disk,Date,Camera,Exp,Lens,Focal,Profile,HDR,Flash,W.Bal,Meter,Prog,Program,Format,GPS";
-    std::wstring InfoPanelFullItemsCompare = L"Histogram,File,RAW,Size,Disk,Date,Camera,Exp,Lens,Focal,Profile,HDR,Flash,W.Bal,Meter,Prog,Program,Format,Sharp,Ent,BPP,GPS";
+    std::wstring InfoPanelFullItemsNormal = L"Histogram,File,Position,RAW,Rating,Size,Disk,Date,Camera,Exp,Lens,Focal,Profile,HDR,Flash,W.Bal,Meter,Prog,Program,Format,GPS";
+    std::wstring InfoPanelFullItemsCompare = L"Histogram,File,RAW,Rating,Size,Disk,Date,Camera,Exp,Lens,Focal,Profile,HDR,Flash,W.Bal,Meter,Prog,Program,Format,Sharp,Ent,BPP,GPS";
     int InfoPanelScale = 0; // 0=Global, 1=100%, 2=125%, 3=150%, 4=175%, 5=200%
     std::wstring InfoPanelLiteSeparator = L" \u00b7 ";
     
-    // --- Save Options --- (Functional options removed, fully automated/smart)
+    // --- File Association & Registry Maintenance ---
     std::wstring LastRegisteredVersion;
     std::wstring LastRegisteredPath;
+    std::wstring LastRegisteredAssocHash;
+    bool FileAssocInitialized = false;
+    std::wstring FileAssocExts;
+    int FileAssocIconStyle = 0;         // 0=SystemNative, 1=QuickViewLogo
+    bool FileAssocContextMenu = false;
+    bool FileAssocAutoRepair = true;
 
 
     // Existing / Internal (Defaults for Runtime)
@@ -787,8 +1307,7 @@ struct AppConfig {
     }
 
     /// <summary>
-    /// Apply a theme preset: full overwrite of all glass material parameters.
-    /// Called when user clicks Dark/Light preset buttons.
+    /// Apply a theme preset: reset glass material parameters without overwriting accent color.
     /// </summary>
     void ApplyThemePreset(const ThemePreset& preset) {
         GlassBlurSigma = preset.blurSigma;
@@ -799,38 +1318,12 @@ struct AppConfig {
         GlassPanelsOpacity = preset.panelsOpacity;
         GlassModalsOpacity = preset.modalsOpacity;
         GlassMenusOpacity = preset.menusOpacity;
-        
-        // Synchronize Custom Theme slots to follow the preset
-        // This ensures a seamless transition when the user later switches to ThemeMode 3 (Custom)
-        ThemeCustomAccentR = preset.accentColor.r;
-        ThemeCustomAccentG = preset.accentColor.g;
-        ThemeCustomAccentB = preset.accentColor.b;
-        ThemeCustomTextR = preset.textColor.r;
-        ThemeCustomTextG = preset.textColor.g;
-        ThemeCustomTextB = preset.textColor.b;
 
-        // Force reset the tint profile to Auto when applying a preset
+        // Force reset the tint profile to Auto when resetting glass material
         GlassTintProfile = 0;
         GlassCustomTintR = preset.tintColor.r;
         GlassCustomTintG = preset.tintColor.g;
         GlassCustomTintB = preset.tintColor.b;
-    }
-
-    /// <summary>
-    /// Capture current preset colors into custom slots without affecting other material parameters.
-    /// Used when transitioning to 'Custom' mode to ensure a seamless visual base.
-    /// </summary>
-    void CaptureThemeColors(bool isLight) {
-        const auto& p = isLight ? PRESET_LIGHT : PRESET_DARK;
-        ThemeCustomAccentR = p.accentColor.r;
-        ThemeCustomAccentG = p.accentColor.g;
-        ThemeCustomAccentB = p.accentColor.b;
-        ThemeCustomTextR = p.textColor.r;
-        ThemeCustomTextG = p.textColor.g;
-        ThemeCustomTextB = p.textColor.b;
-        GlassCustomTintR = p.tintColor.r;
-        GlassCustomTintG = p.tintColor.g;
-        GlassCustomTintB = p.tintColor.b;
     }
 
     /// <summary>
@@ -852,9 +1345,15 @@ struct AppConfig {
 };
 
 // ============================================================================
-// Crop State (6.31.0)
+// Crop & Region Selection State (6.31.0)
 // ============================================================================
+enum class RegionInteractionMode : uint8_t {
+    Crop = 0,     // Physical crop mode (C key, green checkmark on toolbar)
+    AiInpaint     // AI selection inpainting mode (No destructive crop, AI capsule)
+};
+
 struct CropState {
+    RegionInteractionMode Mode = RegionInteractionMode::Crop;
     bool IsActive = false;
     bool IsDragging = false;
     bool IsQuickActionVisible = false;
@@ -882,16 +1381,37 @@ struct CropState {
     D2D1_RECT_F WidthCapsuleRect = {};
     D2D1_RECT_F HeightCapsuleRect = {};
 
+    // AI Inpaint Interactive Capsule states
+    bool InpaintHoverExecute = false;
+    bool InpaintHoverCancel = false;
+    D2D1_RECT_F InpaintCapsuleRect = {};
+    D2D1_RECT_F InpaintExecuteBtnRect = {};
+    D2D1_RECT_F InpaintCancelBtnRect = {};
+
+    // Pending Action Context when inpaint selection is triggered for a specific action
+    std::string PendingActionId;
+    std::wstring PendingCustomPrompt;
+
     bool ReachedEdgeX = false;
     bool ReachedEdgeY = false;
 
+    // Preserved previous committed crop when re-entering Crop Mode for adjustment
+    bool RestoresPriorEditCrop = false;
+    float PriorEditCropLeft = 0.0f;
+    float PriorEditCropTop = 0.0f;
+    float PriorEditCropRight = 0.0f;
+    float PriorEditCropBottom = 0.0f;
+
     void Reset() {
+        Mode = RegionInteractionMode::Crop;
         IsActive = false;
         IsDragging = false;
         IsQuickActionVisible = false;
         IsInputInvalid = false;
         ReachedEdgeX = false;
         ReachedEdgeY = false;
+        RestoresPriorEditCrop = false;
+        PriorEditCropLeft = PriorEditCropTop = PriorEditCropRight = PriorEditCropBottom = 0.0f;
         CropLeft = CropTop = CropRight = CropBottom = 0;
         DragStartCropLeft = DragStartCropTop = DragStartCropRight = DragStartCropBottom = 0;
         DragStartMousePos = { 0, 0 };
@@ -902,6 +1422,14 @@ struct CropState {
         InputBuffer[0] = L'\0';
         WidthCapsuleRect = {};
         HeightCapsuleRect = {};
+
+        InpaintHoverExecute = false;
+        InpaintHoverCancel = false;
+        InpaintCapsuleRect = {};
+        InpaintExecuteBtnRect = {};
+        InpaintCancelBtnRect = {};
+        PendingActionId.clear();
+        PendingCustomPrompt.clear();
     }
 };
 
@@ -1128,11 +1656,17 @@ extern RuntimeConfig g_runtime;
 bool CheckWritePermission(const std::wstring& dir);
 std::wstring GetConfigPath(bool forcePortableCheck = false);
 void SaveConfig(); // Ensure visible
+void SaveConfigSync();
+void SaveMouseGesturesConfig();
+void SaveHotkeysConfig();
+void DeactivateLoupe();
 void LoadConfig(); // Ensure visible
+void ApplySortPreferences(int sortOrder, bool sortDescending, HWND hwnd);
 void ParseFixedZoomLevels(); // Parse comma-separated fixed zoom levels
 bool IsSystemLightTheme();
 bool IsLightThemeActive();
 void ApplyWindowTheme(HWND hwnd);
+void SyncWindowDwmFrameAttributes(HWND hwnd, int activeOverride = -1);
 
 // ============================================================================
 // Contrast Compensation — Automatic dim text brightness adaptation

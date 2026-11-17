@@ -36,6 +36,7 @@ struct WidgetPalette {
     D2D1_COLOR_F hoverTint;
     D2D1_COLOR_F panelBg;
     D2D1_COLOR_F shadow;
+    D2D1_COLOR_F onAccentText = {};
 };
 
 namespace GeekWidgets {
@@ -148,7 +149,24 @@ void DrawPillComboBox(
     bool isDisabled,
     IDWriteTextFormat* textFormat,
     float uiScale,
-    const WidgetPalette& palette);
+    const WidgetPalette& palette,
+    IDWriteFactory* dwriteFactory = nullptr);
+
+// 5.1 Universal Marquee Clipped Text with Smooth Hover Auto-Scroll
+void DrawMarqueeText(
+    ID2D1DeviceContext* dc,
+    const D2D1_RECT_F& visibleRect,
+    std::wstring_view text,
+    bool isHovered,
+    bool isDisabled,
+    IDWriteTextFormat* textFormat,
+    ID2D1Brush* brush,
+    float uiScale,
+    IDWriteFactory* dwriteFactory = nullptr);
+
+// 5.2 Track whether any DrawMarqueeText call in the current render pass has overflowing hovered text
+void BeginMarqueePass();
+bool EndMarqueePass();
 
 // 6. Standalone Reset Button (Placed on the left outside)
 void DrawResetButton(

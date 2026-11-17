@@ -109,10 +109,16 @@ TEST(MetafileCodec, RasterizeGdiCreatedEmf) {
 
 TEST(MetafileCodec, RasterizeTransparentEmfPreservesAlpha) {
     HDC screen = GetDC(nullptr);
-    // 100x100 pixels at 96 DPI in HIMETRIC (0.01 mm): 100 * 2540 / 96 = 2645
-    RECT rclFrame{0, 0, 100 * 2540 / 96, 100 * 2540 / 96};
-    HDC meta = CreateEnhMetaFileW(screen, nullptr, &rclFrame, L"QuickView transparent test\0");
+    HDC meta = CreateEnhMetaFileW(screen, nullptr, nullptr, L"QuickView transparent test\0");
     ASSERT_TRUE(meta != nullptr);
+
+    // Expand bounds to (0,0)-(100,100) using NULL_PEN (completely transparent, no pixels drawn)
+    HPEN nullPen = static_cast<HPEN>(GetStockObject(NULL_PEN));
+    HGDIOBJ oldPen = SelectObject(meta, nullPen);
+    MoveToEx(meta, 0, 0, nullptr);
+    LineTo(meta, 100, 100);
+    SelectObject(meta, oldPen);
+
     // Draw a small red rectangle in the center (25..75), leaving background border untouched
     RECT rc{25, 25, 75, 75};
     HBRUSH brush = CreateSolidBrush(RGB(255, 0, 0));

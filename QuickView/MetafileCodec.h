@@ -19,7 +19,6 @@ inline constexpr uint32_t kAldusKey = 0x9AC6CDD7u;      // placeable WMF
 inline constexpr uint32_t kEmfSignature = 0x464D4520u; // " EMF"
 inline constexpr int kHimetricPerInch = 2540;
 inline constexpr int kMaxEdge = 8192;
-inline constexpr int kRasterScale = 2;
 
 inline void EnsureGdiplusInitialized() {
     struct GdiplusLifecycle {
@@ -162,8 +161,27 @@ inline void ChooseRasterSize(int logicalW, int logicalH, int targetW, int target
     if (logicalW < 1) logicalW = 1;
     if (logicalH < 1) logicalH = 1;
 
-    int w = logicalW * kRasterScale;
-    int h = logicalH * kRasterScale;
+    // Adaptive raster scale:
+    // Small vector files (e.g. 64x64 or 200x150) benefit immensely from a higher rasterization target
+    // so zooming in on 2K/4K displays remains razor-sharp without pixelation.
+    // Larger vector documents scale more conservatively to prevent excessive memory usage.
+    constexpr float kTargetLongEdge = 2048.0f;
+    const int maxDim = (std::max)(logicalW, logicalH);
+
+    float scale = 2.0f;
+    if (maxDim < static_cast<int>(kTargetLongEdge)) {
+        scale = kTargetLongEdge / static_cast<float>(maxDim);
+    } else if (maxDim >= 4096) {
+        scale = 1.0f;
+    } else if (maxDim >= 2048) {
+        scale = 1.5f;
+    }
+
+    scale = std::clamp(scale, 1.0f, 16.0f);
+
+    int w = static_cast<int>(std::round(logicalW * scale));
+    int h = static_cast<int>(std::round(logicalH * scale));
+
     if (w > kMaxEdge || h > kMaxEdge) {
         const float s = (std::min)(static_cast<float>(kMaxEdge) / w,
                                    static_cast<float>(kMaxEdge) / h);

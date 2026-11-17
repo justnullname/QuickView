@@ -1,15 +1,21 @@
-[Bb]in/
-[Oo]bj/
-[Dd]ebug/
-[Rr]elease/
-x64/
-x86/
-[Ww][Ii][Nn]32/
-[Aa][Rr][Mm]/
-[Aa][Rr][Mm]64/
+/[Bb]in/
+/[Oo]bj/
+/[Dd]ebug/
+/[Rr]elease/
+/x64/
+/x86/
+/[Ww][Ii][Nn]32/
+/[Aa][Rr][Mm]/
+/[Aa][Rr][Mm]64/
 bld/
 out/
 build/
+
+!third_party/ncnn/
+!third_party/ncnn/**
+third_party/ncnn/*/bin/
+third_party/ncnn/arm/
+third_party/ncnn/x86/
 
 # Visual Studio
 .vs/
@@ -58,6 +64,7 @@ build_log*.txt
 *.lib
 !third_party/webview2/win-x64/WebView2LoaderStatic.lib
 !third_party/webview2/win-arm64/WebView2LoaderStatic.lib
+!third_party/ncnn/**/*.lib
 *.iobj
 *.ipdb
 
@@ -84,6 +91,7 @@ $RECYCLE.BIN/
 *.cab
 *.msi
 *.msix
+*.msixbundle
 *.msm
 *.msp
 *.lnk
@@ -131,3 +139,10 @@ CMakeUserPresets.json
 
 # Local salvage files
 Local-Files/
+
+# Plugins and AI Models (Downloaded on-demand, not stored in repo)
+plugins/*.qvx
+plugins/*.dll
+plugins/temp_models.zip
+
+third_party/onnxruntime/

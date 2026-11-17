@@ -49,9 +49,28 @@ public:
 
   void SetMouseInGallery(bool inGallery);
   void SetHoveringHotspot(bool hovering) {
+    if (m_suppressHoverUntilMouseLeave && hovering) return;
     m_hoveringHotspot = hovering;
     if (!hovering)
       m_hoverDelayTimer = 0.0f;
+  }
+
+  void SuppressHoverUntilMouseLeave() {
+    m_suppressHoverUntilMouseLeave = true;
+    m_hoveringHotspot = false;
+    m_hoverDelayTimer = 0.0f;
+  }
+  bool IsHoverSuppressed() const { return m_suppressHoverUntilMouseLeave; }
+  void ClearHoverSuppression() { m_suppressHoverUntilMouseLeave = false; }
+
+  void AdjustSelectionAfterRemoval(int removedIndex) {
+    if (m_selectedIndex == removedIndex) {
+      if (m_pNav && m_selectedIndex >= (int)m_pNav->Count()) {
+        m_selectedIndex = (int)m_pNav->Count() - 1;
+      }
+    } else if (m_selectedIndex > removedIndex) {
+      m_selectedIndex--;
+    }
   }
 
   float GetOpacity() const { return m_transitionProgress; }
@@ -89,8 +108,19 @@ public:
   // Animation tick (fade in/out, inertia, hover logic)
   void Update(float deltaTime, HWND hwnd);
 
+  struct ViewportInsets {
+    float top = 0.0f;
+    float bottom = 0.0f;
+  };
+
   // Get current visual height of the gallery
   float GetVisualHeight(float winH) const;
+
+  // Vertical viewport insets reserved when the filmstrip is pinned (supports future top/bottom dock).
+  ViewportInsets GetPinnedViewportInsets(float winH) const {
+    if (!m_isPinned || !IsVisible()) return {};
+    return { GetVisualHeight(winH), 0.0f };
+  }
 
   // Check if mouse is within the gallery active area
   bool HitTestArea(int x, int y, float winW, float winH) const;
@@ -192,6 +222,7 @@ private:
   // Bottom visual handle indicator
   bool m_bottomHintHover = false;
   float m_bottomHintAlpha = 0.0f;
+  bool m_suppressHoverUntilMouseLeave = false;
 
   bool m_gridCloseHover = false;
   bool m_gridSliderHover = false;
@@ -221,7 +252,7 @@ private:
   bool m_restoreInfoPanel = false;
 
   void EnsureVisible(int index, const D2D1_SIZE_F &size, bool smooth = true);
-  __declspec(noinline) D2D1_RECT_F GetItemRect(int index, float winW) const;
+  D2D1_RECT_F GetItemRect(int index, float winW) const;
   int HitTest(float x, float y);
   void CommitSelectionState();
 };

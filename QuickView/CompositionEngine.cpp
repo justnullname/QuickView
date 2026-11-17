@@ -601,6 +601,17 @@ ID2D1DeviceContext* CompositionEngine::BeginPendingUpdate(UINT width, UINT heigh
     // Determine target layer (the hidden one)
     int pendingIndex = (m_activeLayerIndex + 1) % 2;
     ImageLayer& layer = (pendingIndex == 0) ? m_imageA : m_imageB;
+
+    const DXGI_FORMAT resolvedFormat = ResolveImageSurfaceFormat(surfaceFormatOverride == DXGI_FORMAT_UNKNOWN ? m_surfaceFormat : surfaceFormatOverride);
+    const bool useTitan = isTitan || (!allowOversizedStandard && (width > 8192 || height > 8192));
+
+    // Reuse existing standard DComp surface when dimensions, format, and alpha mode match
+    // (critical for animated playback to avoid per-frame surface reallocation).
+    if (!useTitan && !layer.isTitan && layer.surface &&
+        layer.width == width && layer.height == height &&
+        layer.surfaceFormat == resolvedFormat && layer.hasAlpha == hasAlpha) {
+        return BeginDrawHelper(layer.surface.Get(), layer.surfaceFormat);
+    }
     
     // Safe reset
     layer.visual->RemoveAllVisuals(); 
@@ -613,16 +624,11 @@ ID2D1DeviceContext* CompositionEngine::BeginPendingUpdate(UINT width, UINT heigh
         layer.virtualSurfaces[i].Reset();
     }
     layer.isTitan = false;
-    layer.surfaceFormat = ResolveImageSurfaceFormat(surfaceFormatOverride == DXGI_FORMAT_UNKNOWN ? m_surfaceFormat : surfaceFormatOverride);
+    layer.surfaceFormat = resolvedFormat;
     layer.hasAlpha = hasAlpha;
     
     HRESULT hr = S_OK; (void)hr;
 
-    // [Smart Dispatch] Titan Mode: Explicit flag OR size threshold for bitmap-style
-    // content. SVG can request an oversized standard surface so it stays on the
-    // single-surface vector path instead of being funneled into Titan.
-    bool useTitan = isTitan || (!allowOversizedStandard && (width > 8192 || height > 8192));
-    
     // Fallback: If legacy implicit detection used, fill full dimensions
     if (useTitan && (fullWidth == 0 || fullHeight == 0)) {
         fullWidth = width;
@@ -859,18 +865,37 @@ HRESULT CompositionEngine::CreateLayerSurface(UILayer layer, UINT width, UINT he
     if (!m_device || width == 0 || height == 0) return E_FAIL;
     
     LayerData& data = GetLayer(layer);
+    data.width = width;
+    data.height = height;
+
+    // Zero-Flicker: Reuse existing allocated surface if capacity is sufficient
+    if (data.surface && data.allocatedWidth >= width && data.allocatedHeight >= height) {
+        return S_OK;
+    }
+
+    // Cold start / initial allocation: allocate exact dimensions to minimize memory footprint.
+    // Dynamic resize: step allocation with 25% headroom and 256-pixel alignment to prevent frequent reallocations.
+    UINT allocW = width;
+    UINT allocH = height;
+    if (data.allocatedWidth > 0) {
+        allocW = std::max(width, (data.allocatedWidth * 5) / 4);
+        allocW = (allocW + 255) & ~255;
+        allocH = std::max(height, (data.allocatedHeight * 5) / 4);
+        allocH = (allocH + 255) & ~255;
+    }
+
     data.surface.Reset();
     
     HRESULT hr = m_device->CreateSurface(
-        width, height,
+        allocW, allocH,
         kUiSurfaceFormat,
         DXGI_ALPHA_MODE_PREMULTIPLIED,
         &data.surface
     );
     if (FAILED(hr)) return hr;
     
-    data.width = width;
-    data.height = height;
+    data.allocatedWidth = allocW;
+    data.allocatedHeight = allocH;
     return data.visual->SetContent(data.surface.Get());
 }
 
@@ -879,18 +904,31 @@ HRESULT CompositionEngine::CreateAllSurfaces(UINT width, UINT height) {
     CreateLayerSurface(UILayer::Gallery, width, height);
     CreateLayerSurface(UILayer::Dynamic, width, height);
     
-    // Ensure background surface
-    m_backgroundLayer.surface.Reset();
-    HRESULT hr = m_device->CreateSurface(width, height, kUiSurfaceFormat, DXGI_ALPHA_MODE_PREMULTIPLIED, &m_backgroundLayer.surface);
-    if (SUCCEEDED(hr)) {
-        m_backgroundLayer.width = width;
-        m_backgroundLayer.height = height;
-        m_backgroundLayer.visual->SetContent(m_backgroundLayer.surface.Get());
-        
-        // [Fix] Force background redraw since the surface was just created blank
-        m_lastBgW = 0;
+    m_backgroundLayer.width = width;
+    m_backgroundLayer.height = height;
+
+    // Zero-Flicker: Reuse background surface if allocated capacity is sufficient
+    if (!m_backgroundLayer.surface || m_backgroundLayer.allocatedWidth < width || m_backgroundLayer.allocatedHeight < height) {
+        UINT allocW = width;
+        UINT allocH = height;
+        if (m_backgroundLayer.allocatedWidth > 0) {
+            allocW = std::max(width, (m_backgroundLayer.allocatedWidth * 5) / 4);
+            allocW = (allocW + 255) & ~255;
+            allocH = std::max(height, (m_backgroundLayer.allocatedHeight * 5) / 4);
+            allocH = (allocH + 255) & ~255;
+        }
+
+        m_backgroundLayer.surface.Reset();
+        HRESULT hr = m_device->CreateSurface(allocW, allocH, kUiSurfaceFormat, DXGI_ALPHA_MODE_PREMULTIPLIED, &m_backgroundLayer.surface);
+        if (SUCCEEDED(hr)) {
+            m_backgroundLayer.allocatedWidth = allocW;
+            m_backgroundLayer.allocatedHeight = allocH;
+            m_backgroundLayer.visual->SetContent(m_backgroundLayer.surface.Get());
+            m_lastBgW = 0; // Force background redraw on newly created surface
+        }
+        return hr;
     }
-    return hr;
+    return S_OK;
 }
 
 ID2D1DeviceContext* CompositionEngine::BeginLayerUpdate(UILayer layer, const RECT* dirtyRect) {
@@ -1087,7 +1125,7 @@ HRESULT CompositionEngine::ResizeSurfaces(UINT width, UINT height) {
 }
 
 // [Refactor] Virtual Canvas Matrix Chain (VisualState)
-HRESULT CompositionEngine::UpdateTransformMatrix(VisualState vs, float /*winW*/, float /*winH*/, float zoom, float panX, float panY, float animationDurationMs) {
+HRESULT CompositionEngine::UpdateTransformMatrix(VisualState vs, float /*winW*/, float /*winH*/, float zoom, float panX, float panY) {
     if (!m_modelTransform || !m_scaleTransform || !m_translateTransform) return E_FAIL;
     
     // 1. Build Model Matrix (Flip * Rotate)
@@ -1137,64 +1175,38 @@ HRESULT CompositionEngine::UpdateTransformMatrix(VisualState vs, float /*winW*/,
     float targetScaleX = zoom * compScaleX;
     float targetScaleY = zoom * compScaleY;
 
-    // 3. Apply Animation or Set Directly
+    float effectivePanX = panX;
+    float effectivePanY = panY;
+
+    // [Pixel Snapping] Eliminate subpixel blurriness at 1:1 scale (100% zoom)
+    // When target scale is effectively 1.0x (within 0.1% tolerance) and rotation is right-angled,
+    // ensure the visual bounds align exactly with physical pixel grid on the display.
+    if (fabsf(targetScaleX - 1.0f) < 0.001f && fabsf(targetScaleY - 1.0f) < 0.001f &&
+        fmodf(fabsf(vs.TotalRotation), 90.0f) < 0.01f && pLayer->width > 0 && pLayer->height > 0) {
+        float visualW = vs.IsRotated90 ? static_cast<float>(pLayer->height) : static_cast<float>(pLayer->width);
+        float visualH = vs.IsRotated90 ? static_cast<float>(pLayer->width) : static_cast<float>(pLayer->height);
+
+        float originX = (static_cast<float>(m_width) * 0.5f) + panX - (visualW * targetScaleX * 0.5f);
+        float originY = (static_cast<float>(m_height) * 0.5f) + panY - (visualH * targetScaleY * 0.5f);
+
+        float snappedOriginX = std::round(originX);
+        float snappedOriginY = std::round(originY);
+
+        effectivePanX += (snappedOriginX - originX);
+        effectivePanY += (snappedOriginY - originY);
+    }
+
+    // 3. Set Transforms Directly (Zero-latency atomic presentation)
     bool targetChanged = (fabsf(targetScaleX - m_currentScale * m_currentCompScaleX) > 0.0001f) ||
                          (fabsf(targetScaleY - m_currentScale * m_currentCompScaleY) > 0.0001f) ||
-                         (fabsf(panX - m_currentPanX) > 0.0001f) ||
-                         (fabsf(panY - m_currentPanY) > 0.0001f);
+                         (fabsf(effectivePanX - m_currentPanX) > 0.0001f) ||
+                         (fabsf(effectivePanY - m_currentPanY) > 0.0001f);
 
-    if (animationDurationMs > 0.0f) {
-        float duration = animationDurationMs / 1000.0f;
-
-        // Current start values
-        float startScaleX = m_currentScale * m_currentCompScaleX;
-        float startScaleY = m_currentScale * m_currentCompScaleY;
-        float startPanX = m_currentPanX;
-        float startPanY = m_currentPanY;
-
-        // Ensure we don't animate from 0 or negative infinity scale, just in case
-        if (startScaleX <= 0.0f) startScaleX = targetScaleX;
-        if (startScaleY <= 0.0f) startScaleY = targetScaleY;
-
-        ComPtr<IDCompositionAnimation> animScaleX, animScaleY, animPanX, animPanY;
-        HRESULT hr1 = m_device->CreateAnimation(&animScaleX);
-        HRESULT hr2 = m_device->CreateAnimation(&animScaleY);
-        HRESULT hr3 = m_device->CreateAnimation(&animPanX);
-        HRESULT hr4 = m_device->CreateAnimation(&animPanY);
-
-        if (SUCCEEDED(hr1) && SUCCEEDED(hr2) && SUCCEEDED(hr3) && SUCCEEDED(hr4)) {
-            // Cubic ease-out curve: starts fast, smoothly decelerates
-            // f(t) = 1 - (1-t)^3 = 3t - 3t^2 + t^3
-            // AddCubic params: offset, constant, linear, quadratic, cubic
-            auto addEaseOut = [](IDCompositionAnimation* anim, float start, float target, float d) {
-                float delta = target - start;
-                anim->AddCubic(0.0, start, 3.0f * delta / d, -3.0f * delta / (d * d), delta / (d * d * d));
-                anim->End(d, target);
-            };
-
-            addEaseOut(animScaleX.Get(), startScaleX, targetScaleX, duration);
-            addEaseOut(animScaleY.Get(), startScaleY, targetScaleY, duration);
-            addEaseOut(animPanX.Get(), startPanX, panX, duration);
-            addEaseOut(animPanY.Get(), startPanY, panY, duration);
-
-            m_scaleTransform->SetScaleX(animScaleX.Get());
-            m_scaleTransform->SetScaleY(animScaleY.Get());
-            m_translateTransform->SetOffsetX(animPanX.Get());
-            m_translateTransform->SetOffsetY(animPanY.Get());
-        } else {
-            // Fallback if animation creation fails
-            m_scaleTransform->SetScaleX(targetScaleX);
-            m_scaleTransform->SetScaleY(targetScaleY);
-            m_translateTransform->SetOffsetX(panX);
-            m_translateTransform->SetOffsetY(panY);
-        }
-
-    } else if (targetChanged) {
-        // No animation, set directly. Only set if changed to avoid canceling a running animation.
+    if (targetChanged) {
         m_scaleTransform->SetScaleX(targetScaleX);
         m_scaleTransform->SetScaleY(targetScaleY);
-        m_translateTransform->SetOffsetX(panX);
-        m_translateTransform->SetOffsetY(panY);
+        m_translateTransform->SetOffsetX(effectivePanX);
+        m_translateTransform->SetOffsetY(effectivePanY);
     }
     
     // E. Center Screen: [REMOVED]
@@ -1208,8 +1220,8 @@ HRESULT CompositionEngine::UpdateTransformMatrix(VisualState vs, float /*winW*/,
     m_currentScale = zoom;
     m_currentCompScaleX = compScaleX;
     m_currentCompScaleY = compScaleY;
-    m_currentPanX = panX;
-    m_currentPanY = panY;
+    m_currentPanX = effectivePanX;
+    m_currentPanY = effectivePanY;
     
     return S_OK;
 }
@@ -1303,14 +1315,25 @@ HRESULT CompositionEngine::UpdateBackground(float width, float height, const D2D
 
     if (!needsRedraw) return S_OK;
 
-    if (!m_backgroundLayer.surface || m_backgroundLayer.width != w || m_backgroundLayer.height != h) {
+    if (!m_backgroundLayer.surface || m_backgroundLayer.allocatedWidth < w || m_backgroundLayer.allocatedHeight < h) {
+        UINT allocW = (UINT)w;
+        UINT allocH = (UINT)h;
+        if (m_backgroundLayer.allocatedWidth > 0) {
+            allocW = std::max((UINT)w, (m_backgroundLayer.allocatedWidth * 5) / 4);
+            allocW = (allocW + 255) & ~255;
+            allocH = std::max((UINT)h, (m_backgroundLayer.allocatedHeight * 5) / 4);
+            allocH = (allocH + 255) & ~255;
+        }
+
         m_backgroundLayer.surface.Reset();
-        HRESULT hr = m_device->CreateSurface(w, h, kUiSurfaceFormat, DXGI_ALPHA_MODE_PREMULTIPLIED, &m_backgroundLayer.surface);
+        HRESULT hr = m_device->CreateSurface(allocW, allocH, kUiSurfaceFormat, DXGI_ALPHA_MODE_PREMULTIPLIED, &m_backgroundLayer.surface);
         if (FAILED(hr)) return hr;
+        m_backgroundLayer.allocatedWidth = allocW;
+        m_backgroundLayer.allocatedHeight = allocH;
         m_backgroundLayer.visual->SetContent(m_backgroundLayer.surface.Get());
-        m_backgroundLayer.width = w;
-        m_backgroundLayer.height = h;
     }
+    m_backgroundLayer.width = w;
+    m_backgroundLayer.height = h;
 
     // 2. Clear and Render
     ComPtr<IDXGISurface> dxgiSurface;

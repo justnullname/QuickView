@@ -8,6 +8,7 @@
 #include "ImageTypes.h"
 #include "ImageResource.h"
 #include "SupportedExtensions.h"
+#include "StringUtils.h"
 
 
 extern bool g_isLeftPaneDecoding;
@@ -44,9 +45,8 @@ extern bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFirst);
 extern std::unique_ptr<ImageEngine> g_imageEngine;
 #include "CompositionEngine.h"
 extern CompositionEngine* g_compEngine;
-extern int g_renderExifOrientation;
 
-extern std::function<void(bool)> g_leftPaneReadyCallback;
+extern CompareSlotCallback g_leftPaneReadyCallback;
 extern void MarkCompareDirty();
 extern void ReloadCurrentImage(HWND hwnd);
 extern float ComputeZoomMultiplier(float delta, bool fineInterval);
@@ -242,14 +242,15 @@ void AdjustWindowToImage(HWND hwnd);
 
 
 
-FireAndForget CompareController::LoadImageIntoLeftSlot([[maybe_unused]] HWND hwnd, std::wstring path, std::function<void(bool)> callback) {
+FireAndForget CompareController::LoadImageIntoLeftSlot([[maybe_unused]] HWND hwnd, std::wstring path, CompareSlotCallback callback) {
     const std::wstring localPath = path;
     if (localPath.empty() || !g_imageEngine) {
-        if (callback) callback(false);
+        callback.Invoke(false);
+        callback.Reset();
         co_return;
     }
 
-    g_leftPaneReadyCallback = callback;
+    g_leftPaneReadyCallback = std::move(callback);
     
     // Set left pane state to decoding/loading
     g_isLeftPaneDecoding = true;
@@ -262,8 +263,7 @@ FireAndForget CompareController::LoadImageIntoLeftSlot([[maybe_unused]] HWND hwn
     if (FileNavigator::ParseVirtualPath(localPath, archivePath, entryIndex)) {
         // Virtual archive entry
     } else {
-        std::error_code ec;
-        fileSize = std::filesystem::file_size(localPath, ec);
+        fileSize = QuickView::QueryFileSize(localPath.c_str());
     }
 
     // Increment generation ID on Left slot to invalidate stale loads
@@ -329,27 +329,30 @@ void CompareController::CaptureCurrentImageAsLeft() {
     GetPaneContext(PaneSlot::Left).Reset();
     GetPaneContext(PaneSlot::Left).resource = GetPaneContext(PaneSlot::Primary).resource.Clone();
     GetPaneContext(PaneSlot::Left).metadata = GetPaneContext(PaneSlot::Primary).metadata;
+
+    // Ensure Left pane represents the pristine 1.0x unscaled original frame
+    if (GetPaneContext(PaneSlot::Left).resource.baseNormalBitmap) {
+        GetPaneContext(PaneSlot::Left).resource.bitmap = GetPaneContext(PaneSlot::Left).resource.baseNormalBitmap;
+    }
+    GetPaneContext(PaneSlot::Left).resource.srScale = 1.0f;
+    GetPaneContext(PaneSlot::Left).resource.currentSrLevel = 1.0f;
+    GetPaneContext(PaneSlot::Left).resource.promotedSrBitmap.Reset();
+    GetPaneContext(PaneSlot::Left).resource.promotedSrTexture.Reset();
+    GetPaneContext(PaneSlot::Left).metadata.HasSr = false;
+    GetPaneContext(PaneSlot::Left).metadata.SrWidth = 0;
+    GetPaneContext(PaneSlot::Left).metadata.SrHeight = 0;
+    GetPaneContext(PaneSlot::Left).metadata.SrScale = 1.0f;
+
     GetPaneContext(PaneSlot::Left).path = GetPaneContext(PaneSlot::Primary).path;
     GetPaneContext(PaneSlot::Left).valid = true;
     GetPaneContext(PaneSlot::Left).view.Zoom = GetPaneContext(PaneSlot::Primary).view.Zoom;
     GetPaneContext(PaneSlot::Left).view.PanX = GetPaneContext(PaneSlot::Primary).view.PanX;
     GetPaneContext(PaneSlot::Left).view.PanY = GetPaneContext(PaneSlot::Primary).view.PanY;
-    // [Fix] Use g_renderExifOrientation instead of GetPaneContext(PaneSlot::Primary).view.ExifOrientation.
-    // After RenderImageToDComp, GetPaneContext(PaneSlot::Primary).view.ExifOrientation is neutralized to 1
-    // (since the DComp surface is physically rotated). But the bitmap in
-    // GetPaneContext(PaneSlot::Primary).resource is still un-rotated, so compare mode's DrawResourceIntoViewport
-    // needs the original orientation to apply the rotation correctly.
-    GetPaneContext(PaneSlot::Left).view.ExifOrientation = g_renderExifOrientation;
-    if (!g_config.AutoRotate) {
-        GetPaneContext(PaneSlot::Left).view.ExifOrientation = 1;
-    }
+    GetPaneContext(PaneSlot::Left).view.ExifOrientation = GetPaneContext(PaneSlot::Primary).view.ExifOrientation;
+    GetPaneContext(PaneSlot::Left).metadata.ExifOrientation = GetPaneContext(PaneSlot::Primary).metadata.ExifOrientation;
     GetPaneContext(PaneSlot::Left).CmsModeOverride = g_runtime.CmsModeOverride;
     GetPaneContext(PaneSlot::Left).EnableSoftProofing = g_runtime.EnableSoftProofing;
     GetPaneContext(PaneSlot::Left).SoftProofProfilePath = g_runtime.SoftProofProfilePath;
-    // [Fix] Also restore metadata ExifOrientation (was neutralized after RenderImageToDComp)
-    if (g_config.AutoRotate && g_renderExifOrientation > 1) {
-        GetPaneContext(PaneSlot::Left).metadata.ExifOrientation = g_renderExifOrientation;
-    }
 }
 
 
@@ -495,6 +498,10 @@ bool CompareController::RenderComposite(HWND hwnd) {
 void CompareController::EnterMode(HWND hwnd) {
     m_hwnd = hwnd;
     if (IsActive() || !GetPaneContext(PaneSlot::Primary).resource) return;
+    if (GetPaneContext(PaneSlot::Primary).resource.IsAnimated()) {
+        g_osd.Show(hwnd, AppStrings::g.OSD_CompareAnimNotSupported, true);
+        return;
+    }
     if (g_slideshowState.IsActive) {
         g_slideshowState.Reset();
         KillTimer(hwnd, IDT_SLIDESHOW);
@@ -545,14 +552,29 @@ void CompareController::EnterMode(HWND hwnd) {
             }
 
             if (!leftPath.empty()) {
-                LoadImageIntoLeftSlot(hwnd, leftPath, [hwnd, rightPath, this](bool success) {
-                    if (success) {
-                        MarkDirty();
+                struct LeftSlotLoadCtx {
+                    HWND hwnd;
+                    std::wstring rightPath;
+                    CompareController* ctrl;
+                };
+                auto* ctx = new LeftSlotLoadCtx{ hwnd, std::move(rightPath), this };
+                CompareSlotCallback cb;
+                cb.userCtx = ctx;
+                cb.pfn = [](void* u, bool success) {
+                    auto* c = static_cast<LeftSlotLoadCtx*>(u);
+                    if (IsWindow(c->hwnd)) {
+                        if (success) {
+                            c->ctrl->MarkDirty();
+                        }
+                        if (!c->rightPath.empty() && c->rightPath != GetPaneContext(PaneSlot::Primary).path) {
+                            LoadImageAsync(c->hwnd, c->rightPath, false);
+                        }
                     }
-                    if (!rightPath.empty() && rightPath != GetPaneContext(PaneSlot::Primary).path) {
-                        LoadImageAsync(hwnd, rightPath, false);
-                    }
-                });
+                };
+                cb.cleanup = [](void* u) {
+                    delete static_cast<LeftSlotLoadCtx*>(u);
+                };
+                LoadImageIntoLeftSlot(hwnd, leftPath, std::move(cb));
             }
             else {
                 GetPaneContext(PaneSlot::Left).Reset();
@@ -575,18 +597,7 @@ void CompareController::EnterMode(HWND hwnd) {
         GetPaneContext(PaneSlot::Left).EnableSoftProofing = false; // Left pane is the "Before Proofing" version
         g_runtime.LockWindowSize = false;         // [Fix] Allow window to adapt for side-by-side view
         
-        g_osd.ShowCompare(hwnd, AppStrings::OSD_CompareBefore, AppStrings::OSD_CompareAfter, D2D1::ColorF(D2D1::ColorF::White), 2500);
-    }
-
-    if (g_config.AutoRotate && g_imageLoader && !GetPaneContext(PaneSlot::Primary).path.empty()) {
-        CImageLoader::ImageMetadata rightMeta;
-        if (SUCCEEDED(g_imageLoader->ReadMetadata(GetPaneContext(PaneSlot::Primary).path.c_str(), &rightMeta, true)) &&
-            rightMeta.ExifOrientation >= 1 && rightMeta.ExifOrientation <= 8) {
-            GetPaneContext(PaneSlot::Primary).view.ExifOrientation = rightMeta.ExifOrientation;
-            GetPaneContext(PaneSlot::Primary).metadata.ExifOrientation = rightMeta.ExifOrientation;
-        }
-    } else {
-        GetPaneContext(PaneSlot::Primary).view.ExifOrientation = 1;
+        g_osd.ShowCompare(hwnd, AppStrings::g.OSD_CompareBefore, AppStrings::g.OSD_CompareAfter, D2D1::ColorF(D2D1::ColorF::White), 2500);
     }
 
     m_context.Compare.syncZoom = true;
@@ -622,6 +633,9 @@ void CompareController::EnterMode(HWND hwnd) {
     g_toolbar.SetCompareMode(true);
     g_toolbar.SetCompareSyncStates(m_context.Compare.syncZoom, m_context.Compare.syncPan);
     g_toolbar.SetCompareInfoState(g_runtime.ShowCompareInfo);
+    RECT rcToolbar{};
+    GetClientRect(hwnd, &rcToolbar);
+    g_toolbar.UpdateLayout((float)rcToolbar.right, (float)rcToolbar.bottom);
     // [Compare RAW] Initial state: right pane is selected by default
     RefreshCompareRawUI(hwnd);
 
@@ -644,6 +658,56 @@ void CompareController::EnterMode(HWND hwnd) {
     }
 }
 
+void CompareController::EnterSrCompareMode(HWND hwnd) {
+    m_hwnd = hwnd;
+    if (!GetPaneContext(PaneSlot::Primary).resource) return;
+    if (GetPaneContext(PaneSlot::Primary).resource.IsAnimated()) {
+        g_osd.Show(hwnd, AppStrings::g.OSD_CompareAnimNotSupported, true);
+        return;
+    }
+
+    if (g_slideshowState.IsActive) {
+        g_slideshowState.Reset();
+        KillTimer(hwnd, IDT_SLIDESHOW);
+        g_toolbar.SetSlideshowMode(false, false);
+    }
+
+    // 1. Capture current un-upscaled 1.0x image as Left
+    CaptureCurrentImageAsLeft();
+    if (!GetPaneContext(PaneSlot::Left).valid) return;
+
+    // 2. Set to Wipe Mode (split-screen curtain)
+    m_context.Compare.mode = ViewMode::CompareWipe;
+    m_context.Compare.splitRatio = 0.5f;
+    m_context.Compare.syncZoom = true;
+    m_context.Compare.syncPan = true;
+    m_context.Compare.draggingDivider = false;
+    m_context.Compare.activePane = ComparePane::Right;
+    m_context.Compare.contextPane = ComparePane::Right;
+    m_context.Compare.selectedPane = ComparePane::Right;
+    m_context.Compare.dividerOpacity = 1.0f;
+    m_context.Compare.showDividerHandle = true;
+    MarkDirty();
+
+    GetPaneContext(PaneSlot::Primary).view.CompareActive = true;
+    GetPaneContext(PaneSlot::Primary).view.CompareSplitRatio = 0.5f;
+
+    // Synchronize Left pane view to Primary pane view (zoom, pan)
+    GetPaneContext(PaneSlot::Left).view.Zoom = GetPaneContext(PaneSlot::Primary).view.Zoom;
+    GetPaneContext(PaneSlot::Left).view.PanX = GetPaneContext(PaneSlot::Primary).view.PanX;
+    GetPaneContext(PaneSlot::Left).view.PanY = GetPaneContext(PaneSlot::Primary).view.PanY;
+
+    g_toolbar.SetCompareMode(true);
+    g_toolbar.SetCompareSyncStates(m_context.Compare.syncZoom, m_context.Compare.syncPan);
+    g_toolbar.SetCompareInfoState(g_runtime.ShowCompareInfo);
+    RECT rcToolbar{};
+    GetClientRect(hwnd, &rcToolbar);
+    g_toolbar.UpdateLayout((float)rcToolbar.right, (float)rcToolbar.bottom);
+    RefreshCompareRawUI(hwnd);
+
+    // Show OSD banner
+    g_osd.ShowCompare(hwnd, AppStrings::g.OSD_CompareBefore, AppStrings::g.OSD_CompareAfter, D2D1::ColorF(D2D1::ColorF::White), 2500);
+}
 
 void CompareController::ExitMode(HWND hwnd) {
     if (!IsActive()) return;
@@ -657,7 +721,7 @@ void CompareController::ExitMode(HWND hwnd) {
 
     GetPaneContext(PaneSlot::Left).Reset();
     g_isLeftPaneDecoding = false;
-    g_leftPaneReadyCallback = nullptr;
+    g_leftPaneReadyCallback.Reset();
 
     GetPaneContext(PaneSlot::Primary).view.CompareActive = false;
     GetPaneContext(PaneSlot::Primary).view.CompareSplitRatio = 0.5f;
@@ -680,9 +744,6 @@ void CompareController::ExitMode(HWND hwnd) {
 
     if (GetPaneContext(PaneSlot::Primary).resource) {
         RenderImageToDComp(hwnd, GetPaneContext(PaneSlot::Primary).resource, false);
-        if (GetPaneContext(PaneSlot::Primary).view.ExifOrientation > 1 && g_config.AutoRotate) {
-            GetPaneContext(PaneSlot::Primary).view.ExifOrientation = 1;
-        }
         AdjustWindowToImage(hwnd);
         RECT updatedRc{};
         GetClientRect(hwnd, &updatedRc);
@@ -699,12 +760,16 @@ void CompareController::ReloadPaneForDisplayChange([[maybe_unused]] HWND hwnd, C
             return;
         }
 
-        LoadImageIntoLeftSlot(hwnd, GetPaneContext(PaneSlot::Left).path, [this](bool success) {
-            if (success) {
-                MarkDirty();
-                RequestRepaint(QuickView::PaintLayer::Image  | QuickView::PaintLayer::Dynamic);
-            }
-        });
+        LoadImageIntoLeftSlot(hwnd, GetPaneContext(PaneSlot::Left).path, CompareSlotCallback(
+            [](void* u, bool success) {
+                if (success) {
+                    auto* self = static_cast<CompareController*>(u);
+                    self->MarkDirty();
+                    RequestRepaint(QuickView::PaintLayer::Image | QuickView::PaintLayer::Dynamic);
+                }
+            },
+            this
+        ));
         return;
     }
 

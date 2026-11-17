@@ -86,6 +86,14 @@ public:
 
     static bool FormatSupportsExifOrientation(const wchar_t* ext);
 
+    // Renders the configured source (disk path, RAW, unified decode, SVG, or in-memory frame)
+    // with Rotation/Flip/Crop applied into a contiguous 32bpp BGRA pixel buffer.
+    static HRESULT RenderVisualBgraFrame(const ExportOptions& options,
+                                         std::vector<uint8_t>& outBgra,
+                                         uint32_t& outWidth,
+                                         uint32_t& outHeight,
+                                         uint32_t& outStride);
+
 private:
     static HRESULT CreateWICPipeline(const ExportOptions& options,
                                      Microsoft::WRL::ComPtr<IWICBitmapSource>& outSource,

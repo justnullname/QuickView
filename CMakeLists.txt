@@ -53,12 +53,16 @@ endif()
 # ============================================================================
 option(ENABLE_ASAN "Enable Address Sanitizer" OFF)
 option(ENABLE_LTO  "Enable Link Time Optimization (ThinLTO)" OFF)
+option(ENABLE_SECURITY_COOKIE "Enable /GS buffer security check for Store/WACK compliance" ON)
 
 # ============================================================================
 # Source Files Definition
 # ============================================================================
 set(QUICKVIEW_SOURCES
     QuickView/main.cpp
+    QuickView/StringUtils.cpp
+    QuickView/AsyncJob.cpp
+    QuickView/BootPreloader.cpp
     QuickView/ImageExporter.cpp
     QuickView/ExportPanel.cpp
     QuickView/PrintManager.cpp
@@ -78,6 +82,9 @@ set(QUICKVIEW_SOURCES
     QuickView/GeekIconRenderer.cpp
     QuickView/GeekIconData.cpp
     QuickView/exif.cpp
+    QuickView/RatingMetadata.cpp
+    QuickView/RatingStore.cpp
+    QuickView/RatingWriter.cpp
     QuickView/RenderEngine.cpp
     QuickView/ImageLoader.cpp
     QuickView/MiniTiff.cpp
@@ -93,6 +100,7 @@ set(QUICKVIEW_SOURCES
     QuickView/ThumbnailManager.cpp
     QuickView/Toolbar.cpp
     QuickView/SettingsOverlay.cpp
+    QuickView/FileAssociationManager.cpp
     QuickView/HelpOverlay.cpp
     QuickView/UpdateManager.cpp
     QuickView/PreviewExtractor.cpp
@@ -107,6 +115,7 @@ set(QUICKVIEW_SOURCES
     QuickView/ComputeEngine.cpp
     QuickView/DisplayColorInfo.cpp
     QuickView/ProcessRouter.cpp
+    QuickView/ThemePalette.cpp
     QuickView/ThemeSystem.cpp
     QuickView/ImageLoaderSimd.cpp
     QuickView/WebPAnimator.cpp
@@ -116,6 +125,9 @@ set(QUICKVIEW_SOURCES
     QuickView/OffscreenWebView2.cpp
     QuickView/WebContentHost.cpp
     QuickView/WebViewThumbService.cpp
+    QuickView/Plugin/PluginHost.cpp
+    QuickView/AiActionManager.cpp
+    QuickView/AiActionOverlay.cpp
     
     # Third party manually included
     third_party/yyjson/yyjson.c
@@ -149,13 +161,13 @@ set_target_properties(QuickView PROPERTIES LINK_FLAGS "${QUICKVIEW_LINK_FLAGS}")
 # Include paths
 target_include_directories(QuickView PRIVATE QuickView third_party/yyjson third_party/unrar-mini third_party/webview2)
 
-# Precompiled Headers (PCH) - CXX only to avoid conflict with C source (yyjson.c)
-target_precompile_headers(QuickView PRIVATE $<$<COMPILE_LANGUAGE:CXX>:pch.h>)
-
 # Disable PCH for specific files (as defined in .vcxproj)
 set_source_files_properties(QuickView/WuffsImpl.cpp PROPERTIES SKIP_PRECOMPILED_HEADERS ON)
 set_source_files_properties(QuickView/ImageLoaderSimd.cpp PROPERTIES SKIP_PRECOMPILED_HEADERS ON)
 set_source_files_properties(third_party/yyjson/yyjson.c PROPERTIES SKIP_PRECOMPILED_HEADERS ON)
+
+# Precompiled Headers (PCH) - CXX only to avoid conflict with C source (yyjson.c)
+target_precompile_headers(QuickView PRIVATE $<$<COMPILE_LANGUAGE:CXX>:pch.h>)
 
 # ============================================================================
 # Compiler & Linker Flags (Clang-CL Matrix)
@@ -206,13 +218,18 @@ if(MSVC OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 
     if(ENABLE_LTO)
         message(STATUS "Build Matrix: Enabling Full LTO (Release-LTO Pure Maximum Speed)")
-        # Pure peak performance flags (Pure /O2, no /Oscompromise)
+        if(ENABLE_SECURITY_COOKIE)
+            set(QV_SECURITY_COOKIE_FLAG "/GS")
+        else()
+            set(QV_SECURITY_COOKIE_FLAG "/GS-")
+        endif()
+        # Pure peak performance flags for Hot-Path (Pure /O2, no compromise)
         target_compile_options(QuickView PRIVATE 
-            /O2 /Gw /Gy /Zc:inline /GR- /fp:fast /GS- /EHs-c- /Z7
-            /clang:-flto=full
+            /O2 /Gw /Gy /Zc:inline /GR- /fp:fast ${QV_SECURITY_COOKIE_FLAG} /EHs-c- /Z7
+            /clang:-flto=full /clang:-fno-exceptions
             /clang:-fwhole-program-vtables /clang:-fvirtual-function-elimination
             /clang:-fno-ident)
-        target_link_options(QuickView PRIVATE /DEBUG /OPT:REF /OPT:ICF /opt:lldlto=3 "/MAP:${CMAKE_BINARY_DIR}/QuickView.map")
+        target_link_options(QuickView PRIVATE /DEBUG /OPT:REF /OPT:ICF /DYNAMICBASE /NXCOMPAT /opt:lldlto=3 "/MAP:${CMAKE_BINARY_DIR}/QuickView.map")
     endif()
 endif()
 
@@ -310,6 +327,8 @@ find_library(BROTLI_COMMON_LIB_RELEASE NAMES brotlicommon PATH_SUFFIXES "lib" PA
 find_library(BROTLI_COMMON_LIB_DEBUG NAMES brotlicommon PATH_SUFFIXES "debug/lib" PATHS ${_VCPKG_SEARCH_PATHS} NO_DEFAULT_PATH)
 find_library(BROTLI_DEC_LIB_RELEASE NAMES brotlidec PATH_SUFFIXES "lib" PATHS ${_VCPKG_SEARCH_PATHS} NO_DEFAULT_PATH)
 find_library(BROTLI_DEC_LIB_DEBUG NAMES brotlidec PATH_SUFFIXES "debug/lib" PATHS ${_VCPKG_SEARCH_PATHS} NO_DEFAULT_PATH)
+find_library(BROTLI_ENC_LIB_RELEASE NAMES brotlienc PATH_SUFFIXES "lib" PATHS ${_VCPKG_SEARCH_PATHS} NO_DEFAULT_PATH)
+find_library(BROTLI_ENC_LIB_DEBUG NAMES brotlienc PATH_SUFFIXES "debug/lib" PATHS ${_VCPKG_SEARCH_PATHS} NO_DEFAULT_PATH)
 
 # dav1d (required by avif)
 find_library(DAV1D_LIB_RELEASE NAMES dav1d PATH_SUFFIXES "lib" PATHS ${_VCPKG_SEARCH_PATHS} NO_DEFAULT_PATH)
@@ -338,6 +357,10 @@ set_property(TARGET brotli::common PROPERTY IMPORTED_LOCATION_DEBUG "${BROTLI_CO
 add_library(brotli::dec STATIC IMPORTED)
 set_property(TARGET brotli::dec PROPERTY IMPORTED_LOCATION_RELEASE "${BROTLI_DEC_LIB_RELEASE}")
 set_property(TARGET brotli::dec PROPERTY IMPORTED_LOCATION_DEBUG "${BROTLI_DEC_LIB_DEBUG}")
+
+add_library(brotli::enc STATIC IMPORTED)
+set_property(TARGET brotli::enc PROPERTY IMPORTED_LOCATION_RELEASE "${BROTLI_ENC_LIB_RELEASE}")
+set_property(TARGET brotli::enc PROPERTY IMPORTED_LOCATION_DEBUG "${BROTLI_ENC_LIB_DEBUG}")
 
 add_library(dav1d::dav1d STATIC IMPORTED)
 set_property(TARGET dav1d::dav1d PROPERTY IMPORTED_LOCATION_RELEASE "${DAV1D_LIB_RELEASE}")
@@ -370,10 +393,64 @@ target_link_libraries(QuickView PRIVATE
     windowscodecs.lib
     shlwapi.lib
     shell32.lib
+    comctl32.lib
     mscms.lib
     gdiplus.lib
     ${QV_WEBVIEW2_LIB}
 )
+
+# ============================================================================
+# Super-Resolution Plugins (QVX)
+# ============================================================================
+set(NCNN_ARCH "x64")
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^[Aa][Rr][Mm]64$" OR VCPKG_TARGET_TRIPLET MATCHES "arm64" OR VCPKG_TARGET_ARCHITECTURE STREQUAL "arm64" OR CMAKE_GENERATOR_PLATFORM MATCHES "ARM64" OR CMAKE_CXX_COMPILER_TARGET MATCHES "arm64")
+    set(NCNN_ARCH "arm64")
+endif()
+set(NCNN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/ncnn/${NCNN_ARCH}")
+if(EXISTS "${NCNN_DIR}/include/ncnn")
+    add_library(sr_ncnn_vulkan SHARED plugins/sr/sr_ncnn_vulkan/sr_ncnn_vulkan_engine.cpp)
+    set_target_properties(sr_ncnn_vulkan PROPERTIES
+        SUFFIX ".qvx"
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins/sr/sr_ncnn_vulkan"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/plugins/sr/sr_ncnn_vulkan"
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/plugins/sr/sr_ncnn_vulkan"
+    )
+    target_compile_definitions(sr_ncnn_vulkan PRIVATE UNICODE _UNICODE)
+    if(MSVC OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        target_compile_options(sr_ncnn_vulkan PRIVATE /GS)
+        target_link_options(sr_ncnn_vulkan PRIVATE /DYNAMICBASE /NXCOMPAT)
+    endif()
+    target_include_directories(sr_ncnn_vulkan PRIVATE 
+        QuickView 
+        "${NCNN_DIR}/include"
+        "${NCNN_DIR}/include/ncnn"
+    )
+    target_link_libraries(sr_ncnn_vulkan PRIVATE 
+        d3d11.lib dxgi.lib shlwapi.lib
+        "${NCNN_DIR}/lib/ncnn.lib"
+        "${NCNN_DIR}/lib/glslang.lib"
+        "${NCNN_DIR}/lib/SPIRV.lib"
+        "${NCNN_DIR}/lib/MachineIndependent.lib"
+        "${NCNN_DIR}/lib/OGLCompiler.lib"
+        "${NCNN_DIR}/lib/OSDependent.lib"
+        "${NCNN_DIR}/lib/GenericCodeGen.lib"
+    )
+
+    # Sync plugin models and manifest to build directory
+    add_custom_command(TARGET sr_ncnn_vulkan POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/plugins/sr/sr_ncnn_vulkan/models"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/plugins/sr/sr_ncnn_vulkan/models"
+            "${CMAKE_BINARY_DIR}/plugins/sr/sr_ncnn_vulkan/models"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/plugins/plugins_manifest.json"
+            "${CMAKE_BINARY_DIR}/plugins/plugins_manifest.json"
+        COMMENT "Deploying isolated sr_ncnn_vulkan plugin assets & manifest..."
+    )
+
+    add_dependencies(QuickView sr_ncnn_vulkan)
+endif()
 
 # ============================================================================
 # Unit Tests
@@ -393,7 +470,16 @@ add_executable(QuickViewTests
     tests/SvgNeedsFallbackTests.cpp
     tests/MetafileCodecTests.cpp
     tests/GeekWidgetsTests.cpp
+    tests/PluginHostTests.cpp
+    tests/RatingMetadataTests.cpp
+    tests/TileJpegTests.cpp
+    tests/AiActionManagerTests.cpp
+    tests/FileAssociationTests.cpp
+    tests/ThemeSystemTests.cpp
+    tests/UpdateManagerTests.cpp
+    QuickView/AiActionManager.cpp
     QuickView/GeekWidgets.cpp
+    QuickView/ThemePalette.cpp
     QuickView/GeekIconLibrary.cpp
     QuickView/GeekIconData.cpp
     QuickView/GeekIconRenderer.cpp
@@ -407,9 +493,22 @@ add_executable(QuickViewTests
     QuickView/FileNavigator.cpp 
     QuickView/ArchiveVFS.cpp 
     QuickView/exif.cpp
+    QuickView/RatingMetadata.cpp
+    QuickView/RatingWriter.cpp
+    QuickView/RatingStore.cpp
     QuickView/QuickViewETW.cpp
+    QuickView/AppStrings.cpp
+    QuickView/FileAssociationManager.cpp
+    QuickView/UpdateManager.cpp
+    QuickView/Plugin/PluginHost.cpp
+    QuickView/AsyncJob.cpp
+    QuickView/StringUtils.cpp
+    third_party/yyjson/yyjson.c
     QuickView/pch.cpp
 )
+if(TARGET sr_ncnn_vulkan)
+    add_dependencies(QuickViewTests sr_ncnn_vulkan)
+endif()
 target_precompile_headers(QuickViewTests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:pch.h>)
 target_link_libraries(QuickViewTests PRIVATE 
     GTest::gtest_main 
@@ -421,15 +520,57 @@ target_link_libraries(QuickViewTests PRIVATE
     d3d11.lib 
     shlwapi.lib 
     shell32.lib 
+    comctl32.lib
     mscms.lib
     gdiplus.lib
+    winhttp.lib
+    crypt32.lib
     unrar-mini
     ZLIB::ZLIB
     libjpeg-turbo::turbojpeg-static
+    brotli::common
+    brotli::dec
+    libjxl::jxl
+    libjxl::jxl_cms
+    hwy::hwy
 )
-target_include_directories(QuickViewTests PRIVATE QuickView third_party/unrar-mini)
+target_include_directories(QuickViewTests PRIVATE QuickView third_party/yyjson third_party/unrar-mini)
 target_compile_definitions(QuickViewTests PRIVATE UNICODE _UNICODE)
 add_test(NAME QuickViewTests COMMAND QuickViewTests)
+
+add_executable(QuickViewAnimationTests
+    tests/AnimationDecoderTests.cpp
+    QuickView/WuffsImpl.cpp
+    QuickView/WebPAnimator.cpp
+    QuickView/AvifAnimator.cpp
+    QuickView/JxlAnimator.cpp
+    QuickView/ImageLoaderSimd.cpp
+    QuickView/pch.cpp
+)
+target_precompile_headers(QuickViewAnimationTests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:pch.h>)
+target_link_libraries(QuickViewAnimationTests PRIVATE
+    GTest::gtest_main
+    GTest::gtest
+    ZLIB::ZLIB
+    brotli::common
+    brotli::dec
+    brotli::enc
+    libjxl::jxl
+    libjxl::jxl_threads
+    libjxl::jxl_cms
+    lcms2::lcms2
+    avif
+    dav1d::dav1d
+    yuv
+    WebP::webpdemux
+    WebP::libwebpmux
+    WebP::webp
+    WebP::sharpyuv
+    hwy::hwy
+)
+target_include_directories(QuickViewAnimationTests PRIVATE QuickView)
+target_compile_definitions(QuickViewAnimationTests PRIVATE UNICODE _UNICODE)
+add_test(NAME QuickViewAnimationTests COMMAND QuickViewAnimationTests)
 
 # ============================================================================
 # IDE IntelliSense & Build Environment Helper (Inject Adaptive SDK Include Paths)

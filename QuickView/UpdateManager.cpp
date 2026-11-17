@@ -2,15 +2,16 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <charconv>
 #include <ctime>
 #include "UpdateManager.h"
 #include "yyjson.h"
+#include "ArchiveVFS.h"
 #include <shellapi.h>
 #include <shlwapi.h>
 #include <wincrypt.h>
-#include "EditState.h"
-
-extern AppConfig g_config;
+#include "AsyncJob.h"
+#include "SystemInfo.h"
 
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "shlwapi.lib")
@@ -27,54 +28,127 @@ void UpdateManager::Init(const std::string& currentVersion) {
     m_currentVersion = currentVersion;
 }
 
-void UpdateManager::StartBackgroundCheck(int delaySeconds) {
-    // Allow restart if not currently working
-    if (m_status == UpdateStatus::Checking || m_status == UpdateStatus::Downloading) {
-        return; 
-    }
-    
-    // Reset status to ensure UI updates
-    m_status = UpdateStatus::Idle;
-
-    std::thread([this, delaySeconds]() {
-        CheckThread(delaySeconds);
-    }).detach();
+VersionInfo UpdateManager::GetRemoteVersion() const {
+    std::lock_guard<std::mutex> lock(m_dataMutex);
+    return m_remoteInfo;
 }
 
-void UpdateManager::CheckThread(int delaySeconds) {
-    // Default to 1s if 0 passed, or user specific. 
-    // Logic changed to immediate if 0, else delay.
-    if (delaySeconds > 0) {
-        std::this_thread::sleep_for(std::chrono::seconds(delaySeconds));
+void UpdateManager::StartBackgroundCheck(int delaySeconds, bool allowDowngrade,
+                                          int channel, std::string_view lastCheckedVer) {
+    // Store / MSIX packages must receive updates solely via Microsoft Store.
+    if (SystemInfo::IsPackagedApp()) {
+        return;
     }
 
-    m_status = UpdateStatus::Checking;
-    
-    // Notify UI immediately that we are checking (since we reset to Idle)
-    if (m_callback) m_callback(false, VersionInfo(), m_callbackContext); 
+    {
+        std::lock_guard<std::mutex> lock(m_pendingMutex);
+        if (m_workerActive) {
+            if (allowDowngrade || delaySeconds == 0) {
+                m_pendingCheck.valid = true;
+                m_pendingCheck.allowDowngrade = allowDowngrade;
+                m_pendingCheck.channel = channel;
+                m_pendingCheck.lastCheckedVer.assign(lastCheckedVer);
+                // Abort any active HTTP transfer / download so the queued check executes promptly.
+                m_cancelCurrentWork.store(true, std::memory_order_release);
+                m_pendingCv.notify_one();
+            }
+            return;
+        }
+        m_workerActive = true;
+        m_pendingCheck = {};
+        m_cancelCurrentWork.store(false, std::memory_order_relaxed);
+        m_status.store(UpdateStatus::Idle, std::memory_order_release);
+    }
 
-    // 1. Check Version
-    if (CheckVersion()) {
-        m_status = UpdateStatus::NewVersionFound;
-        
+    std::string lastCheckedCopy(lastCheckedVer);
+
+    QuickView::RunDetached([this, delaySeconds, allowDowngrade, channel, lastCheckedCopy = std::move(lastCheckedCopy)]() {
+        CheckThread(delaySeconds, allowDowngrade, channel, std::move(lastCheckedCopy));
+    });
+}
+
+void UpdateManager::CheckThread(int delaySeconds, bool allowDowngrade, int channel, std::string lastCheckedVer) {
+    struct WorkerActiveGuard {
+        std::mutex& mtx;
+        bool& active;
+        bool armed = true;
+        ~WorkerActiveGuard() {
+            if (!armed) return;
+            std::lock_guard<std::mutex> lock(mtx);
+            active = false;
+        }
+    } activeGuard{ m_pendingMutex, m_workerActive };
+
+    auto consumePendingLocked = [&](bool& outAllowDowngrade, int& outChannel, std::string& outLastChecked) -> bool {
+        if (!m_pendingCheck.valid) return false;
+        outAllowDowngrade = m_pendingCheck.allowDowngrade;
+        outChannel = m_pendingCheck.channel;
+        outLastChecked = std::move(m_pendingCheck.lastCheckedVer);
+        m_pendingCheck = {};
+        m_autoSwitchedToPreRelease.store(false, std::memory_order_relaxed);
+        m_channelCalibrationCompleted.store(false, std::memory_order_relaxed);
+        m_cancelCurrentWork.store(false, std::memory_order_relaxed);
+        return true;
+    };
+
+    if (delaySeconds > 0) {
+        std::unique_lock<std::mutex> lock(m_pendingMutex);
+        m_pendingCv.wait_for(lock, std::chrono::seconds(delaySeconds), [this]() {
+            return m_pendingCheck.valid;
+        });
+        consumePendingLocked(allowDowngrade, channel, lastCheckedVer);
+    }
+
+    for (;;) {
+        m_cancelCurrentWork.store(false, std::memory_order_relaxed);
+        m_status.store(UpdateStatus::Checking, std::memory_order_release);
+
+        // Notify UI immediately that we are checking (since we reset to Idle)
+        if (m_callback) m_callback(false, VersionInfo(), m_callbackContext);
+
+        // 1. Check Version
+        VersionInfo candidateInfo;
+        const bool hasUpdate = CheckVersion(channel, lastCheckedVer, allowDowngrade, candidateInfo);
+
+        {
+            std::lock_guard<std::mutex> lock(m_pendingMutex);
+            if (consumePendingLocked(allowDowngrade, channel, lastCheckedVer)) {
+                continue;
+            }
+            if (!hasUpdate) {
+                m_status.store(UpdateStatus::UpToDate, std::memory_order_release);
+                m_workerActive = false;
+                activeGuard.armed = false;
+                break;
+            }
+        }
+
+        {
+            std::lock_guard<std::mutex> dataLock(m_dataMutex);
+            m_remoteInfo = candidateInfo;
+        }
+        m_status.store(UpdateStatus::NewVersionFound, std::memory_order_release);
+
+        // Flush any auto-switched channel calibration to the UI thread before starting a slow download.
+        if (m_autoSwitchedToPreRelease.load(std::memory_order_acquire) ||
+            m_channelCalibrationCompleted.load(std::memory_order_acquire)) {
+            if (m_callback) m_callback(false, VersionInfo(), m_callbackContext);
+        }
+
         // Prepare Temp Path with Version suffix to prevent redownload
         wchar_t tempPath[MAX_PATH];
         GetTempPathW(MAX_PATH, tempPath);
-        std::wstring filename = L"QuickView_Update_" + std::wstring(m_remoteInfo.version.begin(), m_remoteInfo.version.end());
-
-        // Determine if ZIP or EXE
-        bool isZip = (m_remoteInfo.downloadUrl.find(".zip") != std::string::npos);
-        
-        std::wstring dest = std::wstring(tempPath) + filename + (isZip ? L".zip" : L".exe");
-        m_tempPath = dest;
+        std::wstring filename = L"QuickView_Update_" + std::wstring(candidateInfo.version.begin(), candidateInfo.version.end());
+        const bool isZip = (candidateInfo.downloadUrl.find(".zip") != std::string::npos);
+        const std::wstring dest = std::wstring(tempPath) + filename + (isZip ? L".zip" : L".exe");
 
         // Check if already downloaded (Atomic: Check FINAL file)
         bool cached = false;
         if (GetFileAttributesW(dest.c_str()) != INVALID_FILE_ATTRIBUTES) {
             bool valid = true;
-            if (!m_remoteInfo.expectedSha256.empty()) {
+            if (!candidateInfo.expectedSha256.empty()) {
                 std::string fileHash = CalculateSHA256(dest);
-                if (_stricmp(fileHash.c_str(), m_remoteInfo.expectedSha256.c_str()) != 0) {
+                if (_stricmp(fileHash.c_str(), candidateInfo.expectedSha256.c_str()) != 0) {
                     valid = false;
                 }
             } else {
@@ -90,175 +164,194 @@ void UpdateManager::CheckThread(int delaySeconds) {
                 }
             }
             if (valid) {
-                 cached = true;
+                cached = true;
             } else {
-                 DeleteFileW(dest.c_str()); // Invalid or partial, delete it
+                DeleteFileW(dest.c_str()); // Invalid or partial, delete it
+            }
+        }
+
+        // Re-check pending queue before entering a potentially slow download.
+        {
+            std::lock_guard<std::mutex> lock(m_pendingMutex);
+            if (consumePendingLocked(allowDowngrade, channel, lastCheckedVer)) {
+                continue;
             }
         }
 
         bool downloadSuccess = false;
-
         if (cached) {
-             downloadSuccess = true;
+            downloadSuccess = true;
         } else {
             // 2. Download to .part (Atomic Protection)
-            m_status = UpdateStatus::Downloading;
-            
+            m_status.store(UpdateStatus::Downloading, std::memory_order_release);
+
             std::wstring partPath = dest + L".part";
             DeleteFileW(partPath.c_str());
 
-            if (DownloadUpdate(m_remoteInfo.downloadUrl, partPath)) {
-                // Verify hash of downloaded part before renaming
+            if (DownloadUpdate(candidateInfo.downloadUrl, partPath)) {
                 bool validHash = true;
-                if (!m_remoteInfo.expectedSha256.empty()) {
+                if (!candidateInfo.expectedSha256.empty()) {
                     std::string partHash = CalculateSHA256(partPath);
-                    if (_stricmp(partHash.c_str(), m_remoteInfo.expectedSha256.c_str()) != 0) {
+                    if (_stricmp(partHash.c_str(), candidateInfo.expectedSha256.c_str()) != 0) {
                         validHash = false;
                     }
                 }
-                
                 if (validHash) {
                     if (MoveFileW(partPath.c_str(), dest.c_str())) {
                         downloadSuccess = true;
-                    } else {
-                         m_status = UpdateStatus::Error;
-                         if (m_callback) m_callback(false, VersionInfo(), m_callbackContext);
                     }
                 } else {
                     DeleteFileW(partPath.c_str()); // Clean up corrupted download
-                    m_status = UpdateStatus::Error;
-                    if (m_callback) m_callback(false, VersionInfo(), m_callbackContext);
                 }
             } else {
-                 DeleteFileW(partPath.c_str());
-                 m_status = UpdateStatus::Error;
-                 if (m_callback) m_callback(false, VersionInfo(), m_callbackContext);
+                DeleteFileW(partPath.c_str());
             }
         }
-        
-        if (downloadSuccess) {
-            // 3. Extraction (if ZIP)
-            if (isZip) {
-                   std::wstring extractDir = dest + L"_extracted";
-                   CreateDirectoryW(extractDir.c_str(), NULL);
-                   
-                   std::wstring exeInZip = extractDir + L"\\QuickView.exe";
-                   bool extracted = false;
-                   
-                   if (GetFileAttributesW(exeInZip.c_str()) != INVALID_FILE_ATTRIBUTES) {
-                       extracted = true;
-                       m_tempPath = exeInZip;
-                   } else {
-                       std::wstring fullCmd = L"-xf \"" + dest + L"\" -C \"" + extractDir + L"\"";
 
-                       SHELLEXECUTEINFOW sei = {};
-                       sei.cbSize = sizeof(sei);
-                       sei.fMask = SEE_MASK_NOCLOSEPROCESS;
-                       sei.lpVerb = L"open";
-                       sei.lpFile = L"tar.exe";
-                       sei.lpParameters = fullCmd.c_str();
-                       sei.nShow = SW_HIDE;
-                       
-                       if (ShellExecuteExW(&sei)) {
-                           WaitForSingleObject(sei.hProcess, 15000); // 15s timeout
-                           CloseHandle(sei.hProcess);
-                           
-                           if (GetFileAttributesW(exeInZip.c_str()) != INVALID_FILE_ATTRIBUTES) {
-                               m_tempPath = exeInZip;
-                               extracted = true;
-                           }
-                       }
-                   }
-                   
-                   if (extracted) {
-                        m_status = UpdateStatus::ReadyToInstall;
-                        if (m_callback) m_callback(true, m_remoteInfo, m_callbackContext);
-                    } else {
-                        m_status = UpdateStatus::Error; // Extraction failed
-                        if (m_callback) m_callback(false, VersionInfo(), m_callbackContext);
-                    }
-            } else {
-                // Direct EXE
-                m_status = UpdateStatus::ReadyToInstall;
-                m_tempPath = dest; 
-                if (m_callback) m_callback(true, m_remoteInfo, m_callbackContext);
+        // Discard download result and restart if user switched channel / re-checked during download.
+        {
+            std::lock_guard<std::mutex> lock(m_pendingMutex);
+            if (consumePendingLocked(allowDowngrade, channel, lastCheckedVer)) {
+                continue;
             }
         }
-    } else {
-        m_status = UpdateStatus::UpToDate;
-        if (m_callback) m_callback(false, VersionInfo(), m_callbackContext);
+
+        bool ready = false;
+        std::wstring finalTempPath;
+        if (downloadSuccess) {
+            if (isZip) {
+                std::wstring extractDir = dest + L"_extracted";
+                CreateDirectoryW(extractDir.c_str(), NULL);
+
+                std::wstring exeInZip = extractDir + L"\\QuickView.exe";
+                if (GetFileAttributesW(exeInZip.c_str()) != INVALID_FILE_ATTRIBUTES) {
+                    finalTempPath = exeInZip;
+                    ready = true;
+                } else if (QuickView::IArchive::ExtractZipToDirectory(dest, extractDir) &&
+                           GetFileAttributesW(exeInZip.c_str()) != INVALID_FILE_ATTRIBUTES) {
+                    finalTempPath = exeInZip;
+                    ready = true;
+                }
+            } else {
+                finalTempPath = dest;
+                ready = true;
+            }
+        }
+
+        // Publish m_tempPath & m_remoteInfo before publishing ReadyToInstall.
+        if (ready) {
+            std::lock_guard<std::mutex> dataLock(m_dataMutex);
+            m_remoteInfo = candidateInfo;
+            m_tempPath = finalTempPath;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(m_pendingMutex);
+            if (consumePendingLocked(allowDowngrade, channel, lastCheckedVer)) {
+                continue;
+            }
+            m_status.store(ready ? UpdateStatus::ReadyToInstall : UpdateStatus::Error, std::memory_order_release);
+            m_workerActive = false;
+            activeGuard.armed = false;
+        }
+
+        if (m_callback) {
+            m_callback(ready, ready ? candidateInfo : VersionInfo(), m_callbackContext);
+        }
+        return;
     }
+
+    if (m_callback) m_callback(false, VersionInfo(), m_callbackContext);
 }
 
+bool UpdateManager::CheckVersion(int initialChannel, std::string_view lastCheckedVer, bool allowDowngrade, VersionInfo& outInfo) {
+    auto fetchChannelInfo = [this](int channel) -> VersionInfo {
+        std::time_t now = std::time(nullptr);
+        std::wstring jsonName = (channel == 1) ? L"version-prerelease.json" : L"version.json";
+        std::wstring path = L"/QuickView/" + jsonName + L"?t=" + std::to_wstring(now);
+        std::string response = HttpGet(L"justnullname.github.io", path);
+        if (response.empty()) return {};
+        return ParseJson(response);
+    };
 
+    int effectiveChannel = initialChannel;
+    VersionInfo info = fetchChannelInfo(effectiveChannel);
+    if (info.version.empty() || m_cancelCurrentWork.load(std::memory_order_acquire)) return false;
 
-bool UpdateManager::CheckVersion() {
-    // Config: Host and Path
-    // Example: https://justnullname.github.io/QuickView/version.json
-    // Host: justnullname.github.io
-    // Path: /QuickView/version.json
-    
-    // Host: justnullname.github.io
-    // Path: /QuickView/version.json
-    
-    // Timestamp for cache busting
-    std::time_t now = std::time(nullptr);
-    std::wstring jsonName = (g_config.UpdateChannel == 1) ? L"version-prerelease.json" : L"version.json";
-    std::wstring path = L"/QuickView/" + jsonName + L"?t=" + std::to_wstring(now);
-    
-    std::string response = HttpGet(L"justnullname.github.io", path);
-    if (response.empty()) return false;
+    if (!allowDowngrade && effectiveChannel == 0 && !m_currentVersion.empty()) {
+        m_channelCalibrationCompleted.store(true, std::memory_order_release);
+        if (ShouldAutoSwitchToPreRelease(effectiveChannel, m_currentVersion, lastCheckedVer, info.version, allowDowngrade)) {
+            m_autoSwitchedToPreRelease.store(true, std::memory_order_release);
+            effectiveChannel = 1;
+            VersionInfo preInfo = fetchChannelInfo(1);
+            if (!preInfo.version.empty() && !m_cancelCurrentWork.load(std::memory_order_acquire)) {
+                info = std::move(preInfo);
+            } else {
+                // Pre-release feed unreachable or canceled; do not offer the older stable build as an update.
+                return false;
+            }
+        }
+    }
 
-    VersionInfo info = ParseJson(response);
-    if (info.version.empty()) return false;
-
-    if (CompareVersions(m_currentVersion, info.version)) {
-        m_remoteInfo = info;
+    if (ShouldOfferUpdate(m_currentVersion, info.version, allowDowngrade)) {
+        outInfo = std::move(info);
         return true;
     }
     return false;
 }
 
 bool UpdateManager::DownloadUpdate(const std::string& url, const std::wstring& destPath) {
-    // Extract Host/Path from URL (Simple assumption: HTTPS)
-    // URL: https://github.com/.../release.exe
-    size_t protocolPos = url.find("://");
-    if (protocolPos == std::string::npos) return false;
-    
-    std::string domainPath = url.substr(protocolPos + 3);
-    size_t flashPos = domainPath.find('/');
-    if (flashPos == std::string::npos) return false;
+    if (url.empty()) return false;
 
-    std::string hostStr = domainPath.substr(0, flashPos);
-    std::string pathStr = domainPath.substr(flashPos);
-    
-    std::wstring host(hostStr.begin(), hostStr.end());
-    std::wstring path(pathStr.begin(), pathStr.end());
+    std::vector<std::string> candidates;
+    candidates.push_back(url);
 
-    std::string data = HttpGet(host, path); 
-    if (data.empty()) return false;
-
-    // Validate Binary Header
-    // MZ = EXE (0x4D 0x5A)
-    // PK = ZIP (0x50 0x4B)
-    if (data.size() < 2) return false;
-    
-    bool isExe = (data[0] == 'M' && data[1] == 'Z');
-    bool isZip = (data[0] == 'P' && data[1] == 'K');
-
-    if (!isExe && !isZip) {
-        return false; // Invalid format
+    // Multi-source fallback with ghfast.top mirror acceleration
+    if (url.find("github.com") != std::string::npos || url.find("githubusercontent.com") != std::string::npos) {
+        candidates.push_back("https://ghfast.top/" + url);
     }
 
-    // Write to file
-    HANDLE hFile = CreateFileW(destPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (hFile == INVALID_HANDLE_VALUE) return false;
-    DWORD written = 0;
-    BOOL res = WriteFile(hFile, data.data(), static_cast<DWORD>(data.size()), &written, nullptr);
-    CloseHandle(hFile);
-    return res && (written == data.size());
+    for (const auto& candUrl : candidates) {
+        if (m_cancelCurrentWork.load(std::memory_order_acquire)) return false;
+        size_t protocolPos = candUrl.find("://");
+        if (protocolPos == std::string::npos) continue;
+        
+        std::string domainPath = candUrl.substr(protocolPos + 3);
+        size_t slashPos = domainPath.find('/');
+        if (slashPos == std::string::npos) continue;
 
-    return true;
+        std::string hostStr = domainPath.substr(0, slashPos);
+        std::string pathStr = domainPath.substr(slashPos);
+        
+        std::wstring host(hostStr.begin(), hostStr.end());
+        std::wstring path(pathStr.begin(), pathStr.end());
+
+        std::string data = HttpGet(host, path); 
+        if (m_cancelCurrentWork.load(std::memory_order_acquire)) return false;
+        if (data.size() < 2) continue;
+
+        bool isExe = (data[0] == 'M' && data[1] == 'Z');
+        bool isZip = (data[0] == 'P' && data[1] == 'K');
+
+        if (!isExe && !isZip) {
+            continue;
+        }
+
+        HANDLE hFile = CreateFileW(destPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (hFile == INVALID_HANDLE_VALUE) continue;
+
+        DWORD written = 0;
+        BOOL res = WriteFile(hFile, data.data(), static_cast<DWORD>(data.size()), &written, nullptr);
+        CloseHandle(hFile);
+
+        if (res && (written == data.size())) {
+            return true;
+        } else {
+            DeleteFileW(destPath.c_str());
+        }
+    }
+
+    return false;
 }
 
 std::string UpdateManager::HttpGet(const std::wstring& host, const std::wstring& path) {
@@ -283,6 +376,10 @@ std::string UpdateManager::HttpGet(const std::wstring& host, const std::wstring&
             if (statusCode == 200) {
                 DWORD dwDownloaded = 0;
                 do {
+                    if (m_cancelCurrentWork.load(std::memory_order_acquire)) {
+                        result.clear();
+                        break;
+                    }
                     dwSize = 0;
                     if (!WinHttpQueryDataAvailable(hRequest, &dwSize)) break;
                     if (!dwSize) break;
@@ -387,42 +484,59 @@ std::string UpdateManager::CalculateSHA256(const std::wstring& filePath) {
     return hashStr;
 }
 
-bool UpdateManager::CompareVersions(const std::string& current, const std::string& remote) {
-    // Channel switch can be a downgrade (pre-release -> stable). Treat any
-    // mismatch with the selected channel's remote version as an update.
-    // Remove "v" prefix if exists
-    std::string c = (current.size() > 0 && current[0] == 'v') ? current.substr(1) : current;
-    std::string r = (remote.size() > 0 && remote[0] == 'v') ? remote.substr(1) : remote;
-    
-    auto parse = [](const std::string& s) {
-        std::vector<int> v;
-        size_t start = 0;
-        size_t end = s.find('.');
-        while (start < s.size()) {
-          std::string seg = s.substr(start, end - start);
-          int val = 0;
-          if (!seg.empty()) {
-            // Simple atoi fallback
-            val = std::atoi(seg.c_str());
-          }
-          v.push_back(val);
-          if (end == std::string::npos)
-            break;
-          start = end + 1;
-          end = s.find('.', start);
+int UpdateManager::CompareVersionStrings(std::string_view a, std::string_view b) {
+    auto stripPrefix = [](std::string_view& s) {
+        if (!s.empty() && (s.front() == 'v' || s.front() == 'V')) {
+            s.remove_prefix(1);
         }
-        return v;
+    };
+    stripPrefix(a);
+    stripPrefix(b);
+
+    auto nextPart = [](std::string_view& s, int& outVal) -> bool {
+        if (s.empty()) {
+            outVal = 0;
+            return false;
+        }
+        size_t dot = s.find('.');
+        std::string_view seg = (dot == std::string_view::npos) ? s : s.substr(0, dot);
+        outVal = 0;
+        if (!seg.empty()) {
+            std::from_chars(seg.data(), seg.data() + seg.size(), outVal);
+        }
+        if (dot == std::string_view::npos) {
+            s = {};
+        } else {
+            s.remove_prefix(dot + 1);
+        }
+        return true;
     };
 
-    auto vc = parse(c);
-    auto vr = parse(r);
-
-    for (size_t i = 0; i < std::max(vc.size(), vr.size()); i++) {
-        int Ic = (i < vc.size()) ? vc[i] : 0;
-        int Ir = (i < vr.size()) ? vr[i] : 0;
-        if (Ir != Ic) return true; // Remote differs (upgrade or channel downgrade)
+    while (!a.empty() || !b.empty()) {
+        int ia = 0;
+        int ib = 0;
+        nextPart(a, ia);
+        nextPart(b, ib);
+        if (ia != ib) {
+            return (ia > ib) ? 1 : -1;
+        }
     }
-    return false; // Equal
+    return 0;
+}
+
+bool UpdateManager::ShouldOfferUpdate(std::string_view current, std::string_view remote, bool allowDowngrade) {
+    if (current.empty() || remote.empty()) return false;
+    const int cmp = CompareVersionStrings(remote, current);
+    return allowDowngrade ? (cmp != 0) : (cmp > 0);
+}
+
+bool UpdateManager::ShouldAutoSwitchToPreRelease(int currentChannel, std::string_view currentVer,
+                                                 std::string_view lastCheckedVer, std::string_view stableRemoteVer,
+                                                 bool allowDowngrade) {
+    if (allowDowngrade || currentChannel != 0) return false;
+    if (currentVer.empty() || stableRemoteVer.empty()) return false;
+    if (!lastCheckedVer.empty() && CompareVersionStrings(currentVer, lastCheckedVer) == 0) return false;
+    return CompareVersionStrings(currentVer, stableRemoteVer) > 0;
 }
 
 void UpdateManager::OnUserRestart() {
@@ -443,7 +557,17 @@ void UpdateManager::OnUserLater() {
 }
 
 void UpdateManager::HandleExit() {
-    if (IsUpdatePending() && !m_tempPath.empty() && m_status == UpdateStatus::ReadyToInstall) {
+    if (SystemInfo::IsPackagedApp()) {
+        return;
+    }
+
+    std::wstring tempPath;
+    {
+        std::lock_guard<std::mutex> dataLock(m_dataMutex);
+        tempPath = m_tempPath;
+    }
+
+    if (IsUpdatePending() && !tempPath.empty() && m_status.load(std::memory_order_acquire) == UpdateStatus::ReadyToInstall) {
         // [Modern Self-Update Logic: "The Great Swap"]
         // 1. Get current executable path and PID
         wchar_t currentExe[MAX_PATH];
@@ -459,7 +583,7 @@ void UpdateManager::HandleExit() {
             // 4. Move the new update file to the original EXE path
             // [CRITICAL FIX] Added MOVEFILE_COPY_ALLOWED to support cross-volume updates 
             // (e.g., from C:\Temp to E:\AppDir).
-            if (MoveFileExW(m_tempPath.c_str(), currentExe, MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED)) {
+            if (MoveFileExW(tempPath.c_str(), currentExe, MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED)) {
                 // 5. Build command line with cleanup instructions for the new process
                 std::wstring cmdLine = L"\"" + std::wstring(currentExe) + L"\" --cleanup-pid " + std::to_wstring(currentPid);
 
@@ -481,3 +605,4 @@ void UpdateManager::HandleExit() {
         }
     }
 }
+

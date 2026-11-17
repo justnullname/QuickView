@@ -17,9 +17,7 @@
 #include <string_view>
 #include <vector>
 #include <array>
-#include <map>
 #include <unordered_map>
-#include <set>
 #include <unordered_set>
 #include <type_traits>
 #include <utility>
@@ -30,7 +28,6 @@
 #include <shared_mutex>
 #include <atomic>
 #include <thread>
-#include <filesystem>
 #include <algorithm>
 #include <chrono>
 #include <optional>
@@ -43,6 +40,9 @@
 
 // Direct2D and DirectWrite
 #include <d2d1_3.h>
+#include <d2d1effects.h>
+#include <d2d1effects_1.h>
+#include <d2d1effects_2.h>
 #include <d3d11_4.h>
 #include <dxgi1_6.h>
 #include <dwrite.h>
@@ -58,6 +58,7 @@ using Microsoft::WRL::ComPtr;
 #pragma comment(lib, "d2d1.lib")
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
+#pragma comment(lib, "dxguid.lib")
 #pragma comment(lib, "dwrite.lib")
 #pragma comment(lib, "windowscodecs.lib")
 #pragma comment(lib, "shlwapi.lib") // [SVG] For SHCreateMemStream

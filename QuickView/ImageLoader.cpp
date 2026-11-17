@@ -1,17 +1,18 @@
 #include "pch.h"
 #include <DirectXPackedVector.h>
 #include <cstdint>
-#include <filesystem>
-#include <map>
 #include <memory>
 #include <string>
 #include <vector>
 #include <wincodec.h>
 #include <wincodecsdk.h>
 
+#include "StringUtils.h"
+
 
 #include "ImageLoader.h"
 #include "QuickViewETW.h"
+#include "AsyncJob.h"
 static constexpr const char *CURRENT_MODULE = "ImageLoader";
 #include "AnimationDecoder.h"
 #include "EditState.h"         // For g_runtime
@@ -84,8 +85,12 @@ static bool TryDecodeAvifGainMappedLinearRGBA(
     QuickView::HdrStaticMetadata *hdrMetadata, std::wstring *formatDetails);
 
 // [Fast Header] AVIF/HEIC dimension probes (implemented later in this file)
+static bool GetAVIFDimensionsFromMemory(const uint8_t *data, size_t size,
+                                        uint32_t *width, uint32_t *height);
 static bool GetAVIFDimensions(LPCWSTR filePath, uint32_t *width,
                               uint32_t *height);
+static bool GetISOBMFFDimensionsFromMemory(const uint8_t *data, size_t size,
+                                           uint32_t *width, uint32_t *height);
 static bool GetISOBMFFDimensions(LPCWSTR filePath, uint32_t *width,
                                  uint32_t *height);
 static void ProbeHdrMetadataNative(const uint8_t *data, size_t size,
@@ -802,8 +807,8 @@ bool IsUnifiedBufferCodec(const std::wstring &fmt) {
 }
 
 bool ShouldProbeAnimatedBufferCodec(const std::wstring &fmt) {
-  return fmt == L"WebP" || fmt == L"GIF" || fmt == L"PNG" || fmt == L"AVIF" ||
-         fmt == L"JXL";
+  return fmt == L"WebP" || fmt == L"WEBP" || fmt == L"GIF" ||
+         fmt == L"PNG" || fmt == L"APNG" || fmt == L"AVIF" || fmt == L"JXL";
 }
 
 bool IsMetafileFormat(const std::wstring &fmt) {
@@ -1046,6 +1051,78 @@ HRESULT CollapseFloatResultToSdr(const QuickView::Codec::DecodeContext &ctx,
   return S_OK;
 }
 
+bool TryProbeAnimatedBuffer(std::shared_ptr<QuickView::MappedFile> fileMap,
+                            const std::wstring &fmt,
+                            QuickView::Codec::DecodeResult &result,
+                            const QuickView::Codec::DecodeContext *ctx = nullptr) {
+  if ((ctx && ctx->forcePreview) ||
+      !ShouldProbeAnimatedBufferCodec(fmt) || !fileMap || !fileMap->IsValid()) {
+    return false;
+  }
+
+  std::unique_ptr<QuickView::IAnimationDecoder> animator;
+  if (fmt == L"WebP" || fmt == L"WEBP") {
+    animator = QuickView::CreateWebPAnimator();
+  } else if (fmt == L"AVIF") {
+    animator = QuickView::CreateAvifAnimator();
+  } else if (fmt == L"JXL") {
+    animator = QuickView::CreateJxlAnimator();
+  } else {
+    animator = QuickView::CreateWuffsAnimator();
+  }
+
+  if (!animator ||
+      !animator->Initialize(fileMap, QuickView::PixelFormat::BGRA8888) ||
+      !animator->IsAnimated()) {
+    return false;
+  }
+
+  auto firstFrame = animator->GetNextFrame();
+  if (!firstFrame || !firstFrame->pixels) {
+    QV_LOG("Anim_Loader",
+           TraceLoggingString("GetNextFrame Null", "Action"));
+    return false;
+  }
+
+  result.width = firstFrame->width;
+  result.height = firstFrame->height;
+  result.stride = firstFrame->stride;
+  result.format = firstFrame->format;
+
+  if (ctx && ctx->allocator) {
+    const size_t totalBytes = static_cast<size_t>(firstFrame->stride) * static_cast<size_t>(firstFrame->height);
+    uint8_t *allocated = ctx->allocator(totalBytes);
+    if (!allocated) {
+      return false;
+    }
+    memcpy(allocated, firstFrame->pixels, totalBytes);
+    result.pixels = allocated;
+    // firstFrame retains ownership and cleans up its aligned buffer on scope exit.
+  } else {
+    // Transfer ownership of the aligned pixel buffer to DecodeResult.
+    result.pixels = firstFrame->pixels;
+    firstFrame->pixels = nullptr;
+    firstFrame->memoryDeleter.DestroyCtx();
+    firstFrame->memoryDeleter.Clear();
+    result.animator = std::move(animator);
+  }
+
+  result.success = true;
+  result.frameMeta = firstFrame->frameMeta;
+  result.metadata.Width = firstFrame->width;
+  result.metadata.Height = firstFrame->height;
+  result.metadata.Format = fmt;
+  result.metadata.LoaderName =
+      (fmt == L"WebP" || fmt == L"WEBP")
+          ? L"WebPAnimator"
+          : (fmt == L"AVIF" ? L"AvifAnimator"
+                            : (fmt == L"JXL" ? L"JxlAnimator"
+                                             : L"WuffsAnimator"));
+  QV_LOG("Anim_Loader",
+         TraceLoggingString("Hijack Success", "Action"));
+  return true;
+}
+
 void MoveDecodeResultToFrame(const QuickView::Codec::DecodeResult &result,
                              QuickView::RawImageFrame *outFrame,
                              QuantumArena *arena) {
@@ -1057,6 +1134,10 @@ void MoveDecodeResultToFrame(const QuickView::Codec::DecodeResult &result,
 
   outFrame->formatDetails = result.metadata.FormatDetails;
   outFrame->exifOrientation = result.metadata.ExifOrientation;
+  outFrame->srcWidth = (result.metadata.Width > 0) ? static_cast<int>(result.metadata.Width) : result.width;
+  outFrame->srcHeight = (result.metadata.Height > 0) ? static_cast<int>(result.metadata.Height) : result.height;
+  outFrame->dpiX = result.metadata.DpiX;
+  outFrame->dpiY = result.metadata.DpiY;
   outFrame->colorInfo = result.metadata.colorInfo;
   outFrame->hdrMetadata = result.metadata.hdrMetadata;
   if (outFrame->format == QuickView::PixelFormat::R16G16B16A16_FLOAT) {
@@ -1254,6 +1335,8 @@ HRESULT LoadBufferUnified(const uint8_t *mappedData, size_t mappedSize,
 
 } // namespace
 
+static int ReadJpegExifOrientation(const uint8_t *data, size_t size);
+
 // Unified in-memory frame loading entry for MMF/Titan paths.
 HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t *data, size_t size,
                                             QuickView::RawImageFrame *outFrame,
@@ -1261,7 +1344,9 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t *data, size_t size,
                                             int targetWidth, int targetHeight,
                                             std::wstring *pLoaderName,
                                             ImageMetadata *pMetadata,
-                                            float targetHdrHeadroomStops) {
+                                            float targetHdrHeadroomStops,
+                                            std::shared_ptr<QuickView::MappedFile> sourceMmf,
+                                            bool preserveFloat) {
   if (!data || !size || !outFrame)
     return E_INVALIDARG;
   (void)targetHdrHeadroomStops;
@@ -1338,7 +1423,7 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t *data, size_t size,
       pMetadata->Width = width;
       pMetadata->Height = height;
       pMetadata->FileSize = size;
-      pMetadata->Format = L"JPEG (MMF)";
+      pMetadata->Format = L"JPEG";
 
       int subsamp = tj3Get(handle, TJPARAM_SUBSAMP);
       switch (subsamp) {
@@ -1415,10 +1500,10 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t *data, size_t size,
     outFrame->stride = QuickView::CalculateAlignedStride(finalW, 4);
     outFrame->format = PixelFormat::BGRA8888;
     outFrame->formatDetails = L"8-bit JPEG (MMF)";
+    outFrame->srcWidth = width;
+    outFrame->srcHeight = height;
     if (chosenFactor.num != chosenFactor.denom) {
       outFrame->formatDetails += L" Scaled";
-      outFrame->srcWidth = width; // [v10.1] Preserve original resolution
-      outFrame->srcHeight = height;
     }
 
     size_t bufSize = outFrame->GetBufferSize();
@@ -1465,6 +1550,13 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t *data, size_t size,
       tj3Free(iccBuf);
     }
 
+    // [EXIF Orientation] Extract Tag 0x0112 from JPEG binary payload
+    int exifOri = ReadJpegExifOrientation(data, size);
+    outFrame->exifOrientation = exifOri;
+    if (pMetadata) {
+      pMetadata->ExifOrientation = exifOri;
+    }
+
     return S_OK;
   }
 
@@ -1479,18 +1571,37 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t *data, size_t size,
         return static_cast<uint8_t *>(a->Allocate(s, 64));
       return static_cast<uint8_t *>(_aligned_malloc(s, 64));
     };
-    // freeFunc: deleters below handle lifecycle
+    ctx.freeFunc.ctx = arena;
+    ctx.freeFunc.pfn = [](void *c, uint8_t *p) {
+      if (!p)
+        return;
+      auto *a = static_cast<QuantumArena *>(c);
+      if (a && a->Owns(p))
+        return;
+      _aligned_free(p);
+    };
     ctx.targetWidth = targetWidth;
     ctx.targetHeight = targetHeight;
     ctx.pLoaderName = pLoaderName;
     ctx.pMetadata = pMetadata;
     ctx.isTitanMode = false; // Cannot assume MMF; often used for archive extraction where full decode is needed
-    ctx.preserveFloat = (targetWidth == 0 || targetHeight == 0);
+    ctx.preserveFloat = preserveFloat;
     ctx.forceRenderFull = (targetWidth == 0 && targetHeight == 0);
     ctx.targetHdrHeadroomStops = targetHdrHeadroomStops;
 
     DecodeResult result;
-    HRESULT hrUnified = LoadBufferUnified(data, size, fmt, ctx, result);
+    bool animProbed = false;
+    if (ShouldProbeAnimatedBufferCodec(fmt)) {
+      std::shared_ptr<QuickView::MappedFile> animMap = std::move(sourceMmf);
+      if (!animMap || !animMap->IsValid()) {
+        animMap = QuickView::MappedFile::FromMemory(data, size);
+      }
+      animProbed = TryProbeAnimatedBuffer(std::move(animMap), fmt, result);
+    }
+
+    HRESULT hrUnified = animProbed
+                            ? S_OK
+                            : LoadBufferUnified(data, size, fmt, ctx, result);
 
     if (hrUnified == E_OUTOFMEMORY || hrUnified == E_ABORT)
       return hrUnified;
@@ -1503,13 +1614,17 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t *data, size_t size,
 
     if (SUCCEEDED(hrUnified) && result.pixels) {
       MoveDecodeResultToFrame(result, outFrame, arena);
+      if (result.animator) {
+        outFrame->animator = std::move(result.animator);
+        outFrame->frameMeta = result.frameMeta;
+      }
       QV_LOG("LoadToFrame_Memory",
              TraceLoggingString("Unified_Success", "Action"),
              TraceLoggingWideString(fmt.c_str(), "Format"));
 
       if (pMetadata && result.width > 0) {
-        pMetadata->Width = result.width;
-        pMetadata->Height = result.height;
+        pMetadata->Width = (result.metadata.Width > 0) ? result.metadata.Width : static_cast<UINT>(result.width);
+        pMetadata->Height = (result.metadata.Height > 0) ? result.metadata.Height : static_cast<UINT>(result.height);
         pMetadata->Format = fmt;
         pMetadata->colorInfo = result.metadata.colorInfo;
         pMetadata->hdrMetadata = result.metadata.hdrMetadata;
@@ -1533,50 +1648,43 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t *data, size_t size,
 // RAW formats are too varied (40+ types using TIFF/ISOBMFF/proprietary
 // containers). Extension is the ONLY reliable indicator for RAW. Magic bytes
 // are unreliable.
-static std::wstring DetectFormatFromContent(LPCWSTR filePath) {
+static std::wstring DetectFormatFromHeaderBytes(LPCWSTR filePath,
+                                              const uint8_t *data,
+                                              size_t size) {
   if (!filePath)
     return L"Unknown";
 
-  // === STEP 1: Extension-based RAW Detection (Highest Priority) ===
-  // This MUST run first. RAW formats cannot be reliably detected by magic
-  // bytes. Classification list lives in SupportedExtensions.h.
-  // Note: .tif/.tiff excluded - standard TIFFs should use WIC, not LibRaw.
+  // === STEP 1: Extension-based RAW / Vector / Metafile Detection ===
   if (QuickView::IsRawPath(filePath))
-    return L"RAW"; // Definitive RAW identification by extension
+    return L"RAW";
 
-  // [v9.5] SVG detection
-  if (QuickView::ExtEqualsIgnoreCase(QuickView::ExtensionOf(filePath), L".svg"))
+  const std::wstring_view ext = QuickView::ExtensionOf(filePath);
+  if (QuickView::ExtEqualsIgnoreCase(ext, L".svg"))
     return L"SVG";
+  if (QuickView::ExtEqualsIgnoreCase(ext, L".emf") ||
+      QuickView::ExtEqualsIgnoreCase(ext, L".emz"))
+    return L"EMF";
+  if (QuickView::ExtEqualsIgnoreCase(ext, L".wmf") ||
+      QuickView::ExtEqualsIgnoreCase(ext, L".wmz"))
+    return L"WMF";
 
-  {
-    const std::wstring_view ext = QuickView::ExtensionOf(filePath);
-    if (QuickView::ExtEqualsIgnoreCase(ext, L".emf") ||
-        QuickView::ExtEqualsIgnoreCase(ext, L".emz"))
-      return L"EMF";
-    if (QuickView::ExtEqualsIgnoreCase(ext, L".wmf") ||
-        QuickView::ExtEqualsIgnoreCase(ext, L".wmz"))
-      return L"WMF";
-  }
-
-  // === STEP 2: Magic Bytes Detection (for non-RAW formats) ===
-  uint8_t magic[64] = {0};
-  size_t read = PeekHeader(filePath, magic, 64);
-  if (read == 0)
+  // === STEP 2: Magic Bytes Detection ===
+  if (!data || size == 0)
     return L"Unknown";
 
-  std::wstring fmt = DetectFormatFromContent(magic, read);
+  const size_t magicLen = (std::min)(size, static_cast<size_t>(64));
+  std::wstring fmt = DetectFormatFromContent(data, magicLen);
 
-  // === STEP 3: Extension Fallbacks (for problematic formats) ===
-  // TGA: Some TGAs have no reliable magic signature
+  // === STEP 3: Extension Fallbacks ===
   if (fmt == L"Unknown") {
-    const std::wstring_view ext = QuickView::ExtensionOf(filePath);
     if (QuickView::ExtEqualsIgnoreCase(ext, L".tga"))
       return L"TGA";
     if (QuickView::ExtEqualsIgnoreCase(ext, L".jxl"))
       return L"JXL";
     if (QuickView::ExtEqualsIgnoreCase(ext, L".dds"))
       return L"DDS";
-    if (QuickView::ExtEqualsIgnoreCase(ext, L".wdp") || QuickView::ExtEqualsIgnoreCase(ext, L".hdp") ||
+    if (QuickView::ExtEqualsIgnoreCase(ext, L".wdp") ||
+        QuickView::ExtEqualsIgnoreCase(ext, L".hdp") ||
         QuickView::ExtEqualsIgnoreCase(ext, L".jxr"))
       return L"JXR";
     if (QuickView::ExtEqualsIgnoreCase(ext, L".hif"))
@@ -1584,6 +1692,30 @@ static std::wstring DetectFormatFromContent(LPCWSTR filePath) {
   }
 
   return fmt;
+}
+
+static std::wstring DetectFormatFromContent(LPCWSTR filePath) {
+  if (!filePath)
+    return L"Unknown";
+
+  // === STEP 1: Extension-based RAW Detection (Highest Priority) ===
+  if (QuickView::IsRawPath(filePath))
+    return L"RAW";
+
+  const std::wstring_view ext = QuickView::ExtensionOf(filePath);
+  if (QuickView::ExtEqualsIgnoreCase(ext, L".svg"))
+    return L"SVG";
+  if (QuickView::ExtEqualsIgnoreCase(ext, L".emf") ||
+      QuickView::ExtEqualsIgnoreCase(ext, L".emz"))
+    return L"EMF";
+  if (QuickView::ExtEqualsIgnoreCase(ext, L".wmf") ||
+      QuickView::ExtEqualsIgnoreCase(ext, L".wmz"))
+    return L"WMF";
+
+  // === STEP 2: Magic Bytes Detection (for non-RAW formats) ===
+  uint8_t magic[64] = {0};
+  size_t read = PeekHeader(filePath, magic, 64);
+  return DetectFormatFromHeaderBytes(filePath, magic, read);
 }
 
 static QuickView::ColorPrimaries GuessPrimariesFromMetadataColorSpace(
@@ -1947,7 +2079,10 @@ static int ReadJpegExifOrientation(const uint8_t *data, size_t size) {
     if (marker == 0xD9 || marker == 0xDA)
       break;
 
-    uint16_t segLen = (data[offset + 2] << 8) | data[offset + 3];
+    uint16_t segLen = (static_cast<uint16_t>(data[offset + 2]) << 8) | data[offset + 3];
+    if (segLen < 2 || static_cast<size_t>(segLen) > size - (offset + 2)) {
+      break;
+    }
 
     // APP1 (EXIF)
     if (marker == 0xE1 && segLen > 8) {
@@ -1979,7 +2114,7 @@ static int ReadJpegExifOrientation(const uint8_t *data, size_t size) {
 
         // IFD0 offset
         uint32_t ifdOffset = read32(tiff + 4);
-        if (ifdOffset + 2 > tiffLen)
+        if (static_cast<uint64_t>(ifdOffset) + 2 > tiffLen)
           return 1;
 
         const uint8_t *ifd = tiff + ifdOffset;
@@ -2220,45 +2355,82 @@ static int GetJpegQualityFromBuffer(const uint8_t *data, size_t size) {
   if (!data || size < 20)
     return -1;
 
-  // Search for DQT marker (0xFF, 0xDB)
-  for (size_t i = 0; i < size - 70; i++) {
-    if (data[i] == 0xFF && data[i + 1] == 0xDB) {
-      // Found DQT marker
-      size_t offset = i + 4; // Skip marker + length
-      if (offset + 64 >= size)
-        return -1;
-
-      // Read first 64 quantization values
-      int qtable[64];
-      for (int j = 0; j < 64; j++) {
-        qtable[j] = data[offset + j];
+  auto ComputeQualityFromQTable64 = [](const uint8_t *qBytes) -> int {
+    double total_scale = 0.0;
+    for (int j = 0; j < 64; j++) {
+      if (std_luminance_qtable[j] > 0) {
+        total_scale += static_cast<double>(qBytes[j]) / std_luminance_qtable[j];
       }
+    }
+    const double avg_scale = total_scale / 64.0;
+    int quality;
+    if (avg_scale <= 0.0)
+      quality = 100;
+    else if (avg_scale >= 1.0)
+      quality = static_cast<int>(50.0 / avg_scale);
+    else
+      quality = static_cast<int>(100.0 - (avg_scale * 50.0));
 
-      // Calculate average scale compared to standard table
-      double total_scale = 0.0;
-      for (int j = 0; j < 64; j++) {
-        if (std_luminance_qtable[j] > 0) {
-          total_scale += (double)qtable[j] / std_luminance_qtable[j];
+    if (quality > 100)
+      quality = 100;
+    if (quality < 1)
+      quality = 1;
+    return quality;
+  };
+
+  // Fast structured JPEG marker scan: jump segment-by-segment up to SOS (0xFF 0xDA),
+  // avoiding false positives inside EXIF/XMP/ICC payloads and skipping entropy data.
+  if (size >= 4 && data[0] == 0xFF && data[1] == 0xD8) {
+    size_t pos = 2;
+    const size_t headerLimit = (std::min)(size, static_cast<size_t>(1048576));
+    while (pos + 4 <= headerLimit) {
+      if (data[pos] != 0xFF) {
+        ++pos;
+        continue;
+      }
+      while (pos < headerLimit && data[pos] == 0xFF) {
+        ++pos;
+      }
+      if (pos >= headerLimit)
+        break;
+
+      const uint8_t marker = data[pos++];
+      if (marker == 0x00 || marker == 0x01 || (marker >= 0xD0 && marker <= 0xD8)) {
+        continue;
+      }
+      if (marker == 0xD9 || marker == 0xDA) { // EOI or SOS (scan entropy stream starts)
+        break;
+      }
+      if (pos + 2 > headerLimit)
+        break;
+
+      const uint16_t segLen =
+          (static_cast<uint16_t>(data[pos]) << 8) | data[pos + 1];
+      if (segLen < 2 || pos + segLen > size)
+        break;
+
+      if (marker == 0xDB && segLen >= 67) {
+        const uint8_t pq = (data[pos + 2] >> 4) & 0x0F;
+        if (pq == 0) {
+          return ComputeQualityFromQTable64(data + pos + 3);
         }
       }
-      double avg_scale = total_scale / 64.0;
+      pos += segLen;
+    }
+    return -1;
+  }
 
-      // Convert scale to quality (0-100)
-      int quality;
-      if (avg_scale <= 0.0)
-        quality = 100;
-      else if (avg_scale >= 1.0) {
-        quality = (int)(50.0 / avg_scale);
-      } else {
-        quality = (int)(100.0 - (avg_scale * 50.0));
+  // Fallback for non-SOI fragments: strictly cap scan at 64 KB
+  const size_t scanLimit = (std::min)(size, static_cast<size_t>(65536));
+  if (scanLimit <= 70)
+    return -1;
+  for (size_t i = 0; i < scanLimit - 70; i++) {
+    if (data[i] == 0xFF && data[i + 1] == 0xDB) {
+      size_t offset = i + 5;
+      if (offset + 64 <= size) {
+        return ComputeQualityFromQTable64(data + offset);
       }
-
-      if (quality > 100)
-        quality = 100;
-      if (quality < 1)
-        quality = 1;
-
-      return quality;
+      return -1;
     }
   }
   return -1;
@@ -2800,7 +2972,7 @@ HRESULT CImageLoader::FullDecodeToMMF(
       return p->buf;
     };
 
-    if (!WuffsLoader::DecodePNG(data, size, &w, &h, allocator, {}) ||
+    if (!WuffsLoader::DecodePNG(data, size, &w, &h, allocator, checkCancel) ||
         !allocOK) {
       QV_LOG("MMF_Decode", TraceLoggingString("PNG Failed", "Action"));
       return E_FAIL;
@@ -2820,7 +2992,7 @@ HRESULT CImageLoader::FullDecodeToMMF(
   // Works for AVIF, HEIC, TIFF, and any other format.
   // ---------------------------------------------------------------
   QuickView::RawImageFrame heapFrame;
-  HRESULT hr = FullDecodeFromMemory(data, size, &heapFrame);
+  HRESULT hr = FullDecodeFromMemory(data, size, &heapFrame, checkCancel);
   if (FAILED(hr) || !heapFrame.IsValid())
     return FAILED(hr) ? hr : E_FAIL;
 
@@ -4708,7 +4880,7 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize,
     // Get file size (cheap)
     // Actually we iterate file path anyway. But if we read to vector, we know size.
     // If we use WIC, we might not know size unless we query file.
-    // Let's use std::filesystem for non-vector paths logic
+    // Query file size via Win32 attribute probe
     // But most paths read vector.
     
     // Detect format
@@ -4717,9 +4889,7 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize,
     // [Phase 6] Surgical Optimizations
     
     // Check IO Cost FIRST
-    uintmax_t fsize = 0;
-    std::error_code ec;
-    fsize = std::filesystem::file_size(filePath, ec);
+    uintmax_t fsize = QuickView::QueryFileSize(filePath);
 
     // [STE] Universal Scout Lane Hard Limit
     // If Scout Lane (!allowSlow) AND file > 10MB, ABORT immediately.
@@ -6692,46 +6862,6 @@ static HRESULT Load(const uint8_t *pBuf, size_t bufSize,
     }
   }
 
-  // [v6.0] Fill FormatDetails (Q + Subsampling)
-  {
-    // Estimate Quality
-    int q = GetJpegQualityFromBuffer(pBuf, bufSize);
-
-    // Determine Subsampling
-    std::wstring sub = L"";
-    if (cinfo.num_components == 3) {
-      int h0 = cinfo.comp_info[0].h_samp_factor;
-      int v0 = cinfo.comp_info[0].v_samp_factor;
-      int h1 = cinfo.comp_info[1].h_samp_factor;
-      int v1 = cinfo.comp_info[1].v_samp_factor;
-      int h2 = cinfo.comp_info[2].h_samp_factor;
-      int v2 = cinfo.comp_info[2].v_samp_factor;
-
-      if (h0 == 2 && v0 == 2 && h1 == 1 && v1 == 1 && h2 == 1 && v2 == 1)
-        sub = L"4:2:0";
-      else if (h0 == 2 && v0 == 1 && h1 == 1 && v1 == 1 && h2 == 1 && v2 == 1)
-        sub = L"4:2:2";
-      else if (h0 == 1 && v0 == 1 && h1 == 1 && v1 == 1 && h2 == 1 && v2 == 1)
-        sub = L"4:4:4";
-      else
-        sub = L"4:4:0"; // Approximation for others
-    } else if (cinfo.num_components == 1) {
-      sub = L"Gray";
-    }
-
-    wchar_t fmtBuf[64];
-    if (q > 0)
-      swprintf_s(fmtBuf, L"%s Q=%d", sub.c_str(), q);
-    else
-      swprintf_s(fmtBuf, L"%s", sub.c_str());
-    result.metadata.FormatDetails = fmtBuf;
-
-    // Progressive?
-    if (jpeg_has_multiple_scans(&cinfo)) {
-      result.metadata.FormatDetails += L" Prog";
-    }
-  }
-
   // IDCT Scaling Logic
   cinfo.scale_num = 1;
   cinfo.scale_denom = 1;
@@ -6831,15 +6961,29 @@ static HRESULT Load(const uint8_t *pBuf, size_t bufSize,
   }
 
   bool aborted = false;
+  uint32_t scanlinesSinceCheck = 0;
+  JSAMPROW row_pointers[16];
   while (cinfo.output_scanline < cinfo.output_height) {
-    if (ctx.checkCancel && ctx.checkCancel()) {
-      aborted = true;
-      break;
+    if (ctx.checkCancel &&
+        (scanlinesSinceCheck == 0 || scanlinesSinceCheck >= 64)) {
+      if (ctx.checkCancel()) {
+        aborted = true;
+        break;
+      }
+      scanlinesSinceCheck = 0;
     }
 
-    JSAMPROW row_pointer[1];
-    row_pointer[0] = &pixels[(size_t)cinfo.output_scanline * stride];
-    jpeg_read_scanlines(&cinfo, row_pointer, 1);
+    const JDIMENSION remaining = cinfo.output_height - cinfo.output_scanline;
+    const JDIMENSION batch = (remaining < 16) ? remaining : 16;
+    for (JDIMENSION i = 0; i < batch; ++i) {
+      row_pointers[i] =
+          &pixels[(static_cast<size_t>(cinfo.output_scanline) + i) * stride];
+    }
+    const JDIMENSION readCount =
+        jpeg_read_scanlines(&cinfo, row_pointers, batch);
+    if (readCount == 0)
+      break;
+    scanlinesSinceCheck += readCount;
   }
 
   if (aborted) {
@@ -9198,8 +9342,14 @@ HRESULT CImageLoader::LoadImageUnifiedInternal(LPCWSTR filePath,
   if (!filePath)
     return E_INVALIDARG;
 
+  const bool hasValidMmf = (ctx.sourceMmf && ctx.sourceMmf->IsValid() &&
+                            ctx.sourceMmf->data() && ctx.sourceMmf->size() > 0);
+
   // [v9.2] Use path-based detection directly (handles RAW extensions properly)
-  std::wstring fmt = DetectFormatFromContent(filePath);
+  std::wstring fmt =
+      hasValidMmf ? DetectFormatFromHeaderBytes(filePath, ctx.sourceMmf->data(),
+                                                ctx.sourceMmf->size())
+                  : DetectFormatFromContent(filePath);
 
   // [Fix] Ensure Format is stored in metadata for extension mismatch detection
   // (main.cpp)
@@ -9221,7 +9371,8 @@ HRESULT CImageLoader::LoadImageUnifiedInternal(LPCWSTR filePath,
   }
 
   if (IsMetafileFormat(fmt)) {
-    auto fileMap = std::make_shared<QuickView::MappedFile>(filePath);
+    auto fileMap =
+        hasValidMmf ? ctx.sourceMmf : std::make_shared<QuickView::MappedFile>(filePath);
     if (!fileMap->IsValid() || !fileMap->data() || fileMap->size() == 0)
       return E_FAIL;
     return DecodeMetafileBuffer(fileMap->data(), fileMap->size(), fmt, ctx,
@@ -9233,7 +9384,8 @@ HRESULT CImageLoader::LoadImageUnifiedInternal(LPCWSTR filePath,
   bool isBufferCodec = IsUnifiedBufferCodec(fmt) || fmt == L"HEIC";
 
   if (isBufferCodec) {
-    auto fileMap = std::make_shared<QuickView::MappedFile>(filePath);
+    auto fileMap =
+        hasValidMmf ? ctx.sourceMmf : std::make_shared<QuickView::MappedFile>(filePath);
     if (!fileMap->IsValid())
       return E_FAIL;
 
@@ -9241,60 +9393,8 @@ HRESULT CImageLoader::LoadImageUnifiedInternal(LPCWSTR filePath,
     size_t mappedSize = fileMap->size();
 
     // Dispatch
-    if (ShouldProbeAnimatedBufferCodec(fmt)) { // APNG supported by Wuffs
-      if (fileMap->IsValid()) {
-        std::unique_ptr<QuickView::IAnimationDecoder> animator;
-        if (fmt == L"WebP") {
-          animator = QuickView::CreateWebPAnimator();
-        } else if (fmt == L"AVIF") {
-          animator = QuickView::CreateAvifAnimator();
-        } else if (fmt == L"JXL") {
-          animator = QuickView::CreateJxlAnimator();
-        } else {
-          animator = QuickView::CreateWuffsAnimator();
-        }
-
-        if (animator &&
-            animator->Initialize(fileMap, QuickView::PixelFormat::BGRA8888)) {
-          if (animator->IsAnimated()) {
-            auto firstFrame = animator->GetNextFrame();
-            if (firstFrame && firstFrame->pixels) {
-              result.width = firstFrame->width;
-              result.height = firstFrame->height;
-              result.stride = firstFrame->stride;
-              result.format = firstFrame->format;
-
-              // Steal pixels
-              result.pixels = firstFrame->pixels;
-              firstFrame->pixels = nullptr; // prevent double free
-
-              // Propagate Animation meta and Animator link
-              result.frameMeta = firstFrame->frameMeta;
-              result.animator = std::move(animator);
-              result.metadata.LoaderName =
-                  fmt == L"WebP"
-                      ? L"WebPAnimator"
-                      : (fmt == L"AVIF" ? L"AvifAnimator"
-                                        : (fmt == L"JXL" ? L"JxlAnimator"
-                                                         : L"WuffsAnimator"));
-              QV_LOG("Anim_Loader",
-                     TraceLoggingString("Hijack Success", "Action"));
-              return S_OK;
-            } else {
-              QV_LOG("Anim_Loader",
-                     TraceLoggingString("GetNextFrame Null", "Action"));
-            }
-            // QV_LOG("Anim_Loader", TraceLoggingString("NotAnimated",
-            // "Action"));
-          }
-        } else {
-          // QV_LOG("Anim_Loader", TraceLoggingString("InitializeFailed",
-          // "Action"));
-        }
-      } else {
-        QV_LOG("Anim_Loader",
-               TraceLoggingString("MappedFile Invalid", "Action"));
-      }
+    if (TryProbeAnimatedBuffer(fileMap, fmt, result, &ctx)) { // APNG supported by Wuffs
+      return S_OK;
     }
 
     if (fmt == L"HEIC") {
@@ -9308,10 +9408,16 @@ HRESULT CImageLoader::LoadImageUnifiedInternal(LPCWSTR filePath,
           uint32_t baseWidth = result.width;
           uint32_t baseHeight = result.height;
           auto callback = ctx.onAuxLayerReady;
+          ctx.onAuxLayerReady.Clear();
 
           // Capture fileMap shared_ptr to keep memory alive without copying on
           // main thread
-          std::thread([fileMap, headroom, baseWidth, baseHeight, callback]() {
+          QuickView::RunDetached([fileMap, headroom, baseWidth, baseHeight, callback]() mutable {
+            struct AuxCallbackGuard {
+              QuickView::AuxLayerCallback &cb;
+              ~AuxCallbackGuard() { cb.DestroyCtx(); }
+            } cbGuard{callback};
+
             HRESULT hrCo = CoInitializeEx(NULL, COINIT_MULTITHREADED);
             if (FAILED(hrCo))
               return;
@@ -9470,7 +9576,7 @@ HRESULT CImageLoader::LoadImageUnifiedInternal(LPCWSTR filePath,
             }
 
             CoUninitialize();
-          }).detach();
+          });
         }
         return S_OK;
       }
@@ -9664,10 +9770,10 @@ HRESULT CImageLoader::GetImageInfoFast(LPCWSTR filePath, ImageInfo *pInfo) {
     return E_INVALIDARG;
   *pInfo = ImageInfo{}; // Reset
 
-  // 1. Get file size (cheap filesystem call)
-  std::error_code ec_size;
-  pInfo->fileSize = std::filesystem::file_size(filePath, ec_size);
-  if (ec_size) {
+  // 1. Get file size (cheap Win32 GetFileAttributesExW call)
+  bool sizeOk = false;
+  pInfo->fileSize = QuickView::QueryFileSize(filePath, &sizeOk);
+  if (!sizeOk) {
     // Fallback for VFS
     CImageLoader::ImageHeaderInfo vfsPeek = PeekHeader(filePath);
     if (vfsPeek.fileSize > 0)
@@ -9686,10 +9792,20 @@ HRESULT CImageLoader::GetImageInfoFast(LPCWSTR filePath, ImageInfo *pInfo) {
 
   if (bytesRead < 12)
     return E_FAIL;
-  header.resize(bytesRead); // Clamp to actual read
 
-  const uint8_t *data = header.data();
-  size_t size = header.size();
+  uint64_t savedFileSize = pInfo->fileSize;
+  HRESULT hr = GetImageInfoFastFromMemory(header.data(), bytesRead, pInfo, filePath);
+  if (SUCCEEDED(hr)) {
+    pInfo->fileSize = savedFileSize;
+  }
+  return hr;
+}
+
+HRESULT CImageLoader::GetImageInfoFastFromMemory(const uint8_t *data, size_t size, ImageInfo *pInfo, LPCWSTR filePath) {
+  if (!data || size < 12 || !pInfo)
+    return E_INVALIDARG;
+  *pInfo = ImageInfo{};
+  pInfo->fileSize = size;
 
   // 3. Detect format and parse header
 
@@ -9742,6 +9858,7 @@ HRESULT CImageLoader::GetImageInfoFast(LPCWSTR filePath, ImageInfo *pInfo) {
       if (w > 0 && h > 0) {
         pInfo->width = w;
         pInfo->height = h;
+        pInfo->exifOrientation = ReadJpegExifOrientation(data, size);
         int subsamp = tj3Get(tj, TJPARAM_SUBSAMP);
         pInfo->channels = (subsamp == TJSAMP_GRAY) ? 1 : 3;
         pInfo->bitDepth = 8;
@@ -9809,17 +9926,18 @@ HRESULT CImageLoader::GetImageInfoFast(LPCWSTR filePath, ImageInfo *pInfo) {
     if (isAvif || isHeic) {
       pInfo->format = isAvif ? L"AVIF" : L"HEIC";
 
-      // Try robust file-based box parsing first. It handles cases where 64KB
-      // head is insufficient.
+      // Try robust box parsing first (use in-memory helpers when no disk re-open is desired).
       uint32_t boxW = 0, boxH = 0;
-      if (isAvif && GetAVIFDimensions(filePath, &boxW, &boxH)) {
+      if (isAvif && (filePath ? GetAVIFDimensions(filePath, &boxW, &boxH)
+                              : GetAVIFDimensionsFromMemory(data, size, &boxW, &boxH))) {
         pInfo->width = boxW;
         pInfo->height = boxH;
         pInfo->bitDepth =
             10; // Conservative default; exact value may require full decode.
         return S_OK;
       }
-      if (GetISOBMFFDimensions(filePath, &boxW, &boxH)) {
+      if (filePath ? GetISOBMFFDimensions(filePath, &boxW, &boxH)
+                   : GetISOBMFFDimensionsFromMemory(data, size, &boxW, &boxH)) {
         pInfo->width = boxW;
         pInfo->height = boxH;
         pInfo->bitDepth = 10;
@@ -10206,7 +10324,7 @@ HRESULT CImageLoader::GetImageInfoFast(LPCWSTR filePath, ImageInfo *pInfo) {
       } else {
         // IFD is outside the 64KB chunk. We must open the file and read it.
         FILE* f = nullptr;
-        if (_wfopen_s(&f, filePath, L"rb") == 0 && f != nullptr) {
+        if (filePath && _wfopen_s(&f, filePath, L"rb") == 0 && f != nullptr) {
           _fseeki64(f, ifdOffset, SEEK_SET);
           uint8_t countBuf[2];
           if (fread(countBuf, 1, 2, f) == 2) {
@@ -10355,7 +10473,7 @@ HRESULT CImageLoader::GetImageInfoFast(LPCWSTR filePath, ImageInfo *pInfo) {
   };
 
   bool isSvgExt = false;
-  std::wstring pathStr = filePath;
+  std::wstring pathStr = filePath ? filePath : L"";
   if (pathStr.length() > 4) {
     std::wstring ext = pathStr.substr(pathStr.length() - 4);
     if (_wcsicmp(ext.c_str(), L".svg") == 0)
@@ -10372,7 +10490,8 @@ HRESULT CImageLoader::GetImageInfoFast(LPCWSTR filePath, ImageInfo *pInfo) {
     pInfo->height = 512;
 
     // Parse Dimensions (approximate from first 64KB)
-    std::string xml(data, data + size);
+    const size_t xmlProbeBytes = (std::min)(size, size_t{ 65536 });
+    std::string xml(data, data + xmlProbeBytes);
 
     {
       float pw = 0, ph = 0;
@@ -11315,9 +11434,11 @@ PopulateExifFromQueryReader(IWICMetadataQueryReader *reader,
       break;
     }
 
-  // Flash
+  // Flash (Tag 37385 / 0x9209)
   if (pMetadata->Flash.empty()) {
-    const wchar_t *flashQueries[] = {L"/app1/ifd/exif/{ushort=37377}",
+    const wchar_t *flashQueries[] = {L"/app1/ifd/exif/{ushort=37385}",
+                                     L"/ifd/exif/{ushort=37385}",
+                                     L"/app1/ifd/exif/{ushort=37377}",
                                      L"/ifd/exif/{ushort=37377}"};
     for (const auto &q : flashQueries)
       if (SUCCEEDED(reader->GetMetadataByName(q, &var))) {
@@ -11502,9 +11623,9 @@ static void PopulateFileStats(LPCWSTR filePath,
     return;
 
   // File Size
-  std::error_code ec;
-  uintmax_t size = std::filesystem::file_size(filePath, ec);
-  if (!ec)
+  bool sizeOk = false;
+  uint64_t size = QuickView::QueryFileSize(filePath, &sizeOk);
+  if (sizeOk)
     meta->FileSize = size;
 
   // Date (Fallback to Modify Date) + [v5.3] Timestamps
@@ -11908,8 +12029,8 @@ void CImageLoader::ComputeHistogramFromFrame(
     }
   }
 
-  // Laplacian Sharpness (sampled)
-  if ((UINT)frame.width > lapStep * 2 && (UINT)frame.height > lapStep * 2) {
+  // Laplacian Sharpness (sampled with fixed 1-pixel kernel radius)
+  if ((UINT)frame.width > 2 && (UINT)frame.height > 2) {
     auto getLumaAt = [&](const uint8_t *rowPtr, UINT x) -> int {
       if (isFloat) {
         const float *px = (const float *)rowPtr + x * 4;
@@ -11924,15 +12045,16 @@ void CImageLoader::ComputeHistogramFromFrame(
       }
     };
 
-    for (UINT y = lapStep; y + lapStep < (UINT)frame.height; y += lapStep) {
-      const uint8_t *rowPrev = ptr + (UINT64)(y - lapStep) * stride;
+    UINT sampleStep = std::max(1u, lapStep);
+    for (UINT y = 1; y + 1 < (UINT)frame.height; y += sampleStep) {
+      const uint8_t *rowPrev = ptr + (UINT64)(y - 1) * stride;
       const uint8_t *rowCurr = ptr + (UINT64)y * stride;
-      const uint8_t *rowNext = ptr + (UINT64)(y + lapStep) * stride;
+      const uint8_t *rowNext = ptr + (UINT64)(y + 1) * stride;
 
-      for (UINT x = lapStep; x + lapStep < (UINT)frame.width; x += lapStep) {
+      for (UINT x = 1; x + 1 < (UINT)frame.width; x += sampleStep) {
         const int center = getLumaAt(rowCurr, x);
-        const int left = getLumaAt(rowCurr, x - lapStep);
-        const int right = getLumaAt(rowCurr, x + lapStep);
+        const int left = getLumaAt(rowCurr, x - 1);
+        const int right = getLumaAt(rowCurr, x + 1);
         const int up = getLumaAt(rowPrev, x);
         const int down = getLumaAt(rowNext, x);
         const int lap = (up + down + left + right) - 4 * center;
@@ -13104,27 +13226,14 @@ static bool TryParseSvgViewBoxSize(const std::string &vbStr, float *outW,
   return true;
 }
 
-// Helper: Parse SVG dimensions using Regex (Header only)
-static bool GetSvgDimensions(LPCWSTR filePath, uint32_t *width,
-                             uint32_t *height) {
-  if (!width || !height)
+// Helper: Parse SVG dimensions from memory buffer (Header only)
+static bool GetSvgDimensionsFromMemory(const uint8_t *data, size_t size,
+                                       uint32_t *width, uint32_t *height) {
+  if (!data || size == 0 || !width || !height)
     return false;
 
-  // Read first 4KB (usually contains header)
-  HANDLE hFile = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, nullptr,
-                             OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-  if (hFile == INVALID_HANDLE_VALUE)
-    return false;
-
-  char buffer[4096];
-  DWORD bytesRead = 0;
-  ReadFile(hFile, buffer, sizeof(buffer), &bytesRead, nullptr);
-  CloseHandle(hFile);
-
-  if (bytesRead == 0)
-    return false;
-
-  std::string header(buffer, bytesRead);
+  const size_t probeLen = (std::min)(size, static_cast<size_t>(4096));
+  std::string header(reinterpret_cast<const char *>(data), probeLen);
 
   float w = 0, h = 0;
   std::string wStr = GetSvgRootAttrVal(header, "width");
@@ -13147,6 +13256,53 @@ static bool GetSvgDimensions(LPCWSTR filePath, uint32_t *width,
   }
 
   return false;
+}
+
+// Helper: Parse SVG dimensions using Regex (Header only)
+static bool GetSvgDimensions(LPCWSTR filePath, uint32_t *width,
+                             uint32_t *height) {
+  if (!width || !height)
+    return false;
+
+  // Read first 4KB (usually contains header)
+  HANDLE hFile = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, nullptr,
+                             OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (hFile == INVALID_HANDLE_VALUE)
+    return false;
+
+  uint8_t buffer[4096];
+  DWORD bytesRead = 0;
+  ReadFile(hFile, buffer, sizeof(buffer), &bytesRead, nullptr);
+  CloseHandle(hFile);
+
+  return GetSvgDimensionsFromMemory(buffer, bytesRead, width, height);
+}
+
+// Helper: Parse AVIF dimensions from memory buffer using libavif (Header only)
+static bool GetAVIFDimensionsFromMemory(const uint8_t *data, size_t size,
+                                        uint32_t *width, uint32_t *height) {
+  if (!data || size < 100 || !width || !height)
+    return false;
+
+  avifDecoder *decoder = avifDecoderCreate();
+  if (!decoder)
+    return false;
+
+  bool success = false;
+  if (avifDecoderSetIOMemory(decoder, data, size) == AVIF_RESULT_OK) {
+    // [v6.9] Robust Header Parsing
+    decoder->strictFlags = AVIF_STRICT_DISABLED;
+    decoder->ignoreXMP = AVIF_TRUE;
+    decoder->ignoreExif = AVIF_TRUE;
+
+    if (avifDecoderParse(decoder) == AVIF_RESULT_OK) {
+      *width = decoder->image->width;
+      *height = decoder->image->height;
+      success = true;
+    }
+  }
+  avifDecoderDestroy(decoder);
+  return success;
 }
 
 // Helper: Parse AVIF dimensions using libavif (Header only)
@@ -13178,65 +13334,25 @@ static bool GetAVIFDimensions(LPCWSTR filePath, uint32_t *width,
   ReadFile(hFile, buffer.data(), bytesToRead, &bytesRead, nullptr);
   CloseHandle(hFile);
 
-  if (bytesRead < 100)
-    return false;
-
-  avifDecoder *decoder = avifDecoderCreate();
-  if (!decoder)
-    return false;
-
-  bool success = false;
-  if (avifDecoderSetIOMemory(decoder, buffer.data(), bytesRead) ==
-      AVIF_RESULT_OK) {
-    // [v6.9] Robust Header Parsing
-    decoder->strictFlags = AVIF_STRICT_DISABLED;
-    decoder->ignoreXMP = AVIF_TRUE;
-    decoder->ignoreExif = AVIF_TRUE;
-
-    if (avifDecoderParse(decoder) == AVIF_RESULT_OK) {
-      *width = decoder->image->width;
-      *height = decoder->image->height;
-      success = true;
-    }
-  }
-  avifDecoderDestroy(decoder);
-  return success;
+  return GetAVIFDimensionsFromMemory(buffer.data(), bytesRead, width, height);
 }
 
 // Helper: Read Big-Endian uint32
 static uint32_t ReadBE32(const uint8_t *p) {
-  return (p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3];
+  return (static_cast<uint32_t>(p[0]) << 24) |
+         (static_cast<uint32_t>(p[1]) << 16) |
+         (static_cast<uint32_t>(p[2]) << 8) | static_cast<uint32_t>(p[3]);
 }
 
-// Helper: Parse ISOBMFF to find HEIC/AVIF dimensions (ispe box)
-// [v9.8] Custom Parser. Robust fallback for both HEIC and AVIF when native
-// decoders fail to parse header.
-static bool GetISOBMFFDimensions(LPCWSTR filePath, uint32_t *width,
-                                 uint32_t *height) {
-  if (!width || !height)
+// Helper: Parse ISOBMFF from memory buffer to find HEIC/AVIF dimensions (ispe box)
+static bool GetISOBMFFDimensionsFromMemory(const uint8_t *data, size_t size,
+                                           uint32_t *width, uint32_t *height) {
+  if (!data || size < 12 || !width || !height)
     return false;
 
-  HANDLE hFile = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, nullptr,
-                             OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-  if (hFile == INVALID_HANDLE_VALUE)
-    return false;
-
-  // Read 64KB. Typically enough to reach 'ispe' in 'ipco'.
-  DWORD bytesToRead = 65536;
-  std::vector<uint8_t> buffer(bytesToRead);
-  DWORD bytesRead = 0;
-
-  if (!ReadFile(hFile, buffer.data(), bytesToRead, &bytesRead, nullptr)) {
-    CloseHandle(hFile);
-    return false;
-  }
-  CloseHandle(hFile);
-
-  if (bytesRead < 12)
-    return false;
-
-  const uint8_t *p = buffer.data();
-  const uint8_t *end = p + bytesRead;
+  const size_t probeLen = (std::min)(size, static_cast<size_t>(65536));
+  const uint8_t *p = data;
+  const uint8_t *end = p + probeLen;
 
   // Simple robust scan: Look for 'meta' -> 'iprp' -> 'ipco' -> 'ispe'
   // Recursive scanning is best, but for 64KB head, we can just linear scan
@@ -13323,11 +13439,144 @@ static bool GetISOBMFFDimensions(LPCWSTR filePath, uint32_t *width,
   return false;
 }
 
-// Simple robust scan: Look for 'meta' -> 'iprp' -> 'ipco' -> 'ispe'
+static bool GetISOBMFFDimensions(LPCWSTR filePath, uint32_t *width,
+                                 uint32_t *height) {
+  if (!width || !height)
+    return false;
+
+  HANDLE hFile = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, nullptr,
+                             OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (hFile == INVALID_HANDLE_VALUE)
+    return false;
+
+  DWORD bytesToRead = 65536;
+  std::vector<uint8_t> buffer(bytesToRead);
+  DWORD bytesRead = 0;
+
+  const BOOL ok = ReadFile(hFile, buffer.data(), bytesToRead, &bytesRead, nullptr);
+  CloseHandle(hFile);
+  if (!ok)
+    return false;
+
+  return GetISOBMFFDimensionsFromMemory(buffer.data(), bytesRead, width, height);
+}
+
+static void ClassifyImageHeader(CImageLoader &loader, LPCWSTR filePath,
+                                const uint8_t *memoryData, size_t memorySize,
+                                CImageLoader::ImageHeaderInfo &result) {
+  using ImageType = CImageLoader::ImageType;
+
+  // Check for embedded thumbnail (RAW files always have, JPEG may have)
+  result.hasEmbeddedThumb =
+      (result.format == L"RAW" || result.format == L"TIFF");
+  if (result.format == L"JPEG" && result.fileSize > 100 * 1024) {
+    result.hasEmbeddedThumb = true;
+  }
+
+  // === Classification Matrix (v3.2) ===
+  int64_t pixels = result.GetPixelCount();
+
+  if (result.format == L"JXL") {
+    bool isSmall = (result.fileSize < 1048576) && (pixels < 2000000);
+    result.type = isSmall ? ImageType::TypeA_Sprint : ImageType::TypeB_Heavy;
+  } else if (result.format == L"JPEG" || result.format == L"BMP") {
+    result.type = (pixels > 0 && pixels <= 8500000) ? ImageType::TypeA_Sprint
+                                                    : ImageType::TypeB_Heavy;
+  } else if (result.format == L"PNG" || result.format == L"WebP" ||
+             result.format == L"GIF") {
+    result.type = (pixels <= 4000000) ? ImageType::TypeA_Sprint
+                                      : ImageType::TypeB_Heavy;
+  } else if (result.format == L"RAW" || result.format == L"TIFF") {
+    result.hasEmbeddedThumb = true;
+    int previewW = 0, previewH = 0;
+    if (SUCCEEDED(loader.GetEmbeddedPreviewInfo(filePath, &previewW, &previewH))) {
+      result.embeddedPreviewWidth = previewW;
+      result.embeddedPreviewHeight = previewH;
+      result.embeddedPreviewIsJpeg = true;
+
+      int64_t previewPixels = (int64_t)previewW * previewH;
+      result.type = (previewPixels > 0 && previewPixels < 2'000'000)
+                        ? ImageType::TypeA_Sprint
+                        : ImageType::TypeB_Heavy;
+    } else {
+      result.type = ImageType::TypeB_Heavy;
+    }
+  } else if (result.format == L"AVIF" || result.format == L"HEIC") {
+    result.type = (pixels > 0 && pixels <= 4000000) ? ImageType::TypeA_Sprint
+                                                    : ImageType::TypeB_Heavy;
+  } else if (result.format == L"SVG") {
+    uint32_t w = 0, h = 0;
+    bool gotDims = (memoryData && memorySize > 0)
+                       ? GetSvgDimensionsFromMemory(memoryData, memorySize, &w, &h)
+                       : GetSvgDimensions(filePath, &w, &h);
+    if (gotDims) {
+      result.width = w;
+      result.height = h;
+    } else {
+      result.width = 512;
+      result.height = 512;
+    }
+    result.type = (result.fileSize <= 512 * 1024) ? ImageType::TypeA_Sprint
+                                                  : ImageType::TypeB_Heavy;
+  } else {
+    if (result.fileSize < 2 * 1024 * 1024 && pixels < 2100000) {
+      result.type = ImageType::TypeA_Sprint;
+    } else if (result.width > 0) {
+      result.type = ImageType::TypeB_Heavy;
+    }
+  }
+}
 
 // ============================================================================
 // Pre-flight Check (v3.1) - Fast header classification
 // ============================================================================
+CImageLoader::ImageHeaderInfo CImageLoader::PeekHeaderFromMemory(
+    LPCWSTR filePath, const uint8_t *data, size_t size) {
+  ImageHeaderInfo result;
+  if (!filePath)
+    return result;
+
+  if (!data || size == 0 || wcschr(filePath, L'|') != nullptr) {
+    return PeekHeader(filePath);
+  }
+
+  result.fileSize = size;
+  result.format = DetectFormatFromHeaderBytes(filePath, data, size);
+  if (result.format == L"Unknown")
+    return result;
+
+  if (result.format == L"RAW") {
+    return PeekHeader(filePath);
+  }
+
+  ImageInfo info;
+  if (SUCCEEDED(GetImageInfoFastFromMemory(data, size, &info, nullptr))) {
+    result.width = info.width;
+    result.height = info.height;
+    result.exifOrientation = info.exifOrientation;
+  }
+
+  if (result.width == 0) {
+    if (result.format == L"AVIF") {
+      uint32_t w = 0, h = 0;
+      if (GetAVIFDimensionsFromMemory(data, size, &w, &h) ||
+          GetISOBMFFDimensionsFromMemory(data, size, &w, &h)) {
+        result.width = w;
+        result.height = h;
+      }
+    } else if (result.format == L"HEIC") {
+      uint32_t w = 0, h = 0;
+      if (GetISOBMFFDimensionsFromMemory(data, size, &w, &h)) {
+        result.width = w;
+        result.height = h;
+      }
+    }
+  }
+
+  ClassifyImageHeader(*this, filePath, data, size, result);
+  return result;
+}
+
 CImageLoader::ImageHeaderInfo CImageLoader::PeekHeader(LPCWSTR filePath) {
   ImageHeaderInfo result;
   if (!filePath)
@@ -13358,11 +13607,13 @@ CImageLoader::ImageHeaderInfo CImageLoader::PeekHeader(LPCWSTR filePath) {
     if (lastDot != std::wstring::npos) {
       std::wstring ext = pathStr.substr(lastDot);
       std::transform(ext.begin(), ext.end(), ext.begin(), ::towlower);
-      if (ext == L".png")
+      if (ext == L".png" || ext == L".apng")
         result.format = L"PNG";
+      else if (ext == L".gif")
+        result.format = L"GIF";
       else if (ext == L".webp")
         result.format = L"WEBP";
-      else if (ext == L".avif")
+      else if (ext == L".avif" || ext == L".avifs")
         result.format = L"AVIF";
       else if (ext == L".jxl")
         result.format = L"JXL";
@@ -13385,8 +13636,7 @@ CImageLoader::ImageHeaderInfo CImageLoader::PeekHeader(LPCWSTR filePath) {
   }
 
   // Get file size
-  std::error_code ec;
-  result.fileSize = std::filesystem::file_size(filePath, ec);
+  result.fileSize = QuickView::QueryFileSize(filePath);
 
   // [v9.3] Use extension-first format detection (handles RAW correctly)
   result.format = DetectFormatFromContent(filePath);
@@ -13398,6 +13648,7 @@ CImageLoader::ImageHeaderInfo CImageLoader::PeekHeader(LPCWSTR filePath) {
   if (SUCCEEDED(GetImageInfoFast(filePath, &info))) {
     result.width = info.width;
     result.height = info.height;
+    result.exifOrientation = info.exifOrientation;
   }
 
   // [v6.6 Fix] AVIF/HEIC: Try to get real dimensions using libavif (for AVIF)
@@ -13405,14 +13656,8 @@ CImageLoader::ImageHeaderInfo CImageLoader::PeekHeader(LPCWSTR filePath) {
   if (result.width == 0) {
     if (result.format == L"AVIF") {
       uint32_t w = 0, h = 0;
-      // Try native AVIF decoder first (supports some files)
-      if (GetAVIFDimensions(filePath, &w, &h)) {
-        result.width = w;
-        result.height = h;
-      }
-      // Fallback: Generic ISOBMFF parser (handles .avifs or other containers
-      // where libavif might fail)
-      else if (GetISOBMFFDimensions(filePath, &w, &h)) {
+      if (GetAVIFDimensions(filePath, &w, &h) ||
+          GetISOBMFFDimensions(filePath, &w, &h)) {
         result.width = w;
         result.height = h;
       }
@@ -13425,122 +13670,7 @@ CImageLoader::ImageHeaderInfo CImageLoader::PeekHeader(LPCWSTR filePath) {
     }
   }
 
-  // Check for embedded thumbnail (RAW files always have, JPEG may have)
-  result.hasEmbeddedThumb =
-      (result.format == L"RAW" || result.format == L"TIFF");
-  if (result.format == L"JPEG" &&
-      result.fileSize > 100 * 1024) { // >100KB JPEG likely has Exif
-    result.hasEmbeddedThumb = true;
-  }
-
-  // === Classification Matrix (v3.2) ===
-  int64_t pixels = result.GetPixelCount();
-
-  // Type A (Express Lane ONLY): Small enough for fast full decode
-  // Type B (Heavy Lane): Large images routed to Heavy Lane (full decode for
-  // non-Titan)
-
-  // [v4.1] JXL Optimization: Always allow Sprint (Scout Lane)
-  // Small JXL -> Fast Full Decode (via fallback if needed? Currently DC only in
-  // LoadFastPass) Large JXL -> Fast DC Preview (LoadThumbJXL_DC)
-  if (result.format == L"JXL") {
-    // [v9.3] Fix: Large JXL should be TypeB (Heavy) to align with Dispatch
-    // properties. Previously unconditional TypeA caused FastLane Choke on 89MP
-    // images.
-    bool isSmall = (result.fileSize < 1048576) && (pixels < 2000000);
-
-    if (isSmall) {
-      result.type = ImageType::TypeA_Sprint;
-    } else {
-      result.type = ImageType::TypeB_Heavy;
-    }
-  } else if (result.format == L"JPEG" || result.format == L"BMP") {
-    // JPEG/BMP: ≤8.5MP → Express (full decode is fast)
-    // >8.5MP → Heavy (Scout may extract thumb if hasEmbeddedThumb)
-    // [v3.3] Safety: If pixels unknown (0), default to Heavy (Scout might choke
-    // on huge image)
-    if (pixels > 0 && pixels <= 8500000) {
-      result.type = ImageType::TypeA_Sprint;
-    } else {
-      result.type = ImageType::TypeB_Heavy;
-    }
-  } else if (result.format == L"PNG" || result.format == L"WebP" ||
-             result.format == L"GIF") {
-    // PNG/WebP/GIF: ≤4MP → Express, otherwise Heavy
-    if (pixels <= 4000000) {
-      result.type = ImageType::TypeA_Sprint;
-    } else {
-      result.type = ImageType::TypeB_Heavy;
-    }
-  } else if (result.format == L"RAW" || result.format == L"TIFF") {
-    // [v9.1] Smart RAW Dispatch: Based on Embedded Preview Size
-    result.hasEmbeddedThumb = true;
-
-    // Try to get embedded preview dimensions
-    int previewW = 0, previewH = 0;
-    if (SUCCEEDED(GetEmbeddedPreviewInfo(filePath, &previewW, &previewH))) {
-      result.embeddedPreviewWidth = previewW;
-      result.embeddedPreviewHeight = previewH;
-      result.embeddedPreviewIsJpeg =
-          true; // LibRaw unpack_thumb usually returns JPEG
-
-      int64_t previewPixels = (int64_t)previewW * previewH;
-
-      // Dispatch Logic:
-      // - Small preview (< 2MP, e.g. 160x120 thumb): FastLane (fast extraction)
-      // - Large preview (>= 2MP, e.g. 6000x4000 full JPEG): HeavyLane
-      // (TurboJPEG decode)
-      if (previewPixels > 0 && previewPixels < 2'000'000) {
-        result.type = ImageType::TypeA_Sprint;
-      } else {
-        result.type = ImageType::TypeB_Heavy;
-      }
-    } else {
-      // No embedded preview or extraction failed -> HeavyLane (LibRaw
-      // half-size)
-      result.type = ImageType::TypeB_Heavy;
-    }
-  } else if (result.format == L"AVIF" || result.format == L"HEIC") {
-    // AVIF/HEIC: ≤4MP → Express Fast Pass
-    // [v6.6] Safety: If pixels == 0 (Unknown), Assume Large (Heavy Lane)
-    // This prevents huge AVIFs (where header Peek failed) from crashing
-    // FastLane.
-    if (pixels > 0 && pixels <= 4000000) {
-      result.type = ImageType::TypeA_Sprint;
-    } else {
-      result.type = ImageType::TypeB_Heavy;
-    }
-  } else if (result.format == L"SVG") {
-    // [Module B] Smart Dispatch & Measure
-    // 1. Extract Dimensions (Regex)
-    uint32_t w = 0, h = 0;
-    if (GetSvgDimensions(filePath, &w, &h)) {
-      result.width = w;
-      result.height = h;
-    } else {
-      // Fallback
-      result.width = 512;
-      result.height = 512;
-    }
-
-    // 2. Dispatch Logic
-    // <= 512KB: FastLane (In-place Render)
-    // > 512KB: HeavyLane (Background Render)
-    if (result.fileSize <= 512 * 1024) {
-      result.type = ImageType::TypeA_Sprint;
-    } else {
-      result.type = ImageType::TypeB_Heavy;
-    }
-  } else {
-    // Unknown format: Try Express if small
-    if (result.fileSize < 2 * 1024 * 1024 && pixels < 2100000) {
-      result.type = ImageType::TypeA_Sprint;
-    } else if (result.width > 0) {
-      result.type = ImageType::TypeB_Heavy;
-    }
-    // else: Invalid (default)
-  }
-
+  ClassifyImageHeader(*this, filePath, nullptr, 0, result);
   return result;
 }
 
@@ -13560,11 +13690,21 @@ HRESULT CImageLoader::LoadToFrame(
     int targetWidth, int targetHeight, std::wstring *pLoaderName,
     CancelPredicate checkCancel, ImageMetadata *pMetadata, bool allowFakeBase,
     bool isTitanMode, float targetHdrHeadroomStops,
-    QuickView::ColorPrimaries targetPrimaries) {
+    QuickView::ColorPrimaries targetPrimaries,
+    std::shared_ptr<QuickView::MappedFile> existingMmf,
+    bool preserveFloat) {
   using namespace QuickView;
 
   if (!filePath || !outFrame)
     return E_INVALIDARG;
+
+  DecodeContext ctx;
+  ctx.onAuxLayerReady = outFrame->onAuxLayerReady;
+  outFrame->onAuxLayerReady.Clear();
+  struct AuxLayerCtxGuard {
+    QuickView::AuxLayerCallback &cb;
+    ~AuxLayerCtxGuard() { cb.DestroyCtx(); }
+  } auxLayerGuard{ctx.onAuxLayerReady};
 
   // Reset output frame
   outFrame->Release();
@@ -13609,7 +13749,7 @@ HRESULT CImageLoader::LoadToFrame(
           QV_LOG("LoadToFrame_Extracted", TraceLoggingUInt64(written, "Size"));
           HRESULT hr = LoadToFrameFromMemory(
               rawData, written, outFrame, arena, targetWidth, targetHeight,
-              pLoaderName, pMetadata, targetHdrHeadroomStops);
+              pLoaderName, pMetadata, targetHdrHeadroomStops, nullptr, preserveFloat);
           // rawData lifecycle is managed by LoadToFrameFromMemory or the Arena.
           // No manual delete here!
           if (!arena)
@@ -13625,8 +13765,14 @@ HRESULT CImageLoader::LoadToFrame(
   }
   // ===========================
 
-  // Detect format from magic bytes
-  std::wstring format = DetectFormatFromContent(filePath);
+  const bool hasValidMmf = (existingMmf && existingMmf->IsValid() &&
+                            existingMmf->data() && existingMmf->size() > 0);
+
+  // Detect format from magic bytes (reusing existing MMF if available)
+  std::wstring format =
+      hasValidMmf ? DetectFormatFromHeaderBytes(filePath, existingMmf->data(),
+                                                existingMmf->size())
+                  : DetectFormatFromContent(filePath);
 
   // Helper: Setup deleter based on allocation source
   auto SetupDeleter = [&](uint8_t *ptr) {
@@ -13641,13 +13787,21 @@ HRESULT CImageLoader::LoadToFrame(
   };
 
   // [v4.2] Unified Codec Dispatch
-  DecodeContext ctx;
   ctx.allocator.ctx = arena;
   ctx.allocator.pfn = [](void *c, size_t s) -> uint8_t * {
     auto *a = static_cast<QuantumArena *>(c);
     if (a)
       return static_cast<uint8_t *>(a->Allocate(s, 64));
     return static_cast<uint8_t *>(_aligned_malloc(s, 64));
+  };
+  ctx.freeFunc.ctx = arena;
+  ctx.freeFunc.pfn = [](void *c, uint8_t *p) {
+    if (!p)
+      return;
+    auto *a = static_cast<QuantumArena *>(c);
+    if (a && a->Owns(p))
+      return;
+    _aligned_free(p);
   };
   ctx.checkCancel = checkCancel;
   ctx.targetWidth = targetWidth; // Pass scaling request
@@ -13660,14 +13814,10 @@ HRESULT CImageLoader::LoadToFrame(
   ctx.allowFakeBase =
       allowFakeBase; // [v10.1] Pass the fallback behavior override
   ctx.isTitanMode = isTitanMode;
-  ctx.preserveFloat =
-      (arena != nullptr); // [v6.2.5.3] Main viewport requests always use an
-                          // arena; protect them from CPU SDR reduction!
+  ctx.preserveFloat = preserveFloat;
   ctx.targetHdrHeadroomStops = targetHdrHeadroomStops;
   ctx.targetPrimaries = targetPrimaries;
-
-  // Pass callback to intercept async AuxLayer from LoadImageUnified
-  ctx.onAuxLayerReady = outFrame->onAuxLayerReady;
+  ctx.sourceMmf = std::move(existingMmf);
 
   DecodeResult res;
   HRESULT hrUnified = LoadImageUnified(filePath, ctx, res);
@@ -13695,12 +13845,13 @@ HRESULT CImageLoader::LoadToFrame(
       // [Fix] Final Guarantee: Format must not be empty for extension mismatch
       // check
       if (pMetadata->Format.empty()) {
-        pMetadata->Format = DetectFormatFromContent(filePath);
+        pMetadata->Format = format;
       }
     }
 
     // [Fix] Software Downscale if Unified Codec ignored target dimensions
-    if (targetWidth > 0 && targetHeight > 0 &&
+    if (res.format == PixelFormat::BGRA8888 &&
+        targetWidth > 0 && targetHeight > 0 &&
         ((int)res.width > targetWidth || (int)res.height > targetHeight)) {
 
       // Calculate proportional scale to fit within target
@@ -13755,13 +13906,9 @@ HRESULT CImageLoader::LoadToFrame(
     outFrame->colorInfo = res.metadata.colorInfo;
     outFrame->hdrMetadata = res.metadata.hdrMetadata;
 
-    // [v10.1] Preserve original resolution if frame is scaled
-    if (res.metadata.Width > 0 && res.metadata.Height > 0 &&
-        (res.metadata.Width != (UINT)outFrame->width ||
-         res.metadata.Height != (UINT)outFrame->height)) {
-      outFrame->srcWidth = (int)res.metadata.Width;
-      outFrame->srcHeight = (int)res.metadata.Height;
-    }
+    // [v10.1] Always preserve source dimensions so Cache-First can distinguish full vs scaled hits
+    outFrame->srcWidth = (res.metadata.Width > 0) ? static_cast<int>(res.metadata.Width) : outFrame->width;
+    outFrame->srcHeight = (res.metadata.Height > 0) ? static_cast<int>(res.metadata.Height) : outFrame->height;
     outFrame->dpiX = res.metadata.DpiX;
     outFrame->dpiY = res.metadata.DpiY;
 
@@ -13823,7 +13970,7 @@ HRESULT CImageLoader::LoadToFrame(
         // PHASE 1: ID SANITIZATION (Fix Broken Links)
         // =========================================================
         {
-          std::map<std::string, std::string> replacements;
+          std::vector<std::pair<std::string, std::string>> replacements;
           int count = 0;
 
           size_t pos_id = 0;
@@ -13852,10 +13999,19 @@ HRESULT CImageLoader::LoadToFrame(
               unsafe = true;
             }
 
-            if (unsafe && replacements.find(val) == replacements.end()) {
-              char buf[64];
-              sprintf_s(buf, "qv_fix_%d", count++);
-              replacements[val] = std::string(buf);
+            if (unsafe) {
+              bool dup = false;
+              for (const auto& [k, v] : replacements) {
+                if (k == val) {
+                  dup = true;
+                  break;
+                }
+              }
+              if (!dup) {
+                char buf[64];
+                sprintf_s(buf, "qv_fix_%d", count++);
+                replacements.emplace_back(std::move(val), std::string(buf));
+              }
             }
           }
 
@@ -13951,10 +14107,11 @@ HRESULT CImageLoader::LoadToFrame(
 
           // Collected CSS rules: className -> {fill, stroke}
           struct CSSRule {
+            std::string className;
             std::string fill;
             std::string stroke;
           };
-          std::map<std::string, CSSRule> cssRules;
+          std::vector<CSSRule> cssRules;
 
           // --- Pass 1: Parse all <style> blocks ---
           size_t styleSearch = 0;
@@ -14029,12 +14186,21 @@ HRESULT CImageLoader::LoadToFrame(
               std::string_view strokeSV = ExtractCSSProp(body, "stroke");
 
               if (!fillSV.empty() || !strokeSV.empty()) {
-                std::string key(clsName);
-                auto &rule = cssRules[key];
-                if (!fillSV.empty() && rule.fill.empty())
-                  rule.fill = std::string(fillSV);
-                if (!strokeSV.empty() && rule.stroke.empty())
-                  rule.stroke = std::string(strokeSV);
+                CSSRule *rulePtr = nullptr;
+                for (auto &existing : cssRules) {
+                  if (existing.className == clsName) {
+                    rulePtr = &existing;
+                    break;
+                  }
+                }
+                if (!rulePtr) {
+                  cssRules.push_back(CSSRule{std::string(clsName), {}, {}});
+                  rulePtr = &cssRules.back();
+                }
+                if (!fillSV.empty() && rulePtr->fill.empty())
+                  rulePtr->fill = std::string(fillSV);
+                if (!strokeSV.empty() && rulePtr->stroke.empty())
+                  rulePtr->stroke = std::string(strokeSV);
               }
 
               rp = bc + 1;
@@ -14053,7 +14219,7 @@ HRESULT CImageLoader::LoadToFrame(
             };
             std::vector<Injection> injections;
             injections.reserve(cssRules.size());
-            for (auto &[cls, rule] : cssRules) {
+            for (const auto &rule : cssRules) {
               std::string prefix;
               if (!rule.fill.empty()) {
                 prefix += "fill=\"";
@@ -14066,7 +14232,7 @@ HRESULT CImageLoader::LoadToFrame(
                 prefix += "\" ";
               }
               if (!prefix.empty()) {
-                injections.push_back({cls, std::move(prefix)});
+                injections.push_back({rule.className, std::move(prefix)});
               }
             }
 
@@ -14149,6 +14315,59 @@ HRESULT CImageLoader::LoadToFrame(
           if (inlinedCount > 0) {
             QV_LOG("SVG_Style", TraceLoggingString("Inlined", "Action"),
                    TraceLoggingInt32(inlinedCount, "Count"));
+          }
+        }
+
+        // =========================================================
+        // PHASE 3: CURRENTCOLOR RESOLUTION (Fix Modern Icon Sets)
+        // =========================================================
+        // Direct2D SVG parser fails or renders transparent on CSS 'currentColor'.
+        // Modern icon libraries (e.g. Fluent UI system icons) use fill="currentColor".
+        // Replace with a concrete theme-aware contrast color.
+        {
+          auto CiFind = [](std::string_view haystack, std::string_view needle, size_t start = 0) -> size_t {
+            if (needle.empty() || haystack.size() < needle.size()) return std::string_view::npos;
+            for (size_t i = start; i + needle.size() <= haystack.size(); ++i) {
+              bool match = true;
+              for (size_t j = 0; j < needle.size(); ++j) {
+                if (::tolower(static_cast<unsigned char>(haystack[i + j])) != ::tolower(static_cast<unsigned char>(needle[j]))) {
+                  match = false;
+                  break;
+                }
+              }
+              if (match) return i;
+            }
+            return std::string_view::npos;
+          };
+
+          const bool isLight = IsLightThemeActive();
+          const std::string contrastReplacement = isLight ? "#212121" : "#F0F0F0";
+
+          auto replaceAllCi = [&](std::string &text, std::string_view from, std::string_view to) {
+            size_t pos = CiFind(text, from, 0);
+            if (pos == std::string_view::npos) return;
+            std::string rebuilt;
+            rebuilt.reserve(text.size());
+            size_t prev = 0;
+            while (pos != std::string_view::npos) {
+              rebuilt.append(text, prev, pos - prev);
+              rebuilt.append(to);
+              prev = pos + from.size();
+              pos = CiFind(text, from, prev);
+            }
+            rebuilt.append(text, prev, text.size() - prev);
+            text = std::move(rebuilt);
+          };
+
+          // 1. currentColor replacement (single linear pass)
+          replaceAllCi(svgContent, "currentColor", contrastReplacement);
+
+          // 2. Dark theme fill replacement for dark icon sets (#212121, #242424, etc.)
+          if (!isLight) {
+            constexpr std::string_view kDarkFills[] = { "#212121", "#242424", "#202020", "#1f1f1f" };
+            for (const auto& darkFill : kDarkFills) {
+              replaceAllCi(svgContent, darkFill, "#F0F0F0");
+            }
           }
         }
 

@@ -2,6527 +2,6168 @@
 #include "AppStrings.h"
 #include <windows.h> // For GetUserDefaultUILanguage
 #include "EditState.h"
+#include "Plugin/PluginHost.h"
 
 extern AppConfig g_config;
 
 namespace AppStrings {
 
-// ----------------------------------------------------------------
-// ----------------------------------------------------------------
-// Global Pointers (Definition)
-// ----------------------------------------------------------------
-const wchar_t *CurrentLocale = L"en-us";
-const wchar_t *OSD_NoImage = nullptr;
-const wchar_t *OSD_FolderEmpty = nullptr;
-const wchar_t *OSD_SvgStaticFallback = nullptr;
-const wchar_t *OSD_Lossless = nullptr;
-const wchar_t *OSD_ReencodedLossless = nullptr;
-const wchar_t *OSD_EdgeAdapted = nullptr;
-const wchar_t *OSD_Reencoded = nullptr;
-const wchar_t *OSD_ReadOnly = nullptr;
-const wchar_t *OSD_NotPerfect = nullptr;
-const wchar_t *OSD_SpanOn = nullptr;
-const wchar_t *OSD_SpanOff = nullptr;
-const wchar_t *OSD_CompareBefore = nullptr;
-const wchar_t *OSD_CompareAfter = nullptr;
-const wchar_t *OSD_UndoDeleteSuccess = nullptr;
-const wchar_t *OSD_UndoDeleteFailed = nullptr;
-const wchar_t *OSD_GamutDetected = nullptr;
-const wchar_t *OSD_GamutIncompatible = nullptr;
-const wchar_t *OSD_GamutFailed = nullptr;
-const wchar_t *Action_RotateCW = nullptr;
-const wchar_t *Action_RotateCCW = nullptr;
-const wchar_t *Action_Rotate180 = nullptr;
-const wchar_t *Action_FlipH = nullptr;
-const wchar_t *Action_FlipV = nullptr;
-const wchar_t *Dialog_SaveTitle = nullptr;
-const wchar_t *Dialog_SaveContent = nullptr;
-const wchar_t *Dialog_ButtonSave = nullptr;
-const wchar_t *Dialog_ButtonSaveAs = nullptr;
-const wchar_t *Dialog_ButtonDiscard = nullptr;
-const wchar_t *Dialog_ButtonContinue = nullptr;
-const wchar_t *Dialog_CropUnsavedTitle = nullptr;
-const wchar_t *Dialog_SaveAsTitle = nullptr;
-const wchar_t *Dialog_ExportTitle = nullptr;
-const wchar_t *Dialog_ButtonOverwrite = nullptr;
-const wchar_t *Dialog_EmbedICC = nullptr;
-const wchar_t *Dialog_SizeEstimating = nullptr;
-const wchar_t *Dialog_ExportError = nullptr;
-const wchar_t *Toolbar_Tooltip_CropCopy = nullptr;
-const wchar_t *Toolbar_Tooltip_CropSave = nullptr;
-const wchar_t *Toolbar_Tooltip_CropApply = nullptr;
-const wchar_t *Toolbar_Tooltip_CropCancel = nullptr;
-const wchar_t *OSD_EnterCropMode = nullptr;
-const wchar_t *OSD_CropCopied = nullptr;
-const wchar_t *Checkbox_AlwaysSaveLossless = nullptr;
-const wchar_t *Checkbox_AlwaysSaveEdgeAdapted = nullptr;
-const wchar_t *Checkbox_AlwaysSaveLossy = nullptr;
-const wchar_t *Checkbox_NeverConfirmDelete = nullptr;
-const wchar_t *Context_UndoDelete = nullptr;
-const wchar_t *Context_UndoRename = nullptr;
-const wchar_t *Context_UndoTransform = nullptr;
-const wchar_t *Context_Undo = nullptr; // New
-const wchar_t *OSD_UndoRenameSuccess = nullptr;
-const wchar_t *OSD_UndoRenameFailed = nullptr;
-const wchar_t *OSD_UndoTransformSuccess = nullptr;
-const wchar_t *OSD_UndoTransformFailed = nullptr;
-const wchar_t *OSD_HEICCodecMissing = nullptr;
-const wchar_t *Dialog_HEICTitle = nullptr;
-const wchar_t *Dialog_HEICContent = nullptr;
-const wchar_t *Dialog_HEICGetExtension = nullptr;
-const wchar_t *Dialog_Cancel = nullptr;
-const wchar_t *Settings_Tab_General = nullptr;
-const wchar_t *Settings_Tab_About = nullptr;
-const wchar_t *Settings_Tab_Shortcuts = nullptr;
-const wchar_t *Settings_Hotkey_PressKey = nullptr;
-const wchar_t *Settings_Hotkey_Conflict = nullptr;
-const wchar_t *Settings_Hotkey_ConflictPrompt = nullptr;
-const wchar_t *Settings_Hotkey_Restore = nullptr;
-const wchar_t *Settings_Hotkey_Restored = nullptr;
-const wchar_t *Settings_Hotkey_MouseTip = nullptr;
-const wchar_t *Settings_Group_Foundation = nullptr;
-const wchar_t *Settings_Group_Startup = nullptr;
-const wchar_t *Settings_Group_Habits = nullptr;
-const wchar_t *Settings_Label_Language = nullptr;
-const wchar_t *Settings_Label_SingleInstance = nullptr;
-const wchar_t *Settings_Label_CheckUpdates = nullptr;
-const wchar_t *Settings_Label_UpdateChannel = nullptr;
-const wchar_t *Settings_Option_UpdateStable = nullptr;
-const wchar_t *Settings_Option_UpdatePreRelease = nullptr;
-const wchar_t *Settings_Tooltip_PreRelease = nullptr;
-const wchar_t *Settings_Label_NavLoopMode = nullptr;
-const wchar_t *Settings_Label_SortOrder = nullptr;
-const wchar_t *Settings_Label_SortDescending = nullptr;
-const wchar_t *Settings_Label_SortArchivesByNameAscending = nullptr;
-const wchar_t *Settings_Label_ConfirmDel = nullptr;
-const wchar_t *Settings_Label_Portable = nullptr;
-const wchar_t *Settings_Tooltip_Portable = nullptr;
-const wchar_t *Settings_Label_SpanDisplays = nullptr;
-const wchar_t *Settings_Label_UIScale = nullptr;
-const wchar_t *Settings_Status_RestartRequired = nullptr;
-const wchar_t *Settings_Status_NoWritePerm = nullptr;
-const wchar_t *Settings_Status_Enabled = nullptr;
-const wchar_t *Settings_Header_PoweredBy = nullptr;
-const wchar_t *Context_Open = nullptr;
-const wchar_t *Context_Crop = nullptr;
-const wchar_t *Context_OpenWith = nullptr;
-const wchar_t *Context_Edit = nullptr;
-const wchar_t *Context_ShowInExplorer = nullptr;
-const wchar_t *Context_OpenFolder = nullptr;
-const wchar_t *Context_CopyPixels = nullptr;
-const wchar_t *Context_CopyFile = nullptr;
-const wchar_t *Context_CopyImage = nullptr;
-const wchar_t *Context_CopyPath = nullptr;
-const wchar_t *Context_Print = nullptr;
-const wchar_t *Context_RotateCW = nullptr;
-const wchar_t *Context_RotateCCW = nullptr;
-const wchar_t *Context_FlipH = nullptr;
-const wchar_t *Context_FlipV = nullptr;
-const wchar_t *Context_Transform = nullptr;
-const wchar_t *Context_ActualSize = nullptr;
-const wchar_t *Context_FitToScreen = nullptr;
-const wchar_t *Context_FitWindow = nullptr;
-const wchar_t *Context_FillWindow = nullptr;
-const wchar_t *Context_ZoomIn = nullptr;
-const wchar_t *Context_ZoomOut = nullptr;
-const wchar_t *Context_LockWindow = nullptr;
-const wchar_t *Context_AlwaysOnTop = nullptr;
-const wchar_t *Context_HUDGallery = nullptr;
-const wchar_t *Context_LiteInfoPanel = nullptr;
-const wchar_t *Context_FullInfoPanel = nullptr;
-const wchar_t *Context_RenderRAW = nullptr;
-const wchar_t *Context_PixelArtMode = nullptr;
-const wchar_t *Context_ColorSpace = nullptr;
-const wchar_t *Context_Fullscreen = nullptr;
-const wchar_t *Context_View = nullptr;
-const wchar_t *Context_WallpaperFill = nullptr;
-const wchar_t *Context_WallpaperFit = nullptr;
-const wchar_t *Context_WallpaperTile = nullptr;
-const wchar_t *Context_SetAsWallpaper = nullptr;
-const wchar_t *Context_Rename = nullptr;
-const wchar_t *Context_FixExtension = nullptr;
-const wchar_t *Context_Delete = nullptr;
-const wchar_t *Context_SortBy = nullptr;
-const wchar_t *Context_NavOrder = nullptr;
-const wchar_t *Context_SortAscending = nullptr;
-const wchar_t *Context_SortDescending = nullptr;
-const wchar_t *Context_Settings = nullptr;
-const wchar_t *Context_CompareMode = nullptr;
-const wchar_t *Context_OverlayMode = nullptr;
-const wchar_t *Context_GalleryOpenCompare = nullptr;
-const wchar_t *Context_GalleryOpenNewWindow = nullptr;
-const wchar_t *Context_Exit = nullptr;
-const wchar_t *Menu_ExitPassthrough = nullptr;
-const wchar_t *Dialog_PassthroughTitle = nullptr;
-const wchar_t *Dialog_PassthroughContent = nullptr;
-const wchar_t *OSD_PassthroughOn = nullptr;
-const wchar_t *OSD_PassthroughOff = nullptr;
-const wchar_t *OSD_OverlayModeOn = nullptr;
-const wchar_t *OSD_OverlayModeOff = nullptr;
-const wchar_t *OSD_Opacity = nullptr;
-const wchar_t *Toolbar_Tooltip_OverlayZoomIn = nullptr;
-const wchar_t *Toolbar_Tooltip_OverlayZoomOut = nullptr;
-const wchar_t *Toolbar_Tooltip_OverlayAlphaUp = nullptr;
-const wchar_t *Toolbar_Tooltip_OverlayAlphaDown = nullptr;
-const wchar_t *Toolbar_Tooltip_OverlayPassthroughOn = nullptr;
-const wchar_t *Toolbar_Tooltip_OverlayPassthroughOff = nullptr;
-const wchar_t *Toolbar_Tooltip_OverlayExit = nullptr;
-const wchar_t *Message_SaveErrorTitle = nullptr;
-const wchar_t *Message_SaveErrorContent = nullptr;
-const wchar_t *Toolbar_Tooltip_Prev = nullptr;
-const wchar_t *Toolbar_Tooltip_Next = nullptr;
-const wchar_t *Toolbar_Tooltip_RotateL = nullptr;
-const wchar_t *Toolbar_Tooltip_RotateR = nullptr;
-const wchar_t *Toolbar_Tooltip_FlipH = nullptr;
-const wchar_t *Toolbar_Tooltip_Lock = nullptr;
-const wchar_t *Toolbar_Tooltip_Unlock = nullptr;
-const wchar_t *Toolbar_Tooltip_Gallery = nullptr;
-const wchar_t *Toolbar_Tooltip_Info = nullptr;
-const wchar_t *Toolbar_Tooltip_RawPreview = nullptr;
-const wchar_t *Toolbar_Tooltip_RawFull = nullptr;
-const wchar_t *Toolbar_Tooltip_RawPairView = nullptr;
-const wchar_t *Toolbar_Tooltip_RawPairBack = nullptr;
-const wchar_t *Toolbar_Tooltip_FixExtension = nullptr;
-const wchar_t *Toolbar_Tooltip_Pin = nullptr;
-const wchar_t *Toolbar_Tooltip_Unpin = nullptr;
-const wchar_t *Toolbar_Tooltip_GamutWarning = nullptr;
-const wchar_t *Toolbar_Tooltip_NormalMode = nullptr;
-const wchar_t *Toolbar_Tooltip_CompareMode = nullptr;
-const wchar_t *Toolbar_Tooltip_SinglePage = nullptr;
-const wchar_t *Toolbar_Tooltip_DualPage = nullptr;
-const wchar_t *Toolbar_Tooltip_CompareOpen = nullptr;
-const wchar_t *Toolbar_Tooltip_CompareSwap = nullptr;
-const wchar_t *Toolbar_Tooltip_CompareLayout = nullptr;
-const wchar_t *Toolbar_Tooltip_CompareInfo = nullptr;
-const wchar_t *Toolbar_Tooltip_CompareDelete = nullptr;
-const wchar_t *Toolbar_Tooltip_CompareZoomIn = nullptr;
-const wchar_t *Toolbar_Tooltip_CompareZoomOut = nullptr;
-const wchar_t *Toolbar_Tooltip_CompareSyncZoomOn = nullptr;
-const wchar_t *Toolbar_Tooltip_CompareSyncZoomOff = nullptr;
-const wchar_t *Toolbar_Tooltip_CompareSyncPanOn = nullptr;
-const wchar_t *Toolbar_Tooltip_CompareSyncPanOff = nullptr;
-const wchar_t *Toolbar_Tooltip_SlideshowImmersiveToggle = nullptr;
-const wchar_t *Toolbar_Tooltip_SlideshowExit = nullptr;
-const wchar_t *Toolbar_Tooltip_CompareExit = nullptr;
-const wchar_t *Toolbar_Tooltip_AnimPlay = nullptr;
-const wchar_t *Toolbar_Tooltip_AnimPause = nullptr;
-const wchar_t *Toolbar_Tooltip_AnimPrev = nullptr;
-const wchar_t *Toolbar_Tooltip_AnimNext = nullptr;
-const wchar_t *Toolbar_Tooltip_AnimDirtyOn = nullptr;
-const wchar_t *Toolbar_Tooltip_AnimDirtyOff = nullptr;
-const wchar_t *Toolbar_Tooltip_AnimSpeed = nullptr;
-const wchar_t *Settings_Header_Performance = nullptr;
-const wchar_t *Settings_Header_Professional = nullptr;
-const wchar_t *Settings_Label_MemoryReclaim = nullptr;
-const wchar_t *Settings_Option_MemSmart = nullptr;
-const wchar_t *Settings_Option_MemAggressive = nullptr;
-const wchar_t *Settings_Option_MemOnDemand = nullptr;
-const wchar_t *Settings_Tooltip_MemoryReclaim = nullptr;
-const wchar_t *Settings_Label_ShowDirtyRect = nullptr;
-const wchar_t *Settings_Tooltip_ShowDirtyRect = nullptr;
-const wchar_t *Settings_Label_LoupeShape = nullptr;
-const wchar_t *Settings_Option_LoupeShapeSquare = nullptr;
-const wchar_t *Settings_Option_LoupeShapeCircle = nullptr;
-const wchar_t *Settings_Tooltip_LoupeHotkey = nullptr;
-const wchar_t *Settings_Tooltip_CropModeHotkey = nullptr;
-const wchar_t *OSD_Copied = nullptr;
-const wchar_t *OSD_PixelsCopied = nullptr;
-const wchar_t *OSD_PixelsExtracting = nullptr;
-const wchar_t *OSD_FileCopied = nullptr;
-const wchar_t *OSD_CoordinatesCopied = nullptr;
-const wchar_t *OSD_FilePathCopied = nullptr;
-const wchar_t *OSD_Zoom100 = nullptr;
-const wchar_t *OSD_ZoomFit = nullptr;
-const wchar_t *OSD_ZoomFitWindow = nullptr;
-const wchar_t *OSD_ZoomFill = nullptr;
-const wchar_t *OSD_PrintInstruction = nullptr;
-const wchar_t *OSD_MovedToRecycleBin = nullptr;
-const wchar_t *OSD_WindowLocked = nullptr;
-const wchar_t *OSD_WindowUnlocked = nullptr;
-const wchar_t *OSD_AlwaysOnTopOn = nullptr;
-const wchar_t *OSD_AlwaysOnTopOff = nullptr;
-const wchar_t *OSD_WallpaperSet = nullptr;
-const wchar_t *OSD_WallpaperFailed = nullptr;
-const wchar_t *OSD_Renamed = nullptr;
-const wchar_t *OSD_RenameFailed = nullptr;
-const wchar_t *OSD_ExtensionFixed = nullptr;
-const wchar_t *OSD_Restored = nullptr;
-const wchar_t *OSD_FirstImage = nullptr;
-const wchar_t *OSD_LastImage = nullptr;
-const wchar_t *OSD_HD = nullptr;
-const wchar_t *OSD_ZoomPrefix = nullptr;
-const wchar_t *OSD_AnimPlaying = nullptr;
-const wchar_t *OSD_AnimPaused = nullptr;
-const wchar_t *OSD_AnimDirtyOn = nullptr;
-const wchar_t *OSD_AnimDirtyOff = nullptr;
-const wchar_t *OSD_PrintJobStarted = nullptr;
-const wchar_t *OSD_PrintJobFinished = nullptr;
-const wchar_t *Context_SpanDisplays = nullptr;
-const wchar_t *Settings_Tab_Visuals = nullptr;
-const wchar_t *Settings_Tab_Controls = nullptr;
-const wchar_t *Settings_Tab_Image = nullptr;
-const wchar_t *Settings_Tab_Advanced = nullptr;
-const wchar_t *Settings_Header_Backdrop = nullptr;
-const wchar_t *Settings_Header_Window = nullptr;
-const wchar_t *Settings_Header_WindowLock = nullptr;
-const wchar_t *Settings_Header_Panel = nullptr;
-const wchar_t *Settings_Header_Mouse = nullptr;
-const wchar_t *Settings_Header_Edge = nullptr;
-const wchar_t *Settings_Header_Render = nullptr;
-const wchar_t *Settings_Header_Hdr = nullptr;
-const wchar_t *Settings_Header_Prompts = nullptr;
-const wchar_t *Settings_Header_System = nullptr;
-const wchar_t *Settings_Header_Features = nullptr;
-const wchar_t *Settings_Header_Transparency = nullptr;
-const wchar_t *Settings_Header_GeekGlass = nullptr;
-const wchar_t *Settings_Label_EnableGeekGlass = nullptr;
-const wchar_t *Settings_Label_GlassUIAnimations = nullptr;
-const wchar_t *Settings_Header_CoreMaterial = nullptr;
-const wchar_t *Settings_Label_BlurSigma = nullptr;
-const wchar_t *Settings_Status_GlassDisabled = nullptr;
-const wchar_t *Settings_Label_TintDensity = nullptr;
-const wchar_t *Settings_Tooltip_TintDensity = nullptr;
-const wchar_t *Settings_Label_SpecularOpacity = nullptr;
-const wchar_t *Settings_Tooltip_SpecularOpacity = nullptr;
-const wchar_t *Settings_Label_ShadowIntensity = nullptr;
-const wchar_t *Settings_Tooltip_ShadowIntensity = nullptr;
-const wchar_t *Settings_Header_VectorAssets = nullptr;
-const wchar_t *Settings_Label_VectorStrokeWeight = nullptr;
-const wchar_t *Settings_Option_StrokeStandard = nullptr;
-const wchar_t *Settings_Option_StrokeFine = nullptr;
-const wchar_t *Settings_Header_GlassTint = nullptr;
-const wchar_t *Settings_Label_TintProfile = nullptr;
-const wchar_t *Settings_Option_TintAuto = nullptr;
-const wchar_t *Settings_Option_TintCustom = nullptr;
-const wchar_t *Settings_Label_GlassCustomColor = nullptr;
-const wchar_t *Settings_Header_DensityMatrix = nullptr;
-const wchar_t *Settings_Label_OsdDensity = nullptr;
-const wchar_t *Settings_Tooltip_OsdDensity = nullptr;
-const wchar_t *Settings_Label_PanelsDensity = nullptr;
-const wchar_t *Settings_Tooltip_PanelsDensity = nullptr;
-const wchar_t *Settings_Label_ModalsDensity = nullptr;
-const wchar_t *Settings_Tooltip_ModalsDensity = nullptr;
-const wchar_t *Settings_Label_MenusDensity = nullptr;
-const wchar_t *Settings_Tooltip_MenusDensity = nullptr;
-const wchar_t *Settings_Tab_Theme = nullptr;
-const wchar_t *Settings_Label_ThemeMode = nullptr;
-const wchar_t *Settings_Option_ThemeAuto = nullptr;
-const wchar_t *Settings_Option_ThemeDark = nullptr;
-const wchar_t *Settings_Option_ThemeLight = nullptr;
-const wchar_t *Settings_Option_ThemeCustom = nullptr;
-const wchar_t *Settings_Label_AmbientDimmer = nullptr;
-const wchar_t *Settings_Tooltip_AmbientDimmer = nullptr;
-const wchar_t *Settings_Label_AccentColor = nullptr;
-const wchar_t *Settings_Label_TextColor = nullptr;
-const wchar_t *Settings_Header_ThemeManagement = nullptr;
-const wchar_t *Settings_Action_ExportTheme = nullptr;
-const wchar_t *Settings_Action_ImportTheme = nullptr;
-const wchar_t *Settings_Label_CanvasColor = nullptr;
-const wchar_t *Settings_Label_Overlay = nullptr;
-const wchar_t *Settings_Label_ShowGrid = nullptr;
-const wchar_t *Settings_Label_AlwaysOnTop = nullptr;
-const wchar_t *Settings_Label_LockWindow = nullptr;
-const wchar_t *Settings_Tooltip_LockWindow = nullptr;
-const wchar_t *Settings_Label_AutoHideTitle = nullptr;
-const wchar_t *Settings_Label_RoundedCorners = nullptr;
-const wchar_t *Settings_Label_UIBorders = nullptr;
-const wchar_t *Settings_Tooltip_RoundedCorners = nullptr;
-const wchar_t *Settings_Label_LockToolbar = nullptr;
-const wchar_t *Settings_Label_WindowMinSize = nullptr;
-const wchar_t *Settings_Label_WindowMaxSizePercent = nullptr;
-const wchar_t *Settings_Label_ShowBorderIndicator = nullptr;
-const wchar_t *Settings_Tooltip_ShowBorderIndicator = nullptr;
-const wchar_t *Settings_Label_ShowNavigator = nullptr;
-const wchar_t *Settings_Tooltip_ShowNavigator = nullptr;
-const wchar_t *Settings_Option_NavigatorAuto = nullptr;
-const wchar_t *Settings_Option_NavigatorOn = nullptr;
-const wchar_t *Settings_Option_NavigatorOff = nullptr;
-const wchar_t *Settings_Label_KeepWindowSizeOnNav = nullptr;
-const wchar_t *Settings_Label_RememberLastWindowSizeAndPosition = nullptr;
-const wchar_t *Settings_Label_UpscaleSmallImagesWhenLocked = nullptr;
-const wchar_t *Settings_Label_EnableSmoothScaling = nullptr;
-const wchar_t *Settings_Label_ExifMode = nullptr;
-const wchar_t *Settings_Label_ToolbarInfoDefault = nullptr;
-const wchar_t *Settings_Label_OpenFullScreenMode = nullptr;
-const wchar_t *Settings_Label_FullScreenZoomMode = nullptr;
-const wchar_t *Settings_Option_FitScreen = nullptr;
-const wchar_t *Settings_Option_AutoFit = nullptr;
-const wchar_t *Settings_Label_InvertWheel = nullptr;
-const wchar_t *Settings_Label_ZoomSnapDamping = nullptr;
-const wchar_t *Settings_Label_MouseAnchorZoom = nullptr;
-const wchar_t *Settings_Label_RightButtonDragZoom = nullptr;
-const wchar_t *Settings_Label_WheelZoomSpeed = nullptr;
-const wchar_t *Settings_Label_ThumbWheel = nullptr;
-const wchar_t *Settings_Tooltip_ThumbWheel = nullptr;
-const wchar_t *Settings_Tooltip_MiddleDrag = nullptr;
-const wchar_t *Settings_Label_DoubleClick = nullptr;
-const wchar_t *Settings_Option_DoubleClick_Smart = nullptr;
-const wchar_t *Settings_Option_DoubleClick_WheelMode1 = nullptr;
-const wchar_t *Settings_Option_DoubleClick_WheelMode2 = nullptr;
-const wchar_t *Settings_Tooltip_DoubleClick = nullptr;
-const wchar_t *Settings_Tooltip_PanStepNormal = nullptr;
-const wchar_t *OSD_WheelMode1_NextPrevZoom = nullptr;
-const wchar_t *OSD_WheelMode1_ZoomNextPrev = nullptr;
-const wchar_t *OSD_WheelMode2_Pan = nullptr;
-const wchar_t *OSD_WheelMode2_Default = nullptr;
-const wchar_t *Settings_Label_RightDragZoomSpeed = nullptr;
-const wchar_t *Settings_Tooltip_WheelZoomSpeed = nullptr;
-const wchar_t *OSD_WheelZoomSpeed = nullptr;
-const wchar_t *Help_Action_AdjustZoomSpeed = nullptr;
-const wchar_t *Help_Action_LockWindowZoom = nullptr;
-const wchar_t *Settings_Label_InvertButtons = nullptr;
-const wchar_t *Settings_Header_KeyboardPan = nullptr;
-const wchar_t *Settings_Label_PanStepNormal = nullptr;
-const wchar_t *Settings_Label_PanStepFast = nullptr;
-const wchar_t *Settings_Label_UseFixedZoom = nullptr;
-const wchar_t *Settings_Tooltip_UseFixedZoom = nullptr;
-const wchar_t *Settings_Label_FixedZoomLevels = nullptr;
-const wchar_t *Dialog_FixedZoomTitle = nullptr;
-const wchar_t *Dialog_FixedZoomMsg = nullptr;
-const wchar_t *Settings_Label_ZoomModeIn = nullptr;
-const wchar_t *Settings_Label_ZoomModeOut = nullptr;
-const wchar_t *Settings_Label_LeftDrag = nullptr;
-const wchar_t *Settings_Label_MiddleDrag = nullptr;
-const wchar_t *Settings_Label_MiddleClick = nullptr;
-const wchar_t *Settings_Label_EdgeNavClick = nullptr;
-const wchar_t *Settings_Label_ShowOSD = nullptr;
-const wchar_t *Settings_Label_DisableEdgeNavInCompare = nullptr;
-const wchar_t *Settings_Label_NavIndicator = nullptr;
-const wchar_t *Settings_Label_AutoRotate = nullptr;
-const wchar_t *Settings_Label_CMS = nullptr;
-const wchar_t *Settings_Label_AdvancedColor = nullptr;
-const wchar_t *Settings_Label_HdrToneMapping = nullptr;
-const wchar_t *Settings_Label_HdrSplineKnee = nullptr;
-const wchar_t *Settings_Tooltip_HdrToneMapping = nullptr;
-const wchar_t *Settings_Tooltip_HdrSplineKnee = nullptr;
-const wchar_t *Settings_Label_HdrPeakNitsOverride = nullptr;
-const wchar_t *Settings_Tooltip_HdrPeakNitsOverride = nullptr;
-const wchar_t *Settings_Label_HdrPeakPercentile = nullptr;
-const wchar_t *Settings_Tooltip_HdrPeakPercentile = nullptr;
-const wchar_t *Settings_Option_HdrPeakPercentile_100 = nullptr;
-const wchar_t *Settings_Option_HdrPeakPercentile_99995 = nullptr;
-const wchar_t *Settings_Option_HdrPeakPercentile_999 = nullptr;
-const wchar_t *Settings_Label_HdrDesatThreshold = nullptr;
-const wchar_t *Settings_Tooltip_HdrDesatThreshold = nullptr;
-const wchar_t *Settings_Label_HdrMaxDesat = nullptr;
-const wchar_t *Settings_Tooltip_HdrMaxDesat = nullptr;
-const wchar_t *Settings_Option_HdrColorimetric = nullptr;
-const wchar_t *Settings_Option_HdrSpline = nullptr;
-const wchar_t *Settings_Option_HdrLegacyReinhard = nullptr;
-const wchar_t *Settings_Label_CmsFallback = nullptr;
-const wchar_t *Settings_Label_CustomProof = nullptr;
-const wchar_t *Context_SoftProofing = nullptr;
-const wchar_t *Context_SoftProofProfile = nullptr;
-const wchar_t *Context_SoftProofCustom = nullptr;
-const wchar_t *Settings_Value_ComingSoon = nullptr;
-const wchar_t *Settings_Label_ForceRaw = nullptr;
-const wchar_t *Settings_Label_PairRawJpeg = nullptr;
-const wchar_t *Settings_Tooltip_PairRawJpeg = nullptr;
-const wchar_t *Settings_Label_Exposure = nullptr;
-const wchar_t *Settings_Tooltip_Exposure = nullptr;
-const wchar_t *Settings_Label_AddToOpenWith = nullptr;
-const wchar_t *Settings_Label_CustomEditor = nullptr;
-const wchar_t *Context_SelectEditor = nullptr;
-const wchar_t *OSD_EditorLaunchFailed = nullptr;
-const wchar_t *Settings_Action_Add = nullptr;
-const wchar_t *Settings_Action_Added = nullptr;
-const wchar_t *Settings_Status_DisabledInPortable = nullptr;
-const wchar_t *Settings_Label_DebugHUD = nullptr;
-const wchar_t *Settings_Label_Prefetch = nullptr;
-const wchar_t *Settings_Label_InfoPanelAlpha = nullptr;
-const wchar_t *Settings_Label_ToolbarAlpha = nullptr;
-const wchar_t *Settings_Label_SettingsAlpha = nullptr;
-const wchar_t *Settings_Label_Reset = nullptr;
-const wchar_t *Settings_Action_Restore = nullptr;
-const wchar_t *Settings_Action_Done = nullptr;
-const wchar_t *Settings_Header_ConfigManagement = nullptr;
-const wchar_t *Settings_Option_CmsUnmanaged = nullptr;
-const wchar_t *Settings_Option_CmssRGB = nullptr;
-const wchar_t *Settings_Option_CmsP3 = nullptr;
-const wchar_t *Settings_Option_CmsAdobeRGB = nullptr;
-const wchar_t *Settings_Option_CmsGray = nullptr;
-const wchar_t *Settings_Option_CmsProPhoto = nullptr;
-const wchar_t *Settings_Label_CmsIntent = nullptr;
-const wchar_t *Settings_Label_GamutWarning = nullptr;
-const wchar_t *Settings_Tooltip_GamutWarning = nullptr;
-const wchar_t *Settings_Label_GamutAutoPrompt = nullptr;
-const wchar_t *Settings_Tooltip_GamutAutoPrompt = nullptr;
-const wchar_t *Settings_Label_GamutColor = nullptr;
-const wchar_t *Settings_Option_CmsIntentRelative = nullptr;
-const wchar_t *Settings_Option_CmsIntentPerceptual = nullptr;
-const wchar_t *Settings_Tooltip_CMS = nullptr;
-const wchar_t *Settings_Tooltip_CmsIntent = nullptr;
-const wchar_t *Settings_Tooltip_AdvancedColor = nullptr;
-const wchar_t *Settings_Tooltip_ZoomAuto = nullptr;
-const wchar_t *Settings_Action_CheckUpdates = nullptr;
-const wchar_t *Settings_Action_ViewUpdate = nullptr;
-const wchar_t *Settings_Status_Checking = nullptr;
-const wchar_t *Settings_Status_UpToDate = nullptr;
-const wchar_t *Settings_Link_GitHub = nullptr;
-const wchar_t *Settings_Link_ReportIssue = nullptr;
-const wchar_t *Settings_Link_Hotkeys = nullptr;
-const wchar_t *Settings_Label_Version = nullptr;
-const wchar_t *Settings_Label_Build = nullptr;
-const wchar_t *Settings_Option_Black = nullptr;
-const wchar_t *Settings_Option_Effects = nullptr;
-const wchar_t *Settings_Label_ContextMenuBackdrop = nullptr;
-const wchar_t *Settings_Label_CanvasEffectStyle = nullptr;
-const wchar_t *Settings_Tooltip_BackdropEffectsTip = nullptr;
-const wchar_t *Settings_Option_White = nullptr;
-const wchar_t *Settings_Option_Grid = nullptr;
-const wchar_t *Settings_Option_Custom = nullptr;
-const wchar_t *Settings_Option_Off = nullptr;
-const wchar_t *Settings_Option_On = nullptr;
-const wchar_t *Settings_Option_Lite = nullptr;
-const wchar_t *Settings_Option_Full = nullptr;
-const wchar_t *Settings_Option_LargeOnly = nullptr;
-const wchar_t *Settings_Option_All = nullptr;
-const wchar_t *Settings_Option_SoftProofing = nullptr;
-const wchar_t *Settings_Option_Window = nullptr;
-const wchar_t *Settings_Option_Pan = nullptr;
-const wchar_t *Settings_Option_None = nullptr;
-const wchar_t *Settings_Option_Exit = nullptr;
-const wchar_t *Settings_Option_Arrow = nullptr;
-const wchar_t *Settings_Option_Cursor = nullptr;
-const wchar_t *Settings_Option_Manual = nullptr;
-const wchar_t *Settings_Option_SortAuto = nullptr;
-const wchar_t *Settings_Option_SortName = nullptr;
-const wchar_t *Settings_Option_SortModified = nullptr;
-const wchar_t *Settings_Option_SortDateTaken = nullptr;
-const wchar_t *Settings_Option_SortSize = nullptr;
-const wchar_t *Settings_Option_SortType = nullptr;
-const wchar_t *Settings_Option_NavLoop = nullptr;
-const wchar_t *Settings_Option_NavThrough = nullptr;
-const wchar_t *Settings_Option_Linear = nullptr;
-const wchar_t *Settings_Option_Nearest = nullptr;
-const wchar_t *Settings_Option_HighQualityCubic = nullptr;
-const wchar_t *Settings_Option_ZoomAuto = nullptr;
-const wchar_t *Settings_Option_Auto = nullptr;
-const wchar_t *Settings_Option_Eco = nullptr;
-const wchar_t *Settings_Option_Balanced = nullptr;
-const wchar_t *Settings_Option_Ultra = nullptr;
-const wchar_t *Help_Header_Shortcuts = nullptr;
-const wchar_t *Help_Header_Mouse = nullptr;
-const wchar_t *Help_Item_NextPrev = nullptr;
-const wchar_t *Help_Item_Zoom = nullptr;
-const wchar_t *Help_Item_Pan = nullptr;
-const wchar_t *Help_Item_Rotate = nullptr;
-const wchar_t *Help_Item_Fit = nullptr;
-const wchar_t *Help_Item_Delete = nullptr;
-const wchar_t *Help_Item_Fullscreen = nullptr;
-const wchar_t *Help_Item_Close = nullptr;
-const wchar_t *Help_Mouse_Left = nullptr;
-const wchar_t *Help_Mouse_Middle = nullptr;
-const wchar_t *Help_Mouse_Wheel = nullptr;
-const wchar_t *Help_Mouse_Right = nullptr;
-const wchar_t *Help_Mouse_RightVerticalDrag = nullptr;
-const wchar_t *Help_Action_MoveWindow = nullptr;
-const wchar_t *Help_Action_PanImage = nullptr;
-const wchar_t *Help_Action_ContextMenu = nullptr;
-const wchar_t *Help_Action_NextPrev = nullptr;
-const wchar_t *Help_Action_Zoom = nullptr;
-const wchar_t *Help_Action_SmartZoom = nullptr;
-const wchar_t *Help_Desc_Copy = nullptr;
-const wchar_t *Help_Desc_Edit = nullptr;
-const wchar_t *Help_Header_Tips = nullptr;
-const wchar_t *Help_Tip_ContextScope = nullptr;
-const wchar_t *Help_Tip_Rotation = nullptr;
-const wchar_t *Help_Tip_VideoWall = nullptr;
-const wchar_t *Help_Tip_DesignerMode = nullptr;
-const wchar_t *Help_Tip_GamutDetection = nullptr;
-const wchar_t *Help_Tip_Raw = nullptr;
-const wchar_t *Help_Tip_JpegQ = nullptr;
-const wchar_t *Help_Tip_SoftProofCompare = nullptr;
-const wchar_t *Dialog_UpdateTitle = nullptr;
-const wchar_t *Dialog_UpdateContent = nullptr;
-const wchar_t *Dialog_UpdateLogHeader = nullptr;
-const wchar_t *Dialog_ButtonUpdate = nullptr;
-const wchar_t *Dialog_ButtonLater = nullptr;
-const wchar_t *Dialog_ButtonStar = nullptr;
-const wchar_t *Dialog_Update_LoveTitle = nullptr;
-const wchar_t *Dialog_Update_LoveMessage = nullptr;
-const wchar_t *Help_Item_Compare = nullptr;
-const wchar_t *Help_Item_FirstLast = nullptr;
-const wchar_t *HUD_Group_Physical = nullptr;
-const wchar_t *HUD_Group_Scientific = nullptr;
-const wchar_t *HUD_Group_Encoding = nullptr;
-const wchar_t *HUD_Tip_Sharp_Desc = nullptr;
-const wchar_t *HUD_Tip_Sharp_High = nullptr;
-const wchar_t *HUD_Tip_Sharp_Low = nullptr;
-const wchar_t *HUD_Tip_Sharp_Ref = nullptr;
-const wchar_t *HUD_Tip_Ent_Desc = nullptr;
-const wchar_t *HUD_Tip_Ent_High = nullptr;
-const wchar_t *HUD_Tip_Ent_Low = nullptr;
-const wchar_t *HUD_Tip_Ent_Ref = nullptr;
-const wchar_t *HUD_Tip_BPP_Desc = nullptr;
-const wchar_t *HUD_Tip_BPP_High = nullptr;
-const wchar_t *HUD_Tip_BPP_Low = nullptr;
-const wchar_t *HUD_Tip_BPP_Ref = nullptr;
-const wchar_t *HUD_Label_High = nullptr;
-const wchar_t *HUD_Label_Low = nullptr;
-const wchar_t *HUD_Label_Ref = nullptr;
-const wchar_t *Settings_Header_GalleryTrigger = nullptr;
-const wchar_t *Settings_Label_GalleryTriggerMode = nullptr;
-const wchar_t *Settings_Label_KeepGalleryVisibleOnThumbnailClick = nullptr;
-const wchar_t *Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick = nullptr;
-const wchar_t *Settings_Option_GalleryTriggerAuto = nullptr;
-const wchar_t *Settings_Option_GalleryTriggerDelay = nullptr;
-const wchar_t *Settings_Option_GalleryTriggerClick = nullptr;
-const wchar_t *Settings_Option_GalleryTriggerDisable = nullptr;
-const wchar_t *Settings_Tooltip_GalleryTrigger = nullptr;
-const wchar_t *Settings_Label_GalleryTriggerAreaHeight = nullptr;
-const wchar_t *Settings_Label_GalleryDwellTime = nullptr;
-const wchar_t *Settings_Label_GalleryExitDelay = nullptr;
-const wchar_t *Settings_Label_GalleryMinSize = nullptr;
+static int g_activeLangIndex = 0;
 
-const wchar_t *OSD_SlideshowStarted = nullptr;
-const wchar_t *OSD_SlideshowStopped = nullptr;
-const wchar_t *OSD_SlideshowResumed = nullptr;
-const wchar_t *OSD_SlideshowPaused = nullptr;
-const wchar_t *OSD_ImmersiveSpotlight = nullptr;
-const wchar_t *OSD_ImmersiveNormal = nullptr;
-const wchar_t *Context_SlideshowMode = nullptr;
-const wchar_t *Settings_Label_SlideshowInterval = nullptr;
-const wchar_t *Settings_Label_SlideshowImmersive = nullptr;
-const wchar_t *Settings_Label_CustomLiteInfoPanel = nullptr;
-const wchar_t *Settings_Label_CustomFullInfoPanel = nullptr;
-const wchar_t *Settings_Label_InfoPanelScale = nullptr;
-const wchar_t *Settings_Label_ItemsInNormalMode = nullptr;
-const wchar_t *Settings_Label_ItemsInCompareMode = nullptr;
-const wchar_t *Settings_Label_SeparatorPreset = nullptr;
-const wchar_t *Settings_Option_SlideshowNormal = nullptr;
-const wchar_t *Settings_Option_SlideshowSpotlight = nullptr;
+static constexpr char kBlob_EN[] =
+    /* CurrentLocale */ "en-us\0"
+    /* OSD_NoImage */ "No image loaded\0"
+    /* OSD_FolderEmpty */ "No images in this folder\0"
+    /* OSD_SvgStaticFallback */ "Animated SVG shown as a still image\0"
+    /* OSD_Lossless */ "Lossless\0"
+    /* OSD_ReencodedLossless */ "Re-encoded (Lossless)\0"
+    /* OSD_EdgeAdapted */ "Cropped\0"
+    /* OSD_Reencoded */ "Lossy\0"
+    /* OSD_ReadOnly */ "Access denied - file may be in use or read-only\0"
+    /* OSD_NotPerfect */ "Transform is not perfect (edge optimized)\0"
+    /* OSD_SpanOn */ "Video Wall: ON\0"
+    /* OSD_SpanOff */ "Video Wall: OFF\0"
+    /* OSD_CompareBefore */ "Before (original)\0"
+    /* OSD_CompareAfter */ "After (proofed)\0"
+    /* OSD_CompareAnimNotSupported */ "Compare mode is not available for animated images.\0"
+    /* OSD_UndoDeleteSuccess */ "Undo delete succeeded\0"
+    /* OSD_UndoDeleteFailed */ "Undo delete failed\0"
+    /* OSD_UndoRenameSuccess */ "Undo rename succeeded\0"
+    /* OSD_UndoRenameFailed */ "Undo rename failed\0"
+    /* OSD_UndoTransformSuccess */ "Undo rotate/flip succeeded\0"
+    /* OSD_UndoTransformFailed */ "Undo rotate/flip failed\0"
+    /* Action_RotateCW */ "Rotate 90° CW\0"
+    /* Action_RotateCCW */ "Rotate 90° CCW\0"
+    /* Action_Rotate180 */ "Rotate 180°\0"
+    /* Action_FlipH */ "Flip Horizontal\0"
+    /* Action_FlipV */ "Flip Vertical\0"
+    /* Dialog_SaveTitle */ "Save changes?\0"
+    /* Dialog_SaveContent */ "The image has been modified. Do you want to save changes?\0"
+    /* Dialog_ButtonSave */ "Save\0"
+    /* Dialog_ButtonSaveAs */ "Save as...\0"
+    /* Dialog_ButtonDiscard */ "Discard\0"
+    /* Dialog_ButtonContinue */ "Continue\0"
+    /* Dialog_CropUnsavedTitle */ "Unsaved crop modifications. Save changes?\0"
+    /* Dialog_SaveAsTitle */ "Save Image\0"
+    /* Dialog_ExportTitle */ "Save & Export\0"
+    /* Dialog_ButtonOverwrite */ "Overwrite\0"
+    /* Dialog_EmbedICC */ "ICC Profile\0"
+    /* Dialog_SizeEstimating */ "Size: Estimating...\0"
+    /* Dialog_ExportError */ "Export Error\0"
+    /* Context_Open */ "Open...\tCtrl+O\0"
+    /* Context_Crop */ "Crop\0"
+    /* Context_SuperResolution */ "AI Super-Resolution\0"
+    /* Context_AiAction */ "AI Action\0"
+    /* Context_OpenWith */ "Open with...\0"
+    /* Context_Edit */ "Edit\tE\0"
+    /* Context_ShowInExplorer */ "Show in Explorer\0"
+    /* Context_OpenFolder */ "Open Folder\0"
+    /* Context_CopyPixels */ "Copy Pixels\tCtrl+C\0"
+    /* Context_CopyFile */ "Copy File\tCtrl+Shift+C\0"
+    /* Context_CopyPath */ "Copy Path\tCtrl+Alt+C\0"
+    /* Context_Print */ "Print\tCtrl+P\0"
+    /* Context_RotateCW */ "Rotate 90° CW\tR\0"
+    /* Context_RotateCCW */ "Rotate 90° CCW\tShift+R\0"
+    /* Context_FlipH */ "Flip Horizontal\tH\0"
+    /* Context_FlipV */ "Flip Vertical\tV\0"
+    /* Context_Transform */ "Transform\0"
+    /* Context_ActualSize */ "Actual Size (100%)\tZ\0"
+    /* Context_FitToScreen */ "Fit to Screen\tF\0"
+    /* Context_FitWindow */ "Fit Window\0"
+    /* Context_FillWindow */ "Fill Window\0"
+    /* Context_ZoomIn */ "Zoom In\t+ / Ctrl +\0"
+    /* Context_ZoomOut */ "Zoom Out\t- / Ctrl -\0"
+    /* Context_LockWindow */ "Lock Window\0"
+    /* Context_AlwaysOnTop */ "Always on Top\tCtrl+T\0"
+    /* Context_HUDGallery */ "HUD Gallery\tT\0"
+    /* Context_LiteInfoPanel */ "Lite Info Panel\tTab\0"
+    /* Context_FullInfoPanel */ "Full Info Panel\tI\0"
+    /* Context_RenderRAW */ "Render RAW\0"
+    /* Context_PixelArtMode */ "Pixel Art Mode\0"
+    /* Context_Fullscreen */ "Fullscreen\tF11\0"
+    /* Context_SlideshowMode */ "Slideshow Mode\0"
+    /* Context_SpanDisplays */ "Span Displays (Video Wall)\tCtrl+F11\0"
+    /* Context_View */ "View\0"
+    /* Context_WallpaperFill */ "Fill\0"
+    /* Context_WallpaperFit */ "Fit\0"
+    /* Context_WallpaperTile */ "Tile\0"
+    /* Context_SetAsWallpaper */ "Set as Wallpaper\0"
+    /* Context_Rename */ "Rename\tF2\0"
+    /* Context_FixExtension */ "Fix Extension\0"
+    /* Context_Delete */ "Delete\tDel\0"
+    /* Context_UndoDelete */ "Undo Delete\tCtrl+Z\0"
+    /* Context_UndoRename */ "Undo Rename\tCtrl+Z\0"
+    /* Context_UndoTransform */ "Undo Rotate/Flip\tCtrl+Z\0"
+    /* Context_Undo */ "Undo\tCtrl+Z\0"
+    /* Context_SortBy */ "Sort By\0"
+    /* Context_NavOrder */ "Navigation Order\0"
+    /* Context_SortAscending */ "Ascending\0"
+    /* Context_SortDescending */ "Descending\0"
+    /* Context_Settings */ "Settings...\0"
+    /* Context_CompareMode */ "Compare Mode\tC\0"
+    /* Context_OverlayMode */ "Overlay Mode\tCtrl+Shift+O\0"
+    /* Context_GalleryOpenCompare */ "Open in Compare Mode\0"
+    /* Context_GalleryOpenNewWindow */ "Open in New Window\0"
+    /* Context_Exit */ "Exit\tMButton/Esc\0"
+    /* Menu_ExitPassthrough */ "Exit Mouse Passthrough\0"
+    /* Message_SaveErrorTitle */ "Error\0"
+    /* Message_SaveErrorContent */ "Failed to save file. File locked?\0"
+    /* Toolbar_Tooltip_Prev */ "Previous (Left)\0"
+    /* Toolbar_Tooltip_Next */ "Next (Right)\0"
+    /* Toolbar_Tooltip_RotateL */ "Rotate Left (Shift+R)\0"
+    /* Toolbar_Tooltip_RotateR */ "Rotate Right (R)\0"
+    /* Toolbar_Tooltip_FlipH */ "Flip Horizontal (H)\0"
+    /* Toolbar_Tooltip_Lock */ "Lock Window (Temp)\0"
+    /* Toolbar_Tooltip_Unlock */ "Unlock Window\0"
+    /* Toolbar_Tooltip_Gallery */ "Gallery (T)\0"
+    /* Toolbar_Tooltip_Info */ "Info Panel\0"
+    /* Toolbar_Tooltip_RawPreview */ "RAW: Preview (Click for Full)\0"
+    /* Toolbar_Tooltip_RawFull */ "RAW: Full Decode (Click for Preview)\0"
+    /* Toolbar_Tooltip_RawPairView */ "RAW: View paired RAW (Full Decode)\0"
+    /* Toolbar_Tooltip_RawPairBack */ "RAW: Back to paired image\0"
+    /* Toolbar_Tooltip_FixExtension */ "Extension Mismatch (Fix)\0"
+    /* Toolbar_Tooltip_Pin */ "Pin Toolbar\0"
+    /* Toolbar_Tooltip_Unpin */ "Unpin Toolbar\0"
+    /* Toolbar_Tooltip_GamutWarning */ "Show out-of-gamut highlight areas\0"
+    /* Toolbar_Tooltip_CropCopy */ "Copy Selection (Ctrl+C)\0"
+    /* Toolbar_Tooltip_CropSave */ "Save (Ctrl+S)\0"
+    /* Toolbar_Tooltip_CropApply */ "Apply (Enter)\0"
+    /* Toolbar_Tooltip_CropCancel */ "Exit (Esc)\0"
+    /* Toolbar_Tooltip_OverlayAlphaUp */ "Increase Opacity\0"
+    /* Toolbar_Tooltip_OverlayAlphaDown */ "Decrease Opacity\0"
+    /* Toolbar_Tooltip_OverlayPassthroughOn */ "Enter Mouse Passthrough\0"
+    /* Toolbar_Tooltip_OverlayPassthroughOff */ "Exit Mouse Passthrough\0"
+    /* Toolbar_Tooltip_OverlayExit */ "Exit Overlay Mode\0"
+    /* Toolbar_Tooltip_OverlayZoomIn */ "Zoom In (Overlay)\0"
+    /* Toolbar_Tooltip_OverlayZoomOut */ "Zoom Out (Overlay)\0"
+    /* Toolbar_Tooltip_NormalMode */ "Normal Mode\0"
+    /* Toolbar_Tooltip_CompareMode */ "Compare Mode\0"
+    /* Toolbar_Tooltip_SinglePage */ "Single Page Mode\0"
+    /* Toolbar_Tooltip_DualPage */ "Dual Page Mode\0"
+    /* Toolbar_Tooltip_CompareOpen */ "Open New Image in Selection\0"
+    /* Toolbar_Tooltip_CompareSwap */ "Swap Left/Right\0"
+    /* Toolbar_Tooltip_CompareLayout */ "Toggle Layout\0"
+    /* Toolbar_Tooltip_CompareInfo */ "Compare Info\0"
+    /* Toolbar_Tooltip_CompareDelete */ "Delete Selected Image\0"
+    /* Toolbar_Tooltip_CompareZoomIn */ "Zoom In (Fine-tune)\0"
+    /* Toolbar_Tooltip_CompareZoomOut */ "Zoom Out (Fine-tune)\0"
+    /* Toolbar_Tooltip_CompareSyncZoomOn */ "Zoom Sync: ON\0"
+    /* Toolbar_Tooltip_CompareSyncZoomOff */ "Zoom Sync: OFF\0"
+    /* Toolbar_Tooltip_CompareSyncPanOn */ "Pan Sync: ON\0"
+    /* Toolbar_Tooltip_CompareSyncPanOff */ "Pan Sync: OFF\0"
+    /* Toolbar_Tooltip_SlideshowImmersiveToggle */ "Toggle Immersive Spotlight\0"
+    /* Toolbar_Tooltip_SlideshowExit */ "Exit Slideshow Mode\0"
+    /* Toolbar_Tooltip_CompareExit */ "Exit Compare\0"
+    /* Toolbar_Tooltip_AnimPlay */ "Play Animation\0"
+    /* Toolbar_Tooltip_AnimPause */ "Pause Animation\0"
+    /* Toolbar_Tooltip_AnimPrev */ "Previous Frame\0"
+    /* Toolbar_Tooltip_AnimNext */ "Next Frame\0"
+    /* Toolbar_Tooltip_AnimDirtyOn */ "Dirty Rect Debug: ON\0"
+    /* Toolbar_Tooltip_AnimDirtyOff */ "Dirty Rect Debug: OFF\0"
+    /* Toolbar_Tooltip_AnimSpeed */ "Animation Speed\0"
+    /* OSD_Copied */ "Copied!\0"
+    /* OSD_PixelsCopied */ "Pixels copied to clipboard!\0"
+    /* OSD_PixelsExtracting */ "Extracting raw pixels...\0"
+    /* OSD_FileCopied */ "File copied to clipboard!\0"
+    /* OSD_CoordinatesCopied */ "Coordinates copied!\0"
+    /* OSD_FilePathCopied */ "File path copied!\0"
+    /* OSD_Zoom100 */ "Zoom: 100%\0"
+    /* OSD_ZoomFit */ "Zoom: Fit Screen\0"
+    /* OSD_ZoomFitWindow */ "Zoom: Fit Window\0"
+    /* OSD_ZoomFill */ "Zoom: Fill Window\0"
+    /* OSD_PrintInstruction */ "Print: Use Ctrl+P in opened app\0"
+    /* OSD_MovedToRecycleBin */ "Moved to Recycle Bin\0"
+    /* OSD_WindowLocked */ "Window Locked\0"
+    /* OSD_WindowUnlocked */ "Window Unlocked\0"
+    /* OSD_AlwaysOnTopOn */ "Always on Top: ON\0"
+    /* OSD_AlwaysOnTopOff */ "Always on Top: OFF\0"
+    /* OSD_WallpaperSet */ "Wallpaper Set\0"
+    /* OSD_WallpaperFailed */ "Failed to set wallpaper\0"
+    /* OSD_Renamed */ "Renamed\0"
+    /* OSD_RenameFailed */ "Rename Failed\0"
+    /* OSD_Restored */ "Restored\0"
+    /* OSD_ExtensionFixed */ "Extension Fixed\0"
+    /* OSD_FirstImage */ "First image\0"
+    /* OSD_LastImage */ "Last image\0"
+    /* OSD_HD */ "HD\0"
+    /* OSD_ZoomPrefix */ "Zoom: \0"
+    /* OSD_AnimPlaying */ "Playing\0"
+    /* OSD_AnimPaused */ "Paused (Inspector Mode: Alt+Left/Right to Seek)\0"
+    /* OSD_AnimDirtyOn */ "Dirty Rect: ON\0"
+    /* OSD_AnimDirtyOff */ "Dirty Rect: OFF\0"
+    /* OSD_GamutDetected */ "Detected out-of-gamut colors\0"
+    /* OSD_GamutIncompatible */ "Gamut: Incompatible profile or parsing failed\0"
+    /* OSD_GamutFailed */ "Gamut: Analysis failed\0"
+    /* OSD_SlideshowStarted */ "Slideshow Started\0"
+    /* OSD_SlideshowStopped */ "Slideshow Stopped\0"
+    /* OSD_SlideshowResumed */ "Slideshow Resumed\0"
+    /* OSD_SlideshowPaused */ "Slideshow Paused\0"
+    /* OSD_ImmersiveSpotlight */ "Immersive: Spotlight\0"
+    /* OSD_ImmersiveNormal */ "Immersive: Normal\0"
+    /* OSD_PrintJobStarted */ "Print job submitted. You can continue browsing.\0"
+    /* OSD_PrintJobFinished */ "Print job sent successfully.\0"
+    /* OSD_EnterCropMode */ "Entered Crop Mode\0"
+    /* OSD_CropCopied */ "Crop selection has been copied\0"
+    /* OSD_CropApplied */ "Crop applied (unsaved)\0"
+    /* Context_ColorSpace */ "Color Space\0"
+    /* Settings_Option_CmsUnmanaged */ "Unmanaged\0"
+    /* Settings_Option_CmssRGB */ "sRGB\0"
+    /* Settings_Option_CmsP3 */ "Display P3\0"
+    /* Settings_Option_CmsAdobeRGB */ "Adobe RGB (1998)\0"
+    /* Settings_Option_CmsGray */ "Grayscale (Tonal Check)\0"
+    /* Settings_Option_CmsProPhoto */ "ProPhoto RGB\0"
+    /* Checkbox_AlwaysSaveLossless */ "Always Save Lossless Transforms\0"
+    /* Checkbox_AlwaysSaveEdgeAdapted */ "Always Save Edge-Adapted\0"
+    /* Checkbox_AlwaysSaveLossy */ "Always Save Re-Encoded\0"
+    /* Checkbox_NeverConfirmDelete */ "Directly to Recycle Bin, do not confirm again\0"
+    /* OSD_HEICCodecMissing */ "Cannot decode HEIC - Install HEVC Video Extension\0"
+    /* Dialog_HEICTitle */ "Cannot decode HEIC\0"
+    /* Dialog_HEICContent */ "Your system is missing the HEVC Video Extension.\nQuickView uses system hardware acceleration for best performance.\0"
+    /* Dialog_HEICGetExtension */ "Get Extension (Free)\0"
+    /* Dialog_Cancel */ "Cancel\0"
+    /* Settings_Tab_General */ "General\0"
+    /* Settings_Tab_About */ "About\0"
+    /* Settings_Tab_Shortcuts */ "Shortcuts\0"
+    /* Settings_Hotkey_PressKey */ "Press keys...\0"
+    /* Settings_Hotkey_Conflict */ "Hotkey conflict\0"
+    /* Settings_Hotkey_ConflictPrompt */ "Already used by \"%s\". Continuing will clear its hotkey.\0"
+    /* Settings_Hotkey_Restore */ "Restore Default Hotkeys\0"
+    /* Settings_Hotkey_Restored */ "Restored\0"
+    /* Settings_Hotkey_MouseTip */ "Tip: Supports middle mouse button, side buttons, and other multi-function mouse keys. Map additional buttons to keyboard keys in your mouse driver to bind them.\0"
+    /* Settings_Header_GalleryTrigger */ "Gallery Filmstrip (Top Hover)\0"
+    /* Settings_Label_GalleryTriggerMode */ "Filmstrip Trigger Mode\0"
+    /* Settings_Label_KeepGalleryVisibleOnThumbnailClick */ "Keep Visible After Clicking Thumbnail\0"
+    /* Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick */ "This feature will automatically enable Window Lock and Keep Window Size On Navigation.\0"
+    /* Settings_Label_GalleryExpandOnClickOnly */ "Expand Arrow Trigger Mode\0"
+    /* Settings_Tooltip_GalleryExpandOnClickOnly */ "Requires clicking the arrow to expand to folder gallery view, preventing accidental triggers when hovering over thumbnails.\0"
+    /* Settings_Option_TriggerClick */ "Click\0"
+    /* Settings_Option_TriggerHover */ "Hover\0"
+    /* Settings_Option_GalleryTriggerAuto */ "Auto Hover\0"
+    /* Settings_Option_GalleryTriggerDelay */ "Hotspot Hover\0"
+    /* Settings_Option_GalleryTriggerClick */ "Click Hotspot\0"
+    /* Settings_Option_GalleryTriggerDisable */ "Disabled\0"
+    /* Settings_Tooltip_GalleryTrigger */ "This feature is automatically disabled when the window is smaller than 600x450.\0"
+    /* Settings_Label_GalleryTriggerAreaHeight */ "Trigger Area Height\0"
+    /* Settings_Label_GalleryDwellTime */ "Dwell Time\0"
+    /* Settings_Label_GalleryExitDelay */ "Exit Delay\0"
+    /* Settings_Label_GalleryMinSize */ "Gallery Minimum Size\0"
+    /* Settings_Group_Foundation */ "Foundation\0"
+    /* Settings_Group_Startup */ "Startup\0"
+    /* Settings_Group_Habits */ "Habits\0"
+    /* Settings_Label_Language */ "Language\0"
+    /* Settings_Label_SingleInstance */ "Single Instance\0"
+    /* Settings_Label_CheckUpdates */ "Check Updates\0"
+    /* Settings_Label_UpdateChannel */ "Update Channel\0"
+    /* Settings_Option_UpdateStable */ "Stable\0"
+    /* Settings_Option_UpdatePreRelease */ "Pre-release\0"
+    /* Settings_Tooltip_PreRelease */ "Stable: Published after a preview version proves stable.\nPre-release: Delivers the latest code changes immediately to collect your feedback. Note: These changes are not strictly tested.\0"
+    /* Settings_Label_NavLoopMode */ "Loop\0"
+    /* Settings_Label_SortOrder */ "Sort Order\0"
+    /* Settings_Label_SortDescending */ "Descending\0"
+    /* Settings_Label_SortArchivesByNameAscending */ "Always Sort Archives by Name\0"
+    /* Settings_Label_ConfirmDel */ "Confirm Before Delete\0"
+    /* Settings_Label_Portable */ "Portable Mode / Cleanup\0"
+    /* Settings_Tooltip_Portable */ "Portable Mode / Registry Cleanup:\nWhen enabled, QuickView runs in portable mode. It will automatically clean up existing registry associations, disable automatic registry modification, and store configuration files in the application folder instead of AppData.\0"
+    /* Settings_Label_SpanDisplays */ "Span Displays\0"
+    /* Settings_Label_UIScale */ "UI Scale\0"
+    /* Settings_Status_RestartRequired */ "Restart required\0"
+    /* Settings_Status_NoWritePerm */ "No Write Permission!\0"
+    /* Settings_Status_Enabled */ "Enabled\0"
+    /* Settings_Header_PoweredBy */ "Powered by\0"
+    /* Settings_Text_Copyright */ "© 2025–%s Vivor Loong (GitHub: @justnullname)\0"
+    /* Settings_Text_License */ "Licensed under GNU GPL v3.0\0"
+    /* Settings_Tab_Visuals */ "Interface\0"
+    /* Settings_Tab_Controls */ "Controls\0"
+    /* Settings_ControlSub_Mouse */ "Mouse Gestures\0"
+    /* Settings_ControlSub_Keyboard */ "Shortcuts\0"
+    /* Settings_ControlSub_Behavior */ "Behavior\0"
+    /* Settings_Gesture_Preset */ "Gesture Preset\0"
+    /* Settings_Gesture_Preset_Default */ "QuickView Classic (Default)\0"
+    /* Settings_Gesture_Preset_Standard */ "Standard Photo Viewer\0"
+    /* Settings_Gesture_Preset_Browser */ "Minimalist / Browser\0"
+    /* Settings_Gesture_Add */ "+ Add Gesture\0"
+    /* Settings_Gesture_Reset */ "Reset Gestures\0"
+    /* Settings_Tab_Image */ "Image\0"
+    /* Settings_Tab_Advanced */ "Advanced\0"
+    /* Settings_Header_Backdrop */ "Backdrop\0"
+    /* Settings_Header_Window */ "Window\0"
+    /* Settings_Header_WindowLock */ "Window Lock\0"
+    /* Settings_Header_Panel */ "Panel\0"
+    /* Settings_Label_CanvasColor */ "Canvas Color\0"
+    /* Settings_Option_Effects */ "Effects\0"
+    /* Settings_Label_ContextMenuBackdrop */ "Right-Click Menu\0"
+    /* Settings_Label_CanvasEffectStyle */ "Effect Style\0"
+    /* Settings_Tooltip_BackdropEffectsTip */ "Mica and Mica Alt are supported only on Windows 11. Acrylic uses more system resources than Mica/Mica Alt.\0"
+    /* Settings_Label_Overlay */ "Overlay\0"
+    /* Settings_Label_ShowGrid */ "Show Grid Overlay\0"
+    /* Settings_Label_AlwaysOnTop */ "Always on Top\0"
+    /* Settings_Label_LockWindow */ "Lock Window\0"
+    /* Settings_Tooltip_LockWindow */ "Controls whether the program locks the window border by default on startup, rather than following image scaling.\0"
+    /* Settings_Label_AutoHideTitle */ "Auto-Hide Title Bar\0"
+    /* Settings_Label_RoundedCorners */ "Rounded Corners\0"
+    /* Settings_Label_UIBorders */ "Show UI Borders\0"
+    /* Settings_Tooltip_RoundedCorners */ "Controls window and context menu rounded corners. Requires Windows 11.\0"
+    /* Settings_Label_LockToolbar */ "Lock Bottom Toolbar\0"
+    /* Settings_Label_WindowMinSize */ "Minimum Window Width\0"
+    /* Settings_Label_WindowMaxSizePercent */ "Maximum Start Size (%)\0"
+    /* Settings_Label_ShowBorderIndicator */ "Show Edge Overflow Indicators\0"
+    /* Settings_Tooltip_ShowBorderIndicator */ "Shows a soft edge glow along directions where the image exceeds the viewport while panning or zooming, then fades out automatically.\0"
+    /* Settings_Label_ShowNavigator */ "Show Minimap\0"
+    /* Settings_Tooltip_ShowNavigator */ "When mouse is over minimap, Wheel / Thumb Wheel (Shift + Wheel) pans image\0"
+    /* Settings_Label_KeepWindowSizeOnNav */ "Keep Window Size on Navigation\0"
+    /* Settings_Label_RememberLastWindowSizeAndPosition */ "Remember Last Window Size and Position\0"
+    /* Settings_Label_UpscaleSmallImagesWhenLocked */ "Adapt Small Images\0"
+    /* Settings_Label_SlideshowInterval */ "Interval (seconds)\0"
+    /* Settings_Label_SlideshowImmersive */ "Immersive Mode\0"
+    /* Settings_Option_SlideshowNormal */ "Normal\0"
+    /* Settings_Option_SlideshowSpotlight */ "Spotlight\0"
+    /* Settings_Label_ExifMode */ "EXIF Panel Mode\0"
+    /* Settings_Label_ToolbarInfoDefault */ "Toolbar Info Default\0"
+    /* Settings_Label_OpenFullScreenMode */ "Open Fullscreen\0"
+    /* Settings_Label_FullScreenZoomMode */ "Fullscreen Zoom Mode\0"
+    /* Settings_Label_CustomLiteInfoPanel */ "Custom Lite Info Panel\0"
+    /* Settings_Label_CustomFullInfoPanel */ "Custom Full Info Panel\0"
+    /* Settings_Label_InfoPanelScale */ "Info Panel Full/Lite Zoom\0"
+    /* Settings_Label_ItemsInNormalMode */ "Items in Normal Mode\0"
+    /* Settings_Label_ItemsInCompareMode */ "Items in Compare Mode\0"
+    /* Settings_Label_SeparatorPreset */ "Separator Preset\0"
+    /* Settings_Option_FitScreen */ "Fit to Screen\0"
+    /* Settings_Option_Black */ "Black\0"
+    /* Settings_Option_White */ "White\0"
+    /* Settings_Option_Grid */ "Grid\0"
+    /* Settings_Option_Custom */ "Custom\0"
+    /* Settings_Option_Off */ "Off\0"
+    /* Settings_Option_On */ "On\0"
+    /* Settings_Option_Lite */ "Lite\0"
+    /* Settings_Option_Full */ "Full\0"
+    /* Settings_Option_LargeOnly */ "Large Only\0"
+    /* Settings_Option_All */ "All\0"
+    /* Settings_Option_SoftProofing */ "Soft Proofing\0"
+    /* Settings_Header_Mouse */ "Mouse\0"
+    /* Settings_Header_Edge */ "Edge\0"
+    /* Settings_Label_InvertWheel */ "Invert Wheel\0"
+    /* Settings_Label_MouseAnchorZoom */ "Mouse-Anchored Window Zoom\0"
+    /* Settings_Label_RightButtonDragZoom */ "Right Button Drag Zoom\0"
+    /* Settings_Label_WheelZoomSpeed */ "Wheel Zoom Speed\0"
+    /* Settings_Tooltip_WheelZoomSpeed */ "Alt + Wheel temporarily adjusts zoom speed\0"
+    /* Settings_Label_ThumbWheel */ "Thumb Wheel\0"
+    /* Settings_Tooltip_ThumbWheel */ "Can be replaced with Shift + Wheel\0"
+    /* Settings_Tooltip_MiddleDrag */ "Can be replaced with Ctrl + Left Click\0"
+    /* Settings_Label_DoubleClick */ "Double-Click\0"
+    /* Settings_Option_DoubleClick_Smart */ "Smart\0"
+    /* Settings_Option_DoubleClick_WheelMode1 */ "Wheel Mode 1\0"
+    /* Settings_Option_DoubleClick_WheelMode2 */ "Wheel Mode 2\0"
+    /* Settings_Tooltip_DoubleClick */ "Smart: Automatically cycles between Fit Screen / 100% / Initial Size;\nWheel Mode 1: Double-click swaps main & thumb wheel functions;\nWheel Mode 2: Double-click toggles image pan mode;\nTip: Shift + Wheel acts as Thumb Wheel.\0"
+    /* Settings_Tooltip_PanStepNormal */ "Controls key pan and wheel pan speed\0"
+    /* OSD_WheelMode1_NextPrevZoom */ "Main Wheel: Next/Prev; Thumb/Shift+Wheel: Zoom\0"
+    /* OSD_WheelMode1_ZoomNextPrev */ "Main Wheel: Zoom; Thumb/Shift+Wheel: Next/Prev\0"
+    /* OSD_WheelMode2_Pan */ "Wheel: Pan Mode\0"
+    /* OSD_WheelMode2_Default */ "Wheel: Default Mode\0"
+    /* Settings_Label_RightDragZoomSpeed */ "Mouse Drag Zoom Speed\0"
+    /* OSD_WheelZoomSpeed */ "Zoom Speed (Temp): \0"
+    /* Settings_Label_InvertButtons */ "Invert Side Buttons\0"
+    /* Settings_Header_KeyboardPan */ "Pan Step\0"
+    /* Settings_Label_PanStepNormal */ "Pan Step (Normal)\0"
+    /* Settings_Label_PanStepFast */ "Keyboard Pan Step (Fast)\0"
+    /* Settings_Label_UseFixedZoom */ "Use Fixed Zoom Levels\0"
+    /* Settings_Tooltip_UseFixedZoom */ "When enabled, Alt + Wheel performs regular zoom instead of changing zoom speed.\0"
+    /* Settings_Label_FixedZoomLevels */ "  └  Custom Zoom Levels\0"
+    /* Dialog_FixedZoomTitle */ "Edit Zoom Levels\0"
+    /* Dialog_FixedZoomMsg */ "Enter comma-separated zoom ratios (e.g. 0.5, 1, 2):\0"
+    /* Settings_Label_ZoomModeIn */ "Zoom Mode (In)\0"
+    /* Settings_Tooltip_ZoomModeIn */ "Select upscaling algorithm:\n• Auto: Smart content-aware detection (FSR for photos/CG, Nearest for pixel art)\n• Linear: Fast bilinear smoothing\n• Nearest: Sharp pixel grid for pixel art\n• HQ Cubic: Ultra-smooth bicubic filter\n• AMD FSR 1.0: Edge-adaptive spatial super-resolution with RCAS sharpening\0"
+    /* Settings_Label_ZoomModeOut */ "Zoom Mode (Out)\0"
+    /* Settings_Label_LeftDrag */ "Left Drag\0"
+    /* Settings_Label_MiddleDrag */ "Middle Drag\0"
+    /* Settings_Label_MiddleClick */ "Middle Click\0"
+    /* Settings_Label_EdgeNavClick */ "Edge Nav Click\0"
+    /* Settings_Label_ShowOSD */ "Show OSD Notification\0"
+    /* Settings_Label_DisableEdgeNavInCompare */ "Disable in Compare Mode\0"
+    /* Settings_Label_NavIndicator */ "Nav Indicator\0"
+    /* Settings_Option_Window */ "Window\0"
+    /* Settings_Option_Pan */ "Pan\0"
+    /* Settings_Option_None */ "None\0"
+    /* Settings_Option_Exit */ "Exit\0"
+    /* Settings_Option_Arrow */ "Arrow\0"
+    /* Settings_Option_Cursor */ "Cursor\0"
+    /* Settings_Option_Manual */ "Manual\0"
+    /* Settings_Option_SortAuto */ "Auto (Explorer)\0"
+    /* Settings_Option_SortName */ "Name\0"
+    /* Settings_Option_SortModified */ "Date Modified\0"
+    /* Settings_Option_SortDateTaken */ "Date Taken (EXIF)\0"
+    /* Settings_Option_SortSize */ "Size\0"
+    /* Settings_Option_SortType */ "Type\0"
+    /* Settings_Option_NavLoop */ "Loop\0"
+    /* Settings_Option_NavThrough */ "Through Subfolders\0"
+    /* Settings_Option_Linear */ "Linear: Basic smoothing\0"
+    /* Settings_Option_Nearest */ "Nearest: Extreme sharpness\0"
+    /* Settings_Option_HighQualityCubic */ "HQ Cubic: Extreme smoothing\0"
+    /* Settings_Option_FSR */ "AMD FSR 1.0 (EASU/RCAS)\0"
+    /* Settings_Header_Render */ "Render\0"
+    /* Settings_Header_Hdr */ "HDR\0"
+    /* Settings_Header_Prompts */ "Prompts\0"
+    /* Settings_Header_System */ "System\0"
+    /* Settings_Label_AutoRotate */ "Auto Rotate (EXIF)\0"
+    /* Settings_Label_FsrSharpness */ "FSR Sharpness\0"
+    /* Settings_Tooltip_FsrSharpness */ "Adjust edge sharpness for AMD FSR 1.0 spatial super-resolution.\0"
+    /* Settings_Tab_Plugins */ "Plugins\0"
+    /* Settings_Label_EnableSrPlugin */ "Super-Resolution AI\0"
+    /* Settings_Label_SrModel */ "AI Model\0"
+    /* Settings_Label_SrAutoTrigger */ "Auto Trigger\0"
+    /* Settings_Label_SrAutoTriggerMaxWidth */ "Max Source Width\0"
+    /* Settings_Tooltip_SrAutoTriggerMaxWidth */ "Maximum source image width (in pixels) for automatic super-resolution. Set to 0 for unlimited. If either width or height is 0, only the non-zero value acts as the constraint.\0"
+    /* Settings_Label_SrAutoTriggerMaxHeight */ "Max Source Height\0"
+    /* Settings_Tooltip_SrAutoTriggerMaxHeight */ "Maximum source image height (in pixels) for automatic super-resolution. Set to 0 for unlimited. If either width or height is 0, only the non-zero value acts as the constraint.\0"
+    /* Settings_Value_Unlimited */ "Unlimited\0"
+    /* Settings_Label_SrOpenInCompare */ "Show in Compare Mode on Manual Trigger\0"
+    /* Settings_Label_SrPromptModel */ "Prompt Model Selection on Manual Trigger\0"
+    /* Export_Checkbox_SuperResolution */ "Export Super-Resolution Quality\0"
+    /* Settings_Label_SrDebounce */ "Trigger Delay\0"
+    /* Settings_Tooltip_SrDebounce */ "Delay in milliseconds (0 - 5000 ms) before neural super-resolution triggers after zoom settles.\nMaintains smooth interpolation during interaction and reconstructs ultra-crisp AI details once settled.\0"
+    /* Settings_Header_PluginTriggers */ "Triggers & Lifecycle\0"
+    /* Settings_Header_PluginParams */ "Plugin Parameters\0"
+    /* Settings_Label_SrStorageFolder */ "Plugin & Model Storage\0"
+    /* Settings_Button_OpenModelFolder */ "📂 Open Local Directory\0"
+    /* Settings_Prompt_DownloadModelFirst */ "Download selected model first\0"
+    /* Settings_Segment_InstalledPlugins */ "Installed Extensions\0"
+    /* Settings_Segment_Marketplace */ "Marketplace\0"
+    /* Settings_Label_SrEngine */ "Backend Engine\0"
+    /* Settings_Label_SrModelStatus */ "Model Status\0"
+    /* Settings_Format_DownloadModel */ "Download Model (~%llu MB)\0"
+    /* Settings_Header_SrComponent */ "Super-Resolution AI Component\0"
+    /* Settings_Label_QuickEnableEngine */ "Quick Enable Engine\0"
+    /* Settings_Button_QuickEnableNcnn */ "⚡ Enable Real-ESRGAN NCNN Vulkan Engine\0"
+    /* Settings_Label_OnlineExtensions */ "Online Extensions & Models\0"
+    /* Settings_Button_BrowseMarketplace */ "🌐 Browse Online Marketplace\0"
+    /* Settings_Label_MarketManifest */ "Marketplace Manifest\0"
+    /* Settings_Button_RefreshManifest */ "🔄 Refresh Manifest\0"
+    /* Settings_Button_SyncingManifest */ "Syncing from cloud...\0"
+    /* Settings_Format_PluginPackageSize */ "Plugin Package (~%llu MB)\0"
+    /* Settings_Button_InstalledUpToDate */ "✓ Installed (Up-to-date)\0"
+    /* Settings_Format_UpdateTo */ "⚡ Update to v%ls\0"
+    /* Settings_Button_InstallPlugin */ "⚡ Install\0"
+    /* OSD_SrProcessing */ "AI Super-Resolution Processing...\0"
+    /* OSD_SrSuccessFormat */ "✓ AI Upscale Ready: %s [%.0fx] (%.1f ms)\0"
+    /* OSD_SrSuccessFormatSimple */ "✓ AI Upscale Ready: %s (%.1f ms)\0"
+    /* OSD_SrFailed */ "✗ AI Super-Resolution Failed\0"
+    /* OSD_SrPluginDisabledOrMissing */ "AI Super-Resolution plugin is not enabled or not installed\0"
+    /* OSD_SrAnimationProcessingFormat */ "Upscaling animation sequence (%u/%u frames)...\0"
+    /* OSD_SrAnimationSuccessFormat */ "✓ Animation AI Upscale Ready: %s (%u frames in %.2f s)\0"
+    /* OSD_SrVectorLosslessSkipped */ "Vector graphics scale losslessly without AI super-resolution\0"
+    /* OSD_SrAnimationTooManyFrames */ "Animation has too many frames (> %u), skipped full-sequence SR\0"
+    /* OSD_SrImageTooLargeFormat */ "Image resolution is too large (%ux%u, >16 MP), skipped AI upscale to avoid VRAM overflow\0"
+    /* Dialog_Title_SelectSrModel */ "Select AI Super-Resolution Model\0"
+    /* Dialog_Msg_SelectSrModel */ "Choose the AI Super-Resolution model to execute:\0"
+    /* Dialog_Checkbox_RememberSrModelChoice */ "Remember choice and do not prompt on manual trigger\0"
+    /* Dialog_Button_OK */ "OK\0"
+    /* Settings_Label_CMS */ "Color Management\0"
+    /* Settings_Label_AdvancedColor */ "Advanced Color (HDR)\0"
+    /* Settings_Label_CmsFallback */ "Untagged Image Fallback\0"
+    /* Settings_Label_HdrToneMapping */ "HDR Tone Mapping\0"
+    /* Settings_Label_HdrSplineKnee */ "Spline Knee Point\0"
+    /* Settings_Tooltip_HdrToneMapping */ "HDR Tone Mapping strategy:\nDetermines how HDR images are displayed when exceeding monitor capabilities.\nSpline: High-fidelity highlight roll-off using piecewise spline (Recommended).\nColorimetric: Strict luminance mapping; highlights exceeding the monitor limit are clipped.\nBT.2390 (EETF): ITU-R BT.2390 EETF curve for high-fidelity tone mapping.\0"
+    /* Settings_Tooltip_HdrSplineKnee */ "0 = Auto (Calculated based on image luminance).\nThe value represents the ratio of the monitor's peak luminance. Brightness below this knee point maps 1:1, while brightness above is smoothly compressed using a spline curve.\n(Recommended: 0.4 - 0.75)\0"
+    /* Settings_Label_HdrPeakNitsOverride */ "HDR Peak Brightness (Nits)\0"
+    /* Settings_Tooltip_HdrPeakNitsOverride */ "Set to 0 to use system detected brightness.\0"
+    /* Settings_Label_HdrPeakPercentile */ "HDR Peak Percentile\0"
+    /* Settings_Tooltip_HdrPeakPercentile */ "Discard extremely bright pixels to raise overall brightness (mpv default: 99.995%).\0"
+    /* Settings_Option_HdrPeakPercentile_100 */ "100% (Absolute Peak)\0"
+    /* Settings_Option_HdrPeakPercentile_99995 */ "99.995% (Stable)\0"
+    /* Settings_Option_HdrPeakPercentile_999 */ "99.9% (Aggressive)\0"
+    /* Settings_Label_HdrDesatThreshold */ "HDR Highlight Desaturation Range\0"
+    /* Settings_Tooltip_HdrDesatThreshold */ "Start threshold for highlight desaturation. 0.0 means desaturate all brightness, 1.0 means no desaturation. Recommended default is 0.18.\0"
+    /* Settings_Label_HdrMaxDesat */ "HDR Highlight Desaturation Strength\0"
+    /* Settings_Tooltip_HdrMaxDesat */ "Maximum intensity of desaturation at extreme highlights. 0.0 means no desaturation, 1.0 means fully desaturated to white. Recommended default is 0.75.\0"
+    /* Settings_Option_HdrColorimetric */ "Colorimetric\0"
+    /* Settings_Option_HdrSpline */ "Spline\0"
+    /* Settings_Option_HdrLegacyReinhard */ "BT.2390 (EETF)\0"
+    /* Settings_Label_CustomProof */ "Soft Proof Profile (.icc)\0"
+    /* Settings_Label_CmsIntent */ "Rendering Intent\0"
+    /* Settings_Label_GamutWarning */ "Gamut Warning Detection\0"
+    /* Settings_Tooltip_GamutWarning */ "Analyze and highlight out-of-gamut areas. Options: Off, detect only in soft proofing mode, or detect both soft proofing and screen gamut.\0"
+    /* Settings_Label_GamutAutoPrompt */ "Auto Prompt on Gamut Error\0"
+    /* Settings_Tooltip_GamutAutoPrompt */ "Show OSD notification when gamut errors are detected. Highlights can be manually toggled via toolbar.\0"
+    /* Settings_Label_GamutColor */ "Gamut Warning Highlight Color\0"
+    /* Settings_Option_CmsIntentRelative */ "Relative Colorimetric\0"
+    /* Settings_Option_CmsIntentPerceptual */ "Perceptual\0"
+    /* Settings_Tooltip_CMS */ "Enable Color Management System.\nWhen enabled, applies high-precision color space conversion via GPU to restore true colors.\nDisabling it reduces GPU load, but may result in oversaturated colors on wide-gamut displays.\0"
+    /* Settings_Tooltip_CmsIntent */ "Rendering Intent for color space conversion.\nPerceptual: Compresses out-of-gamut colors to preserve details and gradients (ideal for photos).\nRelative Colorimetric: Preserves in-gamut colors and clips out-of-gamut ones (ideal for UI and icons).\nNote: Visual differences only occur when using advanced ICC profiles containing LUTs (Lookup Tables). Standard matrix profiles will automatically fallback to Relative Colorimetric.\0"
+    /* Settings_Tooltip_AdvancedColor */ "Enable 16-bit floating-point rendering pipeline (scRGB).\nWhen enabled, perfectly renders photo highlights on HDR-capable displays by breaking the SDR limit.\nDisabling it forces mapping to SDR output.\nNote: Enabling increases VRAM usage.\0"
+    /* Settings_Tooltip_ZoomAuto */ "Auto: 100% scale when image is smaller than screen, fit to screen when larger.\0"
+    /* Context_SoftProofing */ "Soft Proofing Preview\0"
+    /* Context_SoftProofProfile */ "Proof Profile\0"
+    /* Context_SoftProofCustom */ "Custom...\0"
+    /* Settings_Value_ComingSoon */ "Coming Soon\0"
+    /* Settings_Label_ForceRaw */ "Force RAW Decode\0"
+    /* Settings_Label_PairRawJpeg */ "RAW+JPEG Pairing\0"
+    /* Settings_Tooltip_PairRawJpeg */ "Show a RAW file and its same-name camera image (JPEG/HEIF) as one photo.\nOnly the rendered image stays in the list, marked with the RAW format (e.g. +CR3); capture times are verified in the background and mismatched pairs are split.\nSwitch between the camera image and the RAW decode with the RAW toolbar button or its hotkey, or view both with the pair-compare hotkey.\0"
+    /* Settings_Label_Exposure */ "Exposure (Brightness)\0"
+    /* Settings_Tooltip_Exposure */ "Adjust image brightness (Exposure Compensation). Range: 0.18x to 10.0x.\0"
+    /* Settings_Label_AddToOpenWith */ "Add to Open With\0"
+    /* Settings_Label_CustomEditor */ "Custom Image Editor\0"
+    /* Context_SelectEditor */ "Select Editor\0"
+    /* OSD_EditorLaunchFailed */ "Failed to launch editor. Please configure it again.\0"
+    /* Settings_Action_Add */ "Add\0"
+    /* Settings_Action_Added */ "Added\0"
+    /* Settings_Status_DisabledInPortable */ "Disabled in Portable Mode\0"
+    /* Settings_Header_Features */ "Features\0"
+    /* Settings_Header_Performance */ "Performance\0"
+    /* Settings_Header_Transparency */ "Transparency\0"
+    /* Settings_Label_DebugHUD */ "Enable Debug HUD (F12)\0"
+    /* Settings_Label_Prefetch */ "Prefetch System\0"
+    /* Settings_Label_MemoryReclaim */ "Smart Memory Management\0"
+    /* Settings_Option_MemSmart */ "Smart\0"
+    /* Settings_Option_MemAggressive */ "Aggressive\0"
+    /* Settings_Option_MemOnDemand */ "On-Demand\0"
+    /* Settings_Tooltip_MemoryReclaim */ "Smart: Automatically reclaim memory only when system RAM < 4GB.\nAggressive: Keep memory reserved for absolute 0ns allocation speed.\nOn-Demand: Always reclaim idle memory to save physical RAM.\0"
+    /* Settings_Label_Reset */ "Reset All Settings\0"
+    /* Settings_Action_Restore */ "Restore\0"
+    /* Settings_Action_Done */ "Done\0"
+    /* Settings_Header_ConfigManagement */ "Import / Export (.ini)\0"
+    /* Settings_Action_CheckUpdates */ "Check for Updates\0"
+    /* Settings_Action_ViewUpdate */ "View Update\0"
+    /* Settings_Status_Checking */ "Checking...\0"
+    /* Settings_Status_UpToDate */ "Up to date\0"
+    /* Settings_Link_GitHub */ "GitHub Repo\0"
+    /* Settings_Link_ReportIssue */ "Report Issue\0"
+    /* Settings_Link_Hotkeys */ "Help (F1)\0"
+    /* Settings_Label_Version */ "Version\0"
+    /* Settings_Label_Build */ "Build\0"
+    /* Dialog_UpdateTitle */ "New Version Available!\0"
+    /* Dialog_UpdateContent */ "v%s is ready.\0"
+    /* Dialog_UpdateLogHeader */ "Changelog\0"
+    /* Dialog_ButtonUpdate */ "Update Now\0"
+    /* Dialog_ButtonLater */ "Later\0"
+    /* Dialog_ButtonStar */ "Star on GitHub\0"
+    /* Dialog_Update_LoveTitle */ "QuickView is built with love\0"
+    /* Dialog_Update_LoveMessage */ "I maintain QuickView in my spare time because I believe Windows deserves a faster, cleaner viewer. I don't have a marketing budget or a team. If you enjoy this update, the biggest contribution you can make is to Star us on GitHub or share it with a friend.\0"
+    /* Dialog_PassthroughTitle */ "Mouse Passthrough Mode\0"
+    /* Dialog_PassthroughContent */ "Mouse events will pass through to the window below.\nOnly global hotkey (Shift+Esc) or taskbar menu can exit this mode.\n\nContinue?\0"
+    /* OSD_PassthroughOn */ "Click-Through: ON (Shift+Esc to exit)\0"
+    /* OSD_PassthroughOff */ "Click-Through: OFF\0"
+    /* OSD_OverlayModeOn */ "Overlay Mode: ON\0"
+    /* OSD_OverlayModeOff */ "Overlay Mode: OFF\0"
+    /* OSD_Opacity */ "Opacity\0"
+    /* Help_Desc_Edit */ "Edit\0"
+    /* Help_Header_Tips */ "Tips & Glossary\0"
+    /* Help_Tip_ContextScope */ "Tip: QuickView now supports full keyboard shortcut and mouse gesture customization. Please view and configure your bindings in 'Settings -> Controls'. This help panel content will be migrated to online documentation in a future release.\0"
+    /* Help_Tip_Rotation */ "Rotation: 'Edge Adapted' means minor cropping to align with codec blocks (lossless). 'Lossy' means re-encoding is required.\0"
+    /* Help_Tip_VideoWall */ "Video Wall (Ctrl+F11): Spans all screens. If the close button is hidden, double-click anywhere to exit.\0"
+    /* Help_Tip_DesignerMode */ "Tracing Mode / Film Mode: Once enabled, the image becomes semi-transparent, revealing underlying elements. You can adjust its size or transparency. Click the Mouse Passthrough toggle in the toolbar to enter Passthrough Mode, where all inputs except Shift+Esc are ignored, turning QuickView into a transparent overlay.\0"
+    /* Help_Tip_GamutDetection */ "Gamut Warning: Detects out-of-gamut colors for the target display or soft proofing profile. Modes: Off, Soft Proofing only, or All (Default: Soft Proofing). Toggle via toolbar.\0"
+    /* Help_Tip_Raw */ "RAW: Shows embedded preview by default for speed. Click the RAW button to fully decode (colors may vary).\0"
+    /* Help_Tip_JpegQ */ "JPEG Quality: Estimated value (e.g. Photoshop 100% ≈ 98%). May vary slightly from save settings due to encoder variance, which is normal.\0"
+    /* Help_Tip_SoftProofCompare */ "Soft Proof Comparison: Entering Compare Mode while Soft Proofing is active will automatically compare the original vs. proofed image.\0"
+    /* Settings_Option_Auto */ "Auto\0"
+    /* Settings_Option_Eco */ "Eco\0"
+    /* Settings_Option_Balanced */ "Balanced\0"
+    /* Settings_Option_Ultra */ "Ultra\0"
+    /* HUD_Group_Physical */ "PHYSICAL ATTRIBUTES\0"
+    /* HUD_Group_Scientific */ "SCIENTIFIC QUALITY\0"
+    /* HUD_Group_Encoding */ "OPTICS & ENCODING\0"
+    /* HUD_Tip_Sharp_Desc */ "Edge definition (Laplacian Variance)\0"
+    /* HUD_Tip_Sharp_High */ "Crisp edges, high detail\0"
+    /* HUD_Tip_Sharp_Low */ "Soft focus or motion blur\0"
+    /* HUD_Tip_Sharp_Ref */ "> 500 is very sharp\0"
+    /* HUD_Tip_Ent_Desc */ "Information density (Shannon Entropy)\0"
+    /* HUD_Tip_Ent_High */ "Complex textures or high noise\0"
+    /* HUD_Tip_Ent_Low */ "Flat areas or low detail\0"
+    /* HUD_Tip_Ent_Ref */ "7.0-8.0 is high detail\0"
+    /* HUD_Tip_BPP_Desc */ "Bits Per Pixel (Compression Efficiency)\0"
+    /* HUD_Tip_BPP_High */ "Lower efficiency (more data preserved)\0"
+    /* HUD_Tip_BPP_Low */ "Higher efficiency (higher compression)\0"
+    /* HUD_Tip_BPP_Ref */ "24.0 (Raw RGB), ~2.0-3.0 (High JPEG), ~0.5-1.5 (WebP/AVIF)\0"
+    /* HUD_Label_High */ "High: \0"
+    /* HUD_Label_Low */ "Low: \0"
+    /* HUD_Label_Ref */ "Ref: \0"
+    /* Settings_Header_GeekGlass */ "Glass Engine (GPU)\0"
+    /* Settings_Label_EnableGeekGlass */ "Enable Glass\0"
+    /* Settings_Label_GlassUIAnimations */ "UI Animations\0"
+    /* Settings_Header_CoreMaterial */ "Component Material\0"
+    /* Settings_Label_BlurSigma */ "Glass Blur Sigma\0"
+    /* Settings_Status_GlassDisabled */ "Glass Disabled (System)\0"
+    /* Settings_Label_TintDensity */ "Tint Layer\0"
+    /* Settings_Tooltip_TintDensity */ "Overall color intensity of the glass frost effect.\0"
+    /* Settings_Label_SpecularOpacity */ "Reflex (Specular)\0"
+    /* Settings_Tooltip_SpecularOpacity */ "Brightness of the diagonal lighting reflections.\0"
+    /* Settings_Label_ShadowIntensity */ "Shadow Depth\0"
+    /* Settings_Tooltip_ShadowIntensity */ "Strength of the ambient occlusion shadows.\0"
+    /* Settings_Header_VectorAssets */ "Vector Rendering\0"
+    /* Settings_Label_VectorStrokeWeight */ "Icon Stroke weight\0"
+    /* Settings_Option_StrokeStandard */ "Standard (1.5px)\0"
+    /* Settings_Option_StrokeFine */ "Fine (1.0px)\0"
+    /* Settings_Header_GlassTint */ "Tint Profile\0"
+    /* Settings_Label_TintProfile */ "Color Logic\0"
+    /* Settings_Option_TintAuto */ "Auto (Adaptive)\0"
+    /* Settings_Option_TintCustom */ "Custom Color\0"
+    /* Settings_Label_GlassCustomColor */ "Manual Tint\0"
+    /* Settings_Header_DensityMatrix */ "Control Surface Density (%)\0"
+    /* Settings_Label_OsdDensity */ "OSD & HUD\0"
+    /* Settings_Tooltip_OsdDensity */ "Transparency for small floating overlays.\0"
+    /* Settings_Label_PanelsDensity */ "Toolbar & Sidebars\0"
+    /* Settings_Tooltip_PanelsDensity */ "Transparency for the bottom toolbar, information panel, gallery, and top-right window controls.\0"
+    /* Settings_Label_ModalsDensity */ "Dialogs & Settings\0"
+    /* Settings_Tooltip_ModalsDensity */ "Transparency for centered popups.\0"
+    /* Settings_Label_MenusDensity */ "Menus\0"
+    /* Settings_Tooltip_MenusDensity */ "Control context menu material density (Only adjustable when using Acrylic backdrop).\0"
+    /* Settings_Header_Professional */ "Professional Tools\0"
+    /* Settings_Label_ShowDirtyRect */ "Show Update Regions Button in Animation\0"
+    /* Settings_Tooltip_ShowDirtyRect */ "Show the update region debug button in animation mode to visualize which parts of the frame are being redrawn.\0"
+    /* Settings_Label_LoupeShape */ "Magnifier Shape\0"
+    /* Settings_Option_LoupeShapeSquare */ "Square\0"
+    /* Settings_Option_LoupeShapeCircle */ "Circle\0"
+    /* Settings_Option_LoupeShapeFullscreen */ "Full Window\0"
+    /* Settings_Label_LoupeZoom */ "Magnifier Zoom\0"
+    /* Settings_Tooltip_LoupeHotkey */ "Hold the shortcut key and scroll the mouse wheel to adjust the magnifier size.\0"
+    /* Settings_Tooltip_CropModeHotkey */ "Hold Ctrl and drag with the left mouse button to quick-crop.\0"
+    /* Settings_Tab_Theme */ "Theme\0"
+    /* Settings_Label_ThemeMode */ "Preset\0"
+    /* Settings_Option_ThemeAuto */ "System\0"
+    /* Settings_Option_ThemeDark */ "Dark\0"
+    /* Settings_Option_ThemeLight */ "Light\0"
+    /* Settings_Option_ThemeCustom */ "Design\0"
+    /* Settings_Label_AmbientDimmer */ "Modal Dimmer\0"
+    /* Settings_Tooltip_AmbientDimmer */ "Dim the background when a modal or settings window is open.\0"
+    /* Settings_Label_AccentColor */ "Accent Color\0"
+    /* Settings_Option_AccentSystem */ "System\0"
+    /* Settings_Option_AccentCustom */ "Custom\0"
+    /* Settings_Label_WindowBorderAccent */ "Active Window Border\0"
+    /* Settings_Option_BorderFollowSystem */ "System\0"
+    /* Settings_Option_BorderAccent */ "Accent\0"
+    /* Settings_Label_ResetGlass */ "Material Preset\0"
+    /* Settings_Action_ResetGlass */ "Reset Defaults\0"
+    /* Settings_Header_ThemeManagement */ "Theme Engine\0"
+    /* Settings_Action_ExportTheme */ "Export\0"
+    /* Settings_Action_ImportTheme */ "Import\0"
+    /* Toolbar_Tooltip_CompareSave */ "Save / Export (S)\0"
+    /* Dialog_MultiLineInputHint */ "[Ctrl+Enter] Submit / Save\0"
+    /* Dialog_AiApiKeyTitle */ "Configure API Key\0"
+    /* Dialog_AiApiKeyPrompt */ "Enter provider API key (protected locally via Windows DPAPI):\0"
+    /* Dialog_AiPromptTitle */ "Edit Prompt Template\0"
+    /* Dialog_AiPromptPrompt */ "Configure AI prompt template (multi-line supported, press Ctrl+Enter to submit):\0"
+    /* Dialog_AiActionNameTitle */ "Edit Action Name\0"
+    /* Dialog_AiActionNamePrompt */ "Enter display name for this AI action:\0"
+    /* Dialog_AiBaseUrlTitle */ "Configure Endpoint\0"
+    /* Dialog_AiBaseUrlPrompt */ "Enter OpenAI / ComfyUI compatible API Base URL:\0"
+    /* AiAction_Title */ "AI Command Palette\0"
+    /* AiAction_EscHint */ "[Esc] Close\0"
+    /* AiAction_ScopeCropAndBlend */ "Inpaint Selection\0"
+    /* AiAction_ScopeForceFull */ "Full Image\0"
+    /* AiAction_FooterQuickKeys */ "Press 1~9 / 0 to execute\0"
+    /* AiAction_Placeholder */ "Type prompt, or search presets...\0"
+    /* AiAction_InpaintTitle */ "AI Inpaint & Erase\0"
+    /* AiAction_InpaintDesc */ "Select region to erase or replace seamlessly\0"
+    /* AiAction_InpaintTag */ "Selection\0"
+    /* AiAction_AdhocPrefix */ "✨ Send Prompt: \"\0"
+    /* AiAction_AdhocSend */ "Enter to Send\0"
+    /* AiAction_CurrentModel */ "Current Model\0"
+    /* AiAction_NoModelSelected */ "No Model Selected\0"
+    /* OSD_AiProcessing */ "AI Processing: %s (Esc to cancel)...\0"
+    /* OSD_AiGenerationSuccess */ "AI generation completed! Entering Wipe Compare mode\0"
+    /* OSD_AiCompleted */ "AI processing completed\0"
+    /* OSD_AiPreparing */ "AI: %s preparing (Esc to cancel)...\0"
+    /* OSD_AiProcessingElapsed */ "AI: %s processing [%ds, Esc to cancel]...\0"
+    /* OSD_AiConnecting */ "AI: Connecting to %s (Esc to cancel)...\0"
+    /* OSD_AiSamplingProgress */ "AI Sampling: %d%% (%d/%d steps) [%ds, Esc to cancel]\0"
+    /* OSD_AiSamplingProgressEta */ "AI Sampling: %d%% (%d/%d steps, ~%.0fs left) [%ds, Esc to cancel]\0"
+    /* OSD_AiAdhocPrompt */ "Ad-hoc Prompt\0"
+    /* OSD_AiTaskCancelled */ "AI task cancelled\0"
+    /* OSD_AiInpaintGuide */ "Select a region to inpaint with left mouse button (Enter to run, Esc to cancel)\0"
+    /* OSD_AiInpaintGuideActionFormat */ "Select a region with left mouse button, press Enter to run [%s]\0"
+    /* OSD_AiSelectionTooSmall */ "Selection too small, please select an area to inpaint\0"
+    /* OSD_AiEmptyResult */ "AI generation returned empty result\0"
+    /* OSD_AiDecodeFailed */ "Failed to decode AI image result\0"
+    /* OSD_AiTextureFailed */ "Failed to create GPU texture for AI image\0"
+    /* OSD_AiEmptyPromptHint */ "Please enter a prompt or select a preset action\0"
+    /* OSD_AiInpaintPromptEmptyHint */ "Please enter a prompt for inpainting first\0"
+    /* Settings_Tab_Ai */ "AI Actions\0"
+    /* Settings_Header_AiProviders */ "AI Model Providers\0"
+    /* Settings_Desc_AiProviders */ "Manage AI endpoints, DPAPI-secured keys, and model identifiers.\0"
+    /* Settings_Label_AiProviderName */ "Provider Preset\0"
+    /* Settings_Label_AiBaseUrl */ "Endpoint (Base URL)\0"
+    /* Settings_Label_AiApiKey */ "API Key (DPAPI Encrypted)\0"
+    /* Settings_Label_AiModelId */ "Model Identifier\0"
+    /* Settings_Label_AiModelUnconfigured */ "[Unconfigured, pull or input]\0"
+    /* Settings_Label_AiMaxRes */ "Max Input Resolution\0"
+    /* Settings_Label_AiDefaultProfile */ "★ Default Provider\0"
+    /* Settings_Button_AiSetDefault */ "★ Set as Default Provider\0"
+    /* Settings_Button_AiTestConn */ "Test Connection\0"
+    /* Settings_Button_AiSaveProf */ "Save Provider\0"
+    /* Settings_Button_AiDeleteProf */ "Delete Provider\0"
+    /* Settings_Button_AiAddProf */ "+ Add Model Provider\0"
+    /* Settings_Header_AiActions */ "AI Actions\0"
+    /* Settings_Button_AiAddAction */ "+ New AI Action\0"
+    /* Settings_Label_AiActionName */ "Action Name\0"
+    /* Settings_Label_AiPromptTemplate */ "Prompt Template\0"
+    /* Settings_Label_AiExecModel */ "Execution Provider\0"
+    /* Settings_Option_AiDefaultModel */ "Default Provider\0"
+    /* Settings_Label_AiScopeMode */ "Scope Mode\0"
+    /* Settings_Button_AiDeleteAction */ "Delete Action\0"
+    /* Settings_AiModelCustom */ "✎ Custom Model Identifier...\0"
+    /* Settings_AiModelFetching */ "⏳ Fetching available models...\0"
+    /* Settings_AiModelFetchAuto */ "↻ Fetch models from endpoint...\0"
+    /* Settings_Option_AiRes4K */ "4K / Original (4096px)\0"
+    /* Settings_Option_AiRes2K */ "2K QHD (2048px)\0"
+    /* Settings_Option_AiRes1K */ "1K Standard (1024px)\0"
+    /* Settings_Option_AiResOriginal */ "Unrestricted (Native)\0"
+    /* Settings_Option_AiScopeForceFull */ "Full Image\0"
+    /* Settings_Option_AiScopeCropBlend */ "Inpaint & Blend\0"
+    /* Settings_Option_AiCustomEndpoint */ "Custom (OpenAI Compatible)\0"
+    /* Settings_Option_AiLocalComfyUI */ "Local ComfyUI\0"
+    /* Settings_Option_AiLocalSdWebUI */ "Local SD WebUI / Forge\0"
+    /* OSD_AiFetchingModels */ "Fetching model list from endpoint...\0"
+    /* OSD_AiFetchModelsFailed */ "Failed to fetch models: \0"
+    /* OSD_AiFetchModelsSuccessFormat */ "Fetched %zu available models\0"
+    /* OSD_AiSetDefaultSuccessFormat */ "Set %s as default provider\0"
+    /* OSD_AiTestingConnection */ "Testing connection and authentication...\0"
+    /* OSD_AiConnSuccessFormat */ "✓ Connected successfully! Latency: %dms (HTTP %d)\0"
+    /* OSD_AiSaveFailedBaseUrlEmpty */ "Save failed: Base URL cannot be empty\0"
+    /* OSD_AiSaveFailedApiKeyEmpty */ "Save failed: Cloud provider API key cannot be empty\0"
+    /* OSD_AiSaveFailedModelEmpty */ "Save failed: Please specify or select a valid model\0"
+    /* OSD_AiSaveProfileSuccess */ "✓ Provider configuration saved\0"
+    /* AiError_ApiKeyEmpty */ "API key is empty. Configure it in Settings -> AI Actions.\0"
+    /* AiError_ModelEmpty */ "Model identifier is empty. Configure it in Settings -> AI Actions.\0"
+    /* AiError_InvalidUrl */ "Invalid Base URL format.\0"
+    /* AiError_InitWinHttpFailed */ "Failed to initialize WinHTTP session.\0"
+    /* AiError_ConnectFailed */ "Failed to connect to host. Check network or proxy settings.\0"
+    /* AiError_CreateReqFailed */ "Failed to create HTTP request.\0"
+    /* AiError_NoValidDataReturned */ "HTTP 200 OK, but no valid image or text content was parsed.\0"
+    /* AiError_RequestTimeout */ "Network request timed out or server unresponsive.\0"
+    /* AiError_HttpStatusPrefix */ "Provider returned error (HTTP \0"
+    /* AiError_JsonParseFailed */ "Failed to parse JSON returned by provider.\0"
+    /* AiError_NoModelsFound */ "Request succeeded, but no available models were parsed.\0"
+    /* AiTest_ConnSuccess */ "Connection successful and credentials authorized.\0"
+    /* AiTest_AuthFailedPrefix */ "Invalid API key or unauthorized (HTTP \0"
+    /* AiTest_HttpErrorPrefix */ "Server returned HTTP \0"
+    /* AiError_NoAvailableProfile */ "No available AI model profile found. Please check Settings.\0"
+    /* Settings_Tab_FileAssoc */ "File Assoc\0"
+    /* Settings_Header_FileAssocStatus */ "Association Diagnostics\0"
+    /* Settings_Header_FileAssocOptions */ "Behavior & Customization\0"
+    /* Settings_Header_FileAssocFormats */ "Supported Formats (92)\0"
+    /* Settings_Label_FileAssocIconStyle */ "Explorer File Icon\0"
+    /* Settings_Option_FileAssocIconNative */ "System Native\0"
+    /* Settings_Option_FileAssocIconApp */ "QuickView Logo\0"
+    /* Settings_Label_FileAssocContextMenu */ "Explorer Context Menu (\"Open with QuickView\")\0"
+    /* Settings_Label_FileAssocAutoRepair */ "Auto-repair registered paths on startup / upgrade\0"
+    /* Settings_Label_FileAssocPresets */ "Quick Presets\0"
+    /* Settings_Action_PresetRecommended */ "Recommended\0"
+    /* Settings_Action_PresetAllImages */ "All Images\0"
+    /* Settings_Action_PresetPhotoRaw */ "Photo & RAW\0"
+    /* Settings_Action_PresetClearAll */ "Clear All\0"
+    /* Settings_Action_ApplyAssoc */ "Apply Changes to System\0"
+    /* Settings_Action_ApplyPending */ "Apply Changes*\0"
+    /* Settings_Action_SetDefaultWin */ "Set Default in Windows\0"
+    /* Settings_Action_RepairAssoc */ "Repair Broken Paths\0"
+    /* Settings_Label_FileAssocCatStandard */ "Standard Raster\0"
+    /* Settings_Label_FileAssocCatModern */ "Modern & Vector\0"
+    /* Settings_Label_FileAssocCatPro */ "Pro / HDR / Legacy\0"
+    /* Settings_Label_FileAssocCatRaw */ "Camera RAW\0"
+    /* Settings_Label_FileAssocCatExtRaw */ "Extended / Cinema RAW\0"
+    /* Settings_Label_FileAssocCatArchive */ "Archives & Comics\0"
+    /* Settings_Tooltip_FileAssocArchive */ "Recommended: .cbz / .cbr only. Enable .zip / .rar only if you want QuickView in their Open With menu.\0"
+    /* Settings_Status_AssocApplied */ "Associations synced to Windows registry\0"
+    /* Settings_Status_AssocSummaryFormat */ "%d selected · %d system default · %d Open With only\0"
+    /* Settings_Status_AssocBrokenHint */ "Broken or unquoted command detected — click Apply or Repair to fix.\0"
+    /* Settings_Status_AssocPendingHint */ "Pending changes — click \"Apply Changes\" to sync Open With & Context Menu to Windows.\0"
+    /* Settings_Status_AssocStoreManaged */ "Microsoft Store (MSIX) Mode: Open With & Context Menu are natively managed by Windows. Click \"Set Default in Windows\" to assign default extensions.\0"
+    /* Settings_Label_StoreUpdatesManaged */ "Managed by Microsoft Store\0"
+    /* Settings_Action_OpenStore */ "Open Store\0"
+    /* Settings_Status_AssocLegend */ "Green dot = System Default · Highlighted = Selected / Open With\0"
+    /* Context_OpenWithQuickView */ "Open with QuickView\0";
+static constexpr char kBlob_CN[] =
+    /* CurrentLocale */ "zh-cn\0"
+    /* OSD_NoImage */ "没有加载图片\0"
+    /* OSD_FolderEmpty */ "文件夹中没有图片\0"
+    /* OSD_SvgStaticFallback */ "动态 SVG 已显示为静态图像\0"
+    /* OSD_Lossless */ "无损\0"
+    /* OSD_ReencodedLossless */ "重编码 (无损)\0"
+    /* OSD_EdgeAdapted */ "边缘优化\0"
+    /* OSD_Reencoded */ "重编码\0"
+    /* OSD_ReadOnly */ "拒绝访问 - 文件即使被占用或只读\0"
+    /* OSD_NotPerfect */ "变换不完美 (已进行边缘优化)\0"
+    /* OSD_SpanOn */ "跨屏模式: 开启\0"
+    /* OSD_SpanOff */ "跨屏模式: 关闭\0"
+    /* OSD_CompareBefore */ "打样前 (Original)\0"
+    /* OSD_CompareAfter */ "打样后 (Proofed)\0"
+    /* OSD_CompareAnimNotSupported */ "动画不支持对比模式\0"
+    /* OSD_UndoDeleteSuccess */ "已撤销删除\0"
+    /* OSD_UndoDeleteFailed */ "撤销删除失败\0"
+    /* OSD_UndoRenameSuccess */ "已撤销重命名\0"
+    /* OSD_UndoRenameFailed */ "撤销重命名失败\0"
+    /* OSD_UndoTransformSuccess */ "已撤销旋转/翻转\0"
+    /* OSD_UndoTransformFailed */ "撤销旋转/翻转失败\0"
+    /* Action_RotateCW */ "顺时针旋转 90°\0"
+    /* Action_RotateCCW */ "逆时针旋转 90°\0"
+    /* Action_Rotate180 */ "旋转 180°\0"
+    /* Action_FlipH */ "水平翻转\0"
+    /* Action_FlipV */ "垂直翻转\0"
+    /* Dialog_SaveTitle */ "保存更改?\0"
+    /* Dialog_SaveContent */ "图像已被修改。是否保存更改?\0"
+    /* Dialog_ButtonSave */ "保存\0"
+    /* Dialog_ButtonSaveAs */ "另存为...\0"
+    /* Dialog_ButtonDiscard */ "放弃\0"
+    /* Dialog_ButtonContinue */ "继续\0"
+    /* Dialog_CropUnsavedTitle */ "裁剪修改未保存，是否保存更改？\0"
+    /* Dialog_SaveAsTitle */ "另存图片\0"
+    /* Dialog_ExportTitle */ "保存与导出\0"
+    /* Dialog_ButtonOverwrite */ "覆盖保存\0"
+    /* Dialog_EmbedICC */ "嵌入 ICC 配置\0"
+    /* Dialog_SizeEstimating */ "大小: 估算中...\0"
+    /* Dialog_ExportError */ "导出错误\0"
+    /* Context_Open */ "打开...\tCtrl+O\0"
+    /* Context_Crop */ "裁剪\0"
+    /* Context_SuperResolution */ "AI 超分辨率\0"
+    /* Context_AiAction */ "AI 动作\0"
+    /* Context_OpenWith */ "打开方式...\0"
+    /* Context_Edit */ "编辑\tE\0"
+    /* Context_ShowInExplorer */ "在资源管理器中显示\0"
+    /* Context_OpenFolder */ "打开文件夹\0"
+    /* Context_CopyPixels */ "复制像素\tCtrl+C\0"
+    /* Context_CopyFile */ "复制文件\tCtrl+Shift+C\0"
+    /* Context_CopyPath */ "复制路径\tCtrl+Alt+C\0"
+    /* Context_Print */ "打印\tCtrl+P\0"
+    /* Context_RotateCW */ "顺时针旋转 90°\tR\0"
+    /* Context_RotateCCW */ "逆时针旋转 90°\tShift+R\0"
+    /* Context_FlipH */ "水平翻转\tH\0"
+    /* Context_FlipV */ "垂直翻转\tV\0"
+    /* Context_Transform */ "变换\0"
+    /* Context_ActualSize */ "实际大小 (100%)\tZ\0"
+    /* Context_FitToScreen */ "适应屏幕\tF\0"
+    /* Context_FitWindow */ "适应窗口\0"
+    /* Context_FillWindow */ "填充窗口\0"
+    /* Context_ZoomIn */ "放大\t+ / Ctrl +\0"
+    /* Context_ZoomOut */ "缩小\t- / Ctrl -\0"
+    /* Context_LockWindow */ "锁定窗口\0"
+    /* Context_AlwaysOnTop */ "窗口置顶\tCtrl+T\0"
+    /* Context_HUDGallery */ "HUD 照片墙\tT\0"
+    /* Context_LiteInfoPanel */ "简略信息面板\tTab\0"
+    /* Context_FullInfoPanel */ "详细信息面板\tI\0"
+    /* Context_RenderRAW */ "渲染 RAW\0"
+    /* Context_PixelArtMode */ "像素画模式\0"
+    /* Context_Fullscreen */ "全屏\tF11\0"
+    /* Context_SlideshowMode */ "幻灯片模式\0"
+    /* Context_SpanDisplays */ "跨越显示器 (电视墙模式)\tCtrl+F11\0"
+    /* Context_View */ "视图\0"
+    /* Context_WallpaperFill */ "填充\0"
+    /* Context_WallpaperFit */ "适应\0"
+    /* Context_WallpaperTile */ "平铺\0"
+    /* Context_SetAsWallpaper */ "设为壁纸\0"
+    /* Context_Rename */ "重命名\tF2\0"
+    /* Context_FixExtension */ "修复扩展名\0"
+    /* Context_Delete */ "删除\tDel\0"
+    /* Context_UndoDelete */ "撤销删除\tCtrl+Z\0"
+    /* Context_UndoRename */ "撤销重命名\tCtrl+Z\0"
+    /* Context_UndoTransform */ "撤销旋转/翻转\tCtrl+Z\0"
+    /* Context_Undo */ "撤销\tCtrl+Z\0"
+    /* Context_SortBy */ "排序方式\0"
+    /* Context_NavOrder */ "导航顺序\0"
+    /* Context_SortAscending */ "升序\0"
+    /* Context_SortDescending */ "降序\0"
+    /* Context_Settings */ "设置...\0"
+    /* Context_CompareMode */ "对比模式\tC\0"
+    /* Context_OverlayMode */ "临摹模式\tCtrl+Shift+O\0"
+    /* Context_GalleryOpenCompare */ "在对比模式中打开\0"
+    /* Context_GalleryOpenNewWindow */ "在新窗口中打开\0"
+    /* Context_Exit */ "退出\tMButton/Esc\0"
+    /* Menu_ExitPassthrough */ "退出鼠标穿透\0"
+    /* Message_SaveErrorTitle */ "错误\0"
+    /* Message_SaveErrorContent */ "保存文件失败。文件是否被占用?\0"
+    /* Toolbar_Tooltip_Prev */ "上一张 (方向键左)\0"
+    /* Toolbar_Tooltip_Next */ "下一张 (方向键右)\0"
+    /* Toolbar_Tooltip_RotateL */ "向左旋转 (Shift+R)\0"
+    /* Toolbar_Tooltip_RotateR */ "向右旋转 (R)\0"
+    /* Toolbar_Tooltip_FlipH */ "水平翻转 (H)\0"
+    /* Toolbar_Tooltip_Lock */ "锁定窗口(临时)\0"
+    /* Toolbar_Tooltip_Unlock */ "解锁窗口\0"
+    /* Toolbar_Tooltip_Gallery */ "缩略图 (T)\0"
+    /* Toolbar_Tooltip_Info */ "信息面板\0"
+    /* Toolbar_Tooltip_RawPreview */ "RAW: 快速预览 (点击切换完整)\0"
+    /* Toolbar_Tooltip_RawFull */ "RAW: 完整解码 (点击切换预览)\0"
+    /* Toolbar_Tooltip_RawPairView */ "RAW: 查看配对 RAW (完整解码)\0"
+    /* Toolbar_Tooltip_RawPairBack */ "RAW: 返回配对图像\0"
+    /* Toolbar_Tooltip_FixExtension */ "扩展名不匹配 (修复)\0"
+    /* Toolbar_Tooltip_Pin */ "固定工具栏\0"
+    /* Toolbar_Tooltip_Unpin */ "取消固定工具栏\0"
+    /* Toolbar_Tooltip_GamutWarning */ "显示色彩溢出高亮区域\0"
+    /* Toolbar_Tooltip_CropCopy */ "复制选区 (Ctrl+C)\0"
+    /* Toolbar_Tooltip_CropSave */ "保存 (Ctrl+S)\0"
+    /* Toolbar_Tooltip_CropApply */ "应用 (Enter)\0"
+    /* Toolbar_Tooltip_CropCancel */ "退出 (Esc)\0"
+    /* Toolbar_Tooltip_OverlayAlphaUp */ "增加不透明度\0"
+    /* Toolbar_Tooltip_OverlayAlphaDown */ "减小不透明度\0"
+    /* Toolbar_Tooltip_OverlayPassthroughOn */ "进入鼠标穿透\0"
+    /* Toolbar_Tooltip_OverlayPassthroughOff */ "退出鼠标穿透\0"
+    /* Toolbar_Tooltip_OverlayExit */ "退出临摹模式\0"
+    /* Toolbar_Tooltip_OverlayZoomIn */ "放大 (临摹)\0"
+    /* Toolbar_Tooltip_OverlayZoomOut */ "缩小 (临摹)\0"
+    /* Toolbar_Tooltip_NormalMode */ "普通模式\0"
+    /* Toolbar_Tooltip_CompareMode */ "对比模式\0"
+    /* Toolbar_Tooltip_SinglePage */ "单页模式\0"
+    /* Toolbar_Tooltip_DualPage */ "双页模式\0"
+    /* Toolbar_Tooltip_CompareOpen */ "在选区打开新图\0"
+    /* Toolbar_Tooltip_CompareSwap */ "交换左右\0"
+    /* Toolbar_Tooltip_CompareLayout */ "切换布局\0"
+    /* Toolbar_Tooltip_CompareInfo */ "对比信息\0"
+    /* Toolbar_Tooltip_CompareDelete */ "删除所选图片\0"
+    /* Toolbar_Tooltip_CompareZoomIn */ "放大 (微调)\0"
+    /* Toolbar_Tooltip_CompareZoomOut */ "缩小 (微调)\0"
+    /* Toolbar_Tooltip_CompareSyncZoomOn */ "缩放同步: 开\0"
+    /* Toolbar_Tooltip_CompareSyncZoomOff */ "缩放同步: 关\0"
+    /* Toolbar_Tooltip_CompareSyncPanOn */ "平移同步: 开\0"
+    /* Toolbar_Tooltip_CompareSyncPanOff */ "平移同步: 关\0"
+    /* Toolbar_Tooltip_SlideshowImmersiveToggle */ "切换沉浸聚光灯\0"
+    /* Toolbar_Tooltip_SlideshowExit */ "退出幻灯片模式\0"
+    /* Toolbar_Tooltip_CompareExit */ "退出对比\0"
+    /* Toolbar_Tooltip_AnimPlay */ "播放动画\0"
+    /* Toolbar_Tooltip_AnimPause */ "暂停动画\0"
+    /* Toolbar_Tooltip_AnimPrev */ "上一帧\0"
+    /* Toolbar_Tooltip_AnimNext */ "下一帧\0"
+    /* Toolbar_Tooltip_AnimDirtyOn */ "脏矩形调试: 开\0"
+    /* Toolbar_Tooltip_AnimDirtyOff */ "脏矩形调试: 关\0"
+    /* Toolbar_Tooltip_AnimSpeed */ "动画速度调节\0"
+    /* OSD_Copied */ "已复制!\0"
+    /* OSD_PixelsCopied */ "像素已复制到剪贴板!\0"
+    /* OSD_PixelsExtracting */ "正在提取原片像素...\0"
+    /* OSD_FileCopied */ "文件已复制到剪贴板!\0"
+    /* OSD_CoordinatesCopied */ "坐标已复制!\0"
+    /* OSD_FilePathCopied */ "文件路径已复制!\0"
+    /* OSD_Zoom100 */ "缩放: 100%\0"
+    /* OSD_ZoomFit */ "缩放: 适应屏幕\0"
+    /* OSD_ZoomFitWindow */ "缩放: 适应窗口\0"
+    /* OSD_ZoomFill */ "缩放: 填充窗口\0"
+    /* OSD_PrintInstruction */ "打印: 请在打开的应用中使用 Ctrl+P\0"
+    /* OSD_MovedToRecycleBin */ "已移至回收站\0"
+    /* OSD_WindowLocked */ "窗口已锁定\0"
+    /* OSD_WindowUnlocked */ "窗口已解锁\0"
+    /* OSD_AlwaysOnTopOn */ "窗口置顶: 开\0"
+    /* OSD_AlwaysOnTopOff */ "窗口置顶: 关\0"
+    /* OSD_WallpaperSet */ "壁纸已设置\0"
+    /* OSD_WallpaperFailed */ "设置壁纸失败\0"
+    /* OSD_Renamed */ "重命名成功\0"
+    /* OSD_RenameFailed */ "重命名失败\0"
+    /* OSD_Restored */ "已恢复原状\0"
+    /* OSD_ExtensionFixed */ "扩展名已修复\0"
+    /* OSD_FirstImage */ "已是第一张\0"
+    /* OSD_LastImage */ "已是最后一张\0"
+    /* OSD_HD */ "全高清\0"
+    /* OSD_ZoomPrefix */ "缩放: \0"
+    /* OSD_AnimPlaying */ "播放中\0"
+    /* OSD_AnimPaused */ "已暂停 (检查模式: Alt+左右方向键逐帧查看)\0"
+    /* OSD_AnimDirtyOn */ "脏矩形: 开\0"
+    /* OSD_AnimDirtyOff */ "脏矩形: 关\0"
+    /* OSD_GamutDetected */ "检测到色彩溢出\0"
+    /* OSD_GamutIncompatible */ "色彩空间不匹配 / 配置文件解析失败\0"
+    /* OSD_GamutFailed */ "色彩溢出分析失败\0"
+    /* OSD_SlideshowStarted */ "开始播放幻灯片\0"
+    /* OSD_SlideshowStopped */ "停止播放幻灯片\0"
+    /* OSD_SlideshowResumed */ "继续播放幻灯片\0"
+    /* OSD_SlideshowPaused */ "幻灯片已暂停\0"
+    /* OSD_ImmersiveSpotlight */ "沉浸模式: 聚光灯\0"
+    /* OSD_ImmersiveNormal */ "沉浸模式: 普通\0"
+    /* OSD_PrintJobStarted */ "打印任务已发送，您可以继续浏览。\0"
+    /* OSD_PrintJobFinished */ "打印任务已发送完毕。\0"
+    /* OSD_EnterCropMode */ "已进入裁剪模式\0"
+    /* OSD_CropCopied */ "已复制裁剪选区\0"
+    /* OSD_CropApplied */ "裁剪已应用（未保存）\0"
+    /* Context_ColorSpace */ "色彩空间\0"
+    /* Settings_Option_CmsUnmanaged */ "无管理\0"
+    /* Settings_Option_CmssRGB */ "sRGB\0"
+    /* Settings_Option_CmsP3 */ "Display P3\0"
+    /* Settings_Option_CmsAdobeRGB */ "Adobe RGB (1998)\0"
+    /* Settings_Option_CmsGray */ "灰度模式 (影调检查)\0"
+    /* Settings_Option_CmsProPhoto */ "ProPhoto RGB\0"
+    /* Checkbox_AlwaysSaveLossless */ "总是保存无损变换\0"
+    /* Checkbox_AlwaysSaveEdgeAdapted */ "总是保存边缘优化结果\0"
+    /* Checkbox_AlwaysSaveLossy */ "总是保存重编码结果\0"
+    /* Checkbox_NeverConfirmDelete */ "直接放入回收站，不再确认\0"
+    /* OSD_HEICCodecMissing */ "无法解码 HEIC - 请安装 HEVC 视频扩展\0"
+    /* Dialog_HEICTitle */ "无法解码 HEIC\0"
+    /* Dialog_HEICContent */ "系统缺少 HEVC 视频扩展。\nQuickView 需要系统硬件加速以获得最佳性能。\0"
+    /* Dialog_HEICGetExtension */ "获取扩展 (免费)\0"
+    /* Dialog_Cancel */ "取消\0"
+    /* Settings_Tab_General */ "常规\0"
+    /* Settings_Tab_About */ "关于\0"
+    /* Settings_Tab_Shortcuts */ "快捷键\0"
+    /* Settings_Hotkey_PressKey */ "请按下按键...\0"
+    /* Settings_Hotkey_Conflict */ "快捷键冲突\0"
+    /* Settings_Hotkey_ConflictPrompt */ "已由“%s”占用，继续将清除其快捷键。\0"
+    /* Settings_Hotkey_Restore */ "恢复快捷键默认值\0"
+    /* Settings_Hotkey_Restored */ "已恢复\0"
+    /* Settings_Hotkey_MouseTip */ "提示：支持鼠标中键、侧键等鼠标多功能按键。更多侧键请在鼠标驱动中映射为键盘按键后绑定。\0"
+    /* Settings_Header_GalleryTrigger */ "图库胶片带 (顶部悬浮)\0"
+    /* Settings_Label_GalleryTriggerMode */ "胶片带触发模式\0"
+    /* Settings_Label_KeepGalleryVisibleOnThumbnailClick */ "缩略图切图时不自动隐藏\0"
+    /* Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick */ "开启此功能将自动开启“锁定窗口”和“导航时保持窗口尺寸不变”。\0"
+    /* Settings_Label_GalleryExpandOnClickOnly */ "展开箭头触发模式\0"
+    /* Settings_Tooltip_GalleryExpandOnClickOnly */ "展开至文件夹视图需要明确点击箭头，防止在胶片带中滑动时不慎悬停误触。\0"
+    /* Settings_Option_TriggerClick */ "点击\0"
+    /* Settings_Option_TriggerHover */ "停留\0"
+    /* Settings_Option_GalleryTriggerAuto */ "自动悬停\0"
+    /* Settings_Option_GalleryTriggerDelay */ "热点停留\0"
+    /* Settings_Option_GalleryTriggerClick */ "点击热点\0"
+    /* Settings_Option_GalleryTriggerDisable */ "停用\0"
+    /* Settings_Tooltip_GalleryTrigger */ "该功能在窗口小于 600x450 时将自动禁用。\0"
+    /* Settings_Label_GalleryTriggerAreaHeight */ "触发区域高度\0"
+    /* Settings_Label_GalleryDwellTime */ "停留时长\0"
+    /* Settings_Label_GalleryExitDelay */ "退出延迟\0"
+    /* Settings_Label_GalleryMinSize */ "画廊最小尺寸\0"
+    /* Settings_Group_Foundation */ "基础\0"
+    /* Settings_Group_Startup */ "启动\0"
+    /* Settings_Group_Habits */ "习惯\0"
+    /* Settings_Label_Language */ "语言\0"
+    /* Settings_Label_SingleInstance */ "单实例模式\0"
+    /* Settings_Label_CheckUpdates */ "检查更新\0"
+    /* Settings_Label_UpdateChannel */ "更新通道\0"
+    /* Settings_Option_UpdateStable */ "正式版\0"
+    /* Settings_Option_UpdatePreRelease */ "预览版 (Pre-release)\0"
+    /* Settings_Tooltip_PreRelease */ "正式版：预览版发布一段时间后未收到Bug报告，将发布正式版。\n预览版：第一时间发布最新的代码修改，用于收集您的测试反馈。注意，这些修改并未经过严格测试。\0"
+    /* Settings_Label_NavLoopMode */ "循环播放\0"
+    /* Settings_Label_SortOrder */ "列表排序方式\0"
+    /* Settings_Label_SortDescending */ "降序\0"
+    /* Settings_Label_SortArchivesByNameAscending */ "始终以文件名升序浏览存档文件\0"
+    /* Settings_Label_ConfirmDel */ "删除前确认\0"
+    /* Settings_Label_Portable */ "便携模式 / 清理\0"
+    /* Settings_Tooltip_Portable */ "便携模式与注册表清理：\n开启后，QuickView 将以便携方式运行。程序将自动清理已有的注册表关联，并禁用自动注册表修改功能。同时，配置文件将存放在程序所在目录而非 AppData 目录。\0"
+    /* Settings_Label_SpanDisplays */ "跨屏模式 (电视墙)\0"
+    /* Settings_Label_UIScale */ "界面缩放\0"
+    /* Settings_Status_RestartRequired */ "需要重启\0"
+    /* Settings_Status_NoWritePerm */ "无写入权限!\0"
+    /* Settings_Status_Enabled */ "已启用\0"
+    /* Settings_Header_PoweredBy */ "驱动技术\0"
+    /* Settings_Text_Copyright */ "© 2025–%s Vivor Loong (GitHub: @justnullname)\0"
+    /* Settings_Text_License */ "Licensed under GNU GPL v3.0\0"
+    /* Settings_Tab_Visuals */ "界面\0"
+    /* Settings_Tab_Controls */ "操作\0"
+    /* Settings_ControlSub_Mouse */ "鼠标手势\0"
+    /* Settings_ControlSub_Keyboard */ "按键设置\0"
+    /* Settings_ControlSub_Behavior */ "高级与偏好\0"
+    /* Settings_Gesture_Preset */ "手势预设方案\0"
+    /* Settings_Gesture_Preset_Default */ "QuickView 经典模式 (默认)\0"
+    /* Settings_Gesture_Preset_Standard */ "标准照片查看器\0"
+    /* Settings_Gesture_Preset_Browser */ "极简触控/单手浏览\0"
+    /* Settings_Gesture_Add */ "+ 添加手势\0"
+    /* Settings_Gesture_Reset */ "恢复默认手势\0"
+    /* Settings_Tab_Image */ "图像\0"
+    /* Settings_Tab_Advanced */ "高级\0"
+    /* Settings_Header_Backdrop */ "背景\0"
+    /* Settings_Header_Window */ "窗口\0"
+    /* Settings_Header_WindowLock */ "锁定窗口时\0"
+    /* Settings_Header_Panel */ "面板\0"
+    /* Settings_Label_CanvasColor */ "画布颜色\0"
+    /* Settings_Option_Effects */ "特效\0"
+    /* Settings_Label_ContextMenuBackdrop */ "右键菜单\0"
+    /* Settings_Label_CanvasEffectStyle */ "特效类型\0"
+    /* Settings_Tooltip_BackdropEffectsTip */ "Mica 与 Mica Alt 特效仅在 Windows 11 上支持；Acrylic（亚克力）相比 Mica/Mica Alt 会占用更多系统资源。\0"
+    /* Settings_Label_Overlay */ "叠加层\0"
+    /* Settings_Label_ShowGrid */ "显示网格\0"
+    /* Settings_Label_AlwaysOnTop */ "窗口置顶\0"
+    /* Settings_Label_LockWindow */ "锁定窗口\0"
+    /* Settings_Tooltip_LockWindow */ "此处控制程序启动时默认锁定窗口边框，不跟随图片缩放。\0"
+    /* Settings_Label_AutoHideTitle */ "自动隐藏标题栏\0"
+    /* Settings_Label_RoundedCorners */ "圆角窗口\0"
+    /* Settings_Label_UIBorders */ "显示组件边框\0"
+    /* Settings_Tooltip_RoundedCorners */ "控制主窗口及右键菜单圆角，仅支持Windows 11。\0"
+    /* Settings_Label_LockToolbar */ "锁定底部工具栏\0"
+    /* Settings_Label_WindowMinSize */ "默认最小窗口宽度\0"
+    /* Settings_Label_WindowMaxSizePercent */ "默认最大启动尺寸 (%)\0"
+    /* Settings_Label_ShowBorderIndicator */ "显示边界溢出指示器\0"
+    /* Settings_Tooltip_ShowBorderIndicator */ "在平移或缩放时，于图片超出视口的边缘显示柔和辉光，停留片刻后自动淡出。\0"
+    /* Settings_Label_ShowNavigator */ "显示缩略导航图\0"
+    /* Settings_Tooltip_ShowNavigator */ "鼠标位于导航图上方时，使用滚轮 / 拇指滚轮 (Shift + 滚轮) 可直接平移图片\0"
+    /* Settings_Label_KeepWindowSizeOnNav */ "导航时保持窗口尺寸不变\0"
+    /* Settings_Label_RememberLastWindowSizeAndPosition */ "记住最后窗口位置和尺寸\0"
+    /* Settings_Label_UpscaleSmallImagesWhenLocked */ "小于窗口尺寸图片适应窗口\0"
+    /* Settings_Label_SlideshowInterval */ "切换间隔 (秒)\0"
+    /* Settings_Label_SlideshowImmersive */ "沉浸模式\0"
+    /* Settings_Option_SlideshowNormal */ "普通\0"
+    /* Settings_Option_SlideshowSpotlight */ "聚光灯\0"
+    /* Settings_Label_ExifMode */ "EXIF 面板模式\0"
+    /* Settings_Label_ToolbarInfoDefault */ "工具栏信息默认值\0"
+    /* Settings_Label_OpenFullScreenMode */ "打开时全屏\0"
+    /* Settings_Label_FullScreenZoomMode */ "全屏时缩放模式\0"
+    /* Settings_Label_CustomLiteInfoPanel */ "自定义精简信息栏\0"
+    /* Settings_Label_CustomFullInfoPanel */ "自定义完整信息栏\0"
+    /* Settings_Label_InfoPanelScale */ "完整/精简信息栏缩放\0"
+    /* Settings_Label_ItemsInNormalMode */ "普通模式显示项\0"
+    /* Settings_Label_ItemsInCompareMode */ "对比模式显示项\0"
+    /* Settings_Label_SeparatorPreset */ "分隔符预设\0"
+    /* Settings_Option_FitScreen */ "适应屏幕\0"
+    /* Settings_Option_Black */ "黑色\0"
+    /* Settings_Option_White */ "白色\0"
+    /* Settings_Option_Grid */ "网格\0"
+    /* Settings_Option_Custom */ "自定义\0"
+    /* Settings_Option_Off */ "关闭\0"
+    /* Settings_Option_On */ "开启\0"
+    /* Settings_Option_Lite */ "简略\0"
+    /* Settings_Option_Full */ "详细\0"
+    /* Settings_Option_LargeOnly */ "仅大图\0"
+    /* Settings_Option_All */ "全部\0"
+    /* Settings_Option_SoftProofing */ "软打样\0"
+    /* Settings_Header_Mouse */ "鼠标\0"
+    /* Settings_Header_Edge */ "边缘\0"
+    /* Settings_Label_InvertWheel */ "反转滚轮\0"
+    /* Settings_Label_MouseAnchorZoom */ "窗口缩放以鼠标为中线\0"
+    /* Settings_Label_RightButtonDragZoom */ "右键拖动缩放\0"
+    /* Settings_Label_WheelZoomSpeed */ "滚轮缩放速度\0"
+    /* Settings_Tooltip_WheelZoomSpeed */ "Alt + 滚轮可临时调整缩放速度\0"
+    /* Settings_Label_ThumbWheel */ "拇指滚轮\0"
+    /* Settings_Tooltip_ThumbWheel */ "可用 Shift + 滚轮 替代\0"
+    /* Settings_Tooltip_MiddleDrag */ "可用 Ctrl + 左键 替代\0"
+    /* Settings_Label_DoubleClick */ "双击\0"
+    /* Settings_Option_DoubleClick_Smart */ "智能双击\0"
+    /* Settings_Option_DoubleClick_WheelMode1 */ "滚轮模式一\0"
+    /* Settings_Option_DoubleClick_WheelMode2 */ "滚轮模式二\0"
+    /* Settings_Tooltip_DoubleClick */ "智能双击：自动在 适应屏幕 / 100% / 初始尺寸间切换；\n滚轮模式一：双击快速互换主滚轮与拇指滚轮功能；\n滚轮模式二：双击切换主滚轮上下平移、拇指滚轮左右平移；\n提示：Shift + 滚轮 相当于 拇指滚轮。\0"
+    /* Settings_Tooltip_PanStepNormal */ "控制按键平移和滚轮平移速度\0"
+    /* OSD_WheelMode1_NextPrevZoom */ "主滚轮：切图；拇指滚轮/shift+滚轮：缩放\0"
+    /* OSD_WheelMode1_ZoomNextPrev */ "主滚轮：缩放；拇指滚轮/shift+滚轮：切图\0"
+    /* OSD_WheelMode2_Pan */ "滚轮：平移模式\0"
+    /* OSD_WheelMode2_Default */ "滚轮：默认模式\0"
+    /* Settings_Label_RightDragZoomSpeed */ "鼠标拖拽缩放速度\0"
+    /* OSD_WheelZoomSpeed */ "缩放速度(临时): \0"
+    /* Settings_Label_InvertButtons */ "反转侧键\0"
+    /* Settings_Header_KeyboardPan */ "平移步长\0"
+    /* Settings_Label_PanStepNormal */ "平移步长 (普通)\0"
+    /* Settings_Label_PanStepFast */ "按键平移步长 (加速)\0"
+    /* Settings_Label_UseFixedZoom */ "使用固定的缩放级别\0"
+    /* Settings_Tooltip_UseFixedZoom */ "启用时，Alt + 滚轮将执行普通缩放而非修改缩放速率。\0"
+    /* Settings_Label_FixedZoomLevels */ "  └  自定义缩放级别\0"
+    /* Dialog_FixedZoomTitle */ "编辑固定缩放级别\0"
+    /* Dialog_FixedZoomMsg */ "输入逗号分隔的缩放级别 (例如 0.5, 1, 2):\0"
+    /* Settings_Label_ZoomModeIn */ "放大插值算法\0"
+    /* Settings_Tooltip_ZoomModeIn */ "选择放大时的图像插值算法：\n• 自动 (Auto)：智能内容感知（摄影/CG 自动启用 FSR 边缘超分，像素画/超大放大自动切换最近邻）\n• 线性 (Linear)：基础快速双线性平滑\n• 最近邻 (Nearest)：像素画/点阵图专用，呈现真实锐利像素格\n• 高质量双三次 (HQ Cubic)：极端平滑过渡，消除噪点与马赛克\n• AMD FSR 1.0：空间边缘自适应超分辨率与局部对比度锐化\0"
+    /* Settings_Label_ZoomModeOut */ "缩小插值算法\0"
+    /* Settings_Label_LeftDrag */ "左键拖动\0"
+    /* Settings_Label_MiddleDrag */ "中键拖动\0"
+    /* Settings_Label_MiddleClick */ "中键点击\0"
+    /* Settings_Label_EdgeNavClick */ "边缘点击翻页\0"
+    /* Settings_Label_ShowOSD */ "显示 OSD 提示\0"
+    /* Settings_Label_DisableEdgeNavInCompare */ "在对比模式下禁用\0"
+    /* Settings_Label_NavIndicator */ "翻页指示器\0"
+    /* Settings_Option_Window */ "窗口\0"
+    /* Settings_Option_Pan */ "平移\0"
+    /* Settings_Option_None */ "无\0"
+    /* Settings_Option_Exit */ "退出\0"
+    /* Settings_Option_Arrow */ "箭头\0"
+    /* Settings_Option_Cursor */ "光标\0"
+    /* Settings_Option_Manual */ "手动\0"
+    /* Settings_Option_SortAuto */ "自动 (资源管理器)\0"
+    /* Settings_Option_SortName */ "文件名\0"
+    /* Settings_Option_SortModified */ "修改时间\0"
+    /* Settings_Option_SortDateTaken */ "拍摄时间 (EXIF)\0"
+    /* Settings_Option_SortSize */ "大小\0"
+    /* Settings_Option_SortType */ "类型\0"
+    /* Settings_Option_NavLoop */ "循环播放\0"
+    /* Settings_Option_NavThrough */ "穿透子文件夹\0"
+    /* Settings_Option_Linear */ "线性 (Linear)：基础平滑\0"
+    /* Settings_Option_Nearest */ "最近邻 (Nearest)：极端锐利\0"
+    /* Settings_Option_HighQualityCubic */ "高质量双三次 (HQ Cubic)：极端平滑\0"
+    /* Settings_Option_FSR */ "AMD FSR 1.0 (EASU/RCAS)\0"
+    /* Settings_Header_Render */ "渲染\0"
+    /* Settings_Header_Hdr */ "高动态范围 (HDR)\0"
+    /* Settings_Header_Prompts */ "提示\0"
+    /* Settings_Header_System */ "系统\0"
+    /* Settings_Label_AutoRotate */ "自动旋转 (EXIF)\0"
+    /* Settings_Label_FsrSharpness */ "FSR 锐化强度\0"
+    /* Settings_Tooltip_FsrSharpness */ "调节 AMD FSR 1.0 空间自适应超分辨率的边缘锐化强度。\0"
+    /* Settings_Tab_Plugins */ "插件\0"
+    /* Settings_Label_EnableSrPlugin */ "超分辨率增强\0"
+    /* Settings_Label_SrModel */ "AI Model\0"
+    /* Settings_Label_SrAutoTrigger */ "自动触发\0"
+    /* Settings_Label_SrAutoTriggerMaxWidth */ "原图最大宽度\0"
+    /* Settings_Tooltip_SrAutoTriggerMaxWidth */ "限制自动超分辨率的原始图片最大宽度（像素）。设为 0 为无限制。若宽或高仅有一个为 0，则仅使用非零值作为约束；均非 0 时两者皆须满足。\0"
+    /* Settings_Label_SrAutoTriggerMaxHeight */ "原图最大高度\0"
+    /* Settings_Tooltip_SrAutoTriggerMaxHeight */ "限制自动超分辨率的原始图片最大高度（像素）。设为 0 为无限制。若宽或高仅有一个为 0，则仅使用非零值作为约束；均非 0 时两者皆须满足。\0"
+    /* Settings_Value_Unlimited */ "无限制\0"
+    /* Settings_Label_SrOpenInCompare */ "手动触发后在对比模式中显示\0"
+    /* Settings_Label_SrPromptModel */ "手动触发时提示选择模型\0"
+    /* Export_Checkbox_SuperResolution */ "导出超分辨率画质\0"
+    /* Settings_Label_SrDebounce */ "触发延迟\0"
+    /* Settings_Tooltip_SrDebounce */ "缩放停止后触发 AI 神经超分的等待时间 (0 - 5000 毫秒)。\n缩放交互过程中保持当前放大插值算法的流畅度，静止后无缝重构成 AI 极清画质。\0"
+    /* Settings_Header_PluginTriggers */ "触发调度与交互\0"
+    /* Settings_Header_PluginParams */ "插件参数\0"
+    /* Settings_Label_SrStorageFolder */ "插件与模型目录\0"
+    /* Settings_Button_OpenModelFolder */ "📂 打开本地目录\0"
+    /* Settings_Prompt_DownloadModelFirst */ "需先下载选中的模型\0"
+    /* Settings_Segment_InstalledPlugins */ "已安装扩展\0"
+    /* Settings_Segment_Marketplace */ "云端市场\0"
+    /* Settings_Label_SrEngine */ "超分辨率后端引擎\0"
+    /* Settings_Label_SrModelStatus */ "模型资源状态\0"
+    /* Settings_Format_DownloadModel */ "下载该模型 (~%llu MB)\0"
+    /* Settings_Header_SrComponent */ "超分辨率 AI 增强组件\0"
+    /* Settings_Label_QuickEnableEngine */ "快速启用超分引擎\0"
+    /* Settings_Button_QuickEnableNcnn */ "⚡ 启用 Real-ESRGAN NCNN Vulkan 超分引擎\0"
+    /* Settings_Label_OnlineExtensions */ "在线扩展与模型\0"
+    /* Settings_Button_BrowseMarketplace */ "🌐 前往云端市场浏览更多扩展\0"
+    /* Settings_Label_MarketManifest */ "插件市场清单\0"
+    /* Settings_Button_RefreshManifest */ "🔄 刷新插件清单\0"
+    /* Settings_Button_SyncingManifest */ "正在从云端同步清单...\0"
+    /* Settings_Format_PluginPackageSize */ "插件组件包 (~%llu MB)\0"
+    /* Settings_Button_InstalledUpToDate */ "✓ 已安装\0"
+    /* Settings_Format_UpdateTo */ "⚡ 更新至 v%ls\0"
+    /* Settings_Button_InstallPlugin */ "⚡ 获取并安装\0"
+    /* OSD_SrProcessing */ "AI 超分辨率计算中...\0"
+    /* OSD_SrSuccessFormat */ "✓ AI 超分完成: %s [%.0fx] (耗时: %.1f ms)\0"
+    /* OSD_SrSuccessFormatSimple */ "✓ AI 超分完成: %s (耗时: %.1f ms)\0"
+    /* OSD_SrFailed */ "✗ AI 超分辨率执行失败\0"
+    /* OSD_SrPluginDisabledOrMissing */ "AI 超分辨率插件未启用或未安装\0"
+    /* OSD_SrAnimationProcessingFormat */ "正在超分动画序列 (%u/%u 帧)...\0"
+    /* OSD_SrAnimationSuccessFormat */ "✓ 动画全帧超分完成: %s (%u 帧, 耗时: %.2f 秒)\0"
+    /* OSD_SrVectorLosslessSkipped */ "矢量图像支持无限无损缩放，无需神经网络超分辨率\0"
+    /* OSD_SrAnimationTooManyFrames */ "动图帧数过多（超过 %u 帧上限），已跳过全序列超分\0"
+    /* OSD_SrImageTooLargeFormat */ "图像分辨率过大 (%ux%u, 超过 1600 万像素)，已阻止全图超分以防止显存溢出\0"
+    /* Dialog_Title_SelectSrModel */ "选择 AI 超分辨率模型\0"
+    /* Dialog_Msg_SelectSrModel */ "请选择要应用的 AI 超分辨率模型：\0"
+    /* Dialog_Checkbox_RememberSrModelChoice */ "记住选择，下次手动触发直接使用\0"
+    /* Dialog_Button_OK */ "确定\0"
+    /* Settings_Label_CMS */ "色彩管理 (CMS)\0"
+    /* Settings_Label_AdvancedColor */ "高级色彩与 HDR (scRGB)\0"
+    /* Settings_Label_CmsFallback */ "无配置图片的默认回退\0"
+    /* Settings_Label_HdrToneMapping */ "HDR 色调映射\0"
+    /* Settings_Label_HdrSplineKnee */ "Spline 拐点\0"
+    /* Settings_Tooltip_HdrToneMapping */ "HDR 降级策略 (Tone Mapping)：\n当 HDR 图片超出显示器极限时的映射方式。\nSpline 样条映射：采用分段样条曲线，实现高保真的高光细节还原（推荐）。\n色度模式：保持严格亮度映射，超出显示器极限的亮度将被直接裁剪。\nBT.2390 EETF：ITU-R BT.2390 标准高保真降级曲线。\0"
+    /* Settings_Tooltip_HdrSplineKnee */ "0 = 自动模式（根据图片亮度自动计算）。\n数值表示显示器峰值亮度的比例。该拐点以下的亮度将进行 1:1 绝对映射，拐点以上的亮度将使用平滑曲线进行压缩映射。\n（推荐值：0.4 - 0.75）\0"
+    /* Settings_Label_HdrPeakNitsOverride */ "HDR 峰值亮度 (Nits)\0"
+    /* Settings_Tooltip_HdrPeakNitsOverride */ "设为 0 表示通过系统自动检测亮度.\0"
+    /* Settings_Label_HdrPeakPercentile */ "HDR 峰值百分位\0"
+    /* Settings_Tooltip_HdrPeakPercentile */ "丢弃极少数过亮的像素以提升整体亮度 (mpv 默认: 99.995%).\0"
+    /* Settings_Option_HdrPeakPercentile_100 */ "100% (绝对峰值)\0"
+    /* Settings_Option_HdrPeakPercentile_99995 */ "99.995% (稳定)\0"
+    /* Settings_Option_HdrPeakPercentile_999 */ "99.9% (激进)\0"
+    /* Settings_Label_HdrDesatThreshold */ "高光去饱和范围\0"
+    /* Settings_Tooltip_HdrDesatThreshold */ "高光去饱和开始介入的亮度阈值。0.0 表示对所有亮度进行去饱和，1.0 表示完全不进行去饱和。推荐默认值 0.18。\0"
+    /* Settings_Label_HdrMaxDesat */ "高光去饱和强度\0"
+    /* Settings_Tooltip_HdrMaxDesat */ "高光去饱和的最大强度。0.0 表示不进行去饱和，1.0 表示在高光处完全去饱和为白色。推荐默认值 0.75。\0"
+    /* Settings_Option_HdrColorimetric */ "色度\0"
+    /* Settings_Option_HdrSpline */ "样条映射\0"
+    /* Settings_Option_HdrLegacyReinhard */ "BT.2390 (EETF)\0"
+    /* Settings_Label_CustomProof */ "自定义软打样配置 (.icc)\0"
+    /* Settings_Label_CmsIntent */ "渲染意图\0"
+    /* Settings_Label_GamutWarning */ "色彩溢出检测\0"
+    /* Settings_Tooltip_GamutWarning */ "分析并标出溢出区域：关闭、仅在软打样模式下检测（默认）、或者同时检测软打样和屏幕色彩溢出。\0"
+    /* Settings_Label_GamutAutoPrompt */ "自动提示色彩溢出\0"
+    /* Settings_Tooltip_GamutAutoPrompt */ "检测到溢出后弹出 OSD 提示。高亮区域可通过工具栏按钮手动查看。\0"
+    /* Settings_Label_GamutColor */ "溢出高亮颜色\0"
+    /* Settings_Option_CmsIntentRelative */ "相对色度\0"
+    /* Settings_Option_CmsIntentPerceptual */ "感知意图\0"
+    /* Settings_Tooltip_CMS */ "启用色彩管理 (Color Management System)。\n开启后，将通过 GPU 进行高精度色彩空间转换以还原真实色彩。\n关闭可降低性能消耗，但在广色域屏幕上可能导致颜色过饱和。\0"
+    /* Settings_Tooltip_CmsIntent */ "色彩空间转换策略 (Rendering Intent)。\n感知模式 (Perceptual)：压缩超出色域的颜色，保留细节和渐变，适合照片。\n相对比色 (Relative Colorimetric)：保留在色域内的颜色，超出部分裁剪，适合 UI 和图标。\n注意：仅当图像或显示器使用包含 LUT（查找表）的高级 ICC 配置文件时，切换此选项才会有视觉差异。普通矩阵型配置文件会自动回退至相对色度。\0"
+    /* Settings_Tooltip_AdvancedColor */ "启用 16-bit 浮点渲染管线 (scRGB)。\n开启后，在支持 HDR 的显示器上能突破 SDR 亮度限制，完美呈现照片高光。\n关闭将强制降级映射至 SDR 输出。\n注意：开启会增加显存占用。\0"
+    /* Settings_Tooltip_ZoomAuto */ "自动：图片小于屏幕尺寸时 100% 缩放，图片大于屏幕尺寸时适应屏幕尺寸缩放。\0"
+    /* Context_SoftProofing */ "软打样预览\0"
+    /* Context_SoftProofProfile */ "打样配置文件\0"
+    /* Context_SoftProofCustom */ "自定义...\0"
+    /* Settings_Value_ComingSoon */ "敬请期待\0"
+    /* Settings_Label_ForceRaw */ "强制 RAW 解码\0"
+    /* Settings_Label_PairRawJpeg */ "RAW+JPEG 配对\0"
+    /* Settings_Tooltip_PairRawJpeg */ "将 RAW 与同名的相机直出图 (JPEG/HEIF) 显示为同一张照片。\n列表中仅保留直出图，并标注 RAW 格式（如 +CR3）；后台会校验两者拍摄时间，不一致的配对自动拆开。\n可用 RAW 工具栏按钮或其热键切换相机直出和本机渲染，也可用配对对比热键并排查看。\0"
+    /* Settings_Label_Exposure */ "曝光度 (亮度)\0"
+    /* Settings_Tooltip_Exposure */ "调节图像亮度 (曝光补偿)。范围: 0.18x 至 10.0x。\0"
+    /* Settings_Label_AddToOpenWith */ "添加到打开方式\0"
+    /* Settings_Label_CustomEditor */ "自定义图片编辑器\0"
+    /* Context_SelectEditor */ "选择编辑器\0"
+    /* OSD_EditorLaunchFailed */ "编辑器启动失败，请重新配置。\0"
+    /* Settings_Action_Add */ "添加\0"
+    /* Settings_Action_Added */ "已添加\0"
+    /* Settings_Status_DisabledInPortable */ "便携模式下停用\0"
+    /* Settings_Header_Features */ "功能\0"
+    /* Settings_Header_Performance */ "性能\0"
+    /* Settings_Header_Transparency */ "透明度\0"
+    /* Settings_Label_DebugHUD */ "启用调试 HUD (F12)\0"
+    /* Settings_Label_Prefetch */ "预加载系统\0"
+    /* Settings_Label_MemoryReclaim */ "智能内存管理\0"
+    /* Settings_Option_MemSmart */ "智能\0"
+    /* Settings_Option_MemAggressive */ "激进\0"
+    /* Settings_Option_MemOnDemand */ "按需\0"
+    /* Settings_Tooltip_MemoryReclaim */ "智能 (推荐): 仅当系统可用内存 < 4GB 时，回收图片空闲内存。\n激进: 永不回收，保持 2GB 内存独占以换取绝对 0ns 的看图切换极速。\n按需: 图片切换时立刻回收空闲内存，保持最低物理内存占用。\0"
+    /* Settings_Label_Reset */ "重置所有设置\0"
+    /* Settings_Action_Restore */ "恢复\0"
+    /* Settings_Action_Done */ "完成\0"
+    /* Settings_Header_ConfigManagement */ "导入导出 (.ini)\0"
+    /* Settings_Action_CheckUpdates */ "检查更新\0"
+    /* Settings_Action_ViewUpdate */ "查看更新\0"
+    /* Settings_Status_Checking */ "检查中...\0"
+    /* Settings_Status_UpToDate */ "已是最新\0"
+    /* Settings_Link_GitHub */ "GitHub 仓库\0"
+    /* Settings_Link_ReportIssue */ "反馈问题\0"
+    /* Settings_Link_Hotkeys */ "帮助 (F1)\0"
+    /* Settings_Label_Version */ "版本\0"
+    /* Settings_Label_Build */ "构建\0"
+    /* Dialog_UpdateTitle */ "发现新版本！\0"
+    /* Dialog_UpdateContent */ "v%s 已准备就緒\0"
+    /* Dialog_UpdateLogHeader */ "更新日志\0"
+    /* Dialog_ButtonUpdate */ "立即更新\0"
+    /* Dialog_ButtonLater */ "稍后\0"
+    /* Dialog_ButtonStar */ "在 GitHub 点星\0"
+    /* Dialog_Update_LoveTitle */ "QuickView 源自热爱\0"
+    /* Dialog_Update_LoveMessage */ "我利用业余时间维护 QuickView，只因我相信 Windows 值得拥有一个更快、更纯粹的看图工具。 我没有推广预算，也没有团队。如果您喜欢这次更新，在 GitHub 上点一颗星或分享给朋友，就是对我最大的支持。\0"
+    /* Dialog_PassthroughTitle */ "鼠标穿透模式\0"
+    /* Dialog_PassthroughContent */ "鼠标操作将透传至底层窗口。\n只能通过全局快捷键 (Shift+Esc) 或任务栏菜单退出该模式。\n\n是否继续？\0"
+    /* OSD_PassthroughOn */ "鼠标穿透：开启 (Shift+Esc 退出)\0"
+    /* OSD_PassthroughOff */ "鼠标穿透：关闭\0"
+    /* OSD_OverlayModeOn */ "临摹模式：开启\0"
+    /* OSD_OverlayModeOff */ "临摹模式：关闭\0"
+    /* OSD_Opacity */ "不透明度\0"
+    /* Help_Desc_Edit */ "编辑\0"
+    /* Help_Header_Tips */ "提示与术语\0"
+    /* Help_Tip_ContextScope */ "提示：QuickView 已支持完整的键盘快捷键与鼠标手势自定义，具体绑定请在「设置 -> 操作」中查看与配置。当前帮助面板内容将在后续版本中迁移至在线帮助文档。\0"
+    /* Help_Tip_Rotation */ "旋转说明：'边缘适配' 指为匹配编码块边界进行的微量裁剪(无损)；'有损' 指必须要进行重编码。\0"
+    /* Help_Tip_VideoWall */ "跨屏模式 (Ctrl+F11)：合并所有显示器。若关闭按钮不可见(如L型布局)，双击任意处即可退出。\0"
+    /* Help_Tip_DesignerMode */ "临摹模式/薄膜模式：开启后图像将变为半透明并露出底部元素，此时您可调整尺寸或透明度。点击工具栏中的鼠标穿透模式开关，可进入鼠标穿透模式，此时除了退出快捷键 Shift+Esc 外的任何按键和鼠标输入均被忽略，QuickView 将变为一层透明薄膜覆盖层。\0"
+    /* Help_Tip_GamutDetection */ "色彩溢出检测：检测当前图片是否超出显示器或软打样配置的色域。模式：关闭、仅软打样（默认）、全部（包含屏幕）。可从工具栏手动开关。\0"
+    /* Help_Tip_Raw */ "RAW 渲染：默认显示内嵌预览图以提升速度。点击 RAW 按钮可进行完整解码(色彩可能不同)。\0"
+    /* Help_Tip_JpegQ */ "JPEG 质量：基于算法估算的质量值 (例如 Photoshop 100% ≈ 98%)。因编码器差异，测算结果可能与保存时的设置略有偏差，属正常现象。\0"
+    /* Help_Tip_SoftProofCompare */ "软打样对比：软打样后进入对比模式，将自动进行打样前后对比。\0"
+    /* Settings_Option_Auto */ "自动\0"
+    /* Settings_Option_Eco */ "节能\0"
+    /* Settings_Option_Balanced */ "平衡\0"
+    /* Settings_Option_Ultra */ "极速\0"
+    /* HUD_Group_Physical */ "物理属性\0"
+    /* HUD_Group_Scientific */ "科学指标\0"
+    /* HUD_Group_Encoding */ "光学与编码\0"
+    /* HUD_Tip_Sharp_Desc */ "边缘清晰度 (拉普拉斯方差)\0"
+    /* HUD_Tip_Sharp_High */ "边缘锐利，细节丰富\0"
+    /* HUD_Tip_Sharp_Low */ "软焦点或运动模糊\0"
+    /* HUD_Tip_Sharp_Ref */ "> 500 为非常锐利\0"
+    /* HUD_Tip_Ent_Desc */ "信息密度 (香农熵)\0"
+    /* HUD_Tip_Ent_High */ "复杂纹理或高噪点\0"
+    /* HUD_Tip_Ent_Low */ "平坦区域或低细节\0"
+    /* HUD_Tip_Ent_Ref */ "7.0-8.0 为高细节\0"
+    /* HUD_Tip_BPP_Desc */ "每像素比特数 (压缩效率)\0"
+    /* HUD_Tip_BPP_High */ "低压缩率 (保留更多原始数据)\0"
+    /* HUD_Tip_BPP_Low */ "高压缩率 (空间利用率更高)\0"
+    /* HUD_Tip_BPP_Ref */ "24.0 (原始RGB), ~2.0-3.0 (高质量JPEG), ~0.5-1.5 (WebP/AVIF)\0"
+    /* HUD_Label_High */ "高: \0"
+    /* HUD_Label_Low */ "低: \0"
+    /* HUD_Label_Ref */ "参考: \0"
+    /* Settings_Header_GeekGlass */ "玻璃引擎 (GPU加速)\0"
+    /* Settings_Label_EnableGeekGlass */ "启用玻璃渲染\0"
+    /* Settings_Label_GlassUIAnimations */ "交互动画\0"
+    /* Settings_Header_CoreMaterial */ "核心材质\0"
+    /* Settings_Label_BlurSigma */ "模糊半径\0"
+    /* Settings_Status_GlassDisabled */ "启用玻璃渲染后生效\0"
+    /* Settings_Label_TintDensity */ "厚度 (浓度)\0"
+    /* Settings_Tooltip_TintDensity */ "控制玻璃底色深度。\0"
+    /* Settings_Label_SpecularOpacity */ "光泽亮度\0"
+    /* Settings_Tooltip_SpecularOpacity */ "控制玻璃面板光泽强度。\0"
+    /* Settings_Label_ShadowIntensity */ "阴影强度\0"
+    /* Settings_Tooltip_ShadowIntensity */ "调节 GPU 加速物理落影的深浅。\0"
+    /* Settings_Header_VectorAssets */ "边缘\0"
+    /* Settings_Label_VectorStrokeWeight */ "线框粗细\0"
+    /* Settings_Option_StrokeStandard */ "标准 (1.5px)\0"
+    /* Settings_Option_StrokeFine */ "极细 (1.0px)\0"
+    /* Settings_Header_GlassTint */ "玻璃着色\0"
+    /* Settings_Label_TintProfile */ "着色模式\0"
+    /* Settings_Option_TintAuto */ "自动\0"
+    /* Settings_Option_TintCustom */ "自定义\0"
+    /* Settings_Label_GlassCustomColor */ "自定义底色\0"
+    /* Settings_Header_DensityMatrix */ "材质浓度\0"
+    /* Settings_Label_OsdDensity */ "信息提示 (OSD)\0"
+    /* Settings_Tooltip_OsdDensity */ "控制加载进度条、播放提示、缩放信息等浮层的厚度。\0"
+    /* Settings_Label_PanelsDensity */ "工具面板\0"
+    /* Settings_Tooltip_PanelsDensity */ "控制底部工具栏、信息面板、画廊胶卷以及右上角窗口控制按钮的厚度。\0"
+    /* Settings_Label_ModalsDensity */ "模态窗口\0"
+    /* Settings_Tooltip_ModalsDensity */ "控制设置面板、帮助面板和对话框等弹出窗口的厚度。\0"
+    /* Settings_Label_MenusDensity */ "右键菜单\0"
+    /* Settings_Tooltip_MenusDensity */ "控制右键菜单材质浓度（仅在 Acrylic 材质下可以调节）。\0"
+    /* Settings_Header_Professional */ "专业工具\0"
+    /* Settings_Label_ShowDirtyRect */ "动画模式下显示重绘区域预览按钮\0"
+    /* Settings_Tooltip_ShowDirtyRect */ "在播放动画时显示用于调试重绘区域的工具按钮，以便可视化哪些部分正在更新。\0"
+    /* Settings_Label_LoupeShape */ "放大镜形状\0"
+    /* Settings_Option_LoupeShapeSquare */ "正方形\0"
+    /* Settings_Option_LoupeShapeCircle */ "圆形\0"
+    /* Settings_Option_LoupeShapeFullscreen */ "全图\0"
+    /* Settings_Label_LoupeZoom */ "放大镜倍率\0"
+    /* Settings_Tooltip_LoupeHotkey */ "按住快捷键并滚动鼠标滚轮可调节放大镜尺寸。\0"
+    /* Settings_Tooltip_CropModeHotkey */ "按住 Ctrl 并使用鼠标左键拖动可快速进入框选剪裁模式。\0"
+    /* Settings_Tab_Theme */ "主题\0"
+    /* Settings_Label_ThemeMode */ "主题模式\0"
+    /* Settings_Option_ThemeAuto */ "自动\0"
+    /* Settings_Option_ThemeDark */ "深色\0"
+    /* Settings_Option_ThemeLight */ "浅色\0"
+    /* Settings_Option_ThemeCustom */ "自定义\0"
+    /* Settings_Label_AmbientDimmer */ "环境遮罩\0"
+    /* Settings_Tooltip_AmbientDimmer */ "在画廊模式、设置窗口或对话框开启时，在后端添加沉浸式阴影遮罩。\0"
+    /* Settings_Label_AccentColor */ "强调色\0"
+    /* Settings_Option_AccentSystem */ "跟随系统\0"
+    /* Settings_Option_AccentCustom */ "自定义\0"
+    /* Settings_Label_WindowBorderAccent */ "前台窗口边框强调色\0"
+    /* Settings_Option_BorderFollowSystem */ "跟随系统\0"
+    /* Settings_Option_BorderAccent */ "强调色\0"
+    /* Settings_Label_ResetGlass */ "材质预设\0"
+    /* Settings_Action_ResetGlass */ "重置默认\0"
+    /* Settings_Header_ThemeManagement */ "导入导出 (.qvtheme)\0"
+    /* Settings_Action_ExportTheme */ "导出\0"
+    /* Settings_Action_ImportTheme */ "导入\0"
+    /* Toolbar_Tooltip_CompareSave */ "保存/导出图像 (S)\0"
+    /* Dialog_MultiLineInputHint */ "[Ctrl+Enter] 快速提交保存\0"
+    /* Dialog_AiApiKeyTitle */ "配置 API 密钥\0"
+    /* Dialog_AiApiKeyPrompt */ "请输入服务商 API 密钥（受 Windows DPAPI 本地硬件安全保护）：\0"
+    /* Dialog_AiPromptTitle */ "编辑提示词模板\0"
+    /* Dialog_AiPromptPrompt */ "配置该 AI 动作提示词模板（支持多行编辑，按 Ctrl+Enter 快速提交）：\0"
+    /* Dialog_AiActionNameTitle */ "编辑动作名称\0"
+    /* Dialog_AiActionNamePrompt */ "请输入在 AI 动作面板中展示的名称：\0"
+    /* Dialog_AiBaseUrlTitle */ "配置接口地址\0"
+    /* Dialog_AiBaseUrlPrompt */ "请输入兼容 OpenAI / ComfyUI 格式的 API 基础端点地址 (Base URL)：\0"
+    /* AiAction_Title */ "AI 指令台\0"
+    /* AiAction_EscHint */ "[Esc] 退出\0"
+    /* AiAction_ScopeCropAndBlend */ "选区修补\0"
+    /* AiAction_ScopeForceFull */ "全图生成\0"
+    /* AiAction_FooterQuickKeys */ "按 1~9 / 0 快速执行\0"
+    /* AiAction_Placeholder */ "输入临时提示词，或搜索预设动作...\0"
+    /* AiAction_InpaintTitle */ "选区局部重绘 (AI Inpaint)\0"
+    /* AiAction_InpaintDesc */ "框选局部画面无痕消除或替换\0"
+    /* AiAction_InpaintTag */ "框选模式\0"
+    /* AiAction_AdhocPrefix */ "✨ 发送临时指令: \"\0"
+    /* AiAction_AdhocSend */ "Enter 发送\0"
+    /* AiAction_CurrentModel */ "当前模型\0"
+    /* AiAction_NoModelSelected */ "未选择模型\0"
+    /* OSD_AiProcessing */ "AI 正在处理: %s (按 Esc 取消)...\0"
+    /* OSD_AiGenerationSuccess */ "AI 生成完成！进入帘幕对比模式\0"
+    /* OSD_AiCompleted */ "AI 处理完成\0"
+    /* OSD_AiPreparing */ "AI: %s 准备中 (Esc取消)...\0"
+    /* OSD_AiProcessingElapsed */ "AI: %s 处理中 [%ds, Esc取消]...\0"
+    /* OSD_AiConnecting */ "AI 连接中: %s (Esc取消)...\0"
+    /* OSD_AiSamplingProgress */ "AI 采样中: %d%% (%d/%d步) [耗时%ds, Esc取消]\0"
+    /* OSD_AiSamplingProgressEta */ "AI 采样中: %d%% (%d/%d步, 约剩%.0fs) [耗时%ds, Esc取消]\0"
+    /* OSD_AiAdhocPrompt */ "临时指令\0"
+    /* OSD_AiTaskCancelled */ "AI 任务已取消\0"
+    /* OSD_AiInpaintGuide */ "请使用鼠标左键框选局部重绘区域 (Enter 执行, Esc 取消)\0"
+    /* OSD_AiInpaintGuideActionFormat */ "请使用鼠标左键框选区域，按 Enter 执行 [%s]\0"
+    /* OSD_AiSelectionTooSmall */ "选区过小，请先框选重绘区域\0"
+    /* OSD_AiEmptyResult */ "AI 生成结果为空\0"
+    /* OSD_AiDecodeFailed */ "解码 AI 图像失败\0"
+    /* OSD_AiTextureFailed */ "创建 GPU 纹理失败\0"
+    /* OSD_AiEmptyPromptHint */ "请输入提示词，或选择预设动作\0"
+    /* OSD_AiInpaintPromptEmptyHint */ "请先输入局部重绘提示词\0"
+    /* Settings_Tab_Ai */ "AI 动作\0"
+    /* Settings_Header_AiProviders */ "AI 模型服务商配置\0"
+    /* Settings_Desc_AiProviders */ "配置 AI 端点地址、DPAPI 安全密钥及大模型。\0"
+    /* Settings_Label_AiProviderName */ "供应商预设\0"
+    /* Settings_Label_AiBaseUrl */ "接口地址 (Base URL)\0"
+    /* Settings_Label_AiApiKey */ "API 密钥 (DPAPI 加密保护)\0"
+    /* Settings_Label_AiModelId */ "模型标识\0"
+    /* Settings_Label_AiModelUnconfigured */ "[未配置，请拉取或输入]\0"
+    /* Settings_Label_AiMaxRes */ "最大输入分辨率策略\0"
+    /* Settings_Label_AiDefaultProfile */ "★ 全局默认服务商\0"
+    /* Settings_Button_AiSetDefault */ "★ 设为全局默认服务商\0"
+    /* Settings_Button_AiTestConn */ "测试连接与延迟\0"
+    /* Settings_Button_AiSaveProf */ "保存配置\0"
+    /* Settings_Button_AiDeleteProf */ "删除该服务商配置\0"
+    /* Settings_Button_AiAddProf */ "+ 添加新服务商配置\0"
+    /* Settings_Header_AiActions */ "自定义 AI 动作列表\0"
+    /* Settings_Button_AiAddAction */ "+ 新建 AI 动作\0"
+    /* Settings_Label_AiActionName */ "动作名称\0"
+    /* Settings_Label_AiPromptTemplate */ "提示词模板\0"
+    /* Settings_Label_AiExecModel */ "执行服务商\0"
+    /* Settings_Option_AiDefaultModel */ "全局默认服务商\0"
+    /* Settings_Label_AiScopeMode */ "作用范围模式\0"
+    /* Settings_Button_AiDeleteAction */ "删除该动作\0"
+    /* Settings_AiModelCustom */ "✎ 自定义输入模型标识...\0"
+    /* Settings_AiModelFetching */ "⏳ 正在拉取可用模型列表...\0"
+    /* Settings_AiModelFetchAuto */ "↻ 自动拉取服务端模型列表...\0"
+    /* Settings_Option_AiRes4K */ "4K / 原图优先 (4096px)\0"
+    /* Settings_Option_AiRes2K */ "2K 高清 (2048px)\0"
+    /* Settings_Option_AiRes1K */ "1K 标准 (1024px)\0"
+    /* Settings_Option_AiResOriginal */ "原始尺寸 (不限制)\0"
+    /* Settings_Option_AiScopeForceFull */ "全图处理\0"
+    /* Settings_Option_AiScopeCropBlend */ "局部修补 (贴回羽化)\0"
+    /* Settings_Option_AiCustomEndpoint */ "自定义 (兼容 OpenAI 端点)\0"
+    /* Settings_Option_AiLocalComfyUI */ "本地 ComfyUI\0"
+    /* Settings_Option_AiLocalSdWebUI */ "本地 SD WebUI / Forge\0"
+    /* OSD_AiFetchingModels */ "正在拉取大模型列表...\0"
+    /* OSD_AiFetchModelsFailed */ "拉取模型失败: \0"
+    /* OSD_AiFetchModelsSuccessFormat */ "已成功拉取 %zu 个可用模型\0"
+    /* OSD_AiSetDefaultSuccessFormat */ "已将 %s 设为全局默认服务商\0"
+    /* OSD_AiTestingConnection */ "正在测试服务商连接与鉴权...\0"
+    /* OSD_AiConnSuccessFormat */ "✓ 连接正常！延迟: %dms (HTTP %d)\0"
+    /* OSD_AiSaveFailedBaseUrlEmpty */ "保存失败: 接口地址 (Base URL) 不能为空\0"
+    /* OSD_AiSaveFailedApiKeyEmpty */ "保存失败: 云端服务商 API 密钥不能为空\0"
+    /* OSD_AiSaveFailedModelEmpty */ "保存失败: 请先选择或输入有效的模型标识\0"
+    /* OSD_AiSaveProfileSuccess */ "✓ 服务商配置已保存\0"
+    /* AiError_ApiKeyEmpty */ "API 密钥为空，请先在【设置 -> AI 动作】中配置该服务商密钥。\0"
+    /* AiError_ModelEmpty */ "未配置模型标识，请先在【设置 -> AI 动作】中拉取或输入有效模型。\0"
+    /* AiError_InvalidUrl */ "无效的 Base URL 格式。\0"
+    /* AiError_InitWinHttpFailed */ "初始化 WinHTTP 失败。\0"
+    /* AiError_ConnectFailed */ "连接服务器失败，请检查网络或代理设置。\0"
+    /* AiError_CreateReqFailed */ "创建 HTTP 请求失败。\0"
+    /* AiError_NoValidDataReturned */ "API 响应成功，但未解析到有效的图片或文字数据。\0"
+    /* AiError_RequestTimeout */ "网络请求超时或服务无响应。\0"
+    /* AiError_HttpStatusPrefix */ "服务商返回错误 (HTTP \0"
+    /* AiError_JsonParseFailed */ "无法解析服务商返回的 JSON 数据。\0"
+    /* AiError_NoModelsFound */ "接口返回成功，但未解析到可用模型列表。\0"
+    /* AiTest_ConnSuccess */ "连接正常且凭据鉴权通过。\0"
+    /* AiTest_AuthFailedPrefix */ "API 密钥无效或未授权 (HTTP \0"
+    /* AiTest_HttpErrorPrefix */ "服务器返回 HTTP \0"
+    /* AiError_NoAvailableProfile */ "未找到可用的 AI 模型预设，请检查设置。\0"
+    /* Settings_Tab_FileAssoc */ "文件关联\0"
+    /* Settings_Header_FileAssocStatus */ "关联状态诊断\0"
+    /* Settings_Header_FileAssocOptions */ "行为与个性化\0"
+    /* Settings_Header_FileAssocFormats */ "支持格式管理 (92)\0"
+    /* Settings_Label_FileAssocIconStyle */ "资源管理器文件图标\0"
+    /* Settings_Option_FileAssocIconNative */ "系统原生图标\0"
+    /* Settings_Option_FileAssocIconApp */ "QuickView 图标\0"
+    /* Settings_Label_FileAssocContextMenu */ "资源管理器右键菜单 (\"使用 QuickView 打开\")\0"
+    /* Settings_Label_FileAssocAutoRepair */ "启动 / 升级时自动校验并修复关联路径\0"
+    /* Settings_Label_FileAssocPresets */ "快捷情景预设\0"
+    /* Settings_Action_PresetRecommended */ "日常推荐\0"
+    /* Settings_Action_PresetAllImages */ "全选图像\0"
+    /* Settings_Action_PresetPhotoRaw */ "摄影 RAW\0"
+    /* Settings_Action_PresetClearAll */ "全部清空\0"
+    /* Settings_Action_ApplyAssoc */ "应用更改到系统\0"
+    /* Settings_Action_ApplyPending */ "应用更改*\0"
+    /* Settings_Action_SetDefaultWin */ "在 Windows 中设为默认\0"
+    /* Settings_Action_RepairAssoc */ "修复异常关联\0"
+    /* Settings_Label_FileAssocCatStandard */ "常用标准图像\0"
+    /* Settings_Label_FileAssocCatModern */ "现代与 Web / 矢量\0"
+    /* Settings_Label_FileAssocCatPro */ "专业设计与传统\0"
+    /* Settings_Label_FileAssocCatRaw */ "相机 RAW\0"
+    /* Settings_Label_FileAssocCatExtRaw */ "扩展 / 电影 RAW\0"
+    /* Settings_Label_FileAssocCatArchive */ "漫画与归档\0"
+    /* Settings_Tooltip_FileAssocArchive */ "建议仅关联 .cbz / .cbr；若不希望抢占压缩软件的右键打开方式，请勿勾选 .zip / .rar。\0"
+    /* Settings_Status_AssocApplied */ "文件关联已同步至注册表\0"
+    /* Settings_Status_AssocSummaryFormat */ "已选 %d 项 · 系统默认 %d 项 · 仅打开方式 %d 项\0"
+    /* Settings_Status_AssocBrokenHint */ "检测到注册表命令缺少引号或路径失效，点击应用或修复即可自动纠正。\0"
+    /* Settings_Status_AssocPendingHint */ "有未同步的修改 — 请点击「应用更改」以同步右键菜单和系统打开方式。\0"
+    /* Settings_Status_AssocStoreManaged */ "Microsoft Store (MSIX) 模式：右键菜单与「打开方式」已由系统原生托管，点击「在 Windows 中设为默认」即可设置默认程序。\0"
+    /* Settings_Label_StoreUpdatesManaged */ "由 Microsoft Store 管理更新\0"
+    /* Settings_Action_OpenStore */ "打开商店\0"
+    /* Settings_Status_AssocLegend */ "绿点 = 已设系统默认 · 高亮 = 已勾选 / 打开方式\0"
+    /* Context_OpenWithQuickView */ "使用 QuickView 打开\0";
+static constexpr char kBlob_TW[] =
+    /* CurrentLocale */ "zh-tw\0"
+    /* OSD_NoImage */ "沒有載入圖片\0"
+    /* OSD_FolderEmpty */ "資料夾中沒有圖片\0"
+    /* OSD_SvgStaticFallback */ "動態 SVG 已顯示為靜態圖像\0"
+    /* OSD_Lossless */ "無損\0"
+    /* OSD_ReencodedLossless */ "重新編碼 (無損)\0"
+    /* OSD_EdgeAdapted */ "剪裁\0"
+    /* OSD_Reencoded */ "有損\0"
+    /* OSD_ReadOnly */ "拒絕存取 - 檔案可能被佔用或唯讀\0"
+    /* OSD_NotPerfect */ "變換不完美 (已進行邊緣優化)\0"
+    /* OSD_SpanOn */ "跨屏模式: 開啟\0"
+    /* OSD_SpanOff */ "跨屏模式: 關閉\0"
+    /* OSD_CompareBefore */ "打樣前 (Original)\0"
+    /* OSD_CompareAfter */ "打樣後 (Proofed)\0"
+    /* OSD_CompareAnimNotSupported */ "動畫不支援對比模式\0"
+    /* OSD_UndoDeleteSuccess */ "已撤銷刪除\0"
+    /* OSD_UndoDeleteFailed */ "撤銷刪除失敗\0"
+    /* OSD_UndoRenameSuccess */ "已撤銷重命名\0"
+    /* OSD_UndoRenameFailed */ "撤銷重命名失敗\0"
+    /* OSD_UndoTransformSuccess */ "已撤銷旋轉/翻轉\0"
+    /* OSD_UndoTransformFailed */ "撤銷旋轉/翻轉失敗\0"
+    /* Action_RotateCW */ "順時針旋轉 90°\0"
+    /* Action_RotateCCW */ "逆時針旋轉 90°\0"
+    /* Action_Rotate180 */ "旋轉 180°\0"
+    /* Action_FlipH */ "水平翻轉\0"
+    /* Action_FlipV */ "垂直翻轉\0"
+    /* Dialog_SaveTitle */ "儲存變更?\0"
+    /* Dialog_SaveContent */ "圖像已被修改。是否儲存變更?\0"
+    /* Dialog_ButtonSave */ "儲存\0"
+    /* Dialog_ButtonSaveAs */ "另存為...\0"
+    /* Dialog_ButtonDiscard */ "放棄\0"
+    /* Dialog_ButtonContinue */ "繼續\0"
+    /* Dialog_CropUnsavedTitle */ "裁剪修改未儲存，是否儲存變更？\0"
+    /* Dialog_SaveAsTitle */ "另存圖片\0"
+    /* Dialog_ExportTitle */ "儲存與匯出\0"
+    /* Dialog_ButtonOverwrite */ "覆蓋儲存\0"
+    /* Dialog_EmbedICC */ "嵌入 ICC 設定\0"
+    /* Dialog_SizeEstimating */ "大小: 估算中...\0"
+    /* Dialog_ExportError */ "匯出錯誤\0"
+    /* Context_Open */ "開啟...\tCtrl+O\0"
+    /* Context_Crop */ "裁剪\0"
+    /* Context_SuperResolution */ "AI 超解析度\0"
+    /* Context_AiAction */ "AI 動作\0"
+    /* Context_OpenWith */ "開啟方式...\0"
+    /* Context_Edit */ "編輯\tE\0"
+    /* Context_ShowInExplorer */ "在檔案總管中顯示\0"
+    /* Context_OpenFolder */ "開啟資料夾\0"
+    /* Context_CopyPixels */ "複製像素\tCtrl+C\0"
+    /* Context_CopyFile */ "複製檔案\tCtrl+Shift+C\0"
+    /* Context_CopyPath */ "複製路徑\tCtrl+Alt+C\0"
+    /* Context_Print */ "列印\tCtrl+P\0"
+    /* Context_RotateCW */ "順時針旋轉 90°\tR\0"
+    /* Context_RotateCCW */ "逆時針旋轉 90°\tShift+R\0"
+    /* Context_FlipH */ "水平翻轉\tH\0"
+    /* Context_FlipV */ "垂直翻轉\tV\0"
+    /* Context_Transform */ "變換\0"
+    /* Context_ActualSize */ "實際大小 (100%)\tZ\0"
+    /* Context_FitToScreen */ "適應螢幕\tF\0"
+    /* Context_FitWindow */ "適應視窗\0"
+    /* Context_FillWindow */ "填滿視窗\0"
+    /* Context_ZoomIn */ "放大\t+ / Ctrl +\0"
+    /* Context_ZoomOut */ "縮小\t- / Ctrl -\0"
+    /* Context_LockWindow */ "鎖定視窗\0"
+    /* Context_AlwaysOnTop */ "視窗置頂\tCtrl+T\0"
+    /* Context_HUDGallery */ "HUD 照片牆\tT\0"
+    /* Context_LiteInfoPanel */ "簡略資訊面板\tTab\0"
+    /* Context_FullInfoPanel */ "詳細資訊面板\tI\0"
+    /* Context_RenderRAW */ "渲染 RAW\0"
+    /* Context_PixelArtMode */ "像素畫模式\0"
+    /* Context_Fullscreen */ "全螢幕\tF11\0"
+    /* Context_SlideshowMode */ "幻燈片模式\0"
+    /* Context_SpanDisplays */ "跨越顯示器 (電視牆模式)\tCtrl+F11\0"
+    /* Context_View */ "檢視\0"
+    /* Context_WallpaperFill */ "填滿\0"
+    /* Context_WallpaperFit */ "適應\0"
+    /* Context_WallpaperTile */ "並排\0"
+    /* Context_SetAsWallpaper */ "設為桌布\0"
+    /* Context_Rename */ "重新命名\tF2\0"
+    /* Context_FixExtension */ "修復副檔名\0"
+    /* Context_Delete */ "刪除\tDel\0"
+    /* Context_UndoDelete */ "撤銷刪除\tCtrl+Z\0"
+    /* Context_UndoRename */ "撤銷重命名\tCtrl+Z\0"
+    /* Context_UndoTransform */ "撤銷旋轉/翻轉\tCtrl+Z\0"
+    /* Context_Undo */ "撤銷\tCtrl+Z\0"
+    /* Context_SortBy */ "排序方式\0"
+    /* Context_NavOrder */ "導覽順序\0"
+    /* Context_SortAscending */ "升冪\0"
+    /* Context_SortDescending */ "降冪\0"
+    /* Context_Settings */ "設定...\0"
+    /* Context_CompareMode */ "對比模式\tC\0"
+    /* Context_OverlayMode */ "臨摹模式\tCtrl+Shift+O\0"
+    /* Context_GalleryOpenCompare */ "在對比模式中打開\0"
+    /* Context_GalleryOpenNewWindow */ "在新視窗中打開\0"
+    /* Context_Exit */ "結束\tMButton/Esc\0"
+    /* Menu_ExitPassthrough */ "退出滑鼠穿透\0"
+    /* Message_SaveErrorTitle */ "錯誤\0"
+    /* Message_SaveErrorContent */ "儲存檔案失敗。檔案是否被佔用?\0"
+    /* Toolbar_Tooltip_Prev */ "上一張 (方向鍵左)\0"
+    /* Toolbar_Tooltip_Next */ "下一張 (方向鍵右)\0"
+    /* Toolbar_Tooltip_RotateL */ "向左旋轉 (Shift+R)\0"
+    /* Toolbar_Tooltip_RotateR */ "向右旋轉 (R)\0"
+    /* Toolbar_Tooltip_FlipH */ "水平翻轉 (H)\0"
+    /* Toolbar_Tooltip_Lock */ "鎖定視窗(臨時)\0"
+    /* Toolbar_Tooltip_Unlock */ "解鎖視窗\0"
+    /* Toolbar_Tooltip_Gallery */ "縮圖 (T)\0"
+    /* Toolbar_Tooltip_Info */ "資訊面板\0"
+    /* Toolbar_Tooltip_RawPreview */ "RAW: 快速預覽 (點選切換完整)\0"
+    /* Toolbar_Tooltip_RawFull */ "RAW: 完整解碼 (點選切換預覽)\0"
+    /* Toolbar_Tooltip_RawPairView */ "RAW: 檢視配對 RAW (完整解碼)\0"
+    /* Toolbar_Tooltip_RawPairBack */ "RAW: 返回配對圖像\0"
+    /* Toolbar_Tooltip_FixExtension */ "副檔名不符 (修復)\0"
+    /* Toolbar_Tooltip_Pin */ "固定工具列\0"
+    /* Toolbar_Tooltip_Unpin */ "取消固定工具列\0"
+    /* Toolbar_Tooltip_GamutWarning */ "顯示色彩溢出高亮區域\0"
+    /* Toolbar_Tooltip_CropCopy */ "複製選區 (Ctrl+C)\0"
+    /* Toolbar_Tooltip_CropSave */ "儲存 (Ctrl+S)\0"
+    /* Toolbar_Tooltip_CropApply */ "應用 (Enter)\0"
+    /* Toolbar_Tooltip_CropCancel */ "退出 (Esc)\0"
+    /* Toolbar_Tooltip_OverlayAlphaUp */ "增加不透明度\0"
+    /* Toolbar_Tooltip_OverlayAlphaDown */ "減小不透明度\0"
+    /* Toolbar_Tooltip_OverlayPassthroughOn */ "進入滑鼠穿透\0"
+    /* Toolbar_Tooltip_OverlayPassthroughOff */ "退出滑鼠穿透\0"
+    /* Toolbar_Tooltip_OverlayExit */ "退出臨摹模式\0"
+    /* Toolbar_Tooltip_OverlayZoomIn */ "放大 (臨摹)\0"
+    /* Toolbar_Tooltip_OverlayZoomOut */ "縮小 (臨摹)\0"
+    /* Toolbar_Tooltip_NormalMode */ "普通模式\0"
+    /* Toolbar_Tooltip_CompareMode */ "對比模式\0"
+    /* Toolbar_Tooltip_SinglePage */ "單頁模式\0"
+    /* Toolbar_Tooltip_DualPage */ "雙頁模式\0"
+    /* Toolbar_Tooltip_CompareOpen */ "在選區開啟新圖\0"
+    /* Toolbar_Tooltip_CompareSwap */ "交換左右\0"
+    /* Toolbar_Tooltip_CompareLayout */ "切換佈局\0"
+    /* Toolbar_Tooltip_CompareInfo */ "對比資訊\0"
+    /* Toolbar_Tooltip_CompareDelete */ "刪除所選圖片\0"
+    /* Toolbar_Tooltip_CompareZoomIn */ "放大 (微調)\0"
+    /* Toolbar_Tooltip_CompareZoomOut */ "縮小 (微調)\0"
+    /* Toolbar_Tooltip_CompareSyncZoomOn */ "縮放同步: 開\0"
+    /* Toolbar_Tooltip_CompareSyncZoomOff */ "縮放同步: 關\0"
+    /* Toolbar_Tooltip_CompareSyncPanOn */ "平移同步: 開\0"
+    /* Toolbar_Tooltip_CompareSyncPanOff */ "平移同步: 關\0"
+    /* Toolbar_Tooltip_SlideshowImmersiveToggle */ "切換沉浸聚光燈\0"
+    /* Toolbar_Tooltip_SlideshowExit */ "退出幻燈片模式\0"
+    /* Toolbar_Tooltip_CompareExit */ "退出對比\0"
+    /* Toolbar_Tooltip_AnimPlay */ "播放動畫\0"
+    /* Toolbar_Tooltip_AnimPause */ "暫停動畫\0"
+    /* Toolbar_Tooltip_AnimPrev */ "上一幀\0"
+    /* Toolbar_Tooltip_AnimNext */ "下一幀\0"
+    /* Toolbar_Tooltip_AnimDirtyOn */ "髒矩形偵錯: 開\0"
+    /* Toolbar_Tooltip_AnimDirtyOff */ "髒矩形偵錯: 關\0"
+    /* Toolbar_Tooltip_AnimSpeed */ "動畫速度調節\0"
+    /* OSD_Copied */ "已複製!\0"
+    /* OSD_PixelsCopied */ "像素已複製到剪貼簿!\0"
+    /* OSD_PixelsExtracting */ "正在擷取原圖像素...\0"
+    /* OSD_FileCopied */ "檔案已複製到剪貼簿!\0"
+    /* OSD_CoordinatesCopied */ "座標已複製!\0"
+    /* OSD_FilePathCopied */ "檔案路徑已複製!\0"
+    /* OSD_Zoom100 */ "縮放: 100%\0"
+    /* OSD_ZoomFit */ "縮放: 適應螢幕\0"
+    /* OSD_ZoomFitWindow */ "縮放: 適應視窗\0"
+    /* OSD_ZoomFill */ "縮放: 填滿視窗\0"
+    /* OSD_PrintInstruction */ "列印: 請在開啟的應用程式中使用 Ctrl+P\0"
+    /* OSD_MovedToRecycleBin */ "已移至資源回收筒\0"
+    /* OSD_WindowLocked */ "視窗已鎖定\0"
+    /* OSD_WindowUnlocked */ "視窗已解鎖\0"
+    /* OSD_AlwaysOnTopOn */ "視窗置頂: 開\0"
+    /* OSD_AlwaysOnTopOff */ "視窗置頂: 關\0"
+    /* OSD_WallpaperSet */ "桌布已設定\0"
+    /* OSD_WallpaperFailed */ "設定桌布失敗\0"
+    /* OSD_Renamed */ "重新命名成功\0"
+    /* OSD_RenameFailed */ "重新命名失敗\0"
+    /* OSD_Restored */ "已恢復原狀\0"
+    /* OSD_ExtensionFixed */ "副檔名已修復\0"
+    /* OSD_FirstImage */ "已是第一張\0"
+    /* OSD_LastImage */ "已是最後一張\0"
+    /* OSD_HD */ "高畫質\0"
+    /* OSD_ZoomPrefix */ "縮放: \0"
+    /* OSD_AnimPlaying */ "播放中\0"
+    /* OSD_AnimPaused */ "已暫停 (檢查模式: Alt+左右方向鍵逐幀查看)\0"
+    /* OSD_AnimDirtyOn */ "髒矩形: 開\0"
+    /* OSD_AnimDirtyOff */ "髒矩形: 關\0"
+    /* OSD_GamutDetected */ "檢測到色彩溢出\0"
+    /* OSD_GamutIncompatible */ "色彩空間不匹配 / 設定檔解析失敗\0"
+    /* OSD_GamutFailed */ "色彩溢出分析失敗\0"
+    /* OSD_SlideshowStarted */ "開始播放幻燈片\0"
+    /* OSD_SlideshowStopped */ "停止播放幻燈片\0"
+    /* OSD_SlideshowResumed */ "繼續播放幻燈片\0"
+    /* OSD_SlideshowPaused */ "幻燈片已暫停\0"
+    /* OSD_ImmersiveSpotlight */ "沉浸模式: 聚光燈\0"
+    /* OSD_ImmersiveNormal */ "沉浸模式: 普通\0"
+    /* OSD_PrintJobStarted */ "打印任務已發送，您可以繼續瀏覽。\0"
+    /* OSD_PrintJobFinished */ "打印任务已发送完毕。\0"
+    /* OSD_EnterCropMode */ "已進入裁剪模式\0"
+    /* OSD_CropCopied */ "已複製裁剪選區\0"
+    /* OSD_CropApplied */ "裁剪已套用（未儲存）\0"
+    /* Context_ColorSpace */ "色彩空間\0"
+    /* Settings_Option_CmsUnmanaged */ "無管理\0"
+    /* Settings_Option_CmssRGB */ "sRGB\0"
+    /* Settings_Option_CmsP3 */ "Display P3\0"
+    /* Settings_Option_CmsAdobeRGB */ "Adobe RGB (1998)\0"
+    /* Settings_Option_CmsGray */ "灰度模式 (影調檢查)\0"
+    /* Settings_Option_CmsProPhoto */ "ProPhoto RGB\0"
+    /* Checkbox_AlwaysSaveLossless */ "總是儲存無損變換\0"
+    /* Checkbox_AlwaysSaveEdgeAdapted */ "總是儲存邊緣優化結果\0"
+    /* Checkbox_AlwaysSaveLossy */ "總是儲存重新編碼結果\0"
+    /* Checkbox_NeverConfirmDelete */ "直接放入回收站，不再確認\0"
+    /* OSD_HEICCodecMissing */ "無法解碼 HEIC - 請安裝 HEVC 視訊延伸模組\0"
+    /* Dialog_HEICTitle */ "無法解碼 HEIC\0"
+    /* Dialog_HEICContent */ "系統缺少 HEVC 視訊延伸模組。\\nQuickView 需要系統硬體加速以獲得最佳效能。\0"
+    /* Dialog_HEICGetExtension */ "取得延伸模組 (免費)\0"
+    /* Dialog_Cancel */ "取消\0"
+    /* Settings_Tab_General */ "一般\0"
+    /* Settings_Tab_About */ "關於\0"
+    /* Settings_Tab_Shortcuts */ "快捷鍵\0"
+    /* Settings_Hotkey_PressKey */ "請按下按鍵...\0"
+    /* Settings_Hotkey_Conflict */ "快捷鍵衝突\0"
+    /* Settings_Hotkey_ConflictPrompt */ "已由「%s」佔用，繼續將清除其快捷鍵。\0"
+    /* Settings_Hotkey_Restore */ "恢復快捷鍵預設值\0"
+    /* Settings_Hotkey_Restored */ "已恢復\0"
+    /* Settings_Hotkey_MouseTip */ "提示：支持滑鼠中鍵、側鍵等滑鼠多功能按鍵。更多側鍵請在滑鼠驅動中映射為鍵盤按鍵後綁定。\0"
+    /* Settings_Header_GalleryTrigger */ "圖庫底片帶 (頂部懸浮)\0"
+    /* Settings_Label_GalleryTriggerMode */ "底片帶觸發模式\0"
+    /* Settings_Label_KeepGalleryVisibleOnThumbnailClick */ "縮圖切圖時不自動隱藏\0"
+    /* Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick */ "開啟此功能將自動開啟「鎖定視窗」和「導覽時保持視窗尺寸不變」。\0"
+    /* Settings_Label_GalleryExpandOnClickOnly */ "展開箭頭觸發模式\0"
+    /* Settings_Tooltip_GalleryExpandOnClickOnly */ "展開至資料夾檢視需要明確點擊箭頭，防止在底片帶中滑動時不慎懸停誤觸。\0"
+    /* Settings_Option_TriggerClick */ "點擊\0"
+    /* Settings_Option_TriggerHover */ "停留\0"
+    /* Settings_Option_GalleryTriggerAuto */ "自動懸停\0"
+    /* Settings_Option_GalleryTriggerDelay */ "熱點停留\0"
+    /* Settings_Option_GalleryTriggerClick */ "點擊熱點\0"
+    /* Settings_Option_GalleryTriggerDisable */ "停用\0"
+    /* Settings_Tooltip_GalleryTrigger */ "該功能在視窗小於 600x450 時將自動禁用。\0"
+    /* Settings_Label_GalleryTriggerAreaHeight */ "觸發區域高度\0"
+    /* Settings_Label_GalleryDwellTime */ "停留時長\0"
+    /* Settings_Label_GalleryExitDelay */ "退出延遲\0"
+    /* Settings_Label_GalleryMinSize */ "畫廊最小尺寸\0"
+    /* Settings_Group_Foundation */ "基礎\0"
+    /* Settings_Group_Startup */ "啟動\0"
+    /* Settings_Group_Habits */ "習慣\0"
+    /* Settings_Label_Language */ "語言\0"
+    /* Settings_Label_SingleInstance */ "單一實例模式\0"
+    /* Settings_Label_CheckUpdates */ "檢查更新\0"
+    /* Settings_Label_UpdateChannel */ "更新通道\0"
+    /* Settings_Option_UpdateStable */ "正式版\0"
+    /* Settings_Option_UpdatePreRelease */ "預覽版 (Pre-release)\0"
+    /* Settings_Tooltip_PreRelease */ "正式版：預覽版發布一段時間後未收到Bug報告，將發布正式版。\n預覽版：第一時間發布最新的代碼修改，用於收集您的測試反饋。注意，這些修改並未經過嚴格測試。\0"
+    /* Settings_Label_NavLoopMode */ "循環導覽\0"
+    /* Settings_Label_SortOrder */ "排序方式\0"
+    /* Settings_Label_SortDescending */ "降冪\0"
+    /* Settings_Label_SortArchivesByNameAscending */ "始終以檔名升序瀏覽封存檔案\0"
+    /* Settings_Label_ConfirmDel */ "刪除前確認\0"
+    /* Settings_Label_Portable */ "可攜式模式 / 清理\0"
+    /* Settings_Tooltip_Portable */ "可攜式模式與登錄檔清理：\n開啟後，QuickView 將以可攜式方式執行。程式将自動清理已有的登錄檔關聯，並禁用自動登錄檔修改功能。同時，設定檔將存放在程式所在目錄而非 AppData 目錄。\0"
+    /* Settings_Label_SpanDisplays */ "跨屏模式 (電視牆)\0"
+    /* Settings_Label_UIScale */ "介面縮放\0"
+    /* Settings_Status_RestartRequired */ "需要重新啟動\0"
+    /* Settings_Status_NoWritePerm */ "無寫入權限!\0"
+    /* Settings_Status_Enabled */ "已啟用\0"
+    /* Settings_Header_PoweredBy */ "驅動技術\0"
+    /* Settings_Text_Copyright */ "© 2025–%s Vivor Loong (GitHub: @justnullname)\0"
+    /* Settings_Text_License */ "Licensed under GNU GPL v3.0\0"
+    /* Settings_Tab_Visuals */ "界面\0"
+    /* Settings_Tab_Controls */ "操作\0"
+    /* Settings_ControlSub_Mouse */ "滑鼠手勢\0"
+    /* Settings_ControlSub_Keyboard */ "按鍵設定\0"
+    /* Settings_ControlSub_Behavior */ "進階與偏好\0"
+    /* Settings_Gesture_Preset */ "手勢預設方案\0"
+    /* Settings_Gesture_Preset_Default */ "QuickView 經典模式 (預設)\0"
+    /* Settings_Gesture_Preset_Standard */ "標準相片檢視器\0"
+    /* Settings_Gesture_Preset_Browser */ "極簡觸控/單手瀏覽\0"
+    /* Settings_Gesture_Add */ "+ 新增手勢\0"
+    /* Settings_Gesture_Reset */ "恢復預設手勢\0"
+    /* Settings_Tab_Image */ "圖像\0"
+    /* Settings_Tab_Advanced */ "進階\0"
+    /* Settings_Header_Backdrop */ "背景\0"
+    /* Settings_Header_Window */ "視窗\0"
+    /* Settings_Header_WindowLock */ "鎖定視窗時\0"
+    /* Settings_Header_Panel */ "面板\0"
+    /* Settings_Label_CanvasColor */ "畫布顏色\0"
+    /* Settings_Option_Effects */ "特效\0"
+    /* Settings_Label_ContextMenuBackdrop */ "右鍵菜單\0"
+    /* Settings_Label_CanvasEffectStyle */ "特效類型\0"
+    /* Settings_Tooltip_BackdropEffectsTip */ "Mica 與 Mica Alt 特效僅在 Windows 11 上支援；Acrylic（亞克力）相比 Mica/Mica Alt 會佔用更多系統資源。\0"
+    /* Settings_Label_Overlay */ "疊加層\0"
+    /* Settings_Label_ShowGrid */ "顯示網格\0"
+    /* Settings_Label_AlwaysOnTop */ "視窗置頂\0"
+    /* Settings_Label_LockWindow */ "鎖定視窗\0"
+    /* Settings_Tooltip_LockWindow */ "此處控制程式啟動時預設鎖定視窗邊框，不跟隨圖片縮放。\0"
+    /* Settings_Label_AutoHideTitle */ "自動隱藏標題列\0"
+    /* Settings_Label_RoundedCorners */ "圓角視窗\0"
+    /* Settings_Label_UIBorders */ "顯示組件邊框\0"
+    /* Settings_Tooltip_RoundedCorners */ "控制主視窗及右鍵選單圓角，僅支援Windows 11。\0"
+    /* Settings_Label_LockToolbar */ "鎖定底部工具列\0"
+    /* Settings_Label_WindowMinSize */ "預設最小視窗寬度\0"
+    /* Settings_Label_WindowMaxSizePercent */ "預設最大啟動尺寸 (%)\0"
+    /* Settings_Label_ShowBorderIndicator */ "顯示邊界溢出指示器\0"
+    /* Settings_Tooltip_ShowBorderIndicator */ "在平移或縮放時，於圖片超出視口的邊緣顯示柔和輝光，停留片刻後自動淡出。\0"
+    /* Settings_Label_ShowNavigator */ "顯示縮略導航圖\0"
+    /* Settings_Tooltip_ShowNavigator */ "滑鼠位於導航圖上方時，使用滾輪 / 側鍵滾輪 (Shift + 滾輪) 可直接平移圖片\0"
+    /* Settings_Label_KeepWindowSizeOnNav */ "導航時保持視窗尺寸不變\0"
+    /* Settings_Label_RememberLastWindowSizeAndPosition */ "記住最後視窗位置和尺寸\0"
+    /* Settings_Label_UpscaleSmallImagesWhenLocked */ "小於視窗尺寸圖片適應視窗\0"
+    /* Settings_Label_SlideshowInterval */ "切換間隔 (秒)\0"
+    /* Settings_Label_SlideshowImmersive */ "沉浸模式\0"
+    /* Settings_Option_SlideshowNormal */ "普通\0"
+    /* Settings_Option_SlideshowSpotlight */ "聚光燈\0"
+    /* Settings_Label_ExifMode */ "EXIF 面板模式\0"
+    /* Settings_Label_ToolbarInfoDefault */ "工具列資訊預設值\0"
+    /* Settings_Label_OpenFullScreenMode */ "開啟時全螢幕\0"
+    /* Settings_Label_FullScreenZoomMode */ "全螢幕縮放模式\0"
+    /* Settings_Label_CustomLiteInfoPanel */ "自定義精簡信息欄\0"
+    /* Settings_Label_CustomFullInfoPanel */ "自定義完整信息欄\0"
+    /* Settings_Label_InfoPanelScale */ "完整/精簡信息欄縮放\0"
+    /* Settings_Label_ItemsInNormalMode */ "普通模式顯示項\0"
+    /* Settings_Label_ItemsInCompareMode */ "對比模式顯示項\0"
+    /* Settings_Label_SeparatorPreset */ "分隔符預設\0"
+    /* Settings_Option_FitScreen */ "適應螢幕\0"
+    /* Settings_Option_Black */ "黑色\0"
+    /* Settings_Option_White */ "白色\0"
+    /* Settings_Option_Grid */ "網格\0"
+    /* Settings_Option_Custom */ "自訂\0"
+    /* Settings_Option_Off */ "關閉\0"
+    /* Settings_Option_On */ "開啟\0"
+    /* Settings_Option_Lite */ "簡略\0"
+    /* Settings_Option_Full */ "詳細\0"
+    /* Settings_Option_LargeOnly */ "僅大圖\0"
+    /* Settings_Option_All */ "全部\0"
+    /* Settings_Option_SoftProofing */ "軟打樣\0"
+    /* Settings_Header_Mouse */ "滑鼠\0"
+    /* Settings_Header_Edge */ "邊緣\0"
+    /* Settings_Label_InvertWheel */ "反轉滾輪\0"
+    /* Settings_Label_MouseAnchorZoom */ "視窗縮放以滑鼠為中線\0"
+    /* Settings_Label_RightButtonDragZoom */ "右鍵拖曳縮放\0"
+    /* Settings_Label_WheelZoomSpeed */ "滾輪縮放速度\0"
+    /* Settings_Tooltip_WheelZoomSpeed */ "Alt + 滾輪可臨時調整縮放速度\0"
+    /* Settings_Label_ThumbWheel */ "拇指滾輪\0"
+    /* Settings_Tooltip_ThumbWheel */ "可用 Shift + 滾輪 替代\0"
+    /* Settings_Tooltip_MiddleDrag */ "可用 Ctrl + 左鍵 替代\0"
+    /* Settings_Label_DoubleClick */ "雙擊\0"
+    /* Settings_Option_DoubleClick_Smart */ "智能雙擊\0"
+    /* Settings_Option_DoubleClick_WheelMode1 */ "滾輪模式一\0"
+    /* Settings_Option_DoubleClick_WheelMode2 */ "滾輪模式二\0"
+    /* Settings_Tooltip_DoubleClick */ "智能雙擊：自動在 適應螢幕 / 100% / 初始尺寸間切換；\n滾輪模式一：雙擊快速互換主滾輪與拇指滾輪功能；\n滾輪模式二：雙擊切換主滾輪上下平移、拇指滾輪左右平移；\n提示：Shift + 滾輪 相當於 拇指滾輪。\0"
+    /* Settings_Tooltip_PanStepNormal */ "控制按鍵平移和滾輪平移速度\0"
+    /* OSD_WheelMode1_NextPrevZoom */ "主滾輪：切圖；拇指滾輪/shift+滾輪：縮放\0"
+    /* OSD_WheelMode1_ZoomNextPrev */ "主滾輪：縮放；拇指滾輪/shift+滾轮：切圖\0"
+    /* OSD_WheelMode2_Pan */ "滾輪：平移模式\0"
+    /* OSD_WheelMode2_Default */ "滾輪：預設模式\0"
+    /* Settings_Label_RightDragZoomSpeed */ "滑鼠拖曳縮放速度\0"
+    /* OSD_WheelZoomSpeed */ "縮放速度(臨時): \0"
+    /* Settings_Label_InvertButtons */ "反轉側鍵\0"
+    /* Settings_Header_KeyboardPan */ "平移步長\0"
+    /* Settings_Label_PanStepNormal */ "平移步長 (普通)\0"
+    /* Settings_Label_PanStepFast */ "按鍵平移步長 (加速)\0"
+    /* Settings_Label_UseFixedZoom */ "使用固定的縮放級別\0"
+    /* Settings_Tooltip_UseFixedZoom */ "啟用時，Alt + 滾輪將執行普通縮放而非修改縮放速率。\0"
+    /* Settings_Label_FixedZoomLevels */ "  └  自定義縮放級別\0"
+    /* Dialog_FixedZoomTitle */ "編輯固定縮放級別\0"
+    /* Dialog_FixedZoomMsg */ "輸入逗號分隔的縮放級別 (例如 0.5, 1, 2):\0"
+    /* Settings_Label_ZoomModeIn */ "放大插值演算法\0"
+    /* Settings_Tooltip_ZoomModeIn */ "選擇放大時的影像插值演算法：\n• 自動 (Auto)：智慧內容感知（攝影/CG 自動啟用 FSR 邊緣超解析度，像素畫/超大放大自動切換最近鄰）\n• 線性 (Linear)：基礎快速雙線性平滑\n• 最近鄰 (Nearest)：像素畫/點陣圖專用，呈現真實銳利像素格\n• 高品質雙三次 (HQ Cubic)：極端平滑過渡，消除噪點與馬賽克\n• AMD FSR 1.0：空間邊緣自適應超解析度與局部對比度銳化\0"
+    /* Settings_Label_ZoomModeOut */ "縮小插值演算法\0"
+    /* Settings_Label_LeftDrag */ "左鍵拖曳\0"
+    /* Settings_Label_MiddleDrag */ "中鍵拖曳\0"
+    /* Settings_Label_MiddleClick */ "中鍵點選\0"
+    /* Settings_Label_EdgeNavClick */ "邊緣點選翻頁\0"
+    /* Settings_Label_ShowOSD */ "顯示 OSD 提示\0"
+    /* Settings_Label_DisableEdgeNavInCompare */ "在對比模式下停用\0"
+    /* Settings_Label_NavIndicator */ "翻頁指示器\0"
+    /* Settings_Option_Window */ "視窗\0"
+    /* Settings_Option_Pan */ "平移\0"
+    /* Settings_Option_None */ "無\0"
+    /* Settings_Option_Exit */ "結束\0"
+    /* Settings_Option_Arrow */ "箭頭\0"
+    /* Settings_Option_Cursor */ "游標\0"
+    /* Settings_Option_Manual */ "手動\0"
+    /* Settings_Option_SortAuto */ "自動 (檔案總管)\0"
+    /* Settings_Option_SortName */ "檔案名稱\0"
+    /* Settings_Option_SortModified */ "修改時間\0"
+    /* Settings_Option_SortDateTaken */ "拍攝時間 (EXIF)\0"
+    /* Settings_Option_SortSize */ "大小\0"
+    /* Settings_Option_SortType */ "類型\0"
+    /* Settings_Option_NavLoop */ "資料夾內循環\0"
+    /* Settings_Option_NavThrough */ "穿透子資料夾\0"
+    /* Settings_Option_Linear */ "線性 (Linear)：基礎平滑\0"
+    /* Settings_Option_Nearest */ "最近鄰 (Nearest)：極端銳利\0"
+    /* Settings_Option_HighQualityCubic */ "高品質雙三次 (HQ Cubic)：極端平滑\0"
+    /* Settings_Option_FSR */ "AMD FSR 1.0 (EASU/RCAS)\0"
+    /* Settings_Header_Render */ "渲染\0"
+    /* Settings_Header_Hdr */ "高動態範圍 (HDR)\0"
+    /* Settings_Header_Prompts */ "提示\0"
+    /* Settings_Header_System */ "系統\0"
+    /* Settings_Label_AutoRotate */ "自動旋轉 (EXIF)\0"
+    /* Settings_Label_FsrSharpness */ "FSR 銳化強度\0"
+    /* Settings_Tooltip_FsrSharpness */ "調節 AMD FSR 1.0 空間自適應超解析度的邊緣銳化強度。\0"
+    /* Settings_Tab_Plugins */ "外掛程式\0"
+    /* Settings_Label_EnableSrPlugin */ "超解析度增強\0"
+    /* Settings_Label_SrModel */ "AI Model\0"
+    /* Settings_Label_SrAutoTrigger */ "自動觸發\0"
+    /* Settings_Label_SrAutoTriggerMaxWidth */ "原圖最大寬度\0"
+    /* Settings_Tooltip_SrAutoTriggerMaxWidth */ "限制自動超解析度的原始圖片最大寬度（像素）。設為 0 為無限制。若寬或高僅有一個為 0，則僅使用非零值作為約束；均非 0 時兩者皆須滿足。\0"
+    /* Settings_Label_SrAutoTriggerMaxHeight */ "原圖最大高度\0"
+    /* Settings_Tooltip_SrAutoTriggerMaxHeight */ "限制自動超解析度的原始圖片最大高度（像素）。設為 0 為無限制。若寬或高僅有一個為 0，則僅使用非零值作為約束；均非 0 時兩者皆須滿足。\0"
+    /* Settings_Value_Unlimited */ "無限制\0"
+    /* Settings_Label_SrOpenInCompare */ "手動觸發後在對比模式中顯示\0"
+    /* Settings_Label_SrPromptModel */ "手動觸發時提示選擇模型\0"
+    /* Export_Checkbox_SuperResolution */ "匯出超解析度畫質\0"
+    /* Settings_Label_SrDebounce */ "觸發延遲\0"
+    /* Settings_Tooltip_SrDebounce */ "縮放停止後觸發 AI 神經超分的等待時間 (0 - 5000 毫秒)。\n縮放互動過程中保持當前放大插值演算法的流暢度，靜止後無縫重構成 AI 極清畫質。\0"
+    /* Settings_Header_PluginTriggers */ "觸發調度與互動\0"
+    /* Settings_Header_PluginParams */ "外掛參數\0"
+    /* Settings_Label_SrStorageFolder */ "外掛與模型目錄\0"
+    /* Settings_Button_OpenModelFolder */ "📂 開啟本機目錄\0"
+    /* Settings_Prompt_DownloadModelFirst */ "需先下載選取的模型\0"
+    /* Settings_Segment_InstalledPlugins */ "已安裝擴充\0"
+    /* Settings_Segment_Marketplace */ "雲端市場\0"
+    /* Settings_Label_SrEngine */ "超解析度後端引擎\0"
+    /* Settings_Label_SrModelStatus */ "模型資源狀態\0"
+    /* Settings_Format_DownloadModel */ "下載該模型 (~%llu MB)\0"
+    /* Settings_Header_SrComponent */ "超解析度 AI 增強元件\0"
+    /* Settings_Label_QuickEnableEngine */ "快速啟用超分引擎\0"
+    /* Settings_Button_QuickEnableNcnn */ "⚡ 啟用 Real-ESRGAN NCNN Vulkan 超分引擎\0"
+    /* Settings_Label_OnlineExtensions */ "線上擴充與模型\0"
+    /* Settings_Button_BrowseMarketplace */ "🌐 前往雲端市場瀏覽更多擴充\0"
+    /* Settings_Label_MarketManifest */ "外掛市場清單\0"
+    /* Settings_Button_RefreshManifest */ "🔄 重新整理外掛清單\0"
+    /* Settings_Button_SyncingManifest */ "正在從雲端同步清單...\0"
+    /* Settings_Format_PluginPackageSize */ "外掛元件包 (~%llu MB)\0"
+    /* Settings_Button_InstalledUpToDate */ "✓ 已安裝\0"
+    /* Settings_Format_UpdateTo */ "⚡ 更新至 v%ls\0"
+    /* Settings_Button_InstallPlugin */ "⚡ 取得並安裝\0"
+    /* OSD_SrProcessing */ "AI 超解析度計算中...\0"
+    /* OSD_SrSuccessFormat */ "✓ AI 超解析度完成: %s [%.0fx] (耗時: %.1f ms)\0"
+    /* OSD_SrSuccessFormatSimple */ "✓ AI 超解析度完成: %s (耗時: %.1f ms)\0"
+    /* OSD_SrFailed */ "✗ AI 超解析度執行失敗\0"
+    /* OSD_SrPluginDisabledOrMissing */ "AI 超解析度外掛程式未啟用或未安裝\0"
+    /* OSD_SrAnimationProcessingFormat */ "正在超解析度動畫序列 (%u/%u 幀)...\0"
+    /* OSD_SrAnimationSuccessFormat */ "✓ 動畫全幀超解析度完成: %s (%u 幀, 耗時: %.2f 秒)\0"
+    /* OSD_SrVectorLosslessSkipped */ "向量圖形支援無限無損縮放，無需神經網路超解析度\0"
+    /* OSD_SrAnimationTooManyFrames */ "動圖幀數過多（超過 %u 幀上限），已跳過全序列超解析度\0"
+    /* OSD_SrImageTooLargeFormat */ "影像解析度過大 (%ux%u, 超過 1600 萬像素)，已阻止全圖超解析度以防止視訊記憶體溢位\0"
+    /* Dialog_Title_SelectSrModel */ "選擇 AI 超解析度模型\0"
+    /* Dialog_Msg_SelectSrModel */ "請選擇要套用的 AI 超解析度模型：\0"
+    /* Dialog_Checkbox_RememberSrModelChoice */ "記住選擇，下次手動觸發直接使用\0"
+    /* Dialog_Button_OK */ "確定\0"
+    /* Settings_Label_CMS */ "色彩管理 (CMS)\0"
+    /* Settings_Label_AdvancedColor */ "高級色彩與 HDR (scRGB)\0"
+    /* Settings_Label_CmsFallback */ "無配置圖片的預設回退\0"
+    /* Settings_Label_HdrToneMapping */ "HDR 色調映射\0"
+    /* Settings_Label_HdrSplineKnee */ "Spline 拐點\0"
+    /* Settings_Tooltip_HdrToneMapping */ "HDR 降級策略 (Tone Mapping)：\n當 HDR 圖片超出顯示器極限時的對映方式。\nSpline 樣條對映：採用分段樣條曲線，實現高保真的高光細節還原（推薦）。\n色度模式：保持嚴格亮度對映，超出顯示器極限的亮度將被直接裁剪。\nBT.2390 EETF：ITU-R BT.2390 標準高保真降級曲線。\0"
+    /* Settings_Tooltip_HdrSplineKnee */ "0 = 自動模式（根據圖片亮度自動計算）。\n數值表示顯示器峰值亮度的比例。該拐點以下的亮度將進行 1:1 絕對映射，拐點以上的亮度將使用平滑曲線進行壓縮映射。\n（推薦值：0.4 - 0.75）\0"
+    /* Settings_Label_HdrPeakNitsOverride */ "HDR 峰值亮度 (Nits)\0"
+    /* Settings_Tooltip_HdrPeakNitsOverride */ "設為 0 表示通過系統自動檢測亮度.\0"
+    /* Settings_Label_HdrPeakPercentile */ "HDR 峰值百分位\0"
+    /* Settings_Tooltip_HdrPeakPercentile */ "丟棄極少數過亮的像素以提升整體亮度 (mpv 預設: 99.995%).\0"
+    /* Settings_Option_HdrPeakPercentile_100 */ "100% (絕對峰值)\0"
+    /* Settings_Option_HdrPeakPercentile_99995 */ "99.995% (穩定)\0"
+    /* Settings_Option_HdrPeakPercentile_999 */ "99.9% (激進)\0"
+    /* Settings_Label_HdrDesatThreshold */ "高光去飽和範圍\0"
+    /* Settings_Tooltip_HdrDesatThreshold */ "高光去飽和開始介入的亮度閾值。0.0 表示對所有亮度進行去飽和，1.0 表示完全不進行去飽和。推薦預設值 0.18。\0"
+    /* Settings_Label_HdrMaxDesat */ "高光去飽和強度\0"
+    /* Settings_Tooltip_HdrMaxDesat */ "高光去飽和的最大強度。0.0 表示不進行去飽和，1.0 表示在高光處完全去飽和為白色。推薦預設值 0.75。\0"
+    /* Settings_Option_HdrColorimetric */ "色度\0"
+    /* Settings_Option_HdrSpline */ "樣條映射\0"
+    /* Settings_Option_HdrLegacyReinhard */ "BT.2390 (EETF)\0"
+    /* Settings_Label_CustomProof */ "自訂軟打樣配置 (.icc)\0"
+    /* Settings_Label_CmsIntent */ "渲染意圖\0"
+    /* Settings_Label_GamutWarning */ "色彩溢出檢測\0"
+    /* Settings_Tooltip_GamutWarning */ "分析並標出溢出區域：關閉、僅在軟打樣模式下檢測（預設）、或者同時檢測軟打樣和螢幕色彩溢出。\0"
+    /* Settings_Label_GamutAutoPrompt */ "自動提示色彩溢出\0"
+    /* Settings_Tooltip_GamutAutoPrompt */ "檢測到溢出後彈出 OSD 提示。高亮區域可透過工具欄按鈕手動查看。\0"
+    /* Settings_Label_GamutColor */ "溢出高亮顏色\0"
+    /* Settings_Option_CmsIntentRelative */ "相對色度\0"
+    /* Settings_Option_CmsIntentPerceptual */ "感知意圖\0"
+    /* Settings_Tooltip_CMS */ "啟用色彩管理 (Color Management System)。\n開啟後，將透過 GPU 進行高精度色彩空間轉換以還原真實色彩。\n關閉可降低效能消耗，但在廣色域螢幕上可能導致顏色過飽和。\0"
+    /* Settings_Tooltip_CmsIntent */ "色彩空間轉換策略 (Rendering Intent)。\n感知模式 (Perceptual)：壓縮超出色域的顏色，保留細節和漸變，適合照片。\n相對比色 (Relative Colorimetric)：保留在色域內的顏色，超出部分裁剪，適合 UI 和圖示。\n注意：僅當圖像或顯示器使用包含 LUT（查找表）的高級 ICC 配置文件時，切換此選項才會有視覺差異。普通矩陣型配置文件會自動回退至相對色度。\0"
+    /* Settings_Tooltip_AdvancedColor */ "啟用 16-bit 浮點渲染管線 (scRGB)。\n開啟後，在支援 HDR 的顯示器上能突破 SDR 亮度限制，完美呈現照片高光。\n關閉將強制降級對映至 SDR 輸出。\n注意：開啟會增加顯示卡記憶體佔用。\0"
+    /* Settings_Tooltip_ZoomAuto */ "自動：圖片小於螢幕尺寸時 100% 縮放，圖片大於螢幕尺寸時適應螢幕尺寸縮放。\0"
+    /* Context_SoftProofing */ "軟打樣預覽\0"
+    /* Context_SoftProofProfile */ "打樣設定檔\0"
+    /* Context_SoftProofCustom */ "自訂...\0"
+    /* Settings_Value_ComingSoon */ "敬請期待\0"
+    /* Settings_Label_ForceRaw */ "強制 RAW 解碼\0"
+    /* Settings_Label_PairRawJpeg */ "RAW+JPEG 配對\0"
+    /* Settings_Tooltip_PairRawJpeg */ "將 RAW 與同名的相機直出圖 (JPEG/HEIF) 顯示為同一張照片。\n清單中僅保留直出圖，並標註 RAW 格式（如 +CR3）；背景會校驗兩者拍攝時間，不一致的配對自動拆開。\n可用 RAW 工具列按鈕或其快速鍵切換相機直出與本機渲染，也可用配對比較快速鍵並排檢視。\0"
+    /* Settings_Label_Exposure */ "曝光度 (亮度)\0"
+    /* Settings_Tooltip_Exposure */ "調節圖像亮度 (曝光補償)。範圍: 0.18x 至 10.0x。\0"
+    /* Settings_Label_AddToOpenWith */ "新增至開啟方式\0"
+    /* Settings_Label_CustomEditor */ "自訂圖片編輯器\0"
+    /* Context_SelectEditor */ "選擇編輯器\0"
+    /* OSD_EditorLaunchFailed */ "編輯器啟動失敗，請重新配置。\0"
+    /* Settings_Action_Add */ "新增\0"
+    /* Settings_Action_Added */ "已新增\0"
+    /* Settings_Status_DisabledInPortable */ "可攜式模式下停用\0"
+    /* Settings_Header_Features */ "功能\0"
+    /* Settings_Header_Performance */ "效能\0"
+    /* Settings_Header_Transparency */ "透明度\0"
+    /* Settings_Label_DebugHUD */ "啟用偵錯 HUD (F12)\0"
+    /* Settings_Label_Prefetch */ "預先載入系統\0"
+    /* Settings_Label_MemoryReclaim */ "Memory Reclaim Strategy:\0"
+    /* Settings_Option_MemSmart */ "Smart (Auto)\0"
+    /* Settings_Option_MemAggressive */ "Aggressive (Max Perf)\0"
+    /* Settings_Option_MemOnDemand */ "On-Demand (Min RAM)\0"
+    /* Settings_Tooltip_MemoryReclaim */ "Smart: Balance performance and RAM.\nAggressive: Maximize performance, high memory usage.\nOn-Demand: Release memory immediately when idle.\0"
+    /* Settings_Label_Reset */ "重設所有設定\0"
+    /* Settings_Action_Restore */ "還原\0"
+    /* Settings_Action_Done */ "完成\0"
+    /* Settings_Header_ConfigManagement */ "匯入匯出 (.ini)\0"
+    /* Settings_Action_CheckUpdates */ "檢查更新\0"
+    /* Settings_Action_ViewUpdate */ "檢視更新\0"
+    /* Settings_Status_Checking */ "檢查中...\0"
+    /* Settings_Status_UpToDate */ "已是最新\0"
+    /* Settings_Link_GitHub */ "GitHub 儲存庫\0"
+    /* Settings_Link_ReportIssue */ "回報問題\0"
+    /* Settings_Link_Hotkeys */ "快速鍵\0"
+    /* Settings_Label_Version */ "版本\0"
+    /* Settings_Label_Build */ "建置\0"
+    /* Dialog_UpdateTitle */ "發現新版本！\0"
+    /* Dialog_UpdateContent */ "v%s 已準備就緒\0"
+    /* Dialog_UpdateLogHeader */ "更新日誌\0"
+    /* Dialog_ButtonUpdate */ "立即更新\0"
+    /* Dialog_ButtonLater */ "稍後\0"
+    /* Dialog_ButtonStar */ "在 GitHub 點星\0"
+    /* Dialog_Update_LoveTitle */ "QuickView 源自熱愛\0"
+    /* Dialog_Update_LoveMessage */ "我利用業餘時間維護 QuickView，只因我相信 Windows 值得擁有一個更快、更純粹的看圖工具。 我沒有推廣預算，也沒有團隊。如果您喜歡這次更新，在 GitHub 上點一顆星或分享給朋友，就是對我最大的支持。\0"
+    /* Dialog_PassthroughTitle */ "滑鼠穿透模式\0"
+    /* Dialog_PassthroughContent */ "滑鼠操作將透傳至底層窗口。\n只能通過全局快捷鍵 (Shift+Esc) 或任務欄菜單退出該模式。\n\n是否繼續？\0"
+    /* OSD_PassthroughOn */ "滑鼠穿透：開啟 (Shift+Esc 退出)\0"
+    /* OSD_PassthroughOff */ "滑鼠穿透：關閉\0"
+    /* OSD_OverlayModeOn */ "臨摹模式：開啟\0"
+    /* OSD_OverlayModeOff */ "臨摹模式：關閉\0"
+    /* OSD_Opacity */ "不透明度\0"
+    /* Help_Desc_Edit */ "編輯\0"
+    /* Help_Header_Tips */ "提示與術語\0"
+    /* Help_Tip_ContextScope */ "提示：QuickView 已支援完整的鍵盤快捷鍵與滑鼠手勢自訂，具體綁定請在「設定 -> 操作」中查看與配置。目前說明面板內容將在後續版本中遷移至線上說明文件。\0"
+    /* Help_Tip_Rotation */ "旋轉說明：/邊緣適配/有損 是由於某些圖片格式特性造成的無法完整無損操作。邊緣適配通常只損失邊緣N個像素，接近無損。\0"
+    /* Help_Tip_VideoWall */ "電視牆模式 (Ctrl+F11)：將所有顯示器視為一塊屏幕。若關閉按鈕位於顯示區外 (如L型排布)，雙擊即可退出全屏。\0"
+    /* Help_Tip_DesignerMode */ "臨摹模式/薄膜模式：開啟後圖像將變為半透明並露出底部元素，此時您可調整尺寸或透明度。點擊工具列中的滑鼠穿透模式開關，可進入滑鼠穿透模式，此時除了退出快捷鍵 Shift+Esc 外的任何按鍵和滑鼠輸入均被忽略，QuickView 將變為一層透明薄膜覆蓋層。\0"
+    /* Help_Tip_GamutDetection */ "色彩溢出檢測：檢測當前圖片是否超出顯示器或軟打樣配置的色域。模式：關閉、僅軟打樣（預設）、全部（包含螢幕）。可從工具列手動開關。\0"
+    /* Help_Tip_Raw */ "RAW 按鈕：QuickView 默認顯示 RAW 預覽圖。點擊此按鈕將使用默認參數完整渲染 RAW 文件 (結果可能與預覽不同)。\0"
+    /* Help_Tip_JpegQ */ "JPEG 壓縮率：信息面板顯示的 Q 值是逆向推算值。因算法差異，可能與保存時的數值略有出入 (例如 PS 100% 可能顯示為 98)，屬正常情況。\0"
+    /* Help_Tip_SoftProofCompare */ "軟打樣對比：軟打樣後進入對比模式，將自動進行打樣前後對比。\0"
+    /* Settings_Option_Auto */ "自動\0"
+    /* Settings_Option_Eco */ "節能\0"
+    /* Settings_Option_Balanced */ "平衡\0"
+    /* Settings_Option_Ultra */ "極速\0"
+    /* HUD_Group_Physical */ "物理屬性\0"
+    /* HUD_Group_Scientific */ "科學指標\0"
+    /* HUD_Group_Encoding */ "光學與編碼\0"
+    /* HUD_Tip_Sharp_Desc */ "邊緣清晰度 (拉普拉斯方差)\0"
+    /* HUD_Tip_Sharp_High */ "邊緣銳利，細節豐富\0"
+    /* HUD_Tip_Sharp_Low */ "軟焦點或運動模糊\0"
+    /* HUD_Tip_Sharp_Ref */ "> 500 為非常銳利\0"
+    /* HUD_Tip_Ent_Desc */ "信息密度 (香農熵)\0"
+    /* HUD_Tip_Ent_High */ "複雜紋理或高噪點\0"
+    /* HUD_Tip_Ent_Low */ "平坦區域或低細節\0"
+    /* HUD_Tip_Ent_Ref */ "7.0-8.0 為高細節\0"
+    /* HUD_Tip_BPP_Desc */ "每像素比特數 (壓縮效率)\0"
+    /* HUD_Tip_BPP_High */ "低壓縮率 (保留更多原始數據)\0"
+    /* HUD_Tip_BPP_Low */ "高壓縮率 (空間利用率更高)\0"
+    /* HUD_Tip_BPP_Ref */ "24.0 (原始RGB), ~2.0-3.0 (高品質JPEG), ~0.5-1.5 (WebP/AVIF)\0"
+    /* HUD_Label_High */ "高: \0"
+    /* HUD_Label_Low */ "低: \0"
+    /* HUD_Label_Ref */ "參考: \0"
+    /* Settings_Header_GeekGlass */ "玻璃引擎 (GPU加速)\0"
+    /* Settings_Label_EnableGeekGlass */ "啟用玻璃渲染\0"
+    /* Settings_Label_GlassUIAnimations */ "交互動畫\0"
+    /* Settings_Header_CoreMaterial */ "核心材質\0"
+    /* Settings_Label_BlurSigma */ "模糊半徑\0"
+    /* Settings_Status_GlassDisabled */ "啟用玻璃渲染後生效\0"
+    /* Settings_Label_TintDensity */ "厚度 (濃度)\0"
+    /* Settings_Tooltip_TintDensity */ "控制玻璃底色深度。\0"
+    /* Settings_Label_SpecularOpacity */ "光澤亮度\0"
+    /* Settings_Tooltip_SpecularOpacity */ "控制玻璃面板光澤強度。\0"
+    /* Settings_Label_ShadowIntensity */ "陰影強度\0"
+    /* Settings_Tooltip_ShadowIntensity */ "調節 GPU 加速物理落影的深淺。\0"
+    /* Settings_Header_VectorAssets */ "邊緣\0"
+    /* Settings_Label_VectorStrokeWeight */ "線框粗细\0"
+    /* Settings_Option_StrokeStandard */ "標準 (1.5px)\0"
+    /* Settings_Option_StrokeFine */ "極細 (1.0px)\0"
+    /* Settings_Header_GlassTint */ "玻璃著色\0"
+    /* Settings_Label_TintProfile */ "著色模式\0"
+    /* Settings_Option_TintAuto */ "自動\0"
+    /* Settings_Option_TintCustom */ "自定義\0"
+    /* Settings_Label_GlassCustomColor */ "自定義底色\0"
+    /* Settings_Header_DensityMatrix */ "材質濃度\0"
+    /* Settings_Label_OsdDensity */ "信息提示 (OSD)\0"
+    /* Settings_Tooltip_OsdDensity */ "控制加載進度條、播放提示、縮放資訊等浮層的厚度。\0"
+    /* Settings_Label_PanelsDensity */ "工具面板\0"
+    /* Settings_Tooltip_PanelsDensity */ "控制底部工具列、資訊面板、畫廊底片以及右上角窗口控制按鈕的厚度。\0"
+    /* Settings_Label_ModalsDensity */ "模態視窗\0"
+    /* Settings_Tooltip_ModalsDensity */ "控制設定面板、幫助面板和對話方塊等彈出窗口的厚度。\0"
+    /* Settings_Label_MenusDensity */ "右鍵選單\0"
+    /* Settings_Tooltip_MenusDensity */ "控制右鍵菜單材質濃度（僅在 Acrylic 材質下可以調節）。\0"
+    /* Settings_Header_Professional */ "專業工具\0"
+    /* Settings_Label_ShowDirtyRect */ "動畫模式下顯示髒矩形按鈕\0"
+    /* Settings_Tooltip_ShowDirtyRect */ "在動畫模式工具欄顯示髒矩形調試按鈕，用於觀察局部刷新區域。\0"
+    /* Settings_Label_LoupeShape */ "放大鏡形狀\0"
+    /* Settings_Option_LoupeShapeSquare */ "正方形\0"
+    /* Settings_Option_LoupeShapeCircle */ "圓形\0"
+    /* Settings_Option_LoupeShapeFullscreen */ "全圖\0"
+    /* Settings_Label_LoupeZoom */ "放大鏡倍率\0"
+    /* Settings_Tooltip_LoupeHotkey */ "按住快捷鍵並滾動滑鼠滾輪可調節放大鏡尺寸。\0"
+    /* Settings_Tooltip_CropModeHotkey */ "按住 Ctrl 並使用滑鼠左鍵拖曳可快速進入框選剪裁模式。\0"
+    /* Settings_Tab_Theme */ "主題\0"
+    /* Settings_Label_ThemeMode */ "主題模式\0"
+    /* Settings_Option_ThemeAuto */ "自動\0"
+    /* Settings_Option_ThemeDark */ "深色\0"
+    /* Settings_Option_ThemeLight */ "淺色\0"
+    /* Settings_Option_ThemeCustom */ "自定義\0"
+    /* Settings_Label_AmbientDimmer */ "環境遮罩\0"
+    /* Settings_Tooltip_AmbientDimmer */ "在畫廊模式、設定視窗或對話方塊開啟時，為背景添加沉浸式陰影。\0"
+    /* Settings_Label_AccentColor */ "強調色\0"
+    /* Settings_Option_AccentSystem */ "跟隨系統\0"
+    /* Settings_Option_AccentCustom */ "自定義\0"
+    /* Settings_Label_WindowBorderAccent */ "前景視窗邊框強調色\0"
+    /* Settings_Option_BorderFollowSystem */ "跟隨系統\0"
+    /* Settings_Option_BorderAccent */ "強調色\0"
+    /* Settings_Label_ResetGlass */ "材質預設\0"
+    /* Settings_Action_ResetGlass */ "重設預設\0"
+    /* Settings_Header_ThemeManagement */ "匯入匯出 (.qvtheme)\0"
+    /* Settings_Action_ExportTheme */ "匯出\0"
+    /* Settings_Action_ImportTheme */ "匯入\0"
+    /* Toolbar_Tooltip_CompareSave */ "儲存/匯出影像 (S)\0"
+    /* Dialog_MultiLineInputHint */ "[Ctrl+Enter] 快速儲存提交\0"
+    /* Dialog_AiApiKeyTitle */ "設定 API 金鑰\0"
+    /* Dialog_AiApiKeyPrompt */ "請輸入服務商 API 金鑰（受 Windows DPAPI 本機硬體安全保護）：\0"
+    /* Dialog_AiPromptTitle */ "編輯提示詞範本\0"
+    /* Dialog_AiPromptPrompt */ "設定該 AI 動作提示詞範本（支援多行編輯，按 Ctrl+Enter 快速提交）：\0"
+    /* Dialog_AiActionNameTitle */ "編輯動作名稱\0"
+    /* Dialog_AiActionNamePrompt */ "請輸入在 AI 動作面板中顯示的名稱：\0"
+    /* Dialog_AiBaseUrlTitle */ "設定端點位址\0"
+    /* Dialog_AiBaseUrlPrompt */ "請輸入相容 OpenAI / ComfyUI 格式的 API 基礎端點位址 (Base URL)：\0"
+    /* AiAction_Title */ "AI 指令台\0"
+    /* AiAction_EscHint */ "[Esc] 結束\0"
+    /* AiAction_ScopeCropAndBlend */ "選區修補\0"
+    /* AiAction_ScopeForceFull */ "全圖生成\0"
+    /* AiAction_FooterQuickKeys */ "按 1~9 / 0 快速執行\0"
+    /* AiAction_Placeholder */ "輸入臨時提示詞，或搜尋預設動作...\0"
+    /* AiAction_InpaintTitle */ "選區局部重繪 (AI Inpaint)\0"
+    /* AiAction_InpaintDesc */ "框選局部畫面無痕消除或替換\0"
+    /* AiAction_InpaintTag */ "框選模式\0"
+    /* AiAction_AdhocPrefix */ "✨ 傳送臨時指令: \"\0"
+    /* AiAction_AdhocSend */ "Enter 傳送\0"
+    /* AiAction_CurrentModel */ "目前模型\0"
+    /* AiAction_NoModelSelected */ "未選擇模型\0"
+    /* OSD_AiProcessing */ "AI 正在處理: %s (按 Esc 取消)...\0"
+    /* OSD_AiGenerationSuccess */ "AI 生成完成！進入簾幕對比模式\0"
+    /* OSD_AiCompleted */ "AI 處理完成\0"
+    /* OSD_AiPreparing */ "AI: %s 準備中 (Esc取消)...\0"
+    /* OSD_AiProcessingElapsed */ "AI: %s 處理中 [%ds, Esc取消]...\0"
+    /* OSD_AiConnecting */ "AI 連線中: %s (Esc取消)...\0"
+    /* OSD_AiSamplingProgress */ "AI 採樣中: %d%% (%d/%d步) [耗時%ds, Esc取消]\0"
+    /* OSD_AiSamplingProgressEta */ "AI 採樣中: %d%% (%d/%d步, 約剩%.0fs) [耗時%ds, Esc取消]\0"
+    /* OSD_AiAdhocPrompt */ "臨時指令\0"
+    /* OSD_AiTaskCancelled */ "AI 任務已取消\0"
+    /* OSD_AiInpaintGuide */ "請使用滑鼠左鍵框選局部重繪區域 (Enter 執行, Esc 取消)\0"
+    /* OSD_AiInpaintGuideActionFormat */ "請使用滑鼠左鍵框選區域，按 Enter 執行 [%s]\0"
+    /* OSD_AiSelectionTooSmall */ "選區過小，請先框選重繪區域\0"
+    /* OSD_AiEmptyResult */ "AI 生成結果為空\0"
+    /* OSD_AiDecodeFailed */ "解碼 AI 影像失敗\0"
+    /* OSD_AiTextureFailed */ "建立 GPU 紋理失敗\0"
+    /* OSD_AiEmptyPromptHint */ "請輸入提示詞，或選擇預設動作\0"
+    /* OSD_AiInpaintPromptEmptyHint */ "請先輸入局部重繪提示詞\0"
+    /* Settings_Tab_Ai */ "AI 動作\0"
+    /* Settings_Header_AiProviders */ "AI 模型服務商設定\0"
+    /* Settings_Desc_AiProviders */ "管理 AI 端點位址、DPAPI 安全金鑰及模型。\0"
+    /* Settings_Label_AiProviderName */ "供應商預設\0"
+    /* Settings_Label_AiBaseUrl */ "端點位址 (Base URL)\0"
+    /* Settings_Label_AiApiKey */ "API 金鑰 (DPAPI 加密保護)\0"
+    /* Settings_Label_AiModelId */ "模型識別碼\0"
+    /* Settings_Label_AiModelUnconfigured */ "[未設定，請抓取或輸入]\0"
+    /* Settings_Label_AiMaxRes */ "最大輸入解析度策略\0"
+    /* Settings_Label_AiDefaultProfile */ "★ 全域預設服務商\0"
+    /* Settings_Button_AiSetDefault */ "★ 設為全域預設服務商\0"
+    /* Settings_Button_AiTestConn */ "測試連線與延遲\0"
+    /* Settings_Button_AiSaveProf */ "儲存設定\0"
+    /* Settings_Button_AiDeleteProf */ "刪除該服務商設定\0"
+    /* Settings_Button_AiAddProf */ "+ 新增服務商設定\0"
+    /* Settings_Header_AiActions */ "自訂 AI 動作清單\0"
+    /* Settings_Button_AiAddAction */ "+ 新建 AI 動作\0"
+    /* Settings_Label_AiActionName */ "動作名稱\0"
+    /* Settings_Label_AiPromptTemplate */ "提示詞範本\0"
+    /* Settings_Label_AiExecModel */ "執行服務商\0"
+    /* Settings_Option_AiDefaultModel */ "全域預設服務商\0"
+    /* Settings_Label_AiScopeMode */ "作用範圍模式\0"
+    /* Settings_Button_AiDeleteAction */ "刪除該動作\0"
+    /* Settings_AiModelCustom */ "✎ 自訂輸入模型識別碼...\0"
+    /* Settings_AiModelFetching */ "⏳ 正在抓取可用模型清單...\0"
+    /* Settings_AiModelFetchAuto */ "↻ 自動抓取伺服端模型清單...\0"
+    /* Settings_Option_AiRes4K */ "4K / 原圖優先 (4096px)\0"
+    /* Settings_Option_AiRes2K */ "2K 高畫質 (2048px)\0"
+    /* Settings_Option_AiRes1K */ "1K 標準 (1024px)\0"
+    /* Settings_Option_AiResOriginal */ "原始尺寸 (不限制)\0"
+    /* Settings_Option_AiScopeForceFull */ "全圖處理\0"
+    /* Settings_Option_AiScopeCropBlend */ "局部修補 (貼回羽化)\0"
+    /* Settings_Option_AiCustomEndpoint */ "自訂 (相容 OpenAI 端點)\0"
+    /* Settings_Option_AiLocalComfyUI */ "本機 ComfyUI\0"
+    /* Settings_Option_AiLocalSdWebUI */ "本機 SD WebUI / Forge\0"
+    /* OSD_AiFetchingModels */ "正在抓取大模型清單...\0"
+    /* OSD_AiFetchModelsFailed */ "抓取模型失敗: \0"
+    /* OSD_AiFetchModelsSuccessFormat */ "已成功抓取 %zu 個可用模型\0"
+    /* OSD_AiSetDefaultSuccessFormat */ "已將 %s 設為全域預設服務商\0"
+    /* OSD_AiTestingConnection */ "正在測試服務商連線與驗證...\0"
+    /* OSD_AiConnSuccessFormat */ "✓ 連線正常！延遲: %dms (HTTP %d)\0"
+    /* OSD_AiSaveFailedBaseUrlEmpty */ "儲存失敗: 端點位址 (Base URL) 不能為空\0"
+    /* OSD_AiSaveFailedApiKeyEmpty */ "儲存失敗: 雲端服務商 API 金鑰不能為空\0"
+    /* OSD_AiSaveFailedModelEmpty */ "儲存失敗: 請先選擇或指定有效的模型識別碼\0"
+    /* OSD_AiSaveProfileSuccess */ "✓ 服務商設定已儲存\0"
+    /* AiError_ApiKeyEmpty */ "API 金鑰為空，請先在【設定 -> AI 動作】中設定金鑰。\0"
+    /* AiError_ModelEmpty */ "未設定模型識別碼，請先在【設定 -> AI 動作】中抓取或輸入。\0"
+    /* AiError_InvalidUrl */ "無效的 Base URL 格式。\0"
+    /* AiError_InitWinHttpFailed */ "初始化 WinHTTP 工作階段失敗。\0"
+    /* AiError_ConnectFailed */ "連線至伺服器失敗，請檢查網路或 Proxy 設定。\0"
+    /* AiError_CreateReqFailed */ "建立 HTTP 請求失敗。\0"
+    /* AiError_NoValidDataReturned */ "API 回應成功，但未解析到有效的影像或文字資料。\0"
+    /* AiError_RequestTimeout */ "網路請求超時或服務無回應。\0"
+    /* AiError_HttpStatusPrefix */ "服務商傳回錯誤 (HTTP \0"
+    /* AiError_JsonParseFailed */ "無法解析服務商傳回的 JSON 資料。\0"
+    /* AiError_NoModelsFound */ "介面傳回成功，但未解析到可用模型清單。\0"
+    /* AiTest_ConnSuccess */ "連線正常且憑證鑑權通過。\0"
+    /* AiTest_AuthFailedPrefix */ "API 金鑰無效或未授權 (HTTP \0"
+    /* AiTest_HttpErrorPrefix */ "伺服器傳回 HTTP \0"
+    /* AiError_NoAvailableProfile */ "未找到可用的 AI 模型預設，請檢查設定。\0"
+    /* Settings_Tab_FileAssoc */ "檔案關聯\0"
+    /* Settings_Header_FileAssocStatus */ "關聯狀態診斷\0"
+    /* Settings_Header_FileAssocOptions */ "行為與個人化\0"
+    /* Settings_Header_FileAssocFormats */ "支援格式管理 (92)\0"
+    /* Settings_Label_FileAssocIconStyle */ "檔案總管圖示風格\0"
+    /* Settings_Option_FileAssocIconNative */ "系統原生圖示\0"
+    /* Settings_Option_FileAssocIconApp */ "QuickView 圖示\0"
+    /* Settings_Label_FileAssocContextMenu */ "檔案總管右鍵選單 (\"使用 QuickView 開啟\")\0"
+    /* Settings_Label_FileAssocAutoRepair */ "啟動 / 升級時自動校驗並修復關聯路徑\0"
+    /* Settings_Label_FileAssocPresets */ "快速情景預設\0"
+    /* Settings_Action_PresetRecommended */ "日常推薦\0"
+    /* Settings_Action_PresetAllImages */ "全選影像\0"
+    /* Settings_Action_PresetPhotoRaw */ "攝影 RAW\0"
+    /* Settings_Action_PresetClearAll */ "全部清空\0"
+    /* Settings_Action_ApplyAssoc */ "套用變更至系統\0"
+    /* Settings_Action_ApplyPending */ "套用變更*\0"
+    /* Settings_Action_SetDefaultWin */ "在 Windows 中設為預設\0"
+    /* Settings_Action_RepairAssoc */ "修復異常關聯\0"
+    /* Settings_Label_FileAssocCatStandard */ "常用標準影像\0"
+    /* Settings_Label_FileAssocCatModern */ "現代與 Web / 向量\0"
+    /* Settings_Label_FileAssocCatPro */ "專業設計與傳統\0"
+    /* Settings_Label_FileAssocCatRaw */ "相機 RAW\0"
+    /* Settings_Label_FileAssocCatExtRaw */ "擴展 / 電影 RAW\0"
+    /* Settings_Label_FileAssocCatArchive */ "漫畫與封存檔\0"
+    /* Settings_Tooltip_FileAssocArchive */ "建議僅關聯 .cbz / .cbr；若不希望干擾壓縮軟體的開啟方式，請勿勾選 .zip / .rar。\0"
+    /* Settings_Status_AssocApplied */ "檔案關聯已同步至登錄檔\0"
+    /* Settings_Status_AssocSummaryFormat */ "已選 %d 項 · 系統預設 %d 項 · 僅開啟方式 %d 項\0"
+    /* Settings_Status_AssocBrokenHint */ "偵測到登錄檔命令缺少引號或路徑無效，點擊套用或修復即可自動修正。\0"
+    /* Settings_Status_AssocPendingHint */ "有未同步的變更 — 請點擊「套用變更」以同步右鍵選單與系統開啟方式。\0"
+    /* Settings_Status_AssocStoreManaged */ "Microsoft Store (MSIX) 模式：右鍵選單與「開啟方式」已由系統原生託管，點擊「在 Windows 中設為預設」即可設定預設程式。\0"
+    /* Settings_Label_StoreUpdatesManaged */ "由 Microsoft Store 管理更新\0"
+    /* Settings_Action_OpenStore */ "開啟商店\0"
+    /* Settings_Status_AssocLegend */ "綠點 = 已設系統預設 · 高亮 = 已勾選 / 開啟方式\0"
+    /* Context_OpenWithQuickView */ "使用 QuickView 開啟\0";
+static constexpr char kBlob_JA[] =
+    /* CurrentLocale */ "ja-jp\0"
+    /* OSD_NoImage */ "画像が読み込まれていません\0"
+    /* OSD_FolderEmpty */ "このフォルダーに画像がありません\0"
+    /* OSD_SvgStaticFallback */ "アニメーション SVG を静止画として表示しています\0"
+    /* OSD_Lossless */ "ロスレス\0"
+    /* OSD_ReencodedLossless */ "再エンコード (ロスレス)\0"
+    /* OSD_EdgeAdapted */ "クロップ済み\0"
+    /* OSD_Reencoded */ "非可逆\0"
+    /* OSD_ReadOnly */ "アクセスが拒否されました - ファイルが使用中か読み取り専用の可能性があります\0"
+    /* OSD_NotPerfect */ "完全な変換ではありません (エッジ最適化済み)\0"
+    /* OSD_SpanOn */ "ビデオウォール : オン\0"
+    /* OSD_SpanOff */ "ビデオウォール : オフ\0"
+    /* OSD_CompareBefore */ "変更前 (オリジナル)\0"
+    /* OSD_CompareAfter */ "変更後 (校正済み)\0"
+    /* OSD_CompareAnimNotSupported */ "アニメーション画像は比較モードに対応していません\0"
+    /* OSD_UndoDeleteSuccess */ "削除の取り消しに成功しました\0"
+    /* OSD_UndoDeleteFailed */ "削除の取り消しに失敗しました\0"
+    /* OSD_UndoRenameSuccess */ "名前の変更の取り消しに成功しました\0"
+    /* OSD_UndoRenameFailed */ "名前の変更の取り消しに失敗しました\0"
+    /* OSD_UndoTransformSuccess */ "回転/反転の取り消しに成功しました\0"
+    /* OSD_UndoTransformFailed */ "回転/反転の取り消しに失敗しました\0"
+    /* Action_RotateCW */ "右に90°回転\0"
+    /* Action_RotateCCW */ "左に90°回転\0"
+    /* Action_Rotate180 */ "180°回転\0"
+    /* Action_FlipH */ "左右反転\0"
+    /* Action_FlipV */ "上下反転\0"
+    /* Dialog_SaveTitle */ "変更を保存しますか？\0"
+    /* Dialog_SaveContent */ "画像が変更されています。変更を保存しますか？\0"
+    /* Dialog_ButtonSave */ "保存\0"
+    /* Dialog_ButtonSaveAs */ "名前を付けて保存...\0"
+    /* Dialog_ButtonDiscard */ "破棄\0"
+    /* Dialog_ButtonContinue */ "続行\0"
+    /* Dialog_CropUnsavedTitle */ "クロップの変更が保存されていません。保存しますか？\0"
+    /* Dialog_SaveAsTitle */ "画像を保存\0"
+    /* Dialog_ExportTitle */ "保存とエクスポート\0"
+    /* Dialog_ButtonOverwrite */ "上書き保存\0"
+    /* Dialog_EmbedICC */ "ICCプロファイル\0"
+    /* Dialog_SizeEstimating */ "サイズ: 計算中...\0"
+    /* Dialog_ExportError */ "エクスポートエラー\0"
+    /* Context_Open */ "開く...\tCtrl+O\0"
+    /* Context_Crop */ "クロップ\0"
+    /* Context_SuperResolution */ "AI 超解像\0"
+    /* Context_AiAction */ "AI アクション\0"
+    /* Context_OpenWith */ "プログラムから開く...\0"
+    /* Context_Edit */ "編集\tE\0"
+    /* Context_ShowInExplorer */ "エクスプローラーで表示\0"
+    /* Context_OpenFolder */ "フォルダーを開く\0"
+    /* Context_CopyPixels */ "ピクセルをコピー\tCtrl+C\0"
+    /* Context_CopyFile */ "ファイルをコピー\tCtrl+Shift+C\0"
+    /* Context_CopyPath */ "パスをコピー\tCtrl+Alt+C\0"
+    /* Context_Print */ "印刷\tCtrl+P\0"
+    /* Context_RotateCW */ "右に90°回転\tR\0"
+    /* Context_RotateCCW */ "左に90°回転\tShift+R\0"
+    /* Context_FlipH */ "左右反転\tH\0"
+    /* Context_FlipV */ "上下反転\tV\0"
+    /* Context_Transform */ "変形\0"
+    /* Context_ActualSize */ "原寸大 (100%)\tZ\0"
+    /* Context_FitToScreen */ "画面に合わせる\tF\0"
+    /* Context_FitWindow */ "ウィンドウに合わせる\0"
+    /* Context_FillWindow */ "ウィンドウを埋める\0"
+    /* Context_ZoomIn */ "拡大\t+ / Ctrl +\0"
+    /* Context_ZoomOut */ "縮小\t- / Ctrl -\0"
+    /* Context_LockWindow */ "ウィンドウを固定\0"
+    /* Context_AlwaysOnTop */ "常に手前に表示\tCtrl+T\0"
+    /* Context_HUDGallery */ "HUD ギャラリー\tT\0"
+    /* Context_LiteInfoPanel */ "簡易情報パネル\tTab\0"
+    /* Context_FullInfoPanel */ "詳細情報パネル\tI\0"
+    /* Context_RenderRAW */ "RAW レンダリング\0"
+    /* Context_PixelArtMode */ "ピクセルアートモード\0"
+    /* Context_Fullscreen */ "全画面表示\tF11\0"
+    /* Context_SlideshowMode */ "スライドショーモード\0"
+    /* Context_SpanDisplays */ "マルチディスプレイ展開 (ビデオウォール)\tCtrl+F11\0"
+    /* Context_View */ "表示\0"
+    /* Context_WallpaperFill */ "全画面表示(壁紙)\0"
+    /* Context_WallpaperFit */ "サイズ変更(壁紙)\0"
+    /* Context_WallpaperTile */ "並べて表示(壁紙)\0"
+    /* Context_SetAsWallpaper */ "デスクトップの背景に設定\0"
+    /* Context_Rename */ "名前の変更\tF2\0"
+    /* Context_FixExtension */ "拡張子を修正\0"
+    /* Context_Delete */ "削除\tDel\0"
+    /* Context_UndoDelete */ "削除を取り消す\tCtrl+Z\0"
+    /* Context_UndoRename */ "名前の変更を取り消す\tCtrl+Z\0"
+    /* Context_UndoTransform */ "回転/反転を取り消す\tCtrl+Z\0"
+    /* Context_Undo */ "元に戻す\tCtrl+Z\0"
+    /* Context_SortBy */ "並べ替え\0"
+    /* Context_NavOrder */ "移動順序\0"
+    /* Context_SortAscending */ "昇順\0"
+    /* Context_SortDescending */ "降順\0"
+    /* Context_Settings */ "設定...\0"
+    /* Context_CompareMode */ "比較モード\tC\0"
+    /* Context_OverlayMode */ "オーバーレイモード\tCtrl+Shift+O\0"
+    /* Context_GalleryOpenCompare */ "比較モードで開く\0"
+    /* Context_GalleryOpenNewWindow */ "新しいウィンドウで開く\0"
+    /* Context_Exit */ "終了\tMButton/Esc\0"
+    /* Menu_ExitPassthrough */ "マウススルーモードを解除\0"
+    /* Message_SaveErrorTitle */ "エラー\0"
+    /* Message_SaveErrorContent */ "ファイルの保存に失敗しました。ファイルがロックされている可能性があります。\0"
+    /* Toolbar_Tooltip_Prev */ "前へ (左)\0"
+    /* Toolbar_Tooltip_Next */ "次へ (右)\0"
+    /* Toolbar_Tooltip_RotateL */ "左に回転 (Shift+R)\0"
+    /* Toolbar_Tooltip_RotateR */ "右に回転 (R)\0"
+    /* Toolbar_Tooltip_FlipH */ "左右反転 (H)\0"
+    /* Toolbar_Tooltip_Lock */ "ウィンドウを固定 (一時)\0"
+    /* Toolbar_Tooltip_Unlock */ "ウィンドウの固定を解除\0"
+    /* Toolbar_Tooltip_Gallery */ "ギャラリー (T)\0"
+    /* Toolbar_Tooltip_Info */ "情報パネル\0"
+    /* Toolbar_Tooltip_RawPreview */ "RAW : プレビュー (クリックで完全デコード)\0"
+    /* Toolbar_Tooltip_RawFull */ "RAW : 完全デコード (クリックでプレビュー)\0"
+    /* Toolbar_Tooltip_RawPairView */ "RAW : ペアの RAW を表示 (完全デコード)\0"
+    /* Toolbar_Tooltip_RawPairBack */ "RAW : ペアの画像に戻る\0"
+    /* Toolbar_Tooltip_FixExtension */ "拡張子の不一致 (修正)\0"
+    /* Toolbar_Tooltip_Pin */ "ツールバーをピン留め\0"
+    /* Toolbar_Tooltip_Unpin */ "ツールバーのピン留めを解除\0"
+    /* Toolbar_Tooltip_GamutWarning */ "色域外ハイライト領域を表示\0"
+    /* Toolbar_Tooltip_CropCopy */ "選択範囲をコピー (Ctrl+C)\0"
+    /* Toolbar_Tooltip_CropSave */ "保存 (Ctrl+S)\0"
+    /* Toolbar_Tooltip_CropApply */ "適用 (Enter)\0"
+    /* Toolbar_Tooltip_CropCancel */ "終了 (Esc)\0"
+    /* Toolbar_Tooltip_OverlayAlphaUp */ "不透明度を上げる\0"
+    /* Toolbar_Tooltip_OverlayAlphaDown */ "不透明度を下げる\0"
+    /* Toolbar_Tooltip_OverlayPassthroughOn */ "マウススルーを開始\0"
+    /* Toolbar_Tooltip_OverlayPassthroughOff */ "マウススルーを解除\0"
+    /* Toolbar_Tooltip_OverlayExit */ "オーバーレイモードを終了\0"
+    /* Toolbar_Tooltip_OverlayZoomIn */ "拡大 (オーバーレイ)\0"
+    /* Toolbar_Tooltip_OverlayZoomOut */ "縮小 (オーバーレイ)\0"
+    /* Toolbar_Tooltip_NormalMode */ "通常モード\0"
+    /* Toolbar_Tooltip_CompareMode */ "比較モード\0"
+    /* Toolbar_Tooltip_SinglePage */ "単一ページモード\0"
+    /* Toolbar_Tooltip_DualPage */ "見開きページモード\0"
+    /* Toolbar_Tooltip_CompareOpen */ "選択範囲に新しい画像を開く\0"
+    /* Toolbar_Tooltip_CompareSwap */ "左右を入れ替え\0"
+    /* Toolbar_Tooltip_CompareLayout */ "レイアウトを切り替え\0"
+    /* Toolbar_Tooltip_CompareInfo */ "比較情報\0"
+    /* Toolbar_Tooltip_CompareDelete */ "選択した画像を削除\0"
+    /* Toolbar_Tooltip_CompareZoomIn */ "拡大 (微調整)\0"
+    /* Toolbar_Tooltip_CompareZoomOut */ "縮小 (微調整)\0"
+    /* Toolbar_Tooltip_CompareSyncZoomOn */ "ズーム同期 : オン\0"
+    /* Toolbar_Tooltip_CompareSyncZoomOff */ "ズーム同期 : オフ\0"
+    /* Toolbar_Tooltip_CompareSyncPanOn */ "パン同期 : オン\0"
+    /* Toolbar_Tooltip_CompareSyncPanOff */ "パン同期 : オフ\0"
+    /* Toolbar_Tooltip_SlideshowImmersiveToggle */ "イマーシブスポットライトの切り替え\0"
+    /* Toolbar_Tooltip_SlideshowExit */ "スライドショーモードを終了\0"
+    /* Toolbar_Tooltip_CompareExit */ "比較モードを終了\0"
+    /* Toolbar_Tooltip_AnimPlay */ "アニメーションを再生\0"
+    /* Toolbar_Tooltip_AnimPause */ "アニメーションを一時停止\0"
+    /* Toolbar_Tooltip_AnimPrev */ "前のフレーム\0"
+    /* Toolbar_Tooltip_AnimNext */ "次のフレーム\0"
+    /* Toolbar_Tooltip_AnimDirtyOn */ "更新領域デバッグ : オン\0"
+    /* Toolbar_Tooltip_AnimDirtyOff */ "更新領域デバッグ : オフ\0"
+    /* Toolbar_Tooltip_AnimSpeed */ "アニメーション速度\0"
+    /* OSD_Copied */ "コピーしました！\0"
+    /* OSD_PixelsCopied */ "ピクセルをコピーしました！\0"
+    /* OSD_PixelsExtracting */ "生ピクセルを抽出中...\0"
+    /* OSD_FileCopied */ "ファイルをコピーしました！\0"
+    /* OSD_CoordinatesCopied */ "座標をコピーしました！\0"
+    /* OSD_FilePathCopied */ "ファイルパスをコピーしました！\0"
+    /* OSD_Zoom100 */ "ズーム : 100%\0"
+    /* OSD_ZoomFit */ "ズーム : 画面に合わせる\0"
+    /* OSD_ZoomFitWindow */ "ズーム : ウィンドウに合わせる\0"
+    /* OSD_ZoomFill */ "ズーム : ウィンドウを埋める\0"
+    /* OSD_PrintInstruction */ "印刷 : 開いたアプリで Ctrl+P を使用してください\0"
+    /* OSD_MovedToRecycleBin */ "ゴミ箱に移動しました\0"
+    /* OSD_WindowLocked */ "ウィンドウを固定しました\0"
+    /* OSD_WindowUnlocked */ "ウィンドウの固定を解除しました\0"
+    /* OSD_AlwaysOnTopOn */ "常に手前に表示 : オン\0"
+    /* OSD_AlwaysOnTopOff */ "常に手前に表示 : オフ\0"
+    /* OSD_WallpaperSet */ "壁紙に設定\0"
+    /* OSD_WallpaperFailed */ "壁紙の設定に失敗しました\0"
+    /* OSD_Renamed */ "名前を変更しました\0"
+    /* OSD_RenameFailed */ "名前の変更に失敗しました\0"
+    /* OSD_Restored */ "元に戻しました\0"
+    /* OSD_ExtensionFixed */ "拡張子を修正しました\0"
+    /* OSD_FirstImage */ "最初の画像\0"
+    /* OSD_LastImage */ "最後の画像\0"
+    /* OSD_HD */ "HD\0"
+    /* OSD_ZoomPrefix */ "ズーム : \0"
+    /* OSD_AnimPlaying */ "再生中\0"
+    /* OSD_AnimPaused */ "一時停止中 (インスペクターモード: Alt+Left/Right でシーク)\0"
+    /* OSD_AnimDirtyOn */ "更新領域 : オン\0"
+    /* OSD_AnimDirtyOff */ "更新領域 : オフ\0"
+    /* OSD_GamutDetected */ "色域外の色を検出しました\0"
+    /* OSD_GamutIncompatible */ "色域 : 互換性のないプロファイルか解析に失敗しました\0"
+    /* OSD_GamutFailed */ "色域 : 解析に失敗しました\0"
+    /* OSD_SlideshowStarted */ "スライドショーを開始\0"
+    /* OSD_SlideshowStopped */ "スライドショーを停止\0"
+    /* OSD_SlideshowResumed */ "スライドショーを再開\0"
+    /* OSD_SlideshowPaused */ "スライドショーを一時停止\0"
+    /* OSD_ImmersiveSpotlight */ "イマーシブ : スポットライト\0"
+    /* OSD_ImmersiveNormal */ "イマーシブ : 通常\0"
+    /* OSD_PrintJobStarted */ "印刷ジョブが送信されました。閲覧を続けることができます。\0"
+    /* OSD_PrintJobFinished */ "印刷ジョブが正常に送信されました。\0"
+    /* OSD_EnterCropMode */ "クロップモードに入りました\0"
+    /* OSD_CropCopied */ "クロップ範囲をコピーしました\0"
+    /* OSD_CropApplied */ "クロップを適用しました（未保存）\0"
+    /* Context_ColorSpace */ "色空間\0"
+    /* Settings_Option_CmsUnmanaged */ "管理なし\0"
+    /* Settings_Option_CmssRGB */ "sRGB\0"
+    /* Settings_Option_CmsP3 */ "Display P3\0"
+    /* Settings_Option_CmsAdobeRGB */ "Adobe RGB (1998)\0"
+    /* Settings_Option_CmsGray */ "グレースケール (トーン確認)\0"
+    /* Settings_Option_CmsProPhoto */ "ProPhoto RGB\0"
+    /* Checkbox_AlwaysSaveLossless */ "常にロスレス変換で保存する\0"
+    /* Checkbox_AlwaysSaveEdgeAdapted */ "常にエッジ最適化で保存する\0"
+    /* Checkbox_AlwaysSaveLossy */ "常に再エンコードして保存する\0"
+    /* Checkbox_NeverConfirmDelete */ "確認なしで直接ゴミ箱へ移動する\0"
+    /* OSD_HEICCodecMissing */ "HEIC をデコードできません - HEVCビデオ拡張機能をインストールしてください\0"
+    /* Dialog_HEICTitle */ "HEIC をデコードできません\0"
+    /* Dialog_HEICContent */ "システムに HEVC ビデオ拡張機能がありません。\nQuickView は最高のパフォーマンスを得るためにシステムのハードウェアアクセラレーションを使用します。\0"
+    /* Dialog_HEICGetExtension */ "拡張機能を取得 (無料)\0"
+    /* Dialog_Cancel */ "キャンセル\0"
+    /* Settings_Tab_General */ "全般\0"
+    /* Settings_Tab_About */ "バージョン情報\0"
+    /* Settings_Tab_Shortcuts */ "ショートカット\0"
+    /* Settings_Hotkey_PressKey */ "キーを押してください...\0"
+    /* Settings_Hotkey_Conflict */ "キーの競合\0"
+    /* Settings_Hotkey_ConflictPrompt */ "「%s」で使用中。続行すると割り当てを解除します。\0"
+    /* Settings_Hotkey_Restore */ "既定のショートカットに戻す\0"
+    /* Settings_Hotkey_Restored */ "復元されました\0"
+    /* Settings_Hotkey_MouseTip */ "ヒント：中央ボタンやサイドボタンなどのマウス多機能ボタンに対応しています。その他のサイドボタンは、マウスのドライバーでキーボードのキーにマッピングしてからバインドしてください。\0"
+    /* Settings_Header_GalleryTrigger */ "ギャラリー フィルムストリップ (上部ホバー)\0"
+    /* Settings_Label_GalleryTriggerMode */ "フィルムストリップのトリガーモード\0"
+    /* Settings_Label_KeepGalleryVisibleOnThumbnailClick */ "サムネイルクリック後に表示を維持\0"
+    /* Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick */ "この機能をオンにすると、「ウィンドウをロック」と「ナビゲーション時にウィンドウサイズを維持」が自動的にオンになります。\0"
+    /* Settings_Label_GalleryExpandOnClickOnly */ "展開矢印のトリガーモード\0"
+    /* Settings_Tooltip_GalleryExpandOnClickOnly */ "フォルダギャラリー表示への展開を矢印クリックに限定し、誤ったホバー展開を防止します。\0"
+    /* Settings_Option_TriggerClick */ "クリック\0"
+    /* Settings_Option_TriggerHover */ "ホバー\0"
+    /* Settings_Option_GalleryTriggerAuto */ "自動ホバー\0"
+    /* Settings_Option_GalleryTriggerDelay */ "ホットスポットホバー\0"
+    /* Settings_Option_GalleryTriggerClick */ "ホットスポットクリック\0"
+    /* Settings_Option_GalleryTriggerDisable */ "無効\0"
+    /* Settings_Tooltip_GalleryTrigger */ "この機能はウィンドウサイズが 600x450 未満の場合、自動的に無効になります。\0"
+    /* Settings_Label_GalleryTriggerAreaHeight */ "トリガーエリアの高さ\0"
+    /* Settings_Label_GalleryDwellTime */ "ホバー滞在時間\0"
+    /* Settings_Label_GalleryExitDelay */ "退出ディレイ\0"
+    /* Settings_Label_GalleryMinSize */ "ギャラリー最小サイズ\0"
+    /* Settings_Group_Foundation */ "基本設定\0"
+    /* Settings_Group_Startup */ "スタートアップ\0"
+    /* Settings_Group_Habits */ "操作習慣\0"
+    /* Settings_Label_Language */ "言語\0"
+    /* Settings_Label_SingleInstance */ "単一インスタンス\0"
+    /* Settings_Label_CheckUpdates */ "更新を確認\0"
+    /* Settings_Label_UpdateChannel */ "更新チャンネル\0"
+    /* Settings_Option_UpdateStable */ "安定版\0"
+    /* Settings_Option_UpdatePreRelease */ "プレリリース版\0"
+    /* Settings_Tooltip_PreRelease */ "安定版 : プレビュー版の安定性が確認された後に配信されます。\nプレリリース版: フィードバック収集のため最新のコード変更を即座に提供します。注 : 厳密なテストは行われていません。\0"
+    /* Settings_Label_NavLoopMode */ "ループ再生\0"
+    /* Settings_Label_SortOrder */ "並べ替え順序\0"
+    /* Settings_Label_SortDescending */ "降順\0"
+    /* Settings_Label_SortArchivesByNameAscending */ "アーカイブ内は常に名前順(昇順)で並べ替える\0"
+    /* Settings_Label_ConfirmDel */ "削除前に確認する\0"
+    /* Settings_Label_Portable */ "ポータブルモード / クリーンアップ\0"
+    /* Settings_Tooltip_Portable */ "ポータブルモード / レジストリクリーンアップ:\n有効にすると、QuickViewはポータブルモードで動作します。既存のレジストリ関連付けを自動的にクリーンアップし、自動レジストリ変更を無効化して、設定ファイルをAppDataではなくアプリケーションディレクトリに保存します。\0"
+    /* Settings_Label_SpanDisplays */ "マルチディスプレイ展開\0"
+    /* Settings_Label_UIScale */ "UI スケール\0"
+    /* Settings_Status_RestartRequired */ "再起動が必要です\0"
+    /* Settings_Status_NoWritePerm */ "書き込み権限がありません！\0"
+    /* Settings_Status_Enabled */ "有効\0"
+    /* Settings_Header_PoweredBy */ "Powered by\0"
+    /* Settings_Text_Copyright */ "© 2025–%s Vivor Loong (GitHub: @justnullname)\0"
+    /* Settings_Text_License */ "Licensed under GNU GPL v3.0\0"
+    /* Settings_Tab_Visuals */ "インターフェース\0"
+    /* Settings_Tab_Controls */ "操作\0"
+    /* Settings_ControlSub_Mouse */ "マウス操作\0"
+    /* Settings_ControlSub_Keyboard */ "キー設定\0"
+    /* Settings_ControlSub_Behavior */ "動作と詳細\0"
+    /* Settings_Gesture_Preset */ "プリセット\0"
+    /* Settings_Gesture_Preset_Default */ "QuickView クラシック (既定)\0"
+    /* Settings_Gesture_Preset_Standard */ "標準フォトビューアー\0"
+    /* Settings_Gesture_Preset_Browser */ "ミニマル / ブラウザー\0"
+    /* Settings_Gesture_Add */ "+ ジェスチャーを追加\0"
+    /* Settings_Gesture_Reset */ "既定値にリセット\0"
+    /* Settings_Tab_Image */ "画像\0"
+    /* Settings_Tab_Advanced */ "詳細設定\0"
+    /* Settings_Header_Backdrop */ "背景\0"
+    /* Settings_Header_Window */ "ウィンドウ\0"
+    /* Settings_Header_WindowLock */ "ウィンドウ固定\0"
+    /* Settings_Header_Panel */ "パネル\0"
+    /* Settings_Label_CanvasColor */ "キャンバスの色\0"
+    /* Settings_Option_Effects */ "エフェクト\0"
+    /* Settings_Label_ContextMenuBackdrop */ "右クリックメニュー\0"
+    /* Settings_Label_CanvasEffectStyle */ "エフェクトスタイル\0"
+    /* Settings_Tooltip_BackdropEffectsTip */ "Mica と Mica Alt エフェクトは Windows 11 のみ対応。Acrylic は Mica/Mica Alt よりリソースを多く消費します。\0"
+    /* Settings_Label_Overlay */ "オーバーレイ\0"
+    /* Settings_Label_ShowGrid */ "グリッドオーバーレイを表示\0"
+    /* Settings_Label_AlwaysOnTop */ "常に手前に表示\0"
+    /* Settings_Label_LockWindow */ "ウィンドウを固定\0"
+    /* Settings_Tooltip_LockWindow */ "起動時に画像の倍率に追従せず、既定でウィンドウ枠を固定するかどうかを制御します。\0"
+    /* Settings_Label_AutoHideTitle */ "タイトルバーを自動的に非表示\0"
+    /* Settings_Label_RoundedCorners */ "ウィンドウの角を丸くする\0"
+    /* Settings_Label_UIBorders */ "UI の境界線を表示\0"
+    /* Settings_Tooltip_RoundedCorners */ "ウィンドウとコンテキストメニューの角の丸みを制御します。Windows 11 が必要です。\0"
+    /* Settings_Label_LockToolbar */ "下部ツールバーを固定\0"
+    /* Settings_Label_WindowMinSize */ "最小ウィンドウ幅\0"
+    /* Settings_Label_WindowMaxSizePercent */ "最大初期サイズ (%)\0"
+    /* Settings_Label_ShowBorderIndicator */ "境界オーバーフローインジケーターを表示\0"
+    /* Settings_Tooltip_ShowBorderIndicator */ "パンやズーム操作中に画像がウィンドウからはみ出している側の縁へソフトなグローを表示し、しばらくすると自動的にフェードアウトします。\0"
+    /* Settings_Label_ShowNavigator */ "ミニマップを表示\0"
+    /* Settings_Tooltip_ShowNavigator */ "When mouse is over minimap, Wheel / Thumb Wheel (Shift + Wheel) pans image\0"
+    /* Settings_Label_KeepWindowSizeOnNav */ "画像移動時にウィンドウサイズを維持\0"
+    /* Settings_Label_RememberLastWindowSizeAndPosition */ "前回のウィンドウサイズと位置を記憶\0"
+    /* Settings_Label_UpscaleSmallImagesWhenLocked */ "小さい画像を拡大適応\0"
+    /* Settings_Label_SlideshowInterval */ "間隔 (秒)\0"
+    /* Settings_Label_SlideshowImmersive */ "イマーシブモード\0"
+    /* Settings_Option_SlideshowNormal */ "通常\0"
+    /* Settings_Option_SlideshowSpotlight */ "スポットライト\0"
+    /* Settings_Label_ExifMode */ "EXIF パネルモード\0"
+    /* Settings_Label_ToolbarInfoDefault */ "ツールバー情報の既定値\0"
+    /* Settings_Label_OpenFullScreenMode */ "全画面で開く\0"
+    /* Settings_Label_FullScreenZoomMode */ "全画面ズームモード\0"
+    /* Settings_Label_CustomLiteInfoPanel */ "カスタム簡易情報パネル\0"
+    /* Settings_Label_CustomFullInfoPanel */ "カスタム完全情報パネル\0"
+    /* Settings_Label_InfoPanelScale */ "情報パネルのズーム\0"
+    /* Settings_Label_ItemsInNormalMode */ "通常モード時の表示項目\0"
+    /* Settings_Label_ItemsInCompareMode */ "比較モード時の表示項目\0"
+    /* Settings_Label_SeparatorPreset */ "区切り文字プリセット\0"
+    /* Settings_Option_FitScreen */ "画面に合わせる\0"
+    /* Settings_Option_Black */ "ブラック\0"
+    /* Settings_Option_White */ "ホワイト\0"
+    /* Settings_Option_Grid */ "グリッド\0"
+    /* Settings_Option_Custom */ "カスタム\0"
+    /* Settings_Option_Off */ "オフ\0"
+    /* Settings_Option_On */ "オン\0"
+    /* Settings_Option_Lite */ "簡易\0"
+    /* Settings_Option_Full */ "詳細\0"
+    /* Settings_Option_LargeOnly */ "大きなサイズのみ\0"
+    /* Settings_Option_All */ "すべて\0"
+    /* Settings_Option_SoftProofing */ "ソフトプルーフィング\0"
+    /* Settings_Header_Mouse */ "マウス\0"
+    /* Settings_Header_Edge */ "画面端\0"
+    /* Settings_Label_InvertWheel */ "ホイールの回転を反転\0"
+    /* Settings_Label_MouseAnchorZoom */ "マウス位置基準のウィンドウズーム\0"
+    /* Settings_Label_RightButtonDragZoom */ "右ボタンドラッグでズーム\0"
+    /* Settings_Label_WheelZoomSpeed */ "ホイールズーム速度\0"
+    /* Settings_Tooltip_WheelZoomSpeed */ "Alt + Wheel temporarily adjusts zoom speed\0"
+    /* Settings_Label_ThumbWheel */ "サムホイール\0"
+    /* Settings_Tooltip_ThumbWheel */ "Can be replaced with Shift + Wheel\0"
+    /* Settings_Tooltip_MiddleDrag */ "Can be replaced with Ctrl + Left Click\0"
+    /* Settings_Label_DoubleClick */ "ダブルクリック\0"
+    /* Settings_Option_DoubleClick_Smart */ "スマート\0"
+    /* Settings_Option_DoubleClick_WheelMode1 */ "ホイールモード 1\0"
+    /* Settings_Option_DoubleClick_WheelMode2 */ "ホイールモード 2\0"
+    /* Settings_Tooltip_DoubleClick */ "Smart: Default zoom/fullscreen toggle;\nWheel Mode 1: Double-click swaps main & thumb wheel functions;\nWheel Mode 2: Double-click toggles image pan mode;\nTip: Shift + Wheel acts as Thumb Wheel.\0"
+    /* Settings_Tooltip_PanStepNormal */ "Controls key pan and wheel pan speed\0"
+    /* OSD_WheelMode1_NextPrevZoom */ "Main Wheel: Next/Prev; Thumb/Shift+Wheel: Zoom\0"
+    /* OSD_WheelMode1_ZoomNextPrev */ "Main Wheel: Zoom; Thumb/Shift+Wheel: Next/Prev\0"
+    /* OSD_WheelMode2_Pan */ "Wheel: Pan Mode\0"
+    /* OSD_WheelMode2_Default */ "Wheel: Default Mode\0"
+    /* Settings_Label_RightDragZoomSpeed */ "マウスドラッグズーム速度\0"
+    /* OSD_WheelZoomSpeed */ "ズーム速度 (一時的): \0"
+    /* Settings_Label_InvertButtons */ "サイドボタンを反転\0"
+    /* Settings_Header_KeyboardPan */ "パン歩幅\0"
+    /* Settings_Label_PanStepNormal */ "パン歩幅 (標準)\0"
+    /* Settings_Label_PanStepFast */ "キーボードパン歩幅 (高速)\0"
+    /* Settings_Label_UseFixedZoom */ "固定ズーム倍率を使用\0"
+    /* Settings_Tooltip_UseFixedZoom */ "有効にすると、Alt + ホイールでズーム速度変更ではなく通常のズームを行います。\0"
+    /* Settings_Label_FixedZoomLevels */ "  └  カスタムズーム倍率\0"
+    /* Dialog_FixedZoomTitle */ "ズーム倍率を編集\0"
+    /* Dialog_FixedZoomMsg */ "カンマ区切りでズーム倍率を入力してください (例: 0.5, 1, 2):\0"
+    /* Settings_Label_ZoomModeIn */ "ズームモード (拡大)\0"
+    /* Settings_Tooltip_ZoomModeIn */ "拡大時の補間アルゴリズムを選択：\n• 自動 (Auto)：コンテンツ認識（写真/CG は FSR 超解像、ドット絵はニアレストを自動適用）\n• バイリニア (Linear)：高速な線形平滑化\n• ニアレスト (Nearest)：ドット絵/ピクセルアート用、シャープな格子感を維持\n• HQ バイキュービック (HQ Cubic)：極めて滑らかな高精度補間\n• AMD FSR 1.0：エッジ適応型空間超解像とコントラスト適応シャープニング\0"
+    /* Settings_Label_ZoomModeOut */ "ズームモード (縮小)\0"
+    /* Settings_Label_LeftDrag */ "左ドラッグ\0"
+    /* Settings_Label_MiddleDrag */ "中ドラッグ\0"
+    /* Settings_Label_MiddleClick */ "中クリック\0"
+    /* Settings_Label_EdgeNavClick */ "エッジナビゲーションクリック\0"
+    /* Settings_Label_ShowOSD */ "OSD通知を表示\0"
+    /* Settings_Label_DisableEdgeNavInCompare */ "比較モードでは無効化\0"
+    /* Settings_Label_NavIndicator */ "ナビゲーションインジケーター\0"
+    /* Settings_Option_Window */ "ウィンドウ\0"
+    /* Settings_Option_Pan */ "パン (移動)\0"
+    /* Settings_Option_None */ "なし\0"
+    /* Settings_Option_Exit */ "終了\0"
+    /* Settings_Option_Arrow */ "矢印\0"
+    /* Settings_Option_Cursor */ "カーソル\0"
+    /* Settings_Option_Manual */ "手動\0"
+    /* Settings_Option_SortAuto */ "自動 (エクスプローラー順)\0"
+    /* Settings_Option_SortName */ "名前\0"
+    /* Settings_Option_SortModified */ "更新日時\0"
+    /* Settings_Option_SortDateTaken */ "撮影日時 (EXIF)\0"
+    /* Settings_Option_SortSize */ "サイズ\0"
+    /* Settings_Option_SortType */ "種類\0"
+    /* Settings_Option_NavLoop */ "ループ\0"
+    /* Settings_Option_NavThrough */ "サブフォルダーを含める\0"
+    /* Settings_Option_Linear */ "バイリニア: 基本的な平滑化\0"
+    /* Settings_Option_Nearest */ "ニアレストネイバー : 極限の鮮明さ\0"
+    /* Settings_Option_HighQualityCubic */ "HQ バイキュービック : 高精度な平滑化\0"
+    /* Settings_Option_FSR */ "AMD FSR 1.0 (EASU/RCAS)\0"
+    /* Settings_Header_Render */ "レンダリング\0"
+    /* Settings_Header_Hdr */ "HDR\0"
+    /* Settings_Header_Prompts */ "確認ダイアログ\0"
+    /* Settings_Header_System */ "システム\0"
+    /* Settings_Label_AutoRotate */ "自動回転 (EXIF)\0"
+    /* Settings_Label_FsrSharpness */ "FSR シャープネス\0"
+    /* Settings_Tooltip_FsrSharpness */ "AMD FSR 1.0 空間超解像のエッジ強調強度を調整します。\0"
+    /* Settings_Tab_Plugins */ "プラグイン\0"
+    /* Settings_Label_EnableSrPlugin */ "超解像 AI\0"
+    /* Settings_Label_SrModel */ "AI Model\0"
+    /* Settings_Label_SrAutoTrigger */ "自動トリガー\0"
+    /* Settings_Label_SrAutoTriggerMaxWidth */ "元画像最大幅\0"
+    /* Settings_Tooltip_SrAutoTriggerMaxWidth */ "自動超解像を適用する元画像の最大幅（ピクセル）を制限します。0で無制限。幅または高さのいずれかのみが0の場合、0以外の値のみが制約になります。\0"
+    /* Settings_Label_SrAutoTriggerMaxHeight */ "元画像最大高さ\0"
+    /* Settings_Tooltip_SrAutoTriggerMaxHeight */ "自動超解像を適用する元画像の最大高さ（ピクセル）を制限します。0で無制限。幅または高さのいずれかのみが0の場合、0以外の値のみが制約になります。\0"
+    /* Settings_Value_Unlimited */ "無制限\0"
+    /* Settings_Label_SrOpenInCompare */ "手動実行後に比較モードで表示\0"
+    /* Settings_Label_SrPromptModel */ "手動トリガー時にモデル選択を表示\0"
+    /* Export_Checkbox_SuperResolution */ "超解像画質で書き出す\0"
+    /* Settings_Label_SrDebounce */ "トリガー遅延\0"
+    /* Settings_Tooltip_SrDebounce */ "ズーム操作停止後に AI 超解像をトリガーする遅延時間 (0 - 5000 ミリ秒)。\n操作中は高速補間を維持し、停止後に超高画質 AI 復元を行います。\0"
+    /* Settings_Header_PluginTriggers */ "トリガーと動作設定\0"
+    /* Settings_Header_PluginParams */ "プラグイン設定\0"
+    /* Settings_Label_SrStorageFolder */ "プラグインとモデル保存先\0"
+    /* Settings_Button_OpenModelFolder */ "📂 ローカルフォルダを開く\0"
+    /* Settings_Prompt_DownloadModelFirst */ "選択したモデルのダウンロードが必要\0"
+    /* Settings_Segment_InstalledPlugins */ "インストール済み拡張\0"
+    /* Settings_Segment_Marketplace */ "マーケットプレイス\0"
+    /* Settings_Label_SrEngine */ "超解像バックエンドエンジン\0"
+    /* Settings_Label_SrModelStatus */ "モデル状態\0"
+    /* Settings_Format_DownloadModel */ "このモデルをダウンロード (~%llu MB)\0"
+    /* Settings_Header_SrComponent */ "超解像 AI コンポーネント\0"
+    /* Settings_Label_QuickEnableEngine */ "超解像エンジンを有効化\0"
+    /* Settings_Button_QuickEnableNcnn */ "⚡ Real-ESRGAN NCNN Vulkan エンジンを有効化\0"
+    /* Settings_Label_OnlineExtensions */ "オンライン拡張機能とモデル\0"
+    /* Settings_Button_BrowseMarketplace */ "🌐 マーケットプレイスを表示\0"
+    /* Settings_Label_MarketManifest */ "プラグインリスト\0"
+    /* Settings_Button_RefreshManifest */ "🔄 プラグインリストを更新\0"
+    /* Settings_Button_SyncingManifest */ "クラウドから同期中...\0"
+    /* Settings_Format_PluginPackageSize */ "プラグインパッケージ (~%llu MB)\0"
+    /* Settings_Button_InstalledUpToDate */ "✓ インストール済み\0"
+    /* Settings_Format_UpdateTo */ "⚡ v%ls に更新\0"
+    /* Settings_Button_InstallPlugin */ "⚡ 入手してインストール\0"
+    /* OSD_SrProcessing */ "AI 超解像処理中...\0"
+    /* OSD_SrSuccessFormat */ "✓ AI 超解像完了: %s [%.0fx] (処理時間: %.1f ms)\0"
+    /* OSD_SrSuccessFormatSimple */ "✓ AI 超解像完了: %s (処理時間: %.1f ms)\0"
+    /* OSD_SrFailed */ "✗ AI 超解像の実行に失敗しました\0"
+    /* OSD_SrPluginDisabledOrMissing */ "AI 超解像プラグインが無効または未インストールです\0"
+    /* OSD_SrAnimationProcessingFormat */ "アニメーションシーケンスを超解像処理中 (%u/%u フレーム)...\0"
+    /* OSD_SrAnimationSuccessFormat */ "✓ アニメーション全フレーム超解像完了: %s (%u フレーム, 処理時間: %.2f 秒)\0"
+    /* OSD_SrVectorLosslessSkipped */ "ベクター画像は可逆拡大に対応しているため、AI超解像は不要です\0"
+    /* OSD_SrAnimationTooManyFrames */ "アニメーションのフレーム数が多すぎるため（%u フレーム超過）、処理をスキップしました\0"
+    /* OSD_SrImageTooLargeFormat */ "画像解像度が大きすぎます (%ux%u, 1600万画素超)。VRAMオーバーフロー防止のためAI超解像をスキップしました\0"
+    /* Dialog_Title_SelectSrModel */ "AI 超解像モデルを選択\0"
+    /* Dialog_Msg_SelectSrModel */ "適用する AI 超解像モデルを選択してください:\0"
+    /* Dialog_Checkbox_RememberSrModelChoice */ "選択を記憶し、次回の手動実行時に再確認しない\0"
+    /* Dialog_Button_OK */ "OK\0"
+    /* Settings_Label_CMS */ "カラーマネジメント\0"
+    /* Settings_Label_AdvancedColor */ "高度なカラー (HDR)\0"
+    /* Settings_Label_CmsFallback */ "タグなし画像のフォールバック\0"
+    /* Settings_Label_HdrToneMapping */ "HDR トーンマッピング\0"
+    /* Settings_Label_HdrSplineKnee */ "スプラインニーポイント\0"
+    /* Settings_Tooltip_HdrToneMapping */ "HDR トーンマッピング戦略 :\nHDR 画像がモニターの性能を超える場合の表示方法を決定します。\nSpline: 区分スプラインによる高精度なハイライトロールオフ (推奨)。\nColorimetric: 厳密な輝度マッピング。モニター上限を超えるハイライトはクリップされます。\nBT.2390 (EETF): 高精度トーンマッピング用 ITU-R BT.2390 EETF 曲線。\0"
+    /* Settings_Tooltip_HdrSplineKnee */ "0 = 自動 (画像の輝度に基づいて計算)。\n値はモニターのピーク輝度の比率を表します。このニーポイント以下の明るさは 1:1 でマッピングされ、上の明るさはスプライン曲線で滑らかに圧縮されます。\n(推奨: 0.4 - 0.75)\0"
+    /* Settings_Label_HdrPeakNitsOverride */ "HDR ピーク輝度 (Nits)\0"
+    /* Settings_Tooltip_HdrPeakNitsOverride */ "システム検出の輝度を使用するには 0 に設定します。\0"
+    /* Settings_Label_HdrPeakPercentile */ "HDR ピークパーセンタイル\0"
+    /* Settings_Tooltip_HdrPeakPercentile */ "全体の明るさを上げるため極端に明るいピクセルを除外します (mpv既定値 : 99.995%)。\0"
+    /* Settings_Option_HdrPeakPercentile_100 */ "100% (絶対ピーク)\0"
+    /* Settings_Option_HdrPeakPercentile_99995 */ "99.995% (安定)\0"
+    /* Settings_Option_HdrPeakPercentile_999 */ "99.9% (アグレッシブ)\0"
+    /* Settings_Label_HdrDesatThreshold */ "HDR ハイライト減色開始範囲\0"
+    /* Settings_Tooltip_HdrDesatThreshold */ "ハイライト減色の開始しきい値。0.0 は全輝度を減色、1.0 は減色なし。推奨既定値は 0.18 です。\0"
+    /* Settings_Label_HdrMaxDesat */ "HDR ハイライト減色強度\0"
+    /* Settings_Tooltip_HdrMaxDesat */ "極端なハイライトにおける減色の最大強度。0.0 は減色なし、1.0 は完全に白へ減色。推奨既定値は 0.75 です。\0"
+    /* Settings_Option_HdrColorimetric */ "Colorimetric\0"
+    /* Settings_Option_HdrSpline */ "Spline\0"
+    /* Settings_Option_HdrLegacyReinhard */ "BT.2390 (EETF)\0"
+    /* Settings_Label_CustomProof */ "ソフトプルーフプロファイル (.icc)\0"
+    /* Settings_Label_CmsIntent */ "レンダリングインテント\0"
+    /* Settings_Label_GamutWarning */ "色域外警告検出\0"
+    /* Settings_Tooltip_GamutWarning */ "色域外の領域を解析してハイライト表示します。オプション: オフ、ソフトプルーフィングモードのみで検出、またはソフトプルーフィングと画面色域の両方で検出。\0"
+    /* Settings_Label_GamutAutoPrompt */ "色域エラー時の自動提示\0"
+    /* Settings_Tooltip_GamutAutoPrompt */ "色域エラーが検出されたときに OSD 通知を表示します。ハイライト表示はツールバーから手動で切り替えることができます。\0"
+    /* Settings_Label_GamutColor */ "色域外警告のハイライト色\0"
+    /* Settings_Option_CmsIntentRelative */ "相対的な色域を維持\0"
+    /* Settings_Option_CmsIntentPerceptual */ "知覚的\0"
+    /* Settings_Tooltip_CMS */ "カラーマネジメントシステムを有効にします。\n有効にすると、GPU を介して高精度な色空間変換を適用し、本来の色を復元します。\n無効にすると GPU の負荷は下がりますが、広色域ディスプレイで色が過鮮やかになる場合があります。\0"
+    /* Settings_Tooltip_CmsIntent */ "色空間変換のレンダリングインテント。\n知覚的 : 細部やグラデーションを維持するために色域外の色を圧縮します (写真に最適)。\n相対的な色域を維持: 色域内の色を保持し、色域外の色をクリップします (UI やアイコンに最適)。\n注 : 視覚的な違いは、LUT (ルックアップテーブル) を含む高度な ICC プロファイルを使用する場合にのみ発生します。標準的なマトリックスプロファイルは自動的に「相対的な色域を維持」へフォールバックします。\0"
+    /* Settings_Tooltip_AdvancedColor */ "16ビット浮動小数点レンダリングパイプライン (scRGB) を有効にします。\n有効にすると、SDR の限界を超えて HDR 対応ディスプレイ上で写真のハイライトを完全に描画します。\n無効にすると強制的に SDR 出力へマッピングされます。\n注 : 有効にすると VRAM の使用量が増加します。\0"
+    /* Settings_Tooltip_ZoomAuto */ "自動 : 画像が画面より小さい場合は 100% スケール、大きい場合は画面に合わせます。\0"
+    /* Context_SoftProofing */ "ソフトプルーフィングプレビュー\0"
+    /* Context_SoftProofProfile */ "校正プロファイル\0"
+    /* Context_SoftProofCustom */ "カスタム...\0"
+    /* Settings_Value_ComingSoon */ "近日公開\0"
+    /* Settings_Label_ForceRaw */ "RAW 強制デコード\0"
+    /* Settings_Label_PairRawJpeg */ "RAW + JPEG ペアリング\0"
+    /* Settings_Tooltip_PairRawJpeg */ "RAW ファイルと同名のカメラ画像 (JPEG/HEIF) を1つの写真として表示します。\nレンダリングされた画像のみがリストに残り、RAWフォーマットマーク (例 : +CR3) が付きます。撮影時刻はバックグラウンドで検証され、不一致のペアは分離されます。\nカメラ画像と RAW デコードの切り替えは RAW ツールバーボタンまたはホットキーで行い、ペア比較ホットキーで両方を表示できます。\0"
+    /* Settings_Label_Exposure */ "露出 (明るさ)\0"
+    /* Settings_Tooltip_Exposure */ "画像の明るさ (露出補正) を調整します。範囲: 0.18x ～ 10.0x。\0"
+    /* Settings_Label_AddToOpenWith */ "「アプリで開く」に追加\0"
+    /* Settings_Label_CustomEditor */ "カスタム画像エディタ\0"
+    /* Context_SelectEditor */ "エディタを選択\0"
+    /* OSD_EditorLaunchFailed */ "エディタの起動に失敗しました。再設定してください。\0"
+    /* Settings_Action_Add */ "追加\0"
+    /* Settings_Action_Added */ "追加済み\0"
+    /* Settings_Status_DisabledInPortable */ "ポータブルモードでは無効\0"
+    /* Settings_Header_Features */ "機能\0"
+    /* Settings_Header_Performance */ "パフォーマンス\0"
+    /* Settings_Header_Transparency */ "透明度\0"
+    /* Settings_Label_DebugHUD */ "デバッグ HUD を有効化 (F12)\0"
+    /* Settings_Label_Prefetch */ "先読みシステム\0"
+    /* Settings_Label_MemoryReclaim */ "スマートメモリ管理\0"
+    /* Settings_Option_MemSmart */ "スマート\0"
+    /* Settings_Option_MemAggressive */ "アグレッシブ\0"
+    /* Settings_Option_MemOnDemand */ "オンデマンド\0"
+    /* Settings_Tooltip_MemoryReclaim */ "スマート : システムメモリが 4GB 未満の場合のみ自動的にメモリを解放します。\nアグレッシブ : 0ns の即時割り当て速度を維持するためメモリを確保し続けます。\nオンデマンド : 物理メモリを節約するため、常にアイドル状態のメモリを解放します。\0"
+    /* Settings_Label_Reset */ "すべての設定をリセット\0"
+    /* Settings_Action_Restore */ "復元\0"
+    /* Settings_Action_Done */ "完了\0"
+    /* Settings_Header_ConfigManagement */ "設定の入出力 (.ini)\0"
+    /* Settings_Action_CheckUpdates */ "更新を確認\0"
+    /* Settings_Action_ViewUpdate */ "更新を表示\0"
+    /* Settings_Status_Checking */ "確認中...\0"
+    /* Settings_Status_UpToDate */ "最新です\0"
+    /* Settings_Link_GitHub */ "GitHub リポジトリ\0"
+    /* Settings_Link_ReportIssue */ "問題を報告\0"
+    /* Settings_Link_Hotkeys */ "ヘルプ (F1)\0"
+    /* Settings_Label_Version */ "バージョン\0"
+    /* Settings_Label_Build */ "ビルド\0"
+    /* Dialog_UpdateTitle */ "新しいバージョンが利用可能です！\0"
+    /* Dialog_UpdateContent */ "v%s の準備ができました。\0"
+    /* Dialog_UpdateLogHeader */ "変更履歴\0"
+    /* Dialog_ButtonUpdate */ "今すぐ更新\0"
+    /* Dialog_ButtonLater */ "後で\0"
+    /* Dialog_ButtonStar */ "GitHub で Star をつける\0"
+    /* Dialog_Update_LoveTitle */ "QuickView は愛を込めて開発されています\0"
+    /* Dialog_Update_LoveMessage */ "Windowsにはより高速でクリーンなビューアーが必要だと信じているため、余暇を使って QuickView をメンテナンスしています。マーケティング予算もチームもありません。このアップデートを気に入っていただけたら、GitHub で Star をつけるか、友人に共有していただけることが最大の貢献になります。\0"
+    /* Dialog_PassthroughTitle */ "マウススルーモード\0"
+    /* Dialog_PassthroughContent */ "マウスイベントが下のウィンドウに透過されます。\nグローバルショートカット (Shift+Esc) またはタスクバーメニューからのみこのモードを解除できます。\n\n続行しますか？\0"
+    /* OSD_PassthroughOn */ "クリックスルー : オン (Shift+Esc で解除)\0"
+    /* OSD_PassthroughOff */ "クリックスルー : オフ\0"
+    /* OSD_OverlayModeOn */ "オーバーレイモード : オン\0"
+    /* OSD_OverlayModeOff */ "オーバーレイモード : オフ\0"
+    /* OSD_Opacity */ "不透明度\0"
+    /* Help_Desc_Edit */ "編集\0"
+    /* Help_Header_Tips */ "ヒントと用語集\0"
+    /* Help_Tip_ContextScope */ "ヒント：QuickView はキーボードショートカットとマウスジェスチャーの完全なカスタマイズに対応しました。現在の割り当ては「設定 -> 操作」で確認・変更できます。このヘルプパネルの内容は今後のアップデートでオンラインドキュメントへ移行される予定です。\0"
+    /* Help_Tip_Rotation */ "回転 : 「エッジ適合」はコーデックブロックに合わせるためのわずかなクロップ(ロスレス)を意味します。「非可逆」は再エンコードが必要であることを意味します。\0"
+    /* Help_Tip_VideoWall */ "ビデオウォール (Ctrl+F11): すべての画面に展開します。閉じるボタンが隠れている場合は、任意の場所をダブルクリックして終了します。\0"
+    /* Help_Tip_DesignerMode */ "トレースモード / フィルムモード : 有効にすると画像が半透明になり、下の要素が透けて見えます。サイズや透明度を調整できます。ツールバーのマウススルー切替をクリックするとスルーモードに入り、Shift+Esc 以外のすべての入力が無視され、QuickView が透明なオーバーレイになります。\0"
+    /* Help_Tip_GamutDetection */ "色域警告 : ターゲットディスプレイまたはソフトプルーフィングプロファイルの色域外の色を検出します。モード : オフ、ソフトプルーフィングのみ、またはすべて (既定 : ソフトプルーフィング)。ツールバーから切り替えます。\0"
+    /* Help_Tip_Raw */ "RAW : 速度を優先するため、既定では埋め込みプレビューを表示します。RAW ボタンをクリックすると完全デコードします (色が異なる場合があります)。\0"
+    /* Help_Tip_JpegQ */ "JPEG品質 : 推定値です (例 : Photoshop 100% ≈ 98%)。エンコーダーの差によるものであり、保存設定とわずかに異なる場合がありますが正常です。\0"
+    /* Help_Tip_SoftProofCompare */ "ソフトプルーフ比較 : ソフトプルーフィングが有効な状態で比較モードに入ると、オリジナル画像と校正後の画像が自動的に比較されます。\0"
+    /* Settings_Option_Auto */ "自動\0"
+    /* Settings_Option_Eco */ "エコ\0"
+    /* Settings_Option_Balanced */ "バランス\0"
+    /* Settings_Option_Ultra */ "ウルトラ\0"
+    /* HUD_Group_Physical */ "物理的特性\0"
+    /* HUD_Group_Scientific */ "科学的解析品質\0"
+    /* HUD_Group_Encoding */ "光学 & エンコーディング\0"
+    /* HUD_Tip_Sharp_Desc */ "エッジ鮮明度 (ラプラシアン分散)\0"
+    /* HUD_Tip_Sharp_High */ "くっきりしたエッジ、高い詳細感\0"
+    /* HUD_Tip_Sharp_Low */ "ソフトフォーカスまたは被写体ぶれ\0"
+    /* HUD_Tip_Sharp_Ref */ "> 500 は非常に鮮明です\0"
+    /* HUD_Tip_Ent_Desc */ "情報密度 (シャノンエントロピー)\0"
+    /* HUD_Tip_Ent_High */ "複雑なテクスチャまたは高いノイズ\0"
+    /* HUD_Tip_Ent_Low */ "単調な領域または低ディテール\0"
+    /* HUD_Tip_Ent_Ref */ "7.0～8.0 は高ディテール\0"
+    /* HUD_Tip_BPP_Desc */ "ピクセルあたりのビット数 (圧縮効率)\0"
+    /* HUD_Tip_BPP_High */ "低い効率 (より多くのデータが保持される)\0"
+    /* HUD_Tip_BPP_Low */ "高い効率 (より高い圧縮率)\0"
+    /* HUD_Tip_BPP_Ref */ "24.0 (Raw RGB), ~2.0-3.0 (高画質 JPEG), ~0.5-1.5 (WebP/AVIF)\0"
+    /* HUD_Label_High */ "高 : \0"
+    /* HUD_Label_Low */ "低 : \0"
+    /* HUD_Label_Ref */ "参考 : \0"
+    /* Settings_Header_GeekGlass */ "Glass エンジン (GPU)\0"
+    /* Settings_Label_EnableGeekGlass */ "Glass を有効化\0"
+    /* Settings_Label_GlassUIAnimations */ "UI アニメーション\0"
+    /* Settings_Header_CoreMaterial */ "コンポーネント素材\0"
+    /* Settings_Label_BlurSigma */ "Glass ブラー シグマ\0"
+    /* Settings_Status_GlassDisabled */ "Glass 無効 (システム)\0"
+    /* Settings_Label_TintDensity */ "色合い層\0"
+    /* Settings_Tooltip_TintDensity */ "Glass すりガラス効果の全体的な色の濃さ。\0"
+    /* Settings_Label_SpecularOpacity */ "反射 (反射光)\0"
+    /* Settings_Tooltip_SpecularOpacity */ "斜めからの照明反射の明るさ。\0"
+    /* Settings_Label_ShadowIntensity */ "影の深さ\0"
+    /* Settings_Tooltip_ShadowIntensity */ "アンビエントオクルージョン影の強度。\0"
+    /* Settings_Header_VectorAssets */ "ベクターレンダリング\0"
+    /* Settings_Label_VectorStrokeWeight */ "アイコンの線の太さ\0"
+    /* Settings_Option_StrokeStandard */ "標準 (1.5px)\0"
+    /* Settings_Option_StrokeFine */ "細線 (1.0px)\0"
+    /* Settings_Header_GlassTint */ "色合いプロファイル\0"
+    /* Settings_Label_TintProfile */ "カラーロジック\0"
+    /* Settings_Option_TintAuto */ "自動 (適応)\0"
+    /* Settings_Option_TintCustom */ "カスタムカラー\0"
+    /* Settings_Label_GlassCustomColor */ "手動色合い\0"
+    /* Settings_Header_DensityMatrix */ "操作面の不透明度 (%)\0"
+    /* Settings_Label_OsdDensity */ "OSD & HUD\0"
+    /* Settings_Tooltip_OsdDensity */ "小さなフローティングオーバーレイの透明度。\0"
+    /* Settings_Label_PanelsDensity */ "ツールバー & サイドバー\0"
+    /* Settings_Tooltip_PanelsDensity */ "下部ツールバー、情報パネル、ギャラリー、右上ウィンドウコントロールの透明度。\0"
+    /* Settings_Label_ModalsDensity */ "ダイアログ & 設定\0"
+    /* Settings_Tooltip_ModalsDensity */ "中央ポップアップの透明度。\0"
+    /* Settings_Label_MenusDensity */ "メニュー\0"
+    /* Settings_Tooltip_MenusDensity */ "右クリックメニューの材質濃度（Acrylic 素材でのみ調整可能）。\0"
+    /* Settings_Header_Professional */ "プロフェッショナルツール\0"
+    /* Settings_Label_ShowDirtyRect */ "アニメーションモードで更新領域ボタン表示\0"
+    /* Settings_Tooltip_ShowDirtyRect */ "フレームのどの部分が再描画されているかを視覚化するため、アニメーションモードで更新領域のデバッグボタンを表示します。\0"
+    /* Settings_Label_LoupeShape */ "ルーペの形状\0"
+    /* Settings_Option_LoupeShapeSquare */ "四角形\0"
+    /* Settings_Option_LoupeShapeCircle */ "円形\0"
+    /* Settings_Option_LoupeShapeFullscreen */ "全画面\0"
+    /* Settings_Label_LoupeZoom */ "ルーペ倍率\0"
+    /* Settings_Tooltip_LoupeHotkey */ "ショートカットキーを押しながらマウスホイールをスクロールすると、ルーペのサイズを調整できます。\0"
+    /* Settings_Tooltip_CropModeHotkey */ "Ctrl キーを押しながら左クリックでドラッグすると、すばやく範囲選択してトリミングできます。\0"
+    /* Settings_Tab_Theme */ "テーマ\0"
+    /* Settings_Label_ThemeMode */ "プリセット\0"
+    /* Settings_Option_ThemeAuto */ "システム\0"
+    /* Settings_Option_ThemeDark */ "ダーク\0"
+    /* Settings_Option_ThemeLight */ "ライト\0"
+    /* Settings_Option_ThemeCustom */ "デザイン\0"
+    /* Settings_Label_AmbientDimmer */ "モーダル減光\0"
+    /* Settings_Tooltip_AmbientDimmer */ "モーダルや設定ウィンドウが開いているときに背景を暗くします。\0"
+    /* Settings_Label_AccentColor */ "アクセントカラー\0"
+    /* Settings_Option_AccentSystem */ "システム\0"
+    /* Settings_Option_AccentCustom */ "カスタム\0"
+    /* Settings_Label_WindowBorderAccent */ "ウィンドウ枠の強調色\0"
+    /* Settings_Option_BorderFollowSystem */ "システム\0"
+    /* Settings_Option_BorderAccent */ "アクセント\0"
+    /* Settings_Label_ResetGlass */ "マテリアル\0"
+    /* Settings_Action_ResetGlass */ "リセット\0"
+    /* Settings_Header_ThemeManagement */ "テーマエンジン\0"
+    /* Settings_Action_ExportTheme */ "エクスポート\0"
+    /* Settings_Action_ImportTheme */ "インポート\0"
+    /* Toolbar_Tooltip_CompareSave */ "画像を保存/エクスポート (S)\0"
+    /* Dialog_MultiLineInputHint */ "[Ctrl+Enter] 送信して保存\0"
+    /* Dialog_AiApiKeyTitle */ "API キーの設定\0"
+    /* Dialog_AiApiKeyPrompt */ "プロバイダーの API キーを入力してください（Windows DPAPI で暗号化保存）：\0"
+    /* Dialog_AiPromptTitle */ "プロンプトテンプレートの編集\0"
+    /* Dialog_AiPromptPrompt */ "プロンプトを設定（複数行対応、Ctrl+Enter で送信）：\0"
+    /* Dialog_AiActionNameTitle */ "アクション名の編集\0"
+    /* Dialog_AiActionNamePrompt */ "AI アクションの表示名を入力してください：\0"
+    /* Dialog_AiBaseUrlTitle */ "エンドポイントの設定\0"
+    /* Dialog_AiBaseUrlPrompt */ "OpenAI / ComfyUI 互換の API ベース URL を入力してください：\0"
+    /* AiAction_Title */ "AI コマンドパレット\0"
+    /* AiAction_EscHint */ "[Esc] 閉じる\0"
+    /* AiAction_ScopeCropAndBlend */ "選択範囲の修復\0"
+    /* AiAction_ScopeForceFull */ "画像全体を生成\0"
+    /* AiAction_FooterQuickKeys */ "数字キー 1~9 / 0 で即時実行\0"
+    /* AiAction_Placeholder */ "プロンプトを入力、またはプリセットを検索...\0"
+    /* AiAction_InpaintTitle */ "領域インペイント (AI Inpaint)\0"
+    /* AiAction_InpaintDesc */ "選択範囲を違和感なく消去または置換\0"
+    /* AiAction_InpaintTag */ "範囲選択\0"
+    /* AiAction_AdhocPrefix */ "✨ プロンプトを送信: \"\0"
+    /* AiAction_AdhocSend */ "Enter 送信\0"
+    /* AiAction_CurrentModel */ "現在のモデル\0"
+    /* AiAction_NoModelSelected */ "モデル未選択\0"
+    /* OSD_AiProcessing */ "AI 処理中: %s (Esc でキャンセル)...\0"
+    /* OSD_AiGenerationSuccess */ "AI 生成完了！ワイプ比較モードを開始します\0"
+    /* OSD_AiCompleted */ "AI 処理が完了しました\0"
+    /* OSD_AiPreparing */ "AI: %s 準備中 (Escでキャンセル)...\0"
+    /* OSD_AiProcessingElapsed */ "AI: %s 処理中 [%d秒, Escでキャンセル]...\0"
+    /* OSD_AiConnecting */ "AI 接続中: %s (Escでキャンセル)...\0"
+    /* OSD_AiSamplingProgress */ "AI サンプリング中: %d%% (%d/%dステップ) [%d秒, Escでキャンセル]\0"
+    /* OSD_AiSamplingProgressEta */ "AI サンプリング中: %d%% (%d/%dステップ, 残り約%.0f秒) [%d秒, Escでキャンセル]\0"
+    /* OSD_AiAdhocPrompt */ "カスタムプロンプト\0"
+    /* OSD_AiTaskCancelled */ "AI タスクがキャンセルされました\0"
+    /* OSD_AiInpaintGuide */ "マウスの左ボタンで再描画範囲を選択してください (Enter で実行、Esc でキャンセル)\0"
+    /* OSD_AiInpaintGuideActionFormat */ "マウスの左ボタンで範囲を選択し、Enter で [%s] を実行\0"
+    /* OSD_AiSelectionTooSmall */ "選択範囲が小さすぎます。再描画範囲を選択してください\0"
+    /* OSD_AiEmptyResult */ "AI 生成結果が空です\0"
+    /* OSD_AiDecodeFailed */ "AI 画像のデコードに失敗しました\0"
+    /* OSD_AiTextureFailed */ "GPU テクスチャの作成に失敗しました\0"
+    /* OSD_AiEmptyPromptHint */ "プロンプトを入力するか、プリセットアクションを選択してください\0"
+    /* OSD_AiInpaintPromptEmptyHint */ "先に部分再描画プロンプトを入力してください\0"
+    /* Settings_Tab_Ai */ "AI アクション\0"
+    /* Settings_Header_AiProviders */ "AI プロバイダー設定\0"
+    /* Settings_Desc_AiProviders */ "API エンドポイント、DPAPI 暗号化キー、モデルを管理します。\0"
+    /* Settings_Label_AiProviderName */ "プロバイダー プリセット\0"
+    /* Settings_Label_AiBaseUrl */ "エンドポイント (Base URL)\0"
+    /* Settings_Label_AiApiKey */ "API キー (DPAPI 暗号化)\0"
+    /* Settings_Label_AiModelId */ "モデル識別子\0"
+    /* Settings_Label_AiModelUnconfigured */ "[未設定・取得または入力]\0"
+    /* Settings_Label_AiMaxRes */ "最大解像度ポリシー\0"
+    /* Settings_Label_AiDefaultProfile */ "★ デフォルトプロバイダー\0"
+    /* Settings_Button_AiSetDefault */ "★ デフォルトに設定\0"
+    /* Settings_Button_AiTestConn */ "接続テスト\0"
+    /* Settings_Button_AiSaveProf */ "設定を保存\0"
+    /* Settings_Button_AiDeleteProf */ "この設定を削除\0"
+    /* Settings_Button_AiAddProf */ "+ プロバイダーを追加\0"
+    /* Settings_Header_AiActions */ "カスタム AI アクション一覧\0"
+    /* Settings_Button_AiAddAction */ "+ 新規 AI アクション\0"
+    /* Settings_Label_AiActionName */ "アクション名\0"
+    /* Settings_Label_AiPromptTemplate */ "プロンプトテンプレート\0"
+    /* Settings_Label_AiExecModel */ "実行プロバイダー\0"
+    /* Settings_Option_AiDefaultModel */ "デフォルトプロバイダー\0"
+    /* Settings_Label_AiScopeMode */ "処理範囲モード\0"
+    /* Settings_Button_AiDeleteAction */ "このアクションを削除\0"
+    /* Settings_AiModelCustom */ "✎ モデル名を手動入力...\0"
+    /* Settings_AiModelFetching */ "⏳ モデル一覧を取得中...\0"
+    /* Settings_AiModelFetchAuto */ "↻ サーバーからモデルを取得...\0"
+    /* Settings_Option_AiRes4K */ "4K / 原寸優先 (4096px)\0"
+    /* Settings_Option_AiRes2K */ "2K 高画質 (2048px)\0"
+    /* Settings_Option_AiRes1K */ "1K 標準 (1024px)\0"
+    /* Settings_Option_AiResOriginal */ "制限なし (オリジナル)\0"
+    /* Settings_Option_AiScopeForceFull */ "画像全体\0"
+    /* Settings_Option_AiScopeCropBlend */ "部分修復・ブレンド\0"
+    /* Settings_Option_AiCustomEndpoint */ "カスタム (OpenAI 互換)\0"
+    /* Settings_Option_AiLocalComfyUI */ "ローカル ComfyUI\0"
+    /* Settings_Option_AiLocalSdWebUI */ "ローカル SD WebUI / Forge\0"
+    /* OSD_AiFetchingModels */ "モデル一覧を取得中...\0"
+    /* OSD_AiFetchModelsFailed */ "モデル一覧の取得に失敗: \0"
+    /* OSD_AiFetchModelsSuccessFormat */ "%zu 件のモデルを取得しました\0"
+    /* OSD_AiSetDefaultSuccessFormat */ "%s をデフォルトに設定しました\0"
+    /* OSD_AiTestingConnection */ "接続と認証を確認中...\0"
+    /* OSD_AiConnSuccessFormat */ "✓ 接続成功！レイテンシ: %dms (HTTP %d)\0"
+    /* OSD_AiSaveFailedBaseUrlEmpty */ "保存失敗: エンドポイント (Base URL) が空です\0"
+    /* OSD_AiSaveFailedApiKeyEmpty */ "保存失敗: クラウド API キーが空です\0"
+    /* OSD_AiSaveFailedModelEmpty */ "保存失敗: モデル名を指定または選択してください\0"
+    /* OSD_AiSaveProfileSuccess */ "✓ プロバイダー設定を保存しました\0"
+    /* AiError_ApiKeyEmpty */ "API キーが未設定です。【設定 -> AI アクション】で入力してください。\0"
+    /* AiError_ModelEmpty */ "モデルが未設定です。【設定 -> AI アクション】で選択または入力してください。\0"
+    /* AiError_InvalidUrl */ "Base URL の形式が無効です。\0"
+    /* AiError_InitWinHttpFailed */ "WinHTTP セッションの初期化に失敗しました。\0"
+    /* AiError_ConnectFailed */ "サーバーへの接続に失敗しました。ネットワークを確認してください。\0"
+    /* AiError_CreateReqFailed */ "HTTP リクエストの作成に失敗しました。\0"
+    /* AiError_NoValidDataReturned */ "HTTP 200 応答ですが、有効な画像またはテキストが検出されませんでした。\0"
+    /* AiError_RequestTimeout */ "ネットワーク要求がタイムアウトしたか、応答がありません。\0"
+    /* AiError_HttpStatusPrefix */ "プロバイダーからエラーが返されました (HTTP \0"
+    /* AiError_JsonParseFailed */ "プロバイダーから返された JSON データを解析できません。\0"
+    /* AiError_NoModelsFound */ "リクエストは成功しましたが、利用可能なモデルが見つかりませんでした。\0"
+    /* AiTest_ConnSuccess */ "接続に成功し、認証が承認されました。\0"
+    /* AiTest_AuthFailedPrefix */ "API キーが無効または未認証です (HTTP \0"
+    /* AiTest_HttpErrorPrefix */ "サーバーから HTTP \0"
+    /* AiError_NoAvailableProfile */ "利用可能な AI モデルプロファイルが見つかりません。設定を確認してください。\0"
+    /* Settings_Tab_FileAssoc */ "関連付け\0"
+    /* Settings_Header_FileAssocStatus */ "関連付け診断\0"
+    /* Settings_Header_FileAssocOptions */ "動作とカスタマイズ\0"
+    /* Settings_Header_FileAssocFormats */ "対応フォーマット管理 (92)\0"
+    /* Settings_Label_FileAssocIconStyle */ "エクスプローラーのアイコン\0"
+    /* Settings_Option_FileAssocIconNative */ "システム標準\0"
+    /* Settings_Option_FileAssocIconApp */ "QuickView ロゴ\0"
+    /* Settings_Label_FileAssocContextMenu */ "コンテキストメニュー (\"QuickView で開く\")\0"
+    /* Settings_Label_FileAssocAutoRepair */ "起動・更新時に登録パスを自動修復する\0"
+    /* Settings_Label_FileAssocPresets */ "クイックプリセット\0"
+    /* Settings_Action_PresetRecommended */ "推奨\0"
+    /* Settings_Action_PresetAllImages */ "すべての画像\0"
+    /* Settings_Action_PresetPhotoRaw */ "写真 & RAW\0"
+    /* Settings_Action_PresetClearAll */ "すべて解除\0"
+    /* Settings_Action_ApplyAssoc */ "システムに変更を適用\0"
+    /* Settings_Action_ApplyPending */ "変更を適用*\0"
+    /* Settings_Action_SetDefaultWin */ "Windows で既定に設定\0"
+    /* Settings_Action_RepairAssoc */ "破損パスを修復\0"
+    /* Settings_Label_FileAssocCatStandard */ "標準ラスター画像\0"
+    /* Settings_Label_FileAssocCatModern */ "モダン / Web / ベクター\0"
+    /* Settings_Label_FileAssocCatPro */ "プロ / HDR / レガシー\0"
+    /* Settings_Label_FileAssocCatRaw */ "カメラ RAW\0"
+    /* Settings_Label_FileAssocCatExtRaw */ "拡張 / シネマ RAW\0"
+    /* Settings_Label_FileAssocCatArchive */ "アーカイブ / コミック\0"
+    /* Settings_Tooltip_FileAssocArchive */ "推奨: .cbz / .cbr のみ。.zip / .rar は解凍ソフトとの競合を避けるため必要な場合のみ選択してください。\0"
+    /* Settings_Status_AssocApplied */ "関連付けをレジストリに同期しました\0"
+    /* Settings_Status_AssocSummaryFormat */ "%d 件選択 · 既定 %d 件 · プログラムから開く %d 件\0"
+    /* Settings_Status_AssocBrokenHint */ "引用符なしや無効なコマンドを検出しました。適用または修復で修正できます。\0"
+    /* Settings_Status_AssocPendingHint */ "未適用の変更があります。「変更を適用」をクリックしてシステムと同期してください。\0"
+    /* Settings_Status_AssocStoreManaged */ "Microsoft Store (MSIX) モード：コンテキストメニュー等は Windows が標準管理しています。「Windows で既定に設定」から関連付けを行ってください。\0"
+    /* Settings_Label_StoreUpdatesManaged */ "Microsoft Store で管理\0"
+    /* Settings_Action_OpenStore */ "ストアを開く\0"
+    /* Settings_Status_AssocLegend */ "緑の点 = システム既定 · ハイライト = 選択済み / プログラムから開く\0"
+    /* Context_OpenWithQuickView */ "QuickView で開く\0";
+static constexpr char kBlob_RU[] =
+    /* CurrentLocale */ "ru-ru\0"
+    /* OSD_NoImage */ "Изображение не загружено\0"
+    /* OSD_FolderEmpty */ "В этой папке нет изображений\0"
+    /* OSD_SvgStaticFallback */ "Анимированный SVG показан как статичный кадр\0"
+    /* OSD_Lossless */ "Без потерь\0"
+    /* OSD_ReencodedLossless */ "Перекодировано (без потерь)\0"
+    /* OSD_EdgeAdapted */ "Оптимизация краёв\0"
+    /* OSD_Reencoded */ "Перекодировано\0"
+    /* OSD_ReadOnly */ "Доступ запрещён - файл используется или только для чтения\0"
+    /* OSD_NotPerfect */ "Преобразование неидеально (оптимизация краёв)\0"
+    /* OSD_SpanOn */ "Видеостена: ВКЛ\0"
+    /* OSD_SpanOff */ "Видеостена: ВЫКЛ\0"
+    /* OSD_CompareBefore */ "До (Оригинал)\0"
+    /* OSD_CompareAfter */ "После (Проба)\0"
+    /* OSD_CompareAnimNotSupported */ "Режим сравнения недоступен для анимации\0"
+    /* OSD_UndoDeleteSuccess */ "Удаление отменено\0"
+    /* OSD_UndoDeleteFailed */ "Ошибка отмены удаления\0"
+    /* OSD_UndoRenameSuccess */ "Переименование отменено\0"
+    /* OSD_UndoRenameFailed */ "Ошибка отмены переименования\0"
+    /* OSD_UndoTransformSuccess */ "Поворот/отражение отменено\0"
+    /* OSD_UndoTransformFailed */ "Ошибка отмены поворота/отражения\0"
+    /* Action_RotateCW */ "Повернуть на 90° по часовой\0"
+    /* Action_RotateCCW */ "Повернуть на 90° против часовой\0"
+    /* Action_Rotate180 */ "Повернуть на 180°\0"
+    /* Action_FlipH */ "Отразить по горизонтали\0"
+    /* Action_FlipV */ "Отразить по вертикали\0"
+    /* Dialog_SaveTitle */ "Сохранить изменения?\0"
+    /* Dialog_SaveContent */ "Изображение было изменено. Сохранить изменения?\0"
+    /* Dialog_ButtonSave */ "Сохранить\0"
+    /* Dialog_ButtonSaveAs */ "Сохранить как...\0"
+    /* Dialog_ButtonDiscard */ "Отменить\0"
+    /* Dialog_ButtonContinue */ "Продолжить\0"
+    /* Dialog_CropUnsavedTitle */ "Изменения кадрирования не сохранены. Сохранить?\0"
+    /* Dialog_SaveAsTitle */ "Сохранить изображение\0"
+    /* Dialog_ExportTitle */ "Сохранение и экспорт\0"
+    /* Dialog_ButtonOverwrite */ "Перезаписать\0"
+    /* Dialog_EmbedICC */ "Профиль ICC\0"
+    /* Dialog_SizeEstimating */ "Оценка размера...\0"
+    /* Dialog_ExportError */ "Ошибка экспорта\0"
+    /* Context_Open */ "Открыть...\tCtrl+O\0"
+    /* Context_Crop */ "Кадрировать\0"
+    /* Context_SuperResolution */ "ИИ Супер-разрешение\0"
+    /* Context_AiAction */ "ИИ Действия\0"
+    /* Context_OpenWith */ "Открыть с помощью...\0"
+    /* Context_Edit */ "Изменить\tE\0"
+    /* Context_ShowInExplorer */ "Показать в Проводнике\0"
+    /* Context_OpenFolder */ "Открыть папку\0"
+    /* Context_CopyPixels */ "Скопировать пиксели\tCtrl+C\0"
+    /* Context_CopyFile */ "Скопировать файл\tCtrl+Shift+C\0"
+    /* Context_CopyPath */ "Скопировать путь\tCtrl+Alt+C\0"
+    /* Context_Print */ "Печать\tCtrl+P\0"
+    /* Context_RotateCW */ "Повернуть на 90° вправо\tR\0"
+    /* Context_RotateCCW */ "Повернуть на 90° влево\tShift+R\0"
+    /* Context_FlipH */ "Отразить по горизонтали\tH\0"
+    /* Context_FlipV */ "Отразить по вертикали\tV\0"
+    /* Context_Transform */ "Преобразовать\0"
+    /* Context_ActualSize */ "Настоящий размер (100%)\tZ\0"
+    /* Context_FitToScreen */ "По размеру экрана\tF\0"
+    /* Context_FitWindow */ "По размеру окна\0"
+    /* Context_FillWindow */ "Заполнить окно\0"
+    /* Context_ZoomIn */ "Увеличить\t+ / Ctrl +\0"
+    /* Context_ZoomOut */ "Уменьшить\t- / Ctrl -\0"
+    /* Context_LockWindow */ "Заблокировать окно\0"
+    /* Context_AlwaysOnTop */ "Поверх всех окон\tCtrl+T\0"
+    /* Context_HUDGallery */ "Миниатюры\tT\0"
+    /* Context_LiteInfoPanel */ "Краткая панель информации\tTab\0"
+    /* Context_FullInfoPanel */ "Полная панель информации\tI\0"
+    /* Context_RenderRAW */ "Рендеринг RAW\0"
+    /* Context_PixelArtMode */ "Режим пиксель-арта\0"
+    /* Context_Fullscreen */ "Полный экран\tF11\0"
+    /* Context_SlideshowMode */ "Режим слайд-шоу\0"
+    /* Context_SpanDisplays */ "Распределять по мониторам (видеостена)\tCtrl+F11\0"
+    /* Context_View */ "Вид\0"
+    /* Context_WallpaperFill */ "Заполнить\0"
+    /* Context_WallpaperFit */ "По размеру\0"
+    /* Context_WallpaperTile */ "Замостить\0"
+    /* Context_SetAsWallpaper */ "Сделать обоями\0"
+    /* Context_Rename */ "Переименовать\tF2\0"
+    /* Context_FixExtension */ "Исправить расширение\0"
+    /* Context_Delete */ "Удалить\tDel\0"
+    /* Context_UndoDelete */ "Отменить удаление\tCtrl+Z\0"
+    /* Context_UndoRename */ "Отменить переименование\tCtrl+Z\0"
+    /* Context_UndoTransform */ "Отменить поворот/отражение\tCtrl+Z\0"
+    /* Context_Undo */ "Отменить\tCtrl+Z\0"
+    /* Context_SortBy */ "Сортировка\0"
+    /* Context_NavOrder */ "Навигация\0"
+    /* Context_SortAscending */ "По возрастанию\0"
+    /* Context_SortDescending */ "По убыванию\0"
+    /* Context_Settings */ "Настройки...\0"
+    /* Context_CompareMode */ "Режим сравнения\tC\0"
+    /* Context_OverlayMode */ "Режим наложения\tCtrl+Shift+O\0"
+    /* Context_GalleryOpenCompare */ "Открыть в режиме сравнения\0"
+    /* Context_GalleryOpenNewWindow */ "Открыть в новом окне\0"
+    /* Context_Exit */ "Выход\tMButton/Esc\0"
+    /* Menu_ExitPassthrough */ "Выйти из режима сквозного щелчка\0"
+    /* Message_SaveErrorTitle */ "Ошибка\0"
+    /* Message_SaveErrorContent */ "Не удалось сохранить файл. Файл заблокирован?\0"
+    /* Toolbar_Tooltip_Prev */ "Предыдущее (Влево)\0"
+    /* Toolbar_Tooltip_Next */ "Следующее (Вправо)\0"
+    /* Toolbar_Tooltip_RotateL */ "Повернуть влево (Shift+R)\0"
+    /* Toolbar_Tooltip_RotateR */ "Повернуть вправо (R)\0"
+    /* Toolbar_Tooltip_FlipH */ "Отразить по горизонтали (H)\0"
+    /* Toolbar_Tooltip_Lock */ "Заблокировать окно (временно)\0"
+    /* Toolbar_Tooltip_Unlock */ "Разблокировать окно\0"
+    /* Toolbar_Tooltip_Gallery */ "Галерея (T)\0"
+    /* Toolbar_Tooltip_Info */ "Информационная панель\0"
+    /* Toolbar_Tooltip_RawPreview */ "RAW: Предпросмотр (нажмите для полного)\0"
+    /* Toolbar_Tooltip_RawFull */ "RAW: Полное декодирование (нажмите для предпросмотра)\0"
+    /* Toolbar_Tooltip_RawPairView */ "RAW: Показать парный RAW (полное декодирование)\0"
+    /* Toolbar_Tooltip_RawPairBack */ "RAW: Вернуться к парному изображению\0"
+    /* Toolbar_Tooltip_FixExtension */ "Несоответствие расширения (исправить)\0"
+    /* Toolbar_Tooltip_Pin */ "Закрепить панель\0"
+    /* Toolbar_Tooltip_Unpin */ "Открепить панель\0"
+    /* Toolbar_Tooltip_GamutWarning */ "Показать области вне охвата\0"
+    /* Toolbar_Tooltip_CropCopy */ "Скопировать выделение (Ctrl+C)\0"
+    /* Toolbar_Tooltip_CropSave */ "Сохранить (Ctrl+S)\0"
+    /* Toolbar_Tooltip_CropApply */ "Применить (Enter)\0"
+    /* Toolbar_Tooltip_CropCancel */ "Выход (Esc)\0"
+    /* Toolbar_Tooltip_OverlayAlphaUp */ "Увеличить непрозрачность\0"
+    /* Toolbar_Tooltip_OverlayAlphaDown */ "Уменьшить непрозрачность\0"
+    /* Toolbar_Tooltip_OverlayPassthroughOn */ "Включить сквозной щелчок\0"
+    /* Toolbar_Tooltip_OverlayPassthroughOff */ "Выключить сквозной щелчок\0"
+    /* Toolbar_Tooltip_OverlayExit */ "Выйти из режима наложения\0"
+    /* Toolbar_Tooltip_OverlayZoomIn */ "Увеличить (наложение)\0"
+    /* Toolbar_Tooltip_OverlayZoomOut */ "Уменьшить (наложение)\0"
+    /* Toolbar_Tooltip_NormalMode */ "Обычный режим\0"
+    /* Toolbar_Tooltip_CompareMode */ "Режим сравнения\0"
+    /* Toolbar_Tooltip_SinglePage */ "Одностраничный режим\0"
+    /* Toolbar_Tooltip_DualPage */ "Двухстраничный режим\0"
+    /* Toolbar_Tooltip_CompareOpen */ "Открыть новое изображение в выделении\0"
+    /* Toolbar_Tooltip_CompareSwap */ "Поменять местами\0"
+    /* Toolbar_Tooltip_CompareLayout */ "Переключить макет\0"
+    /* Toolbar_Tooltip_CompareInfo */ "Информация о сравнении\0"
+    /* Toolbar_Tooltip_CompareDelete */ "Удалить выбранное изображение\0"
+    /* Toolbar_Tooltip_CompareZoomIn */ "Увеличить (точно)\0"
+    /* Toolbar_Tooltip_CompareZoomOut */ "Уменьшить (точно)\0"
+    /* Toolbar_Tooltip_CompareSyncZoomOn */ "Синхронное масштабирование: ДА\0"
+    /* Toolbar_Tooltip_CompareSyncZoomOff */ "Синхронное масштабирование: НЕТ\0"
+    /* Toolbar_Tooltip_CompareSyncPanOn */ "Синхронное панорамирование: ДА\0"
+    /* Toolbar_Tooltip_CompareSyncPanOff */ "Синхронное панорамирование: НЕТ\0"
+    /* Toolbar_Tooltip_SlideshowImmersiveToggle */ "Вкл./выкл. эффект прожектора\0"
+    /* Toolbar_Tooltip_SlideshowExit */ "Выйти из режима слайд-шоу\0"
+    /* Toolbar_Tooltip_CompareExit */ "Выйти из сравнения\0"
+    /* Toolbar_Tooltip_AnimPlay */ "Воспроизвести анимацию\0"
+    /* Toolbar_Tooltip_AnimPause */ "Приостановить анимацию\0"
+    /* Toolbar_Tooltip_AnimPrev */ "Предыдущий кадр\0"
+    /* Toolbar_Tooltip_AnimNext */ "Следующий кадр\0"
+    /* Toolbar_Tooltip_AnimDirtyOn */ "Отладка вид. обл.: ДА\0"
+    /* Toolbar_Tooltip_AnimDirtyOff */ "Отладка вид. обл.: НЕТ\0"
+    /* Toolbar_Tooltip_AnimSpeed */ "Скорость анимации\0"
+    /* OSD_Copied */ "Скопировано.\0"
+    /* OSD_PixelsCopied */ "Пиксели скопированы в буфер обмена.\0"
+    /* OSD_PixelsExtracting */ "Извлечение пикселей...\0"
+    /* OSD_FileCopied */ "Файл скопирован в буфер обмена.\0"
+    /* OSD_CoordinatesCopied */ "Координаты скопированы.\0"
+    /* OSD_FilePathCopied */ "Путь к файлу скопирован.\0"
+    /* OSD_Zoom100 */ "Масштаб: 100%\0"
+    /* OSD_ZoomFit */ "Масштаб: По размеру экрана\0"
+    /* OSD_ZoomFitWindow */ "Масштаб: По размеру окна\0"
+    /* OSD_ZoomFill */ "Масштаб: Заполнить окно\0"
+    /* OSD_PrintInstruction */ "Печать: Нажмите Ctrl+P в открытом приложении\0"
+    /* OSD_MovedToRecycleBin */ "Перемещено в Корзину\0"
+    /* OSD_WindowLocked */ "Окно заблокировано\0"
+    /* OSD_WindowUnlocked */ "Окно разблокировано\0"
+    /* OSD_AlwaysOnTopOn */ "Всегда сверху: ДА\0"
+    /* OSD_AlwaysOnTopOff */ "Всегда сверху: НЕТ\0"
+    /* OSD_WallpaperSet */ "Обои установлены\0"
+    /* OSD_WallpaperFailed */ "Не удалось установить обои\0"
+    /* OSD_Renamed */ "Переименовано\0"
+    /* OSD_RenameFailed */ "Ошибка переименования\0"
+    /* OSD_Restored */ "Восстановлено\0"
+    /* OSD_ExtensionFixed */ "Расширение исправлено\0"
+    /* OSD_FirstImage */ "Первое изображение\0"
+    /* OSD_LastImage */ "Последнее изображение\0"
+    /* OSD_HD */ "HD\0"
+    /* OSD_ZoomPrefix */ "Масштаб: \0"
+    /* OSD_AnimPlaying */ "Воспроизведение\0"
+    /* OSD_AnimPaused */ "Пауза (Alt+Влево/Вправо - покадровый просмотр)\0"
+    /* OSD_AnimDirtyOn */ "Видимая область: ДА\0"
+    /* OSD_AnimDirtyOff */ "Видимая область: НЕТ\0"
+    /* OSD_GamutDetected */ "Обнаружены цвета вне цветового охвата\0"
+    /* OSD_GamutIncompatible */ "Охват: Несовместимый профиль или ошибка разбора\0"
+    /* OSD_GamutFailed */ "Охват: Ошибка анализа\0"
+    /* OSD_SlideshowStarted */ "Слайд-шоу начато\0"
+    /* OSD_SlideshowStopped */ "Слайд-шоу остановлено\0"
+    /* OSD_SlideshowResumed */ "Слайд-шоу возобновлено\0"
+    /* OSD_SlideshowPaused */ "Слайд-шоу на паузе\0"
+    /* OSD_ImmersiveSpotlight */ "Эффект: Прожектор\0"
+    /* OSD_ImmersiveNormal */ "Эффект: Обычный\0"
+    /* OSD_PrintJobStarted */ "Задание на печать отправлено. Можно продолжать просмотр.\0"
+    /* OSD_PrintJobFinished */ "Задание на печать успешно отправлено.\0"
+    /* OSD_EnterCropMode */ "Режим кадрирования\0"
+    /* OSD_CropCopied */ "Область кадрирования скопирована\0"
+    /* OSD_CropApplied */ "Кадрирование применено (не сохранено)\0"
+    /* Context_ColorSpace */ "Цвет. пространство\0"
+    /* Settings_Option_CmsUnmanaged */ "Неуправляемый (быстро)\0"
+    /* Settings_Option_CmssRGB */ "sRGB (стандарт)\0"
+    /* Settings_Option_CmsP3 */ "Display P3 (широкий охват)\0"
+    /* Settings_Option_CmsAdobeRGB */ "Adobe RGB (1998)\0"
+    /* Settings_Option_CmsGray */ "Оттенки серого (контроль тона)\0"
+    /* Settings_Option_CmsProPhoto */ "ProPhoto RGB\0"
+    /* Checkbox_AlwaysSaveLossless */ "Всегда сохранять без потерь\0"
+    /* Checkbox_AlwaysSaveEdgeAdapted */ "Всегда сохранять с оптимизацией краёв\0"
+    /* Checkbox_AlwaysSaveLossy */ "Всегда сохранять перекодированное\0"
+    /* Checkbox_NeverConfirmDelete */ "Отправлять в Корзину без подтверждения\0"
+    /* OSD_HEICCodecMissing */ "Невозможно декодировать HEIC, установите расширение HEVC\0"
+    /* Dialog_HEICTitle */ "Невозможно декодировать HEIC\0"
+    /* Dialog_HEICContent */ "В системе отсутствует расширение HEVC.\\nQuickView использует аппаратное ускорение для лучшей производительности.\0"
+    /* Dialog_HEICGetExtension */ "Получить расширение (бесплатно)\0"
+    /* Dialog_Cancel */ "Отмена\0"
+    /* Settings_Tab_General */ "Общие\0"
+    /* Settings_Tab_About */ "О программе\0"
+    /* Settings_Tab_Shortcuts */ "Клавиши\0"
+    /* Settings_Hotkey_PressKey */ "Нажмите клавиши...\0"
+    /* Settings_Hotkey_Conflict */ "Конфликт клавиш\0"
+    /* Settings_Hotkey_ConflictPrompt */ "Занято \"%s\". Продолжение сбросит привязку.\0"
+    /* Settings_Hotkey_Restore */ "Сбросить горячие клавиши\0"
+    /* Settings_Hotkey_Restored */ "Восстановлено\0"
+    /* Settings_Hotkey_MouseTip */ "Подсказка: поддерживаются средняя кнопка, боковые и другие многофункциональные кнопки мыши. Для сопоставления дополнительных кнопок сначала назначьте их на клавиши клавиатуры в драйвере мыши.\0"
+    /* Settings_Header_GalleryTrigger */ "Фотоплёнка (при наведении вверху)\0"
+    /* Settings_Label_GalleryTriggerMode */ "Режим триггера фотопленки\0"
+    /* Settings_Label_KeepGalleryVisibleOnThumbnailClick */ "Не скрывать после щелчка\0"
+    /* Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick */ "Эта функция автоматически включит блокировку окна и сохранение размера окна при навигации.\0"
+    /* Settings_Label_GalleryExpandOnClickOnly */ "Режим триггера стрелки развертывания\0"
+    /* Settings_Tooltip_GalleryExpandOnClickOnly */ "Для развертывания фотопленки требуется щелчок по стрелке, предотвращая случайное наведение.\0"
+    /* Settings_Option_TriggerClick */ "Щелчок\0"
+    /* Settings_Option_TriggerHover */ "Наведение\0"
+    /* Settings_Option_GalleryTriggerAuto */ "Автонаведение\0"
+    /* Settings_Option_GalleryTriggerDelay */ "Наведение на точку\0"
+    /* Settings_Option_GalleryTriggerClick */ "Щелчок по точке\0"
+    /* Settings_Option_GalleryTriggerDisable */ "Отключено\0"
+    /* Settings_Tooltip_GalleryTrigger */ "Эта функция автоматически отключается, если размер окна меньше 600x450 пкс.\0"
+    /* Settings_Label_GalleryTriggerAreaHeight */ "Высота зоны триггера\0"
+    /* Settings_Label_GalleryDwellTime */ "Время задержки\0"
+    /* Settings_Label_GalleryExitDelay */ "Задержка выхода\0"
+    /* Settings_Label_GalleryMinSize */ "Мин. размер галереи\0"
+    /* Settings_Group_Foundation */ "Основные\0"
+    /* Settings_Group_Startup */ "Запуск\0"
+    /* Settings_Group_Habits */ "Предпочтения\0"
+    /* Settings_Label_Language */ "Язык\0"
+    /* Settings_Label_SingleInstance */ "Только один экземпляр программы\0"
+    /* Settings_Label_CheckUpdates */ "Проверка обновлений\0"
+    /* Settings_Label_UpdateChannel */ "Канал обновлений\0"
+    /* Settings_Option_UpdateStable */ "Стабильный\0"
+    /* Settings_Option_UpdatePreRelease */ "Предварительный\0"
+    /* Settings_Tooltip_PreRelease */ "Стабильный: Выпускается, когда предварительная версия доказала свою стабильность.\nПредварительный: Моментальная публикация последних изменений для сбора отзывов (эти изменения не прошли строгую проверку).\0"
+    /* Settings_Label_NavLoopMode */ "Циклическая навигация\0"
+    /* Settings_Label_SortOrder */ "Порядок сортировки\0"
+    /* Settings_Label_SortDescending */ "По убыванию\0"
+    /* Settings_Label_SortArchivesByNameAscending */ "Всегда сортировать архивы по имени\0"
+    /* Settings_Label_ConfirmDel */ "Подтверждать перед удалением\0"
+    /* Settings_Label_Portable */ "Портативный режим / Очистка\0"
+    /* Settings_Tooltip_Portable */ "Портативный режим и очистка реестра:\nПри включении QuickView работает в портативном режиме. Будут автоматически очищены имеющиеся ассоциации в реестре, отключено автоизменение реестра, а файлы конфигурации будут храниться не в AppData, а в папке приложения.\0"
+    /* Settings_Label_SpanDisplays */ "Распределять по мониторам (видеостена)\0"
+    /* Settings_Label_UIScale */ "Масштаб интерфейса\0"
+    /* Settings_Status_RestartRequired */ "Требуется перезапуск\0"
+    /* Settings_Status_NoWritePerm */ "Нет прав на запись!\0"
+    /* Settings_Status_Enabled */ "Включено\0"
+    /* Settings_Header_PoweredBy */ "Работает на\0"
+    /* Settings_Text_Copyright */ "© 2025–%s Vivor Loong (GitHub: @justnullname)\0"
+    /* Settings_Text_License */ "Licensed under GNU GPL v3.0\0"
+    /* Settings_Tab_Visuals */ "Интерфейс\0"
+    /* Settings_Tab_Controls */ "Управление\0"
+    /* Settings_ControlSub_Mouse */ "Мышь и жесты\0"
+    /* Settings_ControlSub_Keyboard */ "Горячие клавиши\0"
+    /* Settings_ControlSub_Behavior */ "Поведение\0"
+    /* Settings_Gesture_Preset */ "Предустановка\0"
+    /* Settings_Gesture_Preset_Default */ "QuickView Классический\0"
+    /* Settings_Gesture_Preset_Standard */ "Стандартный просмотрщик\0"
+    /* Settings_Gesture_Preset_Browser */ "Минималистичный\0"
+    /* Settings_Gesture_Add */ "+ Добавить жест\0"
+    /* Settings_Gesture_Reset */ "Сбросить жесты\0"
+    /* Settings_Tab_Image */ "Картинка\0"
+    /* Settings_Tab_Advanced */ "Ещё\0"
+    /* Settings_Header_Backdrop */ "Фон\0"
+    /* Settings_Header_Window */ "Окно\0"
+    /* Settings_Header_WindowLock */ "Блокировка окна\0"
+    /* Settings_Header_Panel */ "Панель\0"
+    /* Settings_Label_CanvasColor */ "Цвет холста\0"
+    /* Settings_Option_Effects */ "Эффекты\0"
+    /* Settings_Label_ContextMenuBackdrop */ "Контекстное меню\0"
+    /* Settings_Label_CanvasEffectStyle */ "Стиль эффекта\0"
+    /* Settings_Tooltip_BackdropEffectsTip */ "Эффекты Mica и Mica Alt поддерживаются только в Windows 11. Эффект Acrylic использует больше системных ресурсов.\0"
+    /* Settings_Label_Overlay */ "Наложение\0"
+    /* Settings_Label_ShowGrid */ "Показывать сетку\0"
+    /* Settings_Label_AlwaysOnTop */ "Поверх всех окон\0"
+    /* Settings_Label_LockWindow */ "Заблокировать окно\0"
+    /* Settings_Tooltip_LockWindow */ "Определяет, будут ли блокироваться границы окна по умолчанию при запуске, а не после масштабирования изображения.\0"
+    /* Settings_Label_AutoHideTitle */ "Автоскрытие заголовка\0"
+    /* Settings_Label_RoundedCorners */ "Скруглённые углы\0"
+    /* Settings_Label_UIBorders */ "Граница интерфейса\0"
+    /* Settings_Tooltip_RoundedCorners */ "Определяет, будут ли окно и контекстное меню со скруглёнными углами. Требуется Windows 11.\0"
+    /* Settings_Label_LockToolbar */ "Закрепить нижнюю панель\0"
+    /* Settings_Label_WindowMinSize */ "Минимальная ширина окна\0"
+    /* Settings_Label_WindowMaxSizePercent */ "Максимальный начальный размер\0"
+    /* Settings_Label_ShowBorderIndicator */ "Индикаторы выхода за границы\0"
+    /* Settings_Tooltip_ShowBorderIndicator */ "При панорамировании и масштабировании подсвечивает мягким свечением края, за которые выходит изображение, и плавно затухает.\0"
+    /* Settings_Label_ShowNavigator */ "Миникарта\0"
+    /* Settings_Tooltip_ShowNavigator */ "Когда мышь находится над миникартой, колёсико/боковое колёсико (Shift + колёсико) перемещает изображение.\0"
+    /* Settings_Label_KeepWindowSizeOnNav */ "Не менять размер окна при навигации\0"
+    /* Settings_Label_RememberLastWindowSizeAndPosition */ "Запоминать последние размер и положение окна\0"
+    /* Settings_Label_UpscaleSmallImagesWhenLocked */ "Адаптировать мелкие изображения\0"
+    /* Settings_Label_SlideshowInterval */ "Интервал (сек)\0"
+    /* Settings_Label_SlideshowImmersive */ "Режим погружения\0"
+    /* Settings_Option_SlideshowNormal */ "Обычный\0"
+    /* Settings_Option_SlideshowSpotlight */ "Прожектор\0"
+    /* Settings_Label_ExifMode */ "Режим панели EXIF\0"
+    /* Settings_Label_ToolbarInfoDefault */ "Информация в панели по умолчанию\0"
+    /* Settings_Label_OpenFullScreenMode */ "Полноэкранный режим при открытии\0"
+    /* Settings_Label_FullScreenZoomMode */ "Масштаб в полноэкранном режиме\0"
+    /* Settings_Label_CustomLiteInfoPanel */ "Настройка краткой инфопанели\0"
+    /* Settings_Label_CustomFullInfoPanel */ "Настройка полной инфопанели\0"
+    /* Settings_Label_InfoPanelScale */ "Масштаб инфопанели\0"
+    /* Settings_Label_ItemsInNormalMode */ "Элементы в обычном режиме\0"
+    /* Settings_Label_ItemsInCompareMode */ "Элементы в режиме сравнения\0"
+    /* Settings_Label_SeparatorPreset */ "Шаблон разделителя\0"
+    /* Settings_Option_FitScreen */ "Вписывать\0"
+    /* Settings_Option_Black */ "Чёрный\0"
+    /* Settings_Option_White */ "Белый\0"
+    /* Settings_Option_Grid */ "Сетка\0"
+    /* Settings_Option_Custom */ "Свой\0"
+    /* Settings_Option_Off */ "Выкл\0"
+    /* Settings_Option_On */ "Вкл\0"
+    /* Settings_Option_Lite */ "Кратко\0"
+    /* Settings_Option_Full */ "Полностью\0"
+    /* Settings_Option_LargeOnly */ "Только большие\0"
+    /* Settings_Option_All */ "Все\0"
+    /* Settings_Option_SoftProofing */ "Цветопроба\0"
+    /* Settings_Header_Mouse */ "Мышь\0"
+    /* Settings_Header_Edge */ "Край\0"
+    /* Settings_Label_InvertWheel */ "Инвертировать действие колёсика\0"
+    /* Settings_Label_MouseAnchorZoom */ "Масштабировать окно от позиции мыши\0"
+    /* Settings_Label_RightButtonDragZoom */ "Масштаб правой кнопкой мыши\0"
+    /* Settings_Label_WheelZoomSpeed */ "Скорость масштабирования колёсиком\0"
+    /* Settings_Tooltip_WheelZoomSpeed */ "Alt + колёсико временно регулирует скорость масштабирования\0"
+    /* Settings_Label_ThumbWheel */ "Боковое колёсико\0"
+    /* Settings_Tooltip_ThumbWheel */ "Вместо этого можно использовать Shift + колёсико\0"
+    /* Settings_Tooltip_MiddleDrag */ "Вместо этого можно использовать Ctrl + ЛКМ\0"
+    /* Settings_Label_DoubleClick */ "Двойной щелчок\0"
+    /* Settings_Option_DoubleClick_Smart */ "Умный\0"
+    /* Settings_Option_DoubleClick_WheelMode1 */ "Режим колёсика 1\0"
+    /* Settings_Option_DoubleClick_WheelMode2 */ "Режим колёсика 2\0"
+    /* Settings_Tooltip_DoubleClick */ "Умный: Стандартное переключение масштабирования/полноэкранного режима;\nРежим колёсика 1: Двойной щелчок меняет местами функции основного и бокового колёсика;\nРежим колёсика 2: Двойной щелчок переключает режим панорамирования изображения;\nСовет: вместо бокового колёсика можно использовать Shift + колёсико.\0"
+    /* Settings_Tooltip_PanStepNormal */ "Управляет скоростью панорамирования клавишами и колёсиком\0"
+    /* OSD_WheelMode1_NextPrevZoom */ "Главное колёсико: Следующее/предыдущее; Боковое/Shift+колёсико: Масштаб\0"
+    /* OSD_WheelMode1_ZoomNextPrev */ "Главное колёсико: Масштаб; Боковое/Shift+колёсико: Следующее/предыдущее\0"
+    /* OSD_WheelMode2_Pan */ "Колёсико: панорамирование\0"
+    /* OSD_WheelMode2_Default */ "Колёсико: стандартный режим\0"
+    /* Settings_Label_RightDragZoomSpeed */ "Скорость масштабирования перетаскиванием мыши\0"
+    /* OSD_WheelZoomSpeed */ "Скорость масштабирования (временно): \0"
+    /* Settings_Label_InvertButtons */ "Инвертировать действие боковых кнопок\0"
+    /* Settings_Header_KeyboardPan */ "Шаг сдвига\0"
+    /* Settings_Label_PanStepNormal */ "Шаг сдвига (обычный)\0"
+    /* Settings_Label_PanStepFast */ "Шаг сдвига клавишами (быстрый)\0"
+    /* Settings_Label_UseFixedZoom */ "Фиксированные уровни масштабирования\0"
+    /* Settings_Tooltip_UseFixedZoom */ "Если включено, Alt + колёсико выполняет масштабирование, а не изменение скорости масштабирования.\0"
+    /* Settings_Label_FixedZoomLevels */ "  └  Свои уровни\0"
+    /* Dialog_FixedZoomTitle */ "Значения масштаба\0"
+    /* Dialog_FixedZoomMsg */ "Введите значения масштаба через запятую (например, 0.5, 1, 2):\0"
+    /* Settings_Label_ZoomModeIn */ "Увеличение\0"
+    /* Settings_Tooltip_ZoomModeIn */ "Алгоритм масштабирования при увеличении:\n• Авто: Умное распознавание (FSR для фото, По соседним для пиксель-арта)\n• Линейный: Базовое сглаживание\n• По соседним: Четкая пиксельная сетка\n• HQ кубический: Максимально плавный фильтр\n• AMD FSR 1.0: Пространственное суперразрешение FSR с повышением резкости\0"
+    /* Settings_Label_ZoomModeOut */ "Уменьшение\0"
+    /* Settings_Label_LeftDrag */ "Перетаскивание левой кнопкой\0"
+    /* Settings_Label_MiddleDrag */ "Перетаскивание средней кнопкой\0"
+    /* Settings_Label_MiddleClick */ "Щелчок средней кнопкой\0"
+    /* Settings_Label_EdgeNavClick */ "Навигация при щелчке по краям\0"
+    /* Settings_Label_ShowOSD */ "Показывать OSD\0"
+    /* Settings_Label_DisableEdgeNavInCompare */ "Отключить в режиме сравнения\0"
+    /* Settings_Label_NavIndicator */ "Индикатор навигации\0"
+    /* Settings_Option_Window */ "Окно\0"
+    /* Settings_Option_Pan */ "Панорамирование\0"
+    /* Settings_Option_None */ "Нет\0"
+    /* Settings_Option_Exit */ "Выход\0"
+    /* Settings_Option_Arrow */ "Стрелка\0"
+    /* Settings_Option_Cursor */ "Курсор\0"
+    /* Settings_Option_Manual */ "Вручную\0"
+    /* Settings_Option_SortAuto */ "Авто (Проводник)\0"
+    /* Settings_Option_SortName */ "Имя\0"
+    /* Settings_Option_SortModified */ "Дата изменения\0"
+    /* Settings_Option_SortDateTaken */ "Дата съёмки (EXIF)\0"
+    /* Settings_Option_SortSize */ "Размер\0"
+    /* Settings_Option_SortType */ "Тип\0"
+    /* Settings_Option_NavLoop */ "Циклично в папке\0"
+    /* Settings_Option_NavThrough */ "Заходить во вложенные папки\0"
+    /* Settings_Option_Linear */ "Линейный (простое сглаживание)\0"
+    /* Settings_Option_Nearest */ "По соседним (макс. резкость)\0"
+    /* Settings_Option_HighQualityCubic */ "HQ кубический (макс. сглаживание)\0"
+    /* Settings_Option_FSR */ "AMD FSR 1.0 (EASU/RCAS)\0"
+    /* Settings_Header_Render */ "Рендеринг\0"
+    /* Settings_Header_Hdr */ "HDR\0"
+    /* Settings_Header_Prompts */ "Запросы\0"
+    /* Settings_Header_System */ "Система\0"
+    /* Settings_Label_AutoRotate */ "Автоповорот (по EXIF)\0"
+    /* Settings_Label_FsrSharpness */ "Резкость FSR\0"
+    /* Settings_Tooltip_FsrSharpness */ "Настройка резкости краев для масштабирования AMD FSR 1.0.\0"
+    /* Settings_Tab_Plugins */ "Плагины\0"
+    /* Settings_Label_EnableSrPlugin */ "AI Сверхразрешение\0"
+    /* Settings_Label_SrModel */ "AI Model\0"
+    /* Settings_Label_SrAutoTrigger */ "Автоматический запуск\0"
+    /* Settings_Label_SrAutoTriggerMaxWidth */ "Макс. ширина оригинала\0"
+    /* Settings_Tooltip_SrAutoTriggerMaxWidth */ "Ограничение максимальной ширины оригинала (в пикселях) для авто-суперразрешения. 0 — без ограничений.\0"
+    /* Settings_Label_SrAutoTriggerMaxHeight */ "Макс. высота оригинала\0"
+    /* Settings_Tooltip_SrAutoTriggerMaxHeight */ "Ограничение максимальной высоты оригинала (в пикселях) для авто-суперразрешения. 0 — без ограничений.\0"
+    /* Settings_Value_Unlimited */ "Без ограничений\0"
+    /* Settings_Label_SrOpenInCompare */ "Показать в режиме сравнения при ручном запуске\0"
+    /* Settings_Label_SrPromptModel */ "Запрашивать выбор модели при ручном запуске\0"
+    /* Export_Checkbox_SuperResolution */ "Экспортировать с AI масштабированием\0"
+    /* Settings_Label_SrDebounce */ "Задержка запуска\0"
+    /* Settings_Tooltip_SrDebounce */ "Задержка в миллисекундах (0 - 5000 мс) перед запуском нейросетевого сверхразрешения после остановки зума.\0"
+    /* Settings_Header_PluginTriggers */ "Триггеры и взаимодействие\0"
+    /* Settings_Header_PluginParams */ "Параметры плагина\0"
+    /* Settings_Label_SrStorageFolder */ "Каталог плагинов и моделей\0"
+    /* Settings_Button_OpenModelFolder */ "📂 Открыть локальную папку\0"
+    /* Settings_Prompt_DownloadModelFirst */ "Сначала скачайте выбранную модель\0"
+    /* Settings_Segment_InstalledPlugins */ "Установленные\0"
+    /* Settings_Segment_Marketplace */ "Каталог\0"
+    /* Settings_Label_SrEngine */ "Движок сверхразрешения\0"
+    /* Settings_Label_SrModelStatus */ "Состояние модели\0"
+    /* Settings_Format_DownloadModel */ "Скачать эту модель (~%llu МБ)\0"
+    /* Settings_Header_SrComponent */ "Компонент AI сверхразрешения\0"
+    /* Settings_Label_QuickEnableEngine */ "Включить движок сверхразрешения\0"
+    /* Settings_Button_QuickEnableNcnn */ "⚡ Включить движок Real-ESRGAN NCNN Vulkan\0"
+    /* Settings_Label_OnlineExtensions */ "Онлайн расширения и модели\0"
+    /* Settings_Button_BrowseMarketplace */ "🌐 Открыть каталог расширений\0"
+    /* Settings_Label_MarketManifest */ "Список плагинов\0"
+    /* Settings_Button_RefreshManifest */ "🔄 Обновить список плагинов\0"
+    /* Settings_Button_SyncingManifest */ "Синхронизация с облаком...\0"
+    /* Settings_Format_PluginPackageSize */ "Пакет плагина (~%llu МБ)\0"
+    /* Settings_Button_InstalledUpToDate */ "✓ Установлено\0"
+    /* Settings_Format_UpdateTo */ "⚡ Обновить до v%ls\0"
+    /* Settings_Button_InstallPlugin */ "⚡ Скачать и установить\0"
+    /* OSD_SrProcessing */ "Идет обработка сверхразрешения ИИ...\0"
+    /* OSD_SrSuccessFormat */ "✓ ИИ Сверхразрешение готово: %s [%.0fx] (%.1f мс)\0"
+    /* OSD_SrSuccessFormatSimple */ "✓ ИИ Сверхразрешение готово: %s (%.1f мс)\0"
+    /* OSD_SrFailed */ "✗ Ошибка выполнения ИИ сверхразрешения\0"
+    /* OSD_SrPluginDisabledOrMissing */ "Плагин ИИ сверхразрешения отключен или не установлен\0"
+    /* OSD_SrAnimationProcessingFormat */ "Идет обработка анимации (%u/%u кадров)...\0"
+    /* OSD_SrAnimationSuccessFormat */ "✓ ИИ Сверхразрешение анимации готово: %s (%u кадров за %.2f с)\0"
+    /* OSD_SrVectorLosslessSkipped */ "Векторная графика масштабируется без потерь, ИИ сверхразрешение не требуется\0"
+    /* OSD_SrAnimationTooManyFrames */ "Слишком много кадров анимации (> %u), пропуск полного сверхразрешения\0"
+    /* OSD_SrImageTooLargeFormat */ "Слишком высокое разрешение изображения (%ux%u, >16 Мп), ИИ-масштабирование пропущено во избежание переполнения видеопамяти\0"
+    /* Dialog_Title_SelectSrModel */ "Выбор модели ИИ сверхразрешения\0"
+    /* Dialog_Msg_SelectSrModel */ "Выберите модель ИИ сверхразрешения для применения:\0"
+    /* Dialog_Checkbox_RememberSrModelChoice */ "Запомнить выбор и не запрашивать при ручном запуске\0"
+    /* Dialog_Button_OK */ "ОК\0"
+    /* Settings_Label_CMS */ "Управление цветом (CMS)\0"
+    /* Settings_Label_AdvancedColor */ "Расширенный цвет (HDR)\0"
+    /* Settings_Label_CmsFallback */ "Запасной профиль без тегов\0"
+    /* Settings_Label_HdrToneMapping */ "Тональная компрессия HDR\0"
+    /* Settings_Label_HdrSplineKnee */ "Точка перегиба сплайна\0"
+    /* Settings_Tooltip_HdrToneMapping */ "Стратегия тональной компрессии HDR:\nОпределяет, как отображаются HDR-изображения, превышающие возможности монитора.\nСплайн: Высокоточное сжатие светов с использованием сплайнов (рекомендуется).\nКолориметрическая: Строгое отображение яркости; светлые участки, превышающие предел монитора, обрезаются.\nBT.2390 (EETF): Кривая ITU-R BT.2390 EETF для высокоточного отображения тонов.\0"
+    /* Settings_Tooltip_HdrSplineKnee */ "0 = Авто (рассчитывается на основе яркости изображения).\nЗначение представляет собой соотношение пиковой яркости монитора. Яркость ниже этой точки перегиба отображается в соотношении 1:1, а яркость выше плавно сжимается с помощью сплайновой кривой.\n(Рекомендуется: 0.4 - 0.75)\0"
+    /* Settings_Label_HdrPeakNitsOverride */ "Пиковая яркость HDR (ниты)\0"
+    /* Settings_Tooltip_HdrPeakNitsOverride */ "Установите 0 для системной яркости.\0"
+    /* Settings_Label_HdrPeakPercentile */ "Пиковый процентиль HDR\0"
+    /* Settings_Tooltip_HdrPeakPercentile */ "Удаление слишком ярких пикселей для повышения общей яркости (mpv по умолчанию: 99.995%).\0"
+    /* Settings_Option_HdrPeakPercentile_100 */ "100% (абсолютный пик)\0"
+    /* Settings_Option_HdrPeakPercentile_99995 */ "99.995% (стабильный)\0"
+    /* Settings_Option_HdrPeakPercentile_999 */ "99.9% (агрессивный)\0"
+    /* Settings_Label_HdrDesatThreshold */ "Диапазон обесцвечивания светов HDR\0"
+    /* Settings_Tooltip_HdrDesatThreshold */ "Порог начала обесцвечивания светлых участков. 0.0 - обесцвечивать все света, 1.0 - не обесцвечивать. Рекомендуемое значение: 0.18.\0"
+    /* Settings_Label_HdrMaxDesat */ "Степень обесцвечивания светов HDR\0"
+    /* Settings_Tooltip_HdrMaxDesat */ "Максимальная интенсивность обесцвечивания светлых участков. 0.0 - не обесцвечивать, 1.0 - полностью до белого. Рекомендуемое значение: 0.75.\0"
+    /* Settings_Option_HdrColorimetric */ "Колориметрическая\0"
+    /* Settings_Option_HdrSpline */ "Сплайн\0"
+    /* Settings_Option_HdrLegacyReinhard */ "BT.2390 (EETF)\0"
+    /* Settings_Label_CustomProof */ "Профиль цветопробы (.icc)\0"
+    /* Settings_Label_CmsIntent */ "Цель рендеринга\0"
+    /* Settings_Label_GamutWarning */ "Определение выхода за охват\0"
+    /* Settings_Tooltip_GamutWarning */ "Анализ и выделение областей вне цветового охвата. Режимы: выключено / только в режиме цветопробы (по умолчанию) / для цветопробы и монитора одновременно.\0"
+    /* Settings_Label_GamutAutoPrompt */ "Автоуведомление об ошибке охвата\0"
+    /* Settings_Tooltip_GamutAutoPrompt */ "Показать OSD-уведомление при обнаружении ошибок охвата. Выделение можно включить вручную на панели инструментов.\0"
+    /* Settings_Label_GamutColor */ "Цвет выделения вне охвата\0"
+    /* Settings_Option_CmsIntentRelative */ "Относительный (точность)\0"
+    /* Settings_Option_CmsIntentPerceptual */ "Перцептивный (восприятие)\0"
+    /* Settings_Tooltip_CMS */ "Использовать систему управления цветом (CMS).\nЕсли включено, применяется высокоточное преобразование цветового пространства через ГП для восстановления истинных цветов.\nЕсли отключено, снижается нагрузка на ГП, но возможно перенасыщение цветов на дисплеях с широким цветовым охватом.\0"
+    /* Settings_Tooltip_CmsIntent */ "Метод преобразования цветового пространства (цель рендеринга).\nПерцептивный: сжимает цвета вне охвата для сохранения деталей и градиентов (идеально для фото).\nОтносительный колориметрический: сохраняет цвета в пределах охвата и обрезает выходящие за его пределы (идеально для интерфейса и значков).\n* Визуальные различия проявляются только при использовании улучшенных профилей ICC, содержащих LUT (таблицы поиска). Стандартные матричные профили автоматически возвращаются к относительной колориметрии.\0"
+    /* Settings_Tooltip_AdvancedColor */ "Использовать 16-разрядный конвейер рендеринга с плавающей запятой (scRGB).\nЕсли включено, идеально отображаются яркие участки фотографий на HDR-дисплеях, без ограничения SDR.\nЕсли отключено, изображение принудительно отображается как SDR.\n* При включении увеличивается потребление видеопамяти.\0"
+    /* Settings_Tooltip_ZoomAuto */ "Авто: масштаб 100%, если изображение меньше экрана, и вписывание в экран, если больше.\0"
+    /* Context_SoftProofing */ "Предпросмотр цветопробы\0"
+    /* Context_SoftProofProfile */ "Профиль цветопробы\0"
+    /* Context_SoftProofCustom */ "Свой...\0"
+    /* Settings_Value_ComingSoon */ "Скоро\0"
+    /* Settings_Label_ForceRaw */ "Принудительное декодирование RAW\0"
+    /* Settings_Label_PairRawJpeg */ "Объединение RAW+JPEG\0"
+    /* Settings_Tooltip_PairRawJpeg */ "Показывать RAW и одноимённый файл JPEG/HEIF как одно фото.\nВ списке остаётся только готовое изображение с пометкой формата RAW (например, +CR3); время съёмки проверяется в фоне, несовпадающие пары разделяются.\nКнопка RAW на панели или её горячая клавиша переключает между JPEG/HEIF и декодированным RAW; горячая клавиша парного сравнения показывает обе версии рядом.\0"
+    /* Settings_Label_Exposure */ "Экспозиция (яркость)\0"
+    /* Settings_Tooltip_Exposure */ "Регулировка яркости изображения (компенсация экспозиции). Диапазон: 0.18x - 10.0x.\0"
+    /* Settings_Label_AddToOpenWith */ "Добавить в 'Открыть с помощью'\0"
+    /* Settings_Label_CustomEditor */ "Пользовательский редактор\0"
+    /* Context_SelectEditor */ "Выбрать редактор\0"
+    /* OSD_EditorLaunchFailed */ "Не удалось запустить редактор. Настройте его снова.\0"
+    /* Settings_Action_Add */ "Добавить\0"
+    /* Settings_Action_Added */ "Добавлено\0"
+    /* Settings_Status_DisabledInPortable */ "Отключено в портативном режиме\0"
+    /* Settings_Header_Features */ "Функции\0"
+    /* Settings_Header_Performance */ "Производительность\0"
+    /* Settings_Header_Transparency */ "Прозрачность\0"
+    /* Settings_Label_DebugHUD */ "Включить отладочный HUD (F12)\0"
+    /* Settings_Label_Prefetch */ "Система предзагрузки\0"
+    /* Settings_Label_MemoryReclaim */ "Стратегия восстановления памяти:\0"
+    /* Settings_Option_MemSmart */ "Умная (авто)\0"
+    /* Settings_Option_MemAggressive */ "Агрессивная (макс.)\0"
+    /* Settings_Option_MemOnDemand */ "По запросу (мин.)\0"
+    /* Settings_Tooltip_MemoryReclaim */ "Умная: Баланс производительности и ОЗУ.\nАгрессивная: Максимальная производительность и высокий уровень использования памяти.\nПо требованию: Сразу высвобождать память при простоях.\0"
+    /* Settings_Label_Reset */ "Сбросить все настройки\0"
+    /* Settings_Action_Restore */ "Восстановить\0"
+    /* Settings_Action_Done */ "Готово\0"
+    /* Settings_Header_ConfigManagement */ "Импорт/экспорт (.ini)\0"
+    /* Settings_Action_CheckUpdates */ "Проверить наличие новой версии\0"
+    /* Settings_Action_ViewUpdate */ "Посмотреть обновление\0"
+    /* Settings_Status_Checking */ "Проверка...\0"
+    /* Settings_Status_UpToDate */ "Актуальная версия\0"
+    /* Settings_Link_GitHub */ "Репозиторий GitHub\0"
+    /* Settings_Link_ReportIssue */ "Сообщить о проблеме\0"
+    /* Settings_Link_Hotkeys */ "Горячие клавиши (F1)\0"
+    /* Settings_Label_Version */ "Версия\0"
+    /* Settings_Label_Build */ "Сборка\0"
+    /* Dialog_UpdateTitle */ "Доступна новая версия!\0"
+    /* Dialog_UpdateContent */ "Доступна версия %s.\0"
+    /* Dialog_UpdateLogHeader */ "История изменений\0"
+    /* Dialog_ButtonUpdate */ "Обновить\0"
+    /* Dialog_ButtonLater */ "Позже\0"
+    /* Dialog_ButtonStar */ "Звезда на GitHub\0"
+    /* Dialog_Update_LoveTitle */ "QuickView создан с любовью\0"
+    /* Dialog_Update_LoveMessage */ "Я разрабатываю QuickView в свободное время и считаю, что в Windows должен быть более быстрый и эффективный просмотрщик. Если вам нравится эта программа, пожалуйста, поставьте звезду на GitHub или расскажите о QuickView другу.\0"
+    /* Dialog_PassthroughTitle */ "Режим сквозного щелчка\0"
+    /* Dialog_PassthroughContent */ "События мыши будут 'проходить' сквозь окно.\nВыйти можно только через глобальную горячую клавишу (Shift+Esc) или в меню панели задач.\n\nПродолжить?\0"
+    /* OSD_PassthroughOn */ "Сквозной щелчок: ВКЛ (Shift+Esc - выход)\0"
+    /* OSD_PassthroughOff */ "Сквозной щелчок: ВЫКЛ\0"
+    /* OSD_OverlayModeOn */ "Режим наложения: ВКЛ\0"
+    /* OSD_OverlayModeOff */ "Режим наложения: ВЫКЛ\0"
+    /* OSD_Opacity */ "Непрозрачность\0"
+    /* Help_Desc_Edit */ "Изменить\0"
+    /* Help_Header_Tips */ "Советы и термины\0"
+    /* Help_Tip_ContextScope */ "Совет: QuickView поддерживает полную настройку горячих клавиш и жестов мыши. Просмотреть и изменить привязки можно в разделе «Настройки -> Управление». Содержимое этой панели справки будет перенесено в онлайн-документацию в будущих версиях.\0"
+    /* Help_Tip_Rotation */ "Поворот: При оптимизации краёв они слегка обрезаются, чтобы вписать в границы блока (без потерь). В режиме с потерями выполняется полное перекодирование изображения.\0"
+    /* Help_Tip_VideoWall */ "Видеостена (Ctrl+F11): Распределение изображения по всем мониторам. Если кнопка закрытия скрыта, для выхода дважды щёлкните мышью.\0"
+    /* Help_Tip_DesignerMode */ "Режим кальки/плёнки: Если включено, изображение становится полупрозрачным, открывая нижележащие элементы. Размер и прозрачность настраиваются. Включите на панели инструментов режим сквозных щелчков мышью, в котором всё, кроме Shift+Esc, игнорируется - QuickView становится прозрачным наложением.\0"
+    /* Help_Tip_GamutDetection */ "Предупреждение о цветовом охвате: Обнаружение цветов вне охвата для монитора или профиля цветопробы. Режимы: Выключено/Только цветопроба (по умолчанию)/Все. Переключение - через панель инструментов.\0"
+    /* Help_Tip_Raw */ "RAW: По умолчанию QuickView показывает встроенную в RAW картинку предпросмотра. Нажмите кнопку RAW для полного декодирования (из-за параметров рендеринга изображение может выглядеть по-другому).\0"
+    /* Help_Tip_JpegQ */ "Качество JPEG: Ориентировочное значение качества. Может слегка отличаться от настройки сохранения из-за различий в алгоритме (например, Photoshop 100% ≈ 98%).\0"
+    /* Help_Tip_SoftProofCompare */ "Сравнение цветопробы: Вход в режим сравнения при включённой цветопробе автоматически сравнит оригинал и пробу.\0"
+    /* Settings_Option_Auto */ "Авто\0"
+    /* Settings_Option_Eco */ "Эко\0"
+    /* Settings_Option_Balanced */ "Баланс\0"
+    /* Settings_Option_Ultra */ "Ультра\0"
+    /* HUD_Group_Physical */ "ФИЗИЧЕСКИЕ АТРИБУТЫ\0"
+    /* HUD_Group_Scientific */ "НАУЧНОЕ КАЧЕСТВО\0"
+    /* HUD_Group_Encoding */ "ОПТИКА И КОДИРОВАНИЕ\0"
+    /* HUD_Tip_Sharp_Desc */ "Определение границ (Лапласова дисперсия)\0"
+    /* HUD_Tip_Sharp_High */ "Чёткие края, высокая детализация\0"
+    /* HUD_Tip_Sharp_Low */ "Мягкий фокус или размытие в движении\0"
+    /* HUD_Tip_Sharp_Ref */ "> 500 - очень резко\0"
+    /* HUD_Tip_Ent_Desc */ "Плотность информации (энтропия Шеннона)\0"
+    /* HUD_Tip_Ent_High */ "Сложные текстуры или высокий уровень шума\0"
+    /* HUD_Tip_Ent_Low */ "Плоские участки или низкая детализация\0"
+    /* HUD_Tip_Ent_Ref */ "7.0-8.0 - высокая детализация\0"
+    /* HUD_Tip_BPP_Desc */ "Бит на пиксел (эффективность сжатия)\0"
+    /* HUD_Tip_BPP_High */ "Низкая эффективность (сохраняется больше данных)\0"
+    /* HUD_Tip_BPP_Low */ "Высокая эффективность (более плотное сжатие)\0"
+    /* HUD_Tip_BPP_Ref */ "24.0 (Raw RGB), ~2.0-3.0 (High JPEG), ~0.5-1.5 (WebP/AVIF)\0"
+    /* HUD_Label_High */ "Высокая: \0"
+    /* HUD_Label_Low */ "Низкая: \0"
+    /* HUD_Label_Ref */ "Эталон: \0"
+    /* Settings_Header_GeekGlass */ "Стеклянный движок (ГП)\0"
+    /* Settings_Label_EnableGeekGlass */ "Эффекты стекла\0"
+    /* Settings_Label_GlassUIAnimations */ "Анимации\0"
+    /* Settings_Header_CoreMaterial */ "Материал\0"
+    /* Settings_Label_BlurSigma */ "Радиус размытия\0"
+    /* Settings_Status_GlassDisabled */ "Стекло отключено (система)\0"
+    /* Settings_Label_TintDensity */ "Плотность\0"
+    /* Settings_Tooltip_TintDensity */ "Общая интенсивность цвета эффекта стекла.\0"
+    /* Settings_Label_SpecularOpacity */ "Блики\0"
+    /* Settings_Tooltip_SpecularOpacity */ "Яркость диагональных световых бликов.\0"
+    /* Settings_Label_ShadowIntensity */ "Тени\0"
+    /* Settings_Tooltip_ShadowIntensity */ "Интенсивность теней окружающего затенения.\0"
+    /* Settings_Header_VectorAssets */ "Векторный рендеринг\0"
+    /* Settings_Label_VectorStrokeWeight */ "Обводка значков\0"
+    /* Settings_Option_StrokeStandard */ "Обычная (1.5 px)\0"
+    /* Settings_Option_StrokeFine */ "Тонкая (1.0 px)\0"
+    /* Settings_Header_GlassTint */ "Профиль оттенка\0"
+    /* Settings_Label_TintProfile */ "Цветовая логика\0"
+    /* Settings_Option_TintAuto */ "Авто (адаптивно)\0"
+    /* Settings_Option_TintCustom */ "Свой цвет\0"
+    /* Settings_Label_GlassCustomColor */ "Оттенок вручную\0"
+    /* Settings_Header_DensityMatrix */ "Прозрачность элементов (%)\0"
+    /* Settings_Label_OsdDensity */ "OSD и миниатюры\0"
+    /* Settings_Tooltip_OsdDensity */ "Прозрачность небольших плавающих наложений.\0"
+    /* Settings_Label_PanelsDensity */ "Панель инструментов и боковые панели\0"
+    /* Settings_Tooltip_PanelsDensity */ "Прозрачность нижней и информационной панелей, галереи миниатюр и элементов управления в правом верхнем углу окна.\0"
+    /* Settings_Label_ModalsDensity */ "Окна и настройки\0"
+    /* Settings_Tooltip_ModalsDensity */ "Прозрачность центрированных всплывающих окон.\0"
+    /* Settings_Label_MenusDensity */ "Меню\0"
+    /* Settings_Tooltip_MenusDensity */ "Прозрачность контекстного меню (только для Acrylic).\0"
+    /* Settings_Header_Professional */ "Профессиональные инструменты\0"
+    /* Settings_Label_ShowDirtyRect */ "Кнопка обновляемых областей в анимации\0"
+    /* Settings_Tooltip_ShowDirtyRect */ "Показывать кнопку отладки отображаемой области на панели инструментов анимации для отображения обновляемых участков.\0"
+    /* Settings_Label_LoupeShape */ "Форма экранной лупы\0"
+    /* Settings_Option_LoupeShapeSquare */ "Квадратная\0"
+    /* Settings_Option_LoupeShapeCircle */ "Круглая\0"
+    /* Settings_Option_LoupeShapeFullscreen */ "На весь экран\0"
+    /* Settings_Label_LoupeZoom */ "Масштаб лупы\0"
+    /* Settings_Tooltip_LoupeHotkey */ "Чтобы настроить размер лупы, удерживайте сочетание клавиш и вращайте колёсико мыши.\0"
+    /* Settings_Tooltip_CropModeHotkey */ "Удерживайте Ctrl и перемещайте мышь с нажатой левой кнопкой для быстрого кадрирования.\0"
+    /* Settings_Tab_Theme */ "Тема\0"
+    /* Settings_Label_ThemeMode */ "Тема\0"
+    /* Settings_Option_ThemeAuto */ "Авто\0"
+    /* Settings_Option_ThemeDark */ "Тёмная\0"
+    /* Settings_Option_ThemeLight */ "Светлая\0"
+    /* Settings_Option_ThemeCustom */ "Дизайн\0"
+    /* Settings_Label_AmbientDimmer */ "Затемнение (диммер)\0"
+    /* Settings_Tooltip_AmbientDimmer */ "Затемнять фон, когда открыто модальное окно или окно настроек.\0"
+    /* Settings_Label_AccentColor */ "Акцентный цвет\0"
+    /* Settings_Option_AccentSystem */ "Система\0"
+    /* Settings_Option_AccentCustom */ "Свой\0"
+    /* Settings_Label_WindowBorderAccent */ "Рамка активного окна\0"
+    /* Settings_Option_BorderFollowSystem */ "Система\0"
+    /* Settings_Option_BorderAccent */ "Акцент\0"
+    /* Settings_Label_ResetGlass */ "Материал\0"
+    /* Settings_Action_ResetGlass */ "Сбросить\0"
+    /* Settings_Header_ThemeManagement */ "Темы\0"
+    /* Settings_Action_ExportTheme */ "Экспорт\0"
+    /* Settings_Action_ImportTheme */ "Импорт\0"
+    /* Toolbar_Tooltip_CompareSave */ "Сохранить / Экспорт (S)\0"
+    /* Dialog_MultiLineInputHint */ "[Ctrl+Enter] Сохранить\0"
+    /* Dialog_AiApiKeyTitle */ "Настройка API ключа\0"
+    /* Dialog_AiApiKeyPrompt */ "Введите API ключ (защищен с помощью Windows DPAPI):\0"
+    /* Dialog_AiPromptTitle */ "Редактировать шаблон промпта\0"
+    /* Dialog_AiPromptPrompt */ "Настройте шаблон промпта (поддерживает перенос строк, Ctrl+Enter для сохранения):\0"
+    /* Dialog_AiActionNameTitle */ "Редактировать название действия\0"
+    /* Dialog_AiActionNamePrompt */ "Введите отображаемое имя для действия AI:\0"
+    /* Dialog_AiBaseUrlTitle */ "Настройка адреса сервера (Base URL)\0"
+    /* Dialog_AiBaseUrlPrompt */ "Введите базовый URL API, совместимый с OpenAI / ComfyUI:\0"
+    /* AiAction_Title */ "ИИ Командная панель\0"
+    /* AiAction_EscHint */ "[Esc] Закрыть\0"
+    /* AiAction_ScopeCropAndBlend */ "Восстановление области\0"
+    /* AiAction_ScopeForceFull */ "Всё изображение\0"
+    /* AiAction_FooterQuickKeys */ "Клавиши 1~9 / 0 для быстрого запуска\0"
+    /* AiAction_Placeholder */ "Введите запрос или найдите действие...\0"
+    /* AiAction_InpaintTitle */ "Инпейнт выделения (AI Inpaint)\0"
+    /* AiAction_InpaintDesc */ "Выделите область для бесшовного удаления или замены\0"
+    /* AiAction_InpaintTag */ "Выделение\0"
+    /* AiAction_AdhocPrefix */ "✨ Отправить запрос: \"\0"
+    /* AiAction_AdhocSend */ "Enter Отправить\0"
+    /* AiAction_CurrentModel */ "Текущая модель\0"
+    /* AiAction_NoModelSelected */ "Модель не выбрана\0"
+    /* OSD_AiProcessing */ "AI обрабатывает: %s (Esc для отмены)...\0"
+    /* OSD_AiGenerationSuccess */ "Генерация завершена! Переход в режим сравнения шторкой\0"
+    /* OSD_AiCompleted */ "Обработка ИИ завершена\0"
+    /* OSD_AiPreparing */ "AI: %s подготовка (Esc для отмены)...\0"
+    /* OSD_AiProcessingElapsed */ "AI: %s обработка [%dс, Esc для отмены]...\0"
+    /* OSD_AiConnecting */ "AI подключение: %s (Esc для отмены)...\0"
+    /* OSD_AiSamplingProgress */ "AI сэмплирование: %d%% (%d/%d шагов) [%dс, Esc для отмены]\0"
+    /* OSD_AiSamplingProgressEta */ "AI сэмплирование: %d%% (%d/%d шагов, ост.~%.0fс) [%dс, Esc для отмены]\0"
+    /* OSD_AiAdhocPrompt */ "Пользовательский запрос\0"
+    /* OSD_AiTaskCancelled */ "Задача AI отменена\0"
+    /* OSD_AiInpaintGuide */ "Выделите область левой кнопкой мыши (Enter - выполнить, Esc - отмена)\0"
+    /* OSD_AiInpaintGuideActionFormat */ "Выделите область и нажмите Enter для запуска [%s]\0"
+    /* OSD_AiSelectionTooSmall */ "Область слишком мала, выделите область заново\0"
+    /* OSD_AiEmptyResult */ "Результат генерации AI пуст\0"
+    /* OSD_AiDecodeFailed */ "Ошибка декодирования изображения AI\0"
+    /* OSD_AiTextureFailed */ "Не удалось создать текстуру GPU\0"
+    /* OSD_AiEmptyPromptHint */ "Пожалуйста, введите запрос или выберите пресет\0"
+    /* OSD_AiInpaintPromptEmptyHint */ "Сначала введите запрос для частичной перерисовки\0"
+    /* Settings_Tab_Ai */ "AI Действия\0"
+    /* Settings_Header_AiProviders */ "Провайдеры AI моделей\0"
+    /* Settings_Desc_AiProviders */ "Управление адресами API, ключами (DPAPI) и моделями.\0"
+    /* Settings_Label_AiProviderName */ "Предустановка провайдера\0"
+    /* Settings_Label_AiBaseUrl */ "Адрес API (Base URL)\0"
+    /* Settings_Label_AiApiKey */ "API Ключ (шифрование DPAPI)\0"
+    /* Settings_Label_AiModelId */ "Идентификатор модели\0"
+    /* Settings_Label_AiModelUnconfigured */ "[Не настроено, выберите или введите]\0"
+    /* Settings_Label_AiMaxRes */ "Макс. разрешение ввода\0"
+    /* Settings_Label_AiDefaultProfile */ "★ Провайдер по умолчанию\0"
+    /* Settings_Button_AiSetDefault */ "★ Сделать по умолчанию\0"
+    /* Settings_Button_AiTestConn */ "Проверить соединение\0"
+    /* Settings_Button_AiSaveProf */ "Сохранить настройки\0"
+    /* Settings_Button_AiDeleteProf */ "Удалить провайдера\0"
+    /* Settings_Button_AiAddProf */ "+ Добавить провайдера\0"
+    /* Settings_Header_AiActions */ "Список действий AI\0"
+    /* Settings_Button_AiAddAction */ "+ Создать действие AI\0"
+    /* Settings_Label_AiActionName */ "Название действия\0"
+    /* Settings_Label_AiPromptTemplate */ "Шаблон промпта\0"
+    /* Settings_Label_AiExecModel */ "Исполняющий провайдер\0"
+    /* Settings_Option_AiDefaultModel */ "Провайдер по умолчанию\0"
+    /* Settings_Label_AiScopeMode */ "Режим области\0"
+    /* Settings_Button_AiDeleteAction */ "Удалить действие\0"
+    /* Settings_AiModelCustom */ "✎ Ввести модель вручную...\0"
+    /* Settings_AiModelFetching */ "⏳ Получение списка моделей...\0"
+    /* Settings_AiModelFetchAuto */ "↻ Запросить модели с сервера...\0"
+    /* Settings_Option_AiRes4K */ "4K / Оригинал (4096px)\0"
+    /* Settings_Option_AiRes2K */ "2K Высокое (2048px)\0"
+    /* Settings_Option_AiRes1K */ "1K Стандартное (1024px)\0"
+    /* Settings_Option_AiResOriginal */ "Без ограничений (Native)\0"
+    /* Settings_Option_AiScopeForceFull */ "Всё изображение\0"
+    /* Settings_Option_AiScopeCropBlend */ "Замена и смешивание\0"
+    /* Settings_Option_AiCustomEndpoint */ "Пользовательский (OpenAI API)\0"
+    /* Settings_Option_AiLocalComfyUI */ "Локальный ComfyUI\0"
+    /* Settings_Option_AiLocalSdWebUI */ "Локальный SD WebUI / Forge\0"
+    /* OSD_AiFetchingModels */ "Загрузка списка моделей...\0"
+    /* OSD_AiFetchModelsFailed */ "Ошибка загрузки моделей: \0"
+    /* OSD_AiFetchModelsSuccessFormat */ "Получено доступных моделей: %zu\0"
+    /* OSD_AiSetDefaultSuccessFormat */ "Провайдер %s назначен по умолчанию\0"
+    /* OSD_AiTestingConnection */ "Проверка соединения и ключа...\0"
+    /* OSD_AiConnSuccessFormat */ "✓ Успешно! Задержка: %dмс (HTTP %d)\0"
+    /* OSD_AiSaveFailedBaseUrlEmpty */ "Ошибка: адрес (Base URL) не может быть пустым\0"
+    /* OSD_AiSaveFailedApiKeyEmpty */ "Ошибка: API ключ облачного провайдера не может быть пустым\0"
+    /* OSD_AiSaveFailedModelEmpty */ "Ошибка: укажите или выберите модель\0"
+    /* OSD_AiSaveProfileSuccess */ "✓ Конфигурация сохранена\0"
+    /* AiError_ApiKeyEmpty */ "API ключ пуст. Настройте его в Настройки -> AI Действия.\0"
+    /* AiError_ModelEmpty */ "Идентификатор модели не указан. Настройте в Настройки -> AI Действия.\0"
+    /* AiError_InvalidUrl */ "Неверный формат базового URL.\0"
+    /* AiError_InitWinHttpFailed */ "Не удалось инициализировать сеанс WinHTTP.\0"
+    /* AiError_ConnectFailed */ "Не удалось подключиться к серверу.\0"
+    /* AiError_CreateReqFailed */ "Не удалось создать HTTP-запрос.\0"
+    /* AiError_NoValidDataReturned */ "Ответ HTTP 200 получен, но данные изображения или текста не найдены.\0"
+    /* AiError_RequestTimeout */ "Время ожидания сетевого запроса истекло или сервер не отвечает.\0"
+    /* AiError_HttpStatusPrefix */ "Провайдер вернул ошибку (HTTP \0"
+    /* AiError_JsonParseFailed */ "Не удалось разобрать JSON, возвращенный провайдером.\0"
+    /* AiError_NoModelsFound */ "Запрос выполнен успешно, но список доступных моделей не найден.\0"
+    /* AiTest_ConnSuccess */ "Подключение успешно установлено, авторизация пройдена.\0"
+    /* AiTest_AuthFailedPrefix */ "Недействительный API-ключ или нет доступа (HTTP \0"
+    /* AiTest_HttpErrorPrefix */ "Сервер вернул HTTP \0"
+    /* AiError_NoAvailableProfile */ "Профиль AI модели не найден. Проверьте настройки.\0"
+    /* Settings_Tab_FileAssoc */ "Ассоциации\0"
+    /* Settings_Header_FileAssocStatus */ "Диагностика ассоциаций\0"
+    /* Settings_Header_FileAssocOptions */ "Поведение и настройка\0"
+    /* Settings_Header_FileAssocFormats */ "Поддерживаемые форматы (92)\0"
+    /* Settings_Label_FileAssocIconStyle */ "Иконка файлов в проводнике\0"
+    /* Settings_Option_FileAssocIconNative */ "Системная\0"
+    /* Settings_Option_FileAssocIconApp */ "Логотип QuickView\0"
+    /* Settings_Label_FileAssocContextMenu */ "Контекстное меню (\"Открыть в QuickView\")\0"
+    /* Settings_Label_FileAssocAutoRepair */ "Автоисправление путей при запуске / обновлении\0"
+    /* Settings_Label_FileAssocPresets */ "Быстрые пресеты\0"
+    /* Settings_Action_PresetRecommended */ "Рекомендуемые\0"
+    /* Settings_Action_PresetAllImages */ "Все изображения\0"
+    /* Settings_Action_PresetPhotoRaw */ "Фото и RAW\0"
+    /* Settings_Action_PresetClearAll */ "Очистить все\0"
+    /* Settings_Action_ApplyAssoc */ "Применить к системе\0"
+    /* Settings_Action_ApplyPending */ "Применить*\0"
+    /* Settings_Action_SetDefaultWin */ "По умолчанию в Windows\0"
+    /* Settings_Action_RepairAssoc */ "Исправить пути\0"
+    /* Settings_Label_FileAssocCatStandard */ "Стандартный растр\0"
+    /* Settings_Label_FileAssocCatModern */ "Современные и вектор\0"
+    /* Settings_Label_FileAssocCatPro */ "Профессиональные и HDR\0"
+    /* Settings_Label_FileAssocCatRaw */ "Камера RAW\0"
+    /* Settings_Label_FileAssocCatExtRaw */ "Расширенные / Кино RAW\0"
+    /* Settings_Label_FileAssocCatArchive */ "Архивы и комиксы\0"
+    /* Settings_Tooltip_FileAssocArchive */ "Рекомендуется: только .cbz / .cbr. Выбирайте .zip / .rar, только если хотите видеть QuickView в «Открыть с помощью».\0"
+    /* Settings_Status_AssocApplied */ "Ассоциации синхронизированы с реестром\0"
+    /* Settings_Status_AssocSummaryFormat */ "Выбрано: %d · По умолчанию: %d · Только «Открыть с помощью»: %d\0"
+    /* Settings_Status_AssocBrokenHint */ "Обнаружена поврежденная команда без кавычек — нажмите Применить или Исправить.\0"
+    /* Settings_Status_AssocPendingHint */ "Есть несохранённые изменения — нажмите «Применить» для синхронизации с системой.\0"
+    /* Settings_Status_AssocStoreManaged */ "Режим Microsoft Store (MSIX): контекстное меню и «Открыть с помощью» управляются системой Windows. Нажмите «По умолчанию в Windows» для выбора форматов.\0"
+    /* Settings_Label_StoreUpdatesManaged */ "Обновляется через Microsoft Store\0"
+    /* Settings_Action_OpenStore */ "Открыть Store\0"
+    /* Settings_Status_AssocLegend */ "Зеленая точка = по умолчанию · Выделено = выбрано / Открыть с помощью\0"
+    /* Context_OpenWithQuickView */ "Открыть в QuickView\0";
+static constexpr char kBlob_DE[] =
+    /* CurrentLocale */ "de-de\0"
+    /* OSD_NoImage */ "Kein Bild geladen\0"
+    /* OSD_FolderEmpty */ "Keine Bilder in diesem Ordner\0"
+    /* OSD_SvgStaticFallback */ "Animiertes SVG als Standbild angezeigt\0"
+    /* OSD_Lossless */ "Verlustfrei\0"
+    /* OSD_ReencodedLossless */ "Neu kodiert (verlustfrei)\0"
+    /* OSD_EdgeAdapted */ "Kantenoptimiert\0"
+    /* OSD_Reencoded */ "Neu kodiert\0"
+    /* OSD_ReadOnly */ "Zugriff verweigert - Datei wird verwendet oder ist schreibgeschützt\0"
+    /* OSD_NotPerfect */ "Transformation nicht perfekt (Kantenoptimiert)\0"
+    /* OSD_SpanOn */ "Video Wall: ON\0"
+    /* OSD_SpanOff */ "Video Wall: OFF\0"
+    /* OSD_CompareBefore */ "Vorher (Original)\0"
+    /* OSD_CompareAfter */ "Nachher (Proof)\0"
+    /* OSD_CompareAnimNotSupported */ "Vergleichsmodus wird für Animationen nicht unterstützt\0"
+    /* OSD_UndoDeleteSuccess */ "Löschen rückgängig gemacht\0"
+    /* OSD_UndoDeleteFailed */ "Rückgängig machen fehlgeschlagen\0"
+    /* OSD_UndoRenameSuccess */ "Umbenennen rückgängig gemacht\0"
+    /* OSD_UndoRenameFailed */ "Rückgängig machen fehlgeschlagen\0"
+    /* OSD_UndoTransformSuccess */ "Drehung/Spiegelung rückgängig gemacht\0"
+    /* OSD_UndoTransformFailed */ "Rückgängig machen fehlgeschlagen\0"
+    /* Action_RotateCW */ "90° im Uhrzeigersinn drehen\0"
+    /* Action_RotateCCW */ "90° gegen Uhrzeigersinn drehen\0"
+    /* Action_Rotate180 */ "180° drehen\0"
+    /* Action_FlipH */ "Horizontal spiegeln\0"
+    /* Action_FlipV */ "Vertikal spiegeln\0"
+    /* Dialog_SaveTitle */ "Änderungen speichern?\0"
+    /* Dialog_SaveContent */ "Das Bild wurde geändert. Möchten Sie die Änderungen speichern?\0"
+    /* Dialog_ButtonSave */ "Speichern\0"
+    /* Dialog_ButtonSaveAs */ "Speichern unter...\0"
+    /* Dialog_ButtonDiscard */ "Verwerfen\0"
+    /* Dialog_ButtonContinue */ "Fortfahren\0"
+    /* Dialog_CropUnsavedTitle */ "Zuschneide-Änderungen nicht gespeichert. Speichern?\0"
+    /* Dialog_SaveAsTitle */ "Bild speichern\0"
+    /* Dialog_ExportTitle */ "Speichern & Exportieren\0"
+    /* Dialog_ButtonOverwrite */ "Überschreiben\0"
+    /* Dialog_EmbedICC */ "ICC-Profil\0"
+    /* Dialog_SizeEstimating */ "Größe: Schätzung...\0"
+    /* Dialog_ExportError */ "Exportfehler\0"
+    /* Context_Open */ "Öffnen...\tStrg+O\0"
+    /* Context_Crop */ "Zuschneiden\0"
+    /* Context_SuperResolution */ "KI-Super-Resolution\0"
+    /* Context_AiAction */ "KI-Aktionen\0"
+    /* Context_OpenWith */ "Öffnen mit...\0"
+    /* Context_Edit */ "Bearbeiten\tE\0"
+    /* Context_ShowInExplorer */ "Im Explorer anzeigen\0"
+    /* Context_OpenFolder */ "Ordner öffnen\0"
+    /* Context_CopyPixels */ "Pixel kopieren\tStrg+C\0"
+    /* Context_CopyFile */ "Datei kopieren\tStrg+Umschalt+C\0"
+    /* Context_CopyPath */ "Pfad kopieren\tStrg+Alt+C\0"
+    /* Context_Print */ "Drucken\tStrg+P\0"
+    /* Context_RotateCW */ "90° im Uhrzeigersinn\tR\0"
+    /* Context_RotateCCW */ "90° gegen Uhrzeigersinn\tShift+R\0"
+    /* Context_FlipH */ "Horizontal spiegeln\tH\0"
+    /* Context_FlipV */ "Vertikal spiegeln\tV\0"
+    /* Context_Transform */ "Transformieren\0"
+    /* Context_ActualSize */ "Originalgröße (100%)\tZ\0"
+    /* Context_FitToScreen */ "An Bildschirm anpassen\tF\0"
+    /* Context_FitWindow */ "An Fenster anpassen\0"
+    /* Context_FillWindow */ "Fenster ausfüllen\0"
+    /* Context_ZoomIn */ "Vergrößern\t+ / Strg +\0"
+    /* Context_ZoomOut */ "Verkleinern\t- / Strg -\0"
+    /* Context_LockWindow */ "Fenstergröße sperren\0"
+    /* Context_AlwaysOnTop */ "Immer im Vordergrund\tStrg+T\0"
+    /* Context_HUDGallery */ "HUD-Galerie\tT\0"
+    /* Context_LiteInfoPanel */ "Kompaktes Info-Panel\tTab\0"
+    /* Context_FullInfoPanel */ "Vollständiges Info-Panel\tI\0"
+    /* Context_RenderRAW */ "RAW rendern\0"
+    /* Context_PixelArtMode */ "Pixel-Art-Modus\0"
+    /* Context_Fullscreen */ "Vollbild\tF11\0"
+    /* Context_SlideshowMode */ "Diashow-Modus\0"
+    /* Context_SpanDisplays */ "Span Displays (Video Wall)\tCtrl+F11\0"
+    /* Context_View */ "Ansicht\0"
+    /* Context_WallpaperFill */ "Ausfüllen\0"
+    /* Context_WallpaperFit */ "Anpassen\0"
+    /* Context_WallpaperTile */ "Kacheln\0"
+    /* Context_SetAsWallpaper */ "Als Hintergrundbild setzen\0"
+    /* Context_Rename */ "Umbenennen\tF2\0"
+    /* Context_FixExtension */ "Erweiterung reparieren\0"
+    /* Context_Delete */ "Löschen\tEntf\0"
+    /* Context_UndoDelete */ "Löschen rückgängig machen\tCtrl+Z\0"
+    /* Context_UndoRename */ "Umbenennen rückgängig machen\tCtrl+Z\0"
+    /* Context_UndoTransform */ "Drehung/Spiegelung rückgängig machen\tCtrl+Z\0"
+    /* Context_Undo */ "Rückgängig machen\tCtrl+Z\0"
+    /* Context_SortBy */ "Sortieren nach\0"
+    /* Context_NavOrder */ "Navigationsreihenfolge\0"
+    /* Context_SortAscending */ "Aufsteigend\0"
+    /* Context_SortDescending */ "Absteigend\0"
+    /* Context_Settings */ "Einstellungen...\0"
+    /* Context_CompareMode */ "Vergleichsmodus\tC\0"
+    /* Context_OverlayMode */ "Pausmodus\tCtrl+Shift+O\0"
+    /* Context_GalleryOpenCompare */ "Im Vergleichsmodus öffnen\0"
+    /* Context_GalleryOpenNewWindow */ "In neuem Fenster öffnen\0"
+    /* Context_Exit */ "Beenden\tMButton/Esc\0"
+    /* Menu_ExitPassthrough */ "Maus-Passthrough beenden\0"
+    /* Message_SaveErrorTitle */ "Fehler\0"
+    /* Message_SaveErrorContent */ "Datei konnte nicht gespeichert werden. Datei gesperrt?\0"
+    /* Toolbar_Tooltip_Prev */ "Vorheriges (Links)\0"
+    /* Toolbar_Tooltip_Next */ "Nächstes (Rechts)\0"
+    /* Toolbar_Tooltip_RotateL */ "Links drehen (Shift+R)\0"
+    /* Toolbar_Tooltip_RotateR */ "Rechts drehen (R)\0"
+    /* Toolbar_Tooltip_FlipH */ "Horizontal spiegeln (H)\0"
+    /* Toolbar_Tooltip_Lock */ "Fenster sperren (temp)\0"
+    /* Toolbar_Tooltip_Unlock */ "Fenster entsperren\0"
+    /* Toolbar_Tooltip_Gallery */ "Galerie (T)\0"
+    /* Toolbar_Tooltip_Info */ "Info-Panel\0"
+    /* Toolbar_Tooltip_RawPreview */ "RAW: Vorschau (Klick für Voll)\0"
+    /* Toolbar_Tooltip_RawFull */ "RAW: Volle Dekodierung (Klick für Vorschau)\0"
+    /* Toolbar_Tooltip_RawPairView */ "RAW: Gepaartes RAW anzeigen (volle Dekodierung)\0"
+    /* Toolbar_Tooltip_RawPairBack */ "RAW: Zurück zum gepaarten Bild\0"
+    /* Toolbar_Tooltip_FixExtension */ "Erweiterung stimmt nicht (Reparieren)\0"
+    /* Toolbar_Tooltip_Pin */ "Symbolleiste anheften\0"
+    /* Toolbar_Tooltip_Unpin */ "Symbolleiste lösen\0"
+    /* Toolbar_Tooltip_GamutWarning */ "Farbraumwarnung anzeigen\0"
+    /* Toolbar_Tooltip_CropCopy */ "Auswahl kopieren (Strg+C)\0"
+    /* Toolbar_Tooltip_CropSave */ "Speichern (Strg+S)\0"
+    /* Toolbar_Tooltip_CropApply */ "Anwenden (Enter)\0"
+    /* Toolbar_Tooltip_CropCancel */ "Beenden (Esc)\0"
+    /* Toolbar_Tooltip_OverlayAlphaUp */ "Deckkraft erhöhen\0"
+    /* Toolbar_Tooltip_OverlayAlphaDown */ "Deckkraft verringern\0"
+    /* Toolbar_Tooltip_OverlayPassthroughOn */ "Maus-Passthrough aktivieren\0"
+    /* Toolbar_Tooltip_OverlayPassthroughOff */ "Maus-Passthrough deaktivieren\0"
+    /* Toolbar_Tooltip_OverlayExit */ "Pausmodus beenden\0"
+    /* Toolbar_Tooltip_OverlayZoomIn */ "Vergrößern (Pause)\0"
+    /* Toolbar_Tooltip_OverlayZoomOut */ "Verkleinern (Pause)\0"
+    /* Toolbar_Tooltip_NormalMode */ "Normaler Modus\0"
+    /* Toolbar_Tooltip_CompareMode */ "Vergleichsmodus\0"
+    /* Toolbar_Tooltip_SinglePage */ "Einzelseiten-Modus\0"
+    /* Toolbar_Tooltip_DualPage */ "Doppelseiten-Modus\0"
+    /* Toolbar_Tooltip_CompareOpen */ "Neues Bild in Auswahl öffnen\0"
+    /* Toolbar_Tooltip_CompareSwap */ "Links/Rechts tauschen\0"
+    /* Toolbar_Tooltip_CompareLayout */ "Layout umschalten\0"
+    /* Toolbar_Tooltip_CompareInfo */ "Vergleichsinformationen\0"
+    /* Toolbar_Tooltip_CompareDelete */ "Ausgewähltes Bild löschen\0"
+    /* Toolbar_Tooltip_CompareZoomIn */ "Vergrößern (Feineinstellung)\0"
+    /* Toolbar_Tooltip_CompareZoomOut */ "Verkleinern (Feineinstellung)\0"
+    /* Toolbar_Tooltip_CompareSyncZoomOn */ "Zoom-Sync: AN\0"
+    /* Toolbar_Tooltip_CompareSyncZoomOff */ "Zoom-Sync: AUS\0"
+    /* Toolbar_Tooltip_CompareSyncPanOn */ "Pan-Sync: AN\0"
+    /* Toolbar_Tooltip_CompareSyncPanOff */ "Pan-Sync: AUS\0"
+    /* Toolbar_Tooltip_SlideshowImmersiveToggle */ "Spotlight-Effekt umschalten\0"
+    /* Toolbar_Tooltip_SlideshowExit */ "Diashow beenden\0"
+    /* Toolbar_Tooltip_CompareExit */ "Vergleich beenden\0"
+    /* Toolbar_Tooltip_AnimPlay */ "Animation abspielen\0"
+    /* Toolbar_Tooltip_AnimPause */ "Animation pausieren\0"
+    /* Toolbar_Tooltip_AnimPrev */ "Vorheriger Frame\0"
+    /* Toolbar_Tooltip_AnimNext */ "Nächster Frame\0"
+    /* Toolbar_Tooltip_AnimDirtyOn */ "Dirty Rect Debug: AN\0"
+    /* Toolbar_Tooltip_AnimDirtyOff */ "Dirty Rect Debug: AUS\0"
+    /* Toolbar_Tooltip_AnimSpeed */ "Animationsgeschwindigkeit\0"
+    /* OSD_Copied */ "Kopiert!\0"
+    /* OSD_PixelsCopied */ "Pixel in die Zwischenablage kopiert!\0"
+    /* OSD_PixelsExtracting */ "Rohpixel werden extrahiert...\0"
+    /* OSD_FileCopied */ "Datei in die Zwischenablage kopiert!\0"
+    /* OSD_CoordinatesCopied */ "Koordinaten kopiert!\0"
+    /* OSD_FilePathCopied */ "Dateipfad kopiert!\0"
+    /* OSD_Zoom100 */ "Zoom: 100%\0"
+    /* OSD_ZoomFit */ "Zoom: An Bildschirm anpassen\0"
+    /* OSD_ZoomFitWindow */ "Zoom: An Fenster anpassen\0"
+    /* OSD_ZoomFill */ "Zoom: Fenster ausfüllen\0"
+    /* OSD_PrintInstruction */ "Drucken: Benutzen Sie Strg+P in der geöffneten App\0"
+    /* OSD_MovedToRecycleBin */ "In Papierkorb verschoben\0"
+    /* OSD_WindowLocked */ "Fenster gesperrt\0"
+    /* OSD_WindowUnlocked */ "Fenster entsperrt\0"
+    /* OSD_AlwaysOnTopOn */ "Immer im Vordergrund: AN\0"
+    /* OSD_AlwaysOnTopOff */ "Immer im Vordergrund: AUS\0"
+    /* OSD_WallpaperSet */ "Hintergrundbild gesetzt\0"
+    /* OSD_WallpaperFailed */ "Hintergrundbild setzen fehlgeschlagen\0"
+    /* OSD_Renamed */ "Umbenannt\0"
+    /* OSD_RenameFailed */ "Umbenennung fehlgeschlagen\0"
+    /* OSD_Restored */ "Wiederhergestellt\0"
+    /* OSD_ExtensionFixed */ "Erweiterung repariert\0"
+    /* OSD_FirstImage */ "Erstes Bild\0"
+    /* OSD_LastImage */ "Letztes Bild\0"
+    /* OSD_HD */ "HD\0"
+    /* OSD_ZoomPrefix */ "Zoom: \0"
+    /* OSD_AnimPlaying */ "Spielt ab\0"
+    /* OSD_AnimPaused */ "Pausiert (Alt+Links/Rechts zum Suchen)\0"
+    /* OSD_AnimDirtyOn */ "Dirty Rect: AN\0"
+    /* OSD_AnimDirtyOff */ "Dirty Rect: AUS\0"
+    /* OSD_GamutDetected */ "Farbraum-Überschreitung erkannt\0"
+    /* OSD_GamutIncompatible */ "Farbraum: Inkompatibles Profil\0"
+    /* OSD_GamutFailed */ "Farbraum: Analyse fehlgeschlagen\0"
+    /* OSD_SlideshowStarted */ "Diashow gestartet\0"
+    /* OSD_SlideshowStopped */ "Diashow gestoppt\0"
+    /* OSD_SlideshowResumed */ "Diashow fortgesetzt\0"
+    /* OSD_SlideshowPaused */ "Diashow pausiert\0"
+    /* OSD_ImmersiveSpotlight */ "Immersiv: Spotlight\0"
+    /* OSD_ImmersiveNormal */ "Immersiv: Normal\0"
+    /* OSD_PrintJobStarted */ "Druckauftrag übermittelt. Sie können weiterblättern.\0"
+    /* OSD_PrintJobFinished */ "Druckauftrag erfolgreich gesendet.\0"
+    /* OSD_EnterCropMode */ "Zuschneiden-Modus aktiv\0"
+    /* OSD_CropCopied */ "Zuschneide-Auswahl kopiert\0"
+    /* OSD_CropApplied */ "Zuschnitt angewendet (ungespeichert)\0"
+    /* Context_ColorSpace */ "Farbraum\0"
+    /* Settings_Option_CmsUnmanaged */ "Unverwaltet (schnell)\0"
+    /* Settings_Option_CmssRGB */ "sRGB (Standard)\0"
+    /* Settings_Option_CmsP3 */ "Display P3 (Breites Farbspektrum)\0"
+    /* Settings_Option_CmsAdobeRGB */ "Adobe RGB (1998)\0"
+    /* Settings_Option_CmsGray */ "Graustufen (Tonwertkontrolle)\0"
+    /* Settings_Option_CmsProPhoto */ "ProPhoto RGB\0"
+    /* Checkbox_AlwaysSaveLossless */ "Immer verlustfreie speichern\0"
+    /* Checkbox_AlwaysSaveEdgeAdapted */ "Immer kantenoptimiert speichern\0"
+    /* Checkbox_AlwaysSaveLossy */ "Immer neu kodiert speichern\0"
+    /* Checkbox_NeverConfirmDelete */ "Ohne Bestätigung in den Papierkorb verschieben\0"
+    /* OSD_HEICCodecMissing */ "HEIC kann nicht dekodiert werden - HEVC-Erweiterung installieren\0"
+    /* Dialog_HEICTitle */ "HEIC kann nicht dekodiert werden\0"
+    /* Dialog_HEICContent */ "Ihr System hat keine HEVC-Erweiterung.\\nQuickView nutzt Hardware-Beschleunigung für beste Leistung.\0"
+    /* Dialog_HEICGetExtension */ "Erweiterung holen (kostenlos)\0"
+    /* Dialog_Cancel */ "Abbrechen\0"
+    /* Settings_Tab_General */ "Allgemein\0"
+    /* Settings_Tab_About */ "Über\0"
+    /* Settings_Tab_Shortcuts */ "Kürzel\0"
+    /* Settings_Hotkey_PressKey */ "Tasten drücken...\0"
+    /* Settings_Hotkey_Conflict */ "Tastenkonflikt\0"
+    /* Settings_Hotkey_ConflictPrompt */ "Bereits von „%s“ belegt. Fortfahren löscht die Zuweisung.\0"
+    /* Settings_Hotkey_Restore */ "Standard-Tastenkombinationen wiederherstellen\0"
+    /* Settings_Hotkey_Restored */ "Wiederhergestellt\0"
+    /* Settings_Hotkey_MouseTip */ "Tipp: Unterstützt die mittlere Maustaste, Seitentasten und andere Multifunktionstasten. Ordnen Sie weitere Seitentasten im Maustreiber Tastaturtasten zu, um sie zu binden.\0"
+    /* Settings_Header_GalleryTrigger */ "Galerie-Filmstreifen (Hover oben)\0"
+    /* Settings_Label_GalleryTriggerMode */ "Filmstreifen-Triggermodus\0"
+    /* Settings_Label_KeepGalleryVisibleOnThumbnailClick */ "Nach Klick sichtbar bleiben\0"
+    /* Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick */ "Diese Funktion aktiviert automatisch die Fenstersperre und die Beibehaltung der Fenstergröße bei der Navigation.\0"
+    /* Settings_Label_GalleryExpandOnClickOnly */ "Erweiterungspfeil-Triggermodus\0"
+    /* Settings_Tooltip_GalleryExpandOnClickOnly */ "Erfordert Klick auf den Pfeil zum Erweitern der Galerie, verhindert versehentliches Hovern.\0"
+    /* Settings_Option_TriggerClick */ "Klick\0"
+    /* Settings_Option_TriggerHover */ "Hover\0"
+    /* Settings_Option_GalleryTriggerAuto */ "Automatischer Hover\0"
+    /* Settings_Option_GalleryTriggerDelay */ "Hotspot-Hover\0"
+    /* Settings_Option_GalleryTriggerClick */ "Hotspot-Klick\0"
+    /* Settings_Option_GalleryTriggerDisable */ "Deaktiviert\0"
+    /* Settings_Tooltip_GalleryTrigger */ "Diese Funktion wird automatisch deaktiviert, wenn das Fenster kleiner als 600x450 ist.\0"
+    /* Settings_Label_GalleryTriggerAreaHeight */ "Höhe des Auslösebereichs\0"
+    /* Settings_Label_GalleryDwellTime */ "Verweilzeit\0"
+    /* Settings_Label_GalleryExitDelay */ "Verzögerung beim Beenden\0"
+    /* Settings_Label_GalleryMinSize */ "Galerie-Mindestgröße\0"
+    /* Settings_Group_Foundation */ "Grundlagen\0"
+    /* Settings_Group_Startup */ "Start\0"
+    /* Settings_Group_Habits */ "Gewohnheiten\0"
+    /* Settings_Label_Language */ "Sprache\0"
+    /* Settings_Label_SingleInstance */ "Einzelinstanz\0"
+    /* Settings_Label_CheckUpdates */ "Updates prüfen\0"
+    /* Settings_Label_UpdateChannel */ "Update-Kanal\0"
+    /* Settings_Option_UpdateStable */ "Stabil\0"
+    /* Settings_Option_UpdatePreRelease */ "Vorabversion (Pre-release)\0"
+    /* Settings_Tooltip_PreRelease */ "Stabil: Wird veröffentlicht, nachdem sich eine Vorabversion als stabil erwiesen hat.\nVorabversion (Pre-release): Liefert sofort die neuesten Code-Änderungen, um Ihr Feedback zu sammeln. Hinweis: Diese Änderungen sind nicht streng getestet.\0"
+    /* Settings_Label_NavLoopMode */ "Endlosnavigation\0"
+    /* Settings_Label_SortOrder */ "Sortierreihenfolge\0"
+    /* Settings_Label_SortDescending */ "Absteigend\0"
+    /* Settings_Label_SortArchivesByNameAscending */ "Archive immer nach Namen sortieren\0"
+    /* Settings_Label_ConfirmDel */ "Vor dem Löschen bestätigen\0"
+    /* Settings_Label_Portable */ "Portabler Modus / Bereinigung\0"
+    /* Settings_Tooltip_Portable */ "Portabler Modus und Registry-Bereinigung:\nWenn aktiviert, wird QuickView im portablen Modus ausgeführt. Es bereinigt automatisch vorhandene Registry-Verknüpfungen, deaktiviert automatische Registry-Änderungen und speichert Konfigurationsdateien im Anwendungsverzeichnis anstatt in AppData.\0"
+    /* Settings_Label_SpanDisplays */ "Span Displays (Video Wall)\0"
+    /* Settings_Label_UIScale */ "UI-Skalierung\0"
+    /* Settings_Status_RestartRequired */ "Neustart erforderlich\0"
+    /* Settings_Status_NoWritePerm */ "Keine Schreibrechte!\0"
+    /* Settings_Status_Enabled */ "Aktiviert\0"
+    /* Settings_Header_PoweredBy */ "Powered by\0"
+    /* Settings_Text_Copyright */ "© 2025–%s Vivor Loong (GitHub: @justnullname)\0"
+    /* Settings_Text_License */ "Licensed under GNU GPL v3.0\0"
+    /* Settings_Tab_Visuals */ "Interface\0"
+    /* Settings_Tab_Controls */ "Steuerung\0"
+    /* Settings_ControlSub_Mouse */ "Mausgesten\0"
+    /* Settings_ControlSub_Keyboard */ "Tastenkombinationen\0"
+    /* Settings_ControlSub_Behavior */ "Verhalten\0"
+    /* Settings_Gesture_Preset */ "Voreinstellung\0"
+    /* Settings_Gesture_Preset_Default */ "QuickView Klassisch (Standard)\0"
+    /* Settings_Gesture_Preset_Standard */ "Standard-Fotobetrachter\0"
+    /* Settings_Gesture_Preset_Browser */ "Minimal / Browser\0"
+    /* Settings_Gesture_Add */ "+ Geste hinzufügen\0"
+    /* Settings_Gesture_Reset */ "Gesten zurücksetzen\0"
+    /* Settings_Tab_Image */ "Bild\0"
+    /* Settings_Tab_Advanced */ "Erweitert\0"
+    /* Settings_Header_Backdrop */ "Hintergrund\0"
+    /* Settings_Header_Window */ "Fenster\0"
+    /* Settings_Header_WindowLock */ "Fenstersperre\0"
+    /* Settings_Header_Panel */ "Panel\0"
+    /* Settings_Label_CanvasColor */ "Leinwandfarbe\0"
+    /* Settings_Option_Effects */ "Effekte\0"
+    /* Settings_Label_ContextMenuBackdrop */ "Kontextmenü\0"
+    /* Settings_Label_CanvasEffectStyle */ "Effekt-Stil\0"
+    /* Settings_Tooltip_BackdropEffectsTip */ "Mica und Mica Alt werden nur unter Windows 11 unterstützt. Acrylic verbraucht mehr Systemressourcen als Mica/Mica Alt.\0"
+    /* Settings_Label_Overlay */ "Überlagerung\0"
+    /* Settings_Label_ShowGrid */ "Raster anzeigen\0"
+    /* Settings_Label_AlwaysOnTop */ "Immer im Vordergrund\0"
+    /* Settings_Label_LockWindow */ "Fenstergröße sperren\0"
+    /* Settings_Tooltip_LockWindow */ "Legt fest, ob das Programm beim Start standardmäßig den Fensterrahmen sperrt, anstatt der Bildskalierung zu folgen.\0"
+    /* Settings_Label_AutoHideTitle */ "Titelleiste automatisch ausblenden\0"
+    /* Settings_Label_RoundedCorners */ "Abgerundete Ecken\0"
+    /* Settings_Label_UIBorders */ "UI-Rahmen anzeigen\0"
+    /* Settings_Tooltip_RoundedCorners */ "Controls window and context menu rounded corners. Requires Windows 11.\0"
+    /* Settings_Label_LockToolbar */ "Untere Symbolleiste sperren\0"
+    /* Settings_Label_WindowMinSize */ "Minimale Fensterbreite\0"
+    /* Settings_Label_WindowMaxSizePercent */ "Maximale Startgröße (%)\0"
+    /* Settings_Label_ShowBorderIndicator */ "Rand-Überlauf-Indikatoren anzeigen\0"
+    /* Settings_Tooltip_ShowBorderIndicator */ "Zeigt beim Schwenken oder Zoomen ein weiches Randleuchten in Richtungen an, in denen das Bild über den Ansichtsbereich hinausragt, und blendet automatisch aus.\0"
+    /* Settings_Label_ShowNavigator */ "Minimap anzeigen\0"
+    /* Settings_Tooltip_ShowNavigator */ "When mouse is over minimap, Wheel / Thumb Wheel (Shift + Wheel) pans image\0"
+    /* Settings_Label_KeepWindowSizeOnNav */ "Fenstergröße bei Navigation beibehalten\0"
+    /* Settings_Label_RememberLastWindowSizeAndPosition */ "Letzte Fensterposition und -größe merken\0"
+    /* Settings_Label_UpscaleSmallImagesWhenLocked */ "Kleine Bilder anpassen\0"
+    /* Settings_Label_SlideshowInterval */ "Intervall (Sekunden)\0"
+    /* Settings_Label_SlideshowImmersive */ "Immersiver Modus\0"
+    /* Settings_Option_SlideshowNormal */ "Normal\0"
+    /* Settings_Option_SlideshowSpotlight */ "Spotlight\0"
+    /* Settings_Label_ExifMode */ "EXIF-Panel-Modus\0"
+    /* Settings_Label_ToolbarInfoDefault */ "Symbolleisten-Info Standard\0"
+    /* Settings_Label_OpenFullScreenMode */ "Im Vollbildmodus öffnen\0"
+    /* Settings_Label_FullScreenZoomMode */ "Vollbild-Zoom-Modus\0"
+    /* Settings_Label_CustomLiteInfoPanel */ "Kompakte Infoleiste anpassen\0"
+    /* Settings_Label_CustomFullInfoPanel */ "Vollständige Infoleiste anpassen\0"
+    /* Settings_Label_InfoPanelScale */ "Info Panel Zoom\0"
+    /* Settings_Label_ItemsInNormalMode */ "Elemente im Normalmodus\0"
+    /* Settings_Label_ItemsInCompareMode */ "Elemente im Vergleichsmodus\0"
+    /* Settings_Label_SeparatorPreset */ "Trennzeichen-Vorlage\0"
+    /* Settings_Option_FitScreen */ "An Bildschirm anpassen\0"
+    /* Settings_Option_Black */ "Schwarz\0"
+    /* Settings_Option_White */ "Weiß\0"
+    /* Settings_Option_Grid */ "Raster\0"
+    /* Settings_Option_Custom */ "Benutzerdefiniert\0"
+    /* Settings_Option_Off */ "Aus\0"
+    /* Settings_Option_On */ "Ein\0"
+    /* Settings_Option_Lite */ "Kompakt\0"
+    /* Settings_Option_Full */ "Vollständig\0"
+    /* Settings_Option_LargeOnly */ "Nur Große\0"
+    /* Settings_Option_All */ "Alle\0"
+    /* Settings_Option_SoftProofing */ "Softproof\0"
+    /* Settings_Header_Mouse */ "Maus\0"
+    /* Settings_Header_Edge */ "Rand\0"
+    /* Settings_Label_InvertWheel */ "Mausrad invertieren\0"
+    /* Settings_Label_MouseAnchorZoom */ "Fensterzoom am Mauszeiger ausrichten\0"
+    /* Settings_Label_RightButtonDragZoom */ "Zoom mit Rechtsziehen\0"
+    /* Settings_Label_WheelZoomSpeed */ "Mausrad-Zoomgeschwindigkeit\0"
+    /* Settings_Tooltip_WheelZoomSpeed */ "Alt + Wheel temporarily adjusts zoom speed\0"
+    /* Settings_Label_ThumbWheel */ "Daumenrad\0"
+    /* Settings_Tooltip_ThumbWheel */ "Can be replaced with Shift + Wheel\0"
+    /* Settings_Tooltip_MiddleDrag */ "Can be replaced with Ctrl + Left Click\0"
+    /* Settings_Label_DoubleClick */ "Doppelklick\0"
+    /* Settings_Option_DoubleClick_Smart */ "Smart\0"
+    /* Settings_Option_DoubleClick_WheelMode1 */ "Mausrad-Modus 1\0"
+    /* Settings_Option_DoubleClick_WheelMode2 */ "Mausrad-Modus 2\0"
+    /* Settings_Tooltip_DoubleClick */ "Smart: Default zoom/fullscreen toggle;\nWheel Mode 1: Double-click swaps main & thumb wheel functions;\nWheel Mode 2: Double-click toggles image pan mode;\nTip: Shift + Wheel acts as Thumb Wheel.\0"
+    /* Settings_Tooltip_PanStepNormal */ "Controls key pan and wheel pan speed\0"
+    /* OSD_WheelMode1_NextPrevZoom */ "Main Wheel: Next/Prev; Thumb/Shift+Wheel: Zoom\0"
+    /* OSD_WheelMode1_ZoomNextPrev */ "Main Wheel: Zoom; Thumb/Shift+Wheel: Next/Prev\0"
+    /* OSD_WheelMode2_Pan */ "Wheel: Pan Mode\0"
+    /* OSD_WheelMode2_Default */ "Wheel: Default Mode\0"
+    /* Settings_Label_RightDragZoomSpeed */ "Mauszieh-Zoomgeschwindigkeit\0"
+    /* OSD_WheelZoomSpeed */ "Zoomgeschwindigkeit (temp): \0"
+    /* Settings_Label_InvertButtons */ "Seitentasten invertieren\0"
+    /* Settings_Header_KeyboardPan */ "Pan-Schrittweite\0"
+    /* Settings_Label_PanStepNormal */ "Pan-Schrittweite (Normal)\0"
+    /* Settings_Label_PanStepFast */ "Tastatur-Pan-Schrittweite (Schnell)\0"
+    /* Settings_Label_UseFixedZoom */ "Feste Zoomstufen verwenden\0"
+    /* Settings_Tooltip_UseFixedZoom */ "Wenn aktiviert, führt Alt + Rad einen normalen Zoom aus, anstatt die Zoomgeschwindigkeit zu ändern.\0"
+    /* Settings_Label_FixedZoomLevels */ "  └  Benutzerdefinierte Zoomstufen\0"
+    /* Dialog_FixedZoomTitle */ "Zoomstufen bearbeiten\0"
+    /* Dialog_FixedZoomMsg */ "Geben Sie kommagetrennte Zoomstufen ein (z. B. 0.5, 1, 2):\0"
+    /* Settings_Label_ZoomModeIn */ "Vergrößerungsmodus\0"
+    /* Settings_Tooltip_ZoomModeIn */ "Skalierungsalgorithmus für die Vergrößerung:\n• Auto: Intelligente Inhaltserkennung (FSR für Fotos/CG, Nächster für Pixel-Art)\n• Linear: Schnelle bilineare Glättung\n• Nächster: Scharfes Pixelraster für Pixel-Art\n• HQ Kubisch: Extrem sanfter bikubischer Filter\n• AMD FSR 1.0: Kantenadaptive räumliche Super-Resolution mit RCAS-Schärfung\0"
+    /* Settings_Label_ZoomModeOut */ "Verkleinerungsmodus\0"
+    /* Settings_Label_LeftDrag */ "Links ziehen\0"
+    /* Settings_Label_MiddleDrag */ "Mitte ziehen\0"
+    /* Settings_Label_MiddleClick */ "Mittelklick\0"
+    /* Settings_Label_EdgeNavClick */ "Randnavigation-Klick\0"
+    /* Settings_Label_ShowOSD */ "OSD-Benachrichtigung anzeigen\0"
+    /* Settings_Label_DisableEdgeNavInCompare */ "Im Vergleichsmodus deaktivieren\0"
+    /* Settings_Label_NavIndicator */ "Navigationsanzeige\0"
+    /* Settings_Option_Window */ "Fenster\0"
+    /* Settings_Option_Pan */ "Schwenken\0"
+    /* Settings_Option_None */ "Keine\0"
+    /* Settings_Option_Exit */ "Beenden\0"
+    /* Settings_Option_Arrow */ "Pfeil\0"
+    /* Settings_Option_Cursor */ "Cursor\0"
+    /* Settings_Option_Manual */ "Manuell\0"
+    /* Settings_Option_SortAuto */ "Auto (Explorer)\0"
+    /* Settings_Option_SortName */ "Name\0"
+    /* Settings_Option_SortModified */ "Änderungsdatum\0"
+    /* Settings_Option_SortDateTaken */ "Aufnahmedatum (EXIF)\0"
+    /* Settings_Option_SortSize */ "Größe\0"
+    /* Settings_Option_SortType */ "Typ\0"
+    /* Settings_Option_NavLoop */ "Schleife im Ordner\0"
+    /* Settings_Option_NavThrough */ "Durch Unterordner\0"
+    /* Settings_Option_Linear */ "Linear: Grundglättung\0"
+    /* Settings_Option_Nearest */ "Nächster: Extreme Schärfe\0"
+    /* Settings_Option_HighQualityCubic */ "HQ Kubisch: Extreme Glättung\0"
+    /* Settings_Option_FSR */ "AMD FSR 1.0 (EASU/RCAS)\0"
+    /* Settings_Header_Render */ "Rendering\0"
+    /* Settings_Header_Hdr */ "HDR\0"
+    /* Settings_Header_Prompts */ "Eingabeaufforderungen\0"
+    /* Settings_Header_System */ "System\0"
+    /* Settings_Label_AutoRotate */ "Automatisch drehen (EXIF)\0"
+    /* Settings_Label_FsrSharpness */ "FSR-Schärfe\0"
+    /* Settings_Tooltip_FsrSharpness */ "Passen Sie die Kantenschärfe für AMD FSR 1.0 Super-Resolution an.\0"
+    /* Settings_Tab_Plugins */ "Plugins\0"
+    /* Settings_Label_EnableSrPlugin */ "KI-Super-Resolution\0"
+    /* Settings_Label_SrModel */ "AI Model\0"
+    /* Settings_Label_SrAutoTrigger */ "Automatisches Auslösen\0"
+    /* Settings_Label_SrAutoTriggerMaxWidth */ "Maximale Quellbreite\0"
+    /* Settings_Tooltip_SrAutoTriggerMaxWidth */ "Begrenzt die maximale Breite des Quellbildes (in Pixeln) für automatische Super-Resolution. 0 bedeutet unbegrenzt.\0"
+    /* Settings_Label_SrAutoTriggerMaxHeight */ "Maximale Quellhöhe\0"
+    /* Settings_Tooltip_SrAutoTriggerMaxHeight */ "Begrenzt die maximale Höhe des Quellbildes (in Pixeln) für automatische Super-Resolution. 0 bedeutet unbegrenzt.\0"
+    /* Settings_Value_Unlimited */ "Unbegrenzt\0"
+    /* Settings_Label_SrOpenInCompare */ "Nach manuellem Auslösen im Vergleichsmodus anzeigen\0"
+    /* Settings_Label_SrPromptModel */ "Modellauswahl bei manuellem Auslösen abfragen\0"
+    /* Export_Checkbox_SuperResolution */ "Super-Resolution Qualität exportieren\0"
+    /* Settings_Label_SrDebounce */ "Auslöseverzögerung\0"
+    /* Settings_Tooltip_SrDebounce */ "Verzögerung in Millisekunden (0 - 5000 ms), bevor die neuronale Super-Resolution nach dem Zoomen ausgelöst wird.\0"
+    /* Settings_Header_PluginTriggers */ "Trigger & Interaktion\0"
+    /* Settings_Header_PluginParams */ "Plugin-Parameter\0"
+    /* Settings_Label_SrStorageFolder */ "Plugin- & Modellverzeichnis\0"
+    /* Settings_Button_OpenModelFolder */ "📂 Lokales Verzeichnis öffnen\0"
+    /* Settings_Prompt_DownloadModelFirst */ "Gewähltes Modell zuerst herunterladen\0"
+    /* Settings_Segment_InstalledPlugins */ "Installierte Erweiterungen\0"
+    /* Settings_Segment_Marketplace */ "Marktplatz\0"
+    /* Settings_Label_SrEngine */ "Super-Resolution-Engine\0"
+    /* Settings_Label_SrModelStatus */ "Modellstatus\0"
+    /* Settings_Format_DownloadModel */ "Dieses Modell herunterladen (~%llu MB)\0"
+    /* Settings_Header_SrComponent */ "KI-Super-Resolution-Komponente\0"
+    /* Settings_Label_QuickEnableEngine */ "Super-Resolution-Engine aktivieren\0"
+    /* Settings_Button_QuickEnableNcnn */ "⚡ Real-ESRGAN NCNN Vulkan Engine aktivieren\0"
+    /* Settings_Label_OnlineExtensions */ "Online-Erweiterungen & Modelle\0"
+    /* Settings_Button_BrowseMarketplace */ "🌐 Marktplatz durchsuchen\0"
+    /* Settings_Label_MarketManifest */ "Plugin-Übersicht\0"
+    /* Settings_Button_RefreshManifest */ "🔄 Plugin-Übersicht aktualisieren\0"
+    /* Settings_Button_SyncingManifest */ "Synchronisiere aus der Cloud...\0"
+    /* Settings_Format_PluginPackageSize */ "Plugin-Paket (~%llu MB)\0"
+    /* Settings_Button_InstalledUpToDate */ "✓ Installiert\0"
+    /* Settings_Format_UpdateTo */ "⚡ Aktualisieren auf v%ls\0"
+    /* Settings_Button_InstallPlugin */ "⚡ Herunterladen & Installieren\0"
+    /* OSD_SrProcessing */ "KI-Super-Resolution wird berechnet...\0"
+    /* OSD_SrSuccessFormat */ "✓ KI-Super-Resolution fertig: %s [%.0fx] (%.1f ms)\0"
+    /* OSD_SrSuccessFormatSimple */ "✓ KI-Super-Resolution fertig: %s (%.1f ms)\0"
+    /* OSD_SrFailed */ "✗ KI-Super-Resolution fehlgeschlagen\0"
+    /* OSD_SrPluginDisabledOrMissing */ "KI-Super-Resolution-Plugin ist deaktiviert oder nicht installiert\0"
+    /* OSD_SrAnimationProcessingFormat */ "Animationssequenz wird berechnet (%u/%u Bilder)...\0"
+    /* OSD_SrAnimationSuccessFormat */ "✓ KI-Super-Resolution für Animation fertig: %s (%u Bilder in %.2f s)\0"
+    /* OSD_SrVectorLosslessSkipped */ "Vektorgrafiken skalieren verlustfrei, KI-Super-Resolution nicht erforderlich\0"
+    /* OSD_SrAnimationTooManyFrames */ "Animation enthält zu viele Bilder (> %u), vollständige Super-Resolution übersprungen\0"
+    /* OSD_SrImageTooLargeFormat */ "Bildauflösung zu groß (%ux%u, >16 MP), KI-Hochskalierung übersprungen, um VRAM-Überlauf zu verhindern\0"
+    /* Dialog_Title_SelectSrModel */ "KI-Super-Resolution-Modell auswählen\0"
+    /* Dialog_Msg_SelectSrModel */ "Wählen Sie das anzuwendende KI-Super-Resolution-Modell:\0"
+    /* Dialog_Checkbox_RememberSrModelChoice */ "Auswahl merken und bei manuellem Auslösen nicht erneut fragen\0"
+    /* Dialog_Button_OK */ "OK\0"
+    /* Settings_Label_CMS */ "Farbmanagement (CMS)\0"
+    /* Settings_Label_AdvancedColor */ "Erweiterte Farbe (HDR)\0"
+    /* Settings_Label_CmsFallback */ "Fallback für Bilder ohne Tags\0"
+    /* Settings_Label_HdrToneMapping */ "HDR-Tonzuordnung\0"
+    /* Settings_Label_HdrSplineKnee */ "Spline Knee Point\0"
+    /* Settings_Tooltip_HdrToneMapping */ "HDR Tonzuordnungsstrategie:\nLegt fest, wie HDR-Bilder angezeigt werden, wenn sie die Fähigkeiten des Monitors überschreiten.\nSpline: Hochpräzises Highlight-Roll-off mittels stückweiser Splines (Empfohlen).\nFarbmetrisch: Strikte Luminanzzuordnung; Highlights, die das Monitorlimit überschreiten, werden abgeschnitten.\nBT.2390 (EETF): ITU-R BT.2390 EETF-Kurve für hochpräzise Tonzuordnung.\0"
+    /* Settings_Tooltip_HdrSplineKnee */ "0 = Auto (Calculated based on image luminance).\nThe value represents the ratio of the monitor's peak luminance. Brightness below this knee point maps 1:1, while brightness above is smoothly compressed using a spline curve.\n(Recommended: 0.4 - 0.75)\0"
+    /* Settings_Label_HdrPeakNitsOverride */ "HDR Spitzenhelligkeit (Nits)\0"
+    /* Settings_Tooltip_HdrPeakNitsOverride */ "Auf 0 setzen, um erkannte Helligkeit zu verwenden.\0"
+    /* Settings_Label_HdrPeakPercentile */ "HDR Peak Percentile\0"
+    /* Settings_Tooltip_HdrPeakPercentile */ "Discard extremely bright pixels to raise overall brightness (mpv default: 99.995%).\0"
+    /* Settings_Option_HdrPeakPercentile_100 */ "100% (Absolute Peak)\0"
+    /* Settings_Option_HdrPeakPercentile_99995 */ "99.995% (Stable)\0"
+    /* Settings_Option_HdrPeakPercentile_999 */ "99.9% (Aggressive)\0"
+    /* Settings_Label_HdrDesatThreshold */ "HDR-Highlights Entsättigungsbereich\0"
+    /* Settings_Tooltip_HdrDesatThreshold */ "Startschwellenwert für die Entsättigung von Highlights. 0,0 bedeutet Entsättigung aller Helligkeitsstufen, 1,0 bedeutet keine Entsättigung. Empfohlener Standardwert ist 0,18.\0"
+    /* Settings_Label_HdrMaxDesat */ "HDR-Highlights Entsättigungsstärke\0"
+    /* Settings_Tooltip_HdrMaxDesat */ "Maximale Intensität der Entsättigung bei extremen Highlights. 0,0 bedeutet keine Entsättigung, 1,0 bedeutet vollständige Entsättigung zu Weiß. Empfohlener Standardwert ist 0,75.\0"
+    /* Settings_Option_HdrColorimetric */ "Farbmetrisch\0"
+    /* Settings_Option_HdrSpline */ "Spline\0"
+    /* Settings_Option_HdrLegacyReinhard */ "BT.2390 (EETF)\0"
+    /* Settings_Label_CustomProof */ "Softproof-Profil (.icc)\0"
+    /* Settings_Label_CmsIntent */ "Rendering-Intent\0"
+    /* Settings_Label_GamutWarning */ "Farbraumwarnung-Erkennung\0"
+    /* Settings_Tooltip_GamutWarning */ "Analysiert und markiert Farbbereiche außerhalb des Farbraums bei Softproofing oder wenn das Bild den Bildschirmfarbraum überschreitet.\0"
+    /* Settings_Label_GamutAutoPrompt */ "Automatische Benachrichtigung bei Farbraumfehlern\0"
+    /* Settings_Tooltip_GamutAutoPrompt */ "OSD-Benachrichtigung bei Farbraumfehlern anzeigen. Markierungen können manuell über die Symbolleiste umgeschaltet werden.\0"
+    /* Settings_Label_GamutColor */ "Farbraumwarnung-Highlight-Farbe\0"
+    /* Settings_Option_CmsIntentRelative */ "Relativ farbmetrisch\0"
+    /* Settings_Option_CmsIntentPerceptual */ "Perzeptiv\0"
+    /* Settings_Tooltip_CMS */ "Farbmanagementsystem (CMS) aktivieren.\nWenn aktiviert, wird eine hochpräzise Farbraumkonvertierung über die GPU angewendet, um echte Farben wiederherzustellen.\nDeaktivieren verringert die GPU-Auslastung, kann aber auf Displays mit großem Farbraum zu übersättigten Farben führen.\0"
+    /* Settings_Tooltip_CmsIntent */ "Rendering-Intent für die Farbraumkonvertierung.\nPerzeptiv: Komprimiert Farben außerhalb des Farbraums, um Details und Farbverläufe zu erhalten (ideal für Fotos).\nRelativ farbmetrisch: Behält Farben im Farbraum bei und schneidet die anderen ab (ideal für UI und Symbole).\nHinweis: Visuelle Unterschiede treten nur bei Verwendung fortgeschrittener ICC-Profile mit LUTs (Lookup Tables) auf. Standard-Matrix-Profile fallen automatisch auf 'Relativ farbmetrisch' zurück.\0"
+    /* Settings_Tooltip_AdvancedColor */ "16-Bit-Gleitkomma-Rendering-Pipeline (scRGB) aktivieren.\nWenn aktiviert, werden die Lichter von Fotos auf HDR-fähigen Displays perfekt gerendert, indem das SDR-Limit überschritten wird.\nDeaktivieren erzwingt die Zuordnung zur SDR-Ausgabe.\nHinweis: Aktivieren erhöht die VRAM-Nutzung.\0"
+    /* Settings_Tooltip_ZoomAuto */ "Auto: 100 % Skalierung, wenn das Bild kleiner als der Bildschirm ist, und an den Bildschirm anpassen, wenn es größer ist.\0"
+    /* Context_SoftProofing */ "Softproof-Vorschau\0"
+    /* Context_SoftProofProfile */ "Proof-Profil\0"
+    /* Context_SoftProofCustom */ "Benutzerdefiniert...\0"
+    /* Settings_Value_ComingSoon */ "Demnächst\0"
+    /* Settings_Label_ForceRaw */ "RAW erzwingen\0"
+    /* Settings_Label_PairRawJpeg */ "RAW+JPEG-Paarung\0"
+    /* Settings_Tooltip_PairRawJpeg */ "Eine RAW-Datei und das gleichnamige Kamerabild (JPEG/HEIF) als ein Foto anzeigen.\nIn der Liste bleibt nur das gerenderte Bild, markiert mit dem RAW-Format (z. B. +CR3); Aufnahmezeiten werden im Hintergrund geprüft, abweichende Paare werden getrennt.\nMit dem RAW-Button oder seinem Hotkey zwischen Kamerabild und RAW-Dekodierung wechseln, mit dem Paarvergleich-Hotkey beide nebeneinander ansehen.\0"
+    /* Settings_Label_Exposure */ "Belichtung (Helligkeit)\0"
+    /* Settings_Tooltip_Exposure */ "Passt die Bildhelligkeit an (Belichtungskorrektur). Bereich: 0.18x bis 10.0x.\0"
+    /* Settings_Label_AddToOpenWith */ "Zu Öffnen mit hinzufügen\0"
+    /* Settings_Label_CustomEditor */ "Benutzerdefinierter Editor\0"
+    /* Context_SelectEditor */ "Editor auswählen\0"
+    /* OSD_EditorLaunchFailed */ "Editor konnte nicht gestartet werden. Bitte neu konfigurieren.\0"
+    /* Settings_Action_Add */ "Hinzufügen\0"
+    /* Settings_Action_Added */ "Hinzugefügt\0"
+    /* Settings_Status_DisabledInPortable */ "Im portablen Modus deaktiviert\0"
+    /* Settings_Header_Features */ "Funktionen\0"
+    /* Settings_Header_Performance */ "Leistung\0"
+    /* Settings_Header_Transparency */ "Transparenz\0"
+    /* Settings_Label_DebugHUD */ "Debug-HUD aktivieren (F12)\0"
+    /* Settings_Label_Prefetch */ "Vorlade-System\0"
+    /* Settings_Label_MemoryReclaim */ "Memory Reclaim Strategy:\0"
+    /* Settings_Option_MemSmart */ "Smart (Auto)\0"
+    /* Settings_Option_MemAggressive */ "Aggressive (Max Perf)\0"
+    /* Settings_Option_MemOnDemand */ "On-Demand (Min RAM)\0"
+    /* Settings_Tooltip_MemoryReclaim */ "Smart: Balance performance and RAM.\nAggressive: Maximize performance, high memory usage.\nOn-Demand: Release memory immediately when idle.\0"
+    /* Settings_Label_Reset */ "Alle Einstellungen zurücksetzen\0"
+    /* Settings_Action_Restore */ "Wiederherstellen\0"
+    /* Settings_Action_Done */ "Fertig\0"
+    /* Settings_Header_ConfigManagement */ "Import / Export (.ini)\0"
+    /* Settings_Action_CheckUpdates */ "Nach Updates suchen\0"
+    /* Settings_Action_ViewUpdate */ "Update anzeigen\0"
+    /* Settings_Status_Checking */ "Prüfe...\0"
+    /* Settings_Status_UpToDate */ "Aktuell\0"
+    /* Settings_Link_GitHub */ "GitHub-Repository\0"
+    /* Settings_Link_ReportIssue */ "Problem melden\0"
+    /* Settings_Link_Hotkeys */ "Tastenkürzel\0"
+    /* Settings_Label_Version */ "Version\0"
+    /* Settings_Label_Build */ "Build\0"
+    /* Dialog_UpdateTitle */ "Neue Version verfügbar!\0"
+    /* Dialog_UpdateContent */ "v%s is ready.\0"
+    /* Dialog_UpdateLogHeader */ "Was ist neu:\0"
+    /* Dialog_ButtonUpdate */ "Jetzt aktualisieren\0"
+    /* Dialog_ButtonLater */ "Später\0"
+    /* Dialog_ButtonStar */ "Stern auf GitHub\0"
+    /* Dialog_Update_LoveTitle */ "QuickView wird mit Liebe entwickelt\0"
+    /* Dialog_Update_LoveMessage */ "Ich pflege QuickView in meiner Freizeit, weil ich glaube, dass Windows einen schnelleren und saubereren Viewer verdient. Wenn Ihnen dieses Update gefällt, ist der größte Beitrag, uns auf GitHub einen Stern zu geben.\0"
+    /* Dialog_PassthroughTitle */ "Maus-Passthrough-Modus\0"
+    /* Dialog_PassthroughContent */ "Mausereignisse werden an das darunterliegende Fenster weitergegeben.\nBeenden nur über globalen Hotkey (Shift+Esc) oder Taskleisten-Menü möglich.\n\nFortfahren?\0"
+    /* OSD_PassthroughOn */ "Durchklicken: AN (Shift+Esc zum Beenden)\0"
+    /* OSD_PassthroughOff */ "Durchklicken: AUS\0"
+    /* OSD_OverlayModeOn */ "Pausmodus: AN\0"
+    /* OSD_OverlayModeOff */ "Pausmodus: AUS\0"
+    /* OSD_Opacity */ "Deckkraft\0"
+    /* Help_Desc_Edit */ "Edit\0"
+    /* Help_Header_Tips */ "Tips & Glossary\0"
+    /* Help_Tip_ContextScope */ "Tipp: QuickView unterstützt jetzt die vollständige Anpassung von Tastaturkürzeln und Mausgesten. Bitte prüfen und konfigurieren Sie Ihre Belegungen unter „Einstellungen -> Steuerung“. Die Inhalte dieses Hilfefensters werden in einer zukünftigen Version in die Online-Dokumentation verschoben.\0"
+    /* Help_Tip_Rotation */ "Rotation: 'Edge Adapted' means minor cropping to fit block boundaries (lossless data). 'Lossy' means full re-encoding.\0"
+    /* Help_Tip_VideoWall */ "Video Wall (Ctrl+F11): Spans all monitors. If close button is hidden, double-click to exit.\0"
+    /* Help_Tip_DesignerMode */ "Pausmodus / Folienmodus: Sobald aktiviert, wird das Bild halbtransparent und gibt den Blick auf darunter liegende Elemente frei. Sie können die Größe oder Transparenz anpassen. Klicken Sie auf den Maus-Durchlass-Umschalter in der Symbolleiste, um in den Durchlassmodus zu gelangen, in dem alle Eingaben außer Umschalt+Esc ignoriert werden, wodurch QuickView zu einer transparenten Überlagerung wird.\0"
+    /* Help_Tip_GamutDetection */ "Farbraumwarnung: Erkennt Farben außerhalb des Farbumfangs für den Zielmonitor oder das Softproof-Profil. Modi: Aus, nur Softproof oder Alle (Standard: Softproof). Umschaltbar über die Symbolleiste.\0"
+    /* Help_Tip_Raw */ "RAW Button: QuickView shows embedded preview by default. Click to fully decode (may look different due to rendering parameters).\0"
+    /* Help_Tip_JpegQ */ "JPEG Quality: Estimated Q value (reverse engineered). May differ slightly from save setting due to algorithm variations.\0"
+    /* Help_Tip_SoftProofCompare */ "Softproof-Vergleich: Wenn der Vergleichsmodus bei aktiviertem Softproof aufgerufen wird, werden Original und Proof-Bild automatisch verglichen.\0"
+    /* Settings_Option_Auto */ "Auto\0"
+    /* Settings_Option_Eco */ "Öko\0"
+    /* Settings_Option_Balanced */ "Ausgewogen\0"
+    /* Settings_Option_Ultra */ "Ultra\0"
+    /* HUD_Group_Physical */ "PHYSICAL ATTRIBUTES\0"
+    /* HUD_Group_Scientific */ "SCIENTIFIC QUALITY\0"
+    /* HUD_Group_Encoding */ "OPTICS & ENCODING\0"
+    /* HUD_Tip_Sharp_Desc */ "Edge definition (Laplacian Variance)\0"
+    /* HUD_Tip_Sharp_High */ "Crisp edges, high detail\0"
+    /* HUD_Tip_Sharp_Low */ "Soft focus or motion blur\0"
+    /* HUD_Tip_Sharp_Ref */ "> 500 is very sharp\0"
+    /* HUD_Tip_Ent_Desc */ "Information density (Shannon Entropy)\0"
+    /* HUD_Tip_Ent_High */ "Complex textures or high noise\0"
+    /* HUD_Tip_Ent_Low */ "Flat areas or low detail\0"
+    /* HUD_Tip_Ent_Ref */ "7.0-8.0 is high detail\0"
+    /* HUD_Tip_BPP_Desc */ "Bits Per Pixel (Compression Efficiency)\0"
+    /* HUD_Tip_BPP_High */ "Lower efficiency (more data preserved)\0"
+    /* HUD_Tip_BPP_Low */ "Higher efficiency (higher compression)\0"
+    /* HUD_Tip_BPP_Ref */ "24.0 (Raw RGB), ~2.0-3.0 (High JPEG), ~0.5-1.5 (WebP/AVIF)\0"
+    /* HUD_Label_High */ "High: \0"
+    /* HUD_Label_Low */ "Low: \0"
+    /* HUD_Label_Ref */ "Ref: \0"
+    /* Settings_Header_GeekGlass */ "Glas-Engine (GPU)\0"
+    /* Settings_Label_EnableGeekGlass */ "Glas-Effekte\0"
+    /* Settings_Label_GlassUIAnimations */ "UI Animations\0"
+    /* Settings_Header_CoreMaterial */ "Material\0"
+    /* Settings_Label_BlurSigma */ "Unschärfe\0"
+    /* Settings_Status_GlassDisabled */ "Glass Disabled (System)\0"
+    /* Settings_Label_TintDensity */ "Dichte\0"
+    /* Settings_Tooltip_TintDensity */ "Overall color intensity of the glass frost effect.\0"
+    /* Settings_Label_SpecularOpacity */ "Reflex (Specular)\0"
+    /* Settings_Tooltip_SpecularOpacity */ "Brightness of the diagonal lighting reflections.\0"
+    /* Settings_Label_ShadowIntensity */ "Shadow Depth\0"
+    /* Settings_Tooltip_ShadowIntensity */ "Strength of the ambient occlusion shadows.\0"
+    /* Settings_Header_VectorAssets */ "Vector Rendering\0"
+    /* Settings_Label_VectorStrokeWeight */ "Icon Stroke weight\0"
+    /* Settings_Option_StrokeStandard */ "Standard (1.5px)\0"
+    /* Settings_Option_StrokeFine */ "Fine (1.0px)\0"
+    /* Settings_Header_GlassTint */ "Tint Profile\0"
+    /* Settings_Label_TintProfile */ "Color Logic\0"
+    /* Settings_Option_TintAuto */ "Auto (Adaptive)\0"
+    /* Settings_Option_TintCustom */ "Custom Color\0"
+    /* Settings_Label_GlassCustomColor */ "Manual Tint\0"
+    /* Settings_Header_DensityMatrix */ "Control Surface Density (%)\0"
+    /* Settings_Label_OsdDensity */ "OSD & HUD\0"
+    /* Settings_Tooltip_OsdDensity */ "Transparency for small floating overlays.\0"
+    /* Settings_Label_PanelsDensity */ "Toolbar & Sidebars\0"
+    /* Settings_Tooltip_PanelsDensity */ "Transparency for persistent control panels.\0"
+    /* Settings_Label_ModalsDensity */ "Dialogs & Settings\0"
+    /* Settings_Tooltip_ModalsDensity */ "Transparency for centered popups.\0"
+    /* Settings_Label_MenusDensity */ "Menus\0"
+    /* Settings_Tooltip_MenusDensity */ "Materialdichte für Kontextmenüs (Nur bei Acrylic-Material anpassbar).\0"
+    /* Settings_Header_Professional */ "Profi-Werkzeuge\0"
+    /* Settings_Label_ShowDirtyRect */ "Dirty-Rect-Taste in Animation anzeigen\0"
+    /* Settings_Tooltip_ShowDirtyRect */ "Debug-Schaltfläche für Dirty Rects in der Animations-Symbolleiste anzeigen.\0"
+    /* Settings_Label_LoupeShape */ "Lupenform\0"
+    /* Settings_Option_LoupeShapeSquare */ "Quadrat\0"
+    /* Settings_Option_LoupeShapeCircle */ "Kreis\0"
+    /* Settings_Option_LoupeShapeFullscreen */ "Vollbild\0"
+    /* Settings_Label_LoupeZoom */ "Lupen-Zoom\0"
+    /* Settings_Tooltip_LoupeHotkey */ "Halten Sie die Tastenkombination gedrückt und scrollen Sie mit dem Mausrad, um die Lupengröße anzupassen.\0"
+    /* Settings_Tooltip_CropModeHotkey */ "Halten Sie Strg gedrückt und ziehen Sie mit der linken Maustaste, um schnell zuzuschneiden.\0"
+    /* Settings_Tab_Theme */ "Theme\0"
+    /* Settings_Label_ThemeMode */ "Preset\0"
+    /* Settings_Option_ThemeAuto */ "System\0"
+    /* Settings_Option_ThemeDark */ "Dunkel\0"
+    /* Settings_Option_ThemeLight */ "Hell\0"
+    /* Settings_Option_ThemeCustom */ "Design\0"
+    /* Settings_Label_AmbientDimmer */ "Hintergrund abdunkeln\0"
+    /* Settings_Tooltip_AmbientDimmer */ "Dim the background when a modal or settings window is open.\0"
+    /* Settings_Label_AccentColor */ "Accent Color\0"
+    /* Settings_Option_AccentSystem */ "System\0"
+    /* Settings_Option_AccentCustom */ "Custom\0"
+    /* Settings_Label_WindowBorderAccent */ "Active Window Border\0"
+    /* Settings_Option_BorderFollowSystem */ "System\0"
+    /* Settings_Option_BorderAccent */ "Accent\0"
+    /* Settings_Label_ResetGlass */ "Material Preset\0"
+    /* Settings_Action_ResetGlass */ "Reset Defaults\0"
+    /* Settings_Header_ThemeManagement */ "Theme Engine\0"
+    /* Settings_Action_ExportTheme */ "Export\0"
+    /* Settings_Action_ImportTheme */ "Import\0"
+    /* Toolbar_Tooltip_CompareSave */ "Bild speichern / exportieren (S)\0"
+    /* Dialog_MultiLineInputHint */ "[Strg+Eingabe] Speichern\0"
+    /* Dialog_AiApiKeyTitle */ "API-Schlüssel konfigurieren\0"
+    /* Dialog_AiApiKeyPrompt */ "Geben Sie den API-Schlüssel ein (lokal geschützt durch Windows DPAPI):\0"
+    /* Dialog_AiPromptTitle */ "Prompt-Vorlage bearbeiten\0"
+    /* Dialog_AiPromptPrompt */ "Konfigurieren Sie den AI-Prompt (mehrzeilig, Strg+Eingabe zum Speichern):\0"
+    /* Dialog_AiActionNameTitle */ "Aktionsnamen bearbeiten\0"
+    /* Dialog_AiActionNamePrompt */ "Geben Sie einen Anzeigenamen für die AI-Aktion ein:\0"
+    /* Dialog_AiBaseUrlTitle */ "Endpunkt-URL konfigurieren\0"
+    /* Dialog_AiBaseUrlPrompt */ "Geben Sie die OpenAI / ComfyUI kompatible Basis-URL ein:\0"
+    /* AiAction_Title */ "KI-Befehlskonsole\0"
+    /* AiAction_EscHint */ "[Esc] Schließen\0"
+    /* AiAction_ScopeCropAndBlend */ "Bereich reparieren\0"
+    /* AiAction_ScopeForceFull */ "Gesamtes Bild\0"
+    /* AiAction_FooterQuickKeys */ "1~9 / 0 für Schnellausführung drücken\0"
+    /* AiAction_Placeholder */ "Prompt eingeben oder Presets suchen...\0"
+    /* AiAction_InpaintTitle */ "Bereichs-Inpaint (AI Inpaint)\0"
+    /* AiAction_InpaintDesc */ "Bereich auswählen zum nahtlosen Entfernen oder Ersetzen\0"
+    /* AiAction_InpaintTag */ "Auswahlmodus\0"
+    /* AiAction_AdhocPrefix */ "✨ Prompt senden: \"\0"
+    /* AiAction_AdhocSend */ "Enter Senden\0"
+    /* AiAction_CurrentModel */ "Aktuelles Modell\0"
+    /* AiAction_NoModelSelected */ "Kein Modell ausgewählt\0"
+    /* OSD_AiProcessing */ "AI verarbeitet: %s (Esc zum Abbrechen)...\0"
+    /* OSD_AiGenerationSuccess */ "AI-Generierung abgeschlossen! Wisch-Vergleichsmodus aktiv\0"
+    /* OSD_AiCompleted */ "KI-Verarbeitung abgeschlossen\0"
+    /* OSD_AiPreparing */ "AI: %s wird vorbereitet (Esc zum Abbrechen)...\0"
+    /* OSD_AiProcessingElapsed */ "AI: %s wird verarbeitet [%ds, Esc zum Abbrechen]...\0"
+    /* OSD_AiConnecting */ "AI verbindet: %s (Esc zum Abbrechen)...\0"
+    /* OSD_AiSamplingProgress */ "AI-Sampling: %d%% (%d/%d Schritte) [%ds, Esc zum Abbrechen]\0"
+    /* OSD_AiSamplingProgressEta */ "AI-Sampling: %d%% (%d/%d Schritte, ca. %.0fs übrig) [%ds, Esc zum Abbrechen]\0"
+    /* OSD_AiAdhocPrompt */ "Benutzerdefinierter Prompt\0"
+    /* OSD_AiTaskCancelled */ "AI-Aufgabe abgebrochen\0"
+    /* OSD_AiInpaintGuide */ "Bereich mit linker Maustaste auswählen (Enter zum Ausführen, Esc zum Abbrechen)\0"
+    /* OSD_AiInpaintGuideActionFormat */ "Bereich auswählen und Enter drücken zum Ausführen von [%s]\0"
+    /* OSD_AiSelectionTooSmall */ "Auswahl zu klein, bitte Bereich zum Inpainten auswählen\0"
+    /* OSD_AiEmptyResult */ "AI-Generierung lieferte leeres Ergebnis\0"
+    /* OSD_AiDecodeFailed */ "Fehler beim Decodieren des AI-Bildes\0"
+    /* OSD_AiTextureFailed */ "GPU-Textur konnte nicht erstellt werden\0"
+    /* OSD_AiEmptyPromptHint */ "Bitte Prompt eingeben oder Standardaktion auswählen\0"
+    /* OSD_AiInpaintPromptEmptyHint */ "Bitte zuerst Prompt für die Teil-Neuzeichnung eingeben\0"
+    /* Settings_Tab_Ai */ "AI-Aktionen\0"
+    /* Settings_Header_AiProviders */ "AI-Modellanbieter\0"
+    /* Settings_Desc_AiProviders */ "Verwalten Sie Endpunkte, DPAPI-Schlüssel und Modellkennungen.\0"
+    /* Settings_Label_AiProviderName */ "Anbieter-Voreinstellung\0"
+    /* Settings_Label_AiBaseUrl */ "Endpunkt (Base URL)\0"
+    /* Settings_Label_AiApiKey */ "API-Schlüssel (DPAPI-geschützt)\0"
+    /* Settings_Label_AiModelId */ "Modellkennung\0"
+    /* Settings_Label_AiModelUnconfigured */ "[Nicht konfiguriert, abrufen oder eingeben]\0"
+    /* Settings_Label_AiMaxRes */ "Maximale Eingangsauflösung\0"
+    /* Settings_Label_AiDefaultProfile */ "★ Standard-Anbieter\0"
+    /* Settings_Button_AiSetDefault */ "★ Als Standard festlegen\0"
+    /* Settings_Button_AiTestConn */ "Verbindung testen\0"
+    /* Settings_Button_AiSaveProf */ "Konfiguration speichern\0"
+    /* Settings_Button_AiDeleteProf */ "Anbieter löschen\0"
+    /* Settings_Button_AiAddProf */ "+ Anbieter hinzufügen\0"
+    /* Settings_Header_AiActions */ "Benutzerdefinierte AI-Aktionen\0"
+    /* Settings_Button_AiAddAction */ "+ Neue AI-Aktion\0"
+    /* Settings_Label_AiActionName */ "Aktionsname\0"
+    /* Settings_Label_AiPromptTemplate */ "Prompt-Vorlage\0"
+    /* Settings_Label_AiExecModel */ "Ausführender Anbieter\0"
+    /* Settings_Option_AiDefaultModel */ "Standard-Anbieter\0"
+    /* Settings_Label_AiScopeMode */ "Wirkungsbereich\0"
+    /* Settings_Button_AiDeleteAction */ "Aktion löschen\0"
+    /* Settings_AiModelCustom */ "✎ Modell manuell eingeben...\0"
+    /* Settings_AiModelFetching */ "⏳ Modelle werden abgerufen...\0"
+    /* Settings_AiModelFetchAuto */ "↻ Modelle vom Server abrufen...\0"
+    /* Settings_Option_AiRes4K */ "4K / Original (4096px)\0"
+    /* Settings_Option_AiRes2K */ "2K QHD (2048px)\0"
+    /* Settings_Option_AiRes1K */ "1K Standard (1024px)\0"
+    /* Settings_Option_AiResOriginal */ "Unbegrenzt (Original)\0"
+    /* Settings_Option_AiScopeForceFull */ "Ganzes Bild\0"
+    /* Settings_Option_AiScopeCropBlend */ "Inpaint & Einblenden\0"
+    /* Settings_Option_AiCustomEndpoint */ "Benutzerdefiniert (OpenAI-kompatibel)\0"
+    /* Settings_Option_AiLocalComfyUI */ "Lokales ComfyUI\0"
+    /* Settings_Option_AiLocalSdWebUI */ "Lokales SD WebUI / Forge\0"
+    /* OSD_AiFetchingModels */ "Modellliste wird abgerufen...\0"
+    /* OSD_AiFetchModelsFailed */ "Abrufen der Modelle fehlgeschlagen: \0"
+    /* OSD_AiFetchModelsSuccessFormat */ "%zu verfügbare Modelle abgerufen\0"
+    /* OSD_AiSetDefaultSuccessFormat */ "%s als Standardanbieter festgelegt\0"
+    /* OSD_AiTestingConnection */ "Verbindung und Autorisierung werden getestet...\0"
+    /* OSD_AiConnSuccessFormat */ "✓ Verbindung erfolgreich! Latenz: %dms (HTTP %d)\0"
+    /* OSD_AiSaveFailedBaseUrlEmpty */ "Speichern fehlgeschlagen: Basis-URL darf nicht leer sein\0"
+    /* OSD_AiSaveFailedApiKeyEmpty */ "Speichern fehlgeschlagen: API-Schlüssel erforderlich\0"
+    /* OSD_AiSaveFailedModelEmpty */ "Speichern fehlgeschlagen: Bitte Modell festlegen\0"
+    /* OSD_AiSaveProfileSuccess */ "✓ Anbieterkonfiguration gespeichert\0"
+    /* AiError_ApiKeyEmpty */ "API-Schlüssel ist leer. Bitte in Einstellungen -> AI-Aktionen konfigurieren.\0"
+    /* AiError_ModelEmpty */ "Modellkennung ist leer. Bitte in Einstellungen -> AI-Aktionen konfigurieren.\0"
+    /* AiError_InvalidUrl */ "Ungültiges Basis-URL-Format.\0"
+    /* AiError_InitWinHttpFailed */ "WinHTTP-Sitzung konnte nicht initialisiert werden.\0"
+    /* AiError_ConnectFailed */ "Verbindung zum Server fehlgeschlagen.\0"
+    /* AiError_CreateReqFailed */ "HTTP-Anfrage konnte nicht erstellt werden.\0"
+    /* AiError_NoValidDataReturned */ "HTTP 200 empfangen, aber keine Bild- oder Textdaten gefunden.\0"
+    /* AiError_RequestTimeout */ "Netzwerkanforderung abgelaufen oder Server antwortet nicht.\0"
+    /* AiError_HttpStatusPrefix */ "Anbieter meldete Fehler (HTTP \0"
+    /* AiError_JsonParseFailed */ "JSON-Antwort des Anbieters konnte nicht verarbeitet werden.\0"
+    /* AiError_NoModelsFound */ "Anforderung erfolgreich, aber keine verfügbaren Modelle gefunden.\0"
+    /* AiTest_ConnSuccess */ "Verbindung erfolgreich und Authentifizierung bestätigt.\0"
+    /* AiTest_AuthFailedPrefix */ "Ungültiger API-Schlüssel oder nicht autorisiert (HTTP \0"
+    /* AiTest_HttpErrorPrefix */ "Server antwortet mit HTTP \0"
+    /* AiError_NoAvailableProfile */ "Kein verfügbares AI-Modellprofil gefunden. Bitte Einstellungen prüfen.\0"
+    /* Settings_Tab_FileAssoc */ "Dateitypen\0"
+    /* Settings_Header_FileAssocStatus */ "Zuordnungsdiagnose\0"
+    /* Settings_Header_FileAssocOptions */ "Verhalten & Anpassung\0"
+    /* Settings_Header_FileAssocFormats */ "Unterstützte Formate (92)\0"
+    /* Settings_Label_FileAssocIconStyle */ "Explorer-Dateisymbol\0"
+    /* Settings_Option_FileAssocIconNative */ "Systemstandard\0"
+    /* Settings_Option_FileAssocIconApp */ "QuickView-Logo\0"
+    /* Settings_Label_FileAssocContextMenu */ "Explorer-Kontextmenü (\"Mit QuickView öffnen\")\0"
+    /* Settings_Label_FileAssocAutoRepair */ "Registrierte Pfade beim Start automatisch reparieren\0"
+    /* Settings_Label_FileAssocPresets */ "Schnellvorlagen\0"
+    /* Settings_Action_PresetRecommended */ "Empfohlen\0"
+    /* Settings_Action_PresetAllImages */ "Alle Bilder\0"
+    /* Settings_Action_PresetPhotoRaw */ "Foto & RAW\0"
+    /* Settings_Action_PresetClearAll */ "Alle löschen\0"
+    /* Settings_Action_ApplyAssoc */ "Auf System anwenden\0"
+    /* Settings_Action_ApplyPending */ "Anwenden*\0"
+    /* Settings_Action_SetDefaultWin */ "Windows-Standard festlegen\0"
+    /* Settings_Action_RepairAssoc */ "Pfade reparieren\0"
+    /* Settings_Label_FileAssocCatStandard */ "Standard-Raster\0"
+    /* Settings_Label_FileAssocCatModern */ "Modern & Vektor\0"
+    /* Settings_Label_FileAssocCatPro */ "Pro / HDR / Legacy\0"
+    /* Settings_Label_FileAssocCatRaw */ "Kamera-RAW\0"
+    /* Settings_Label_FileAssocCatExtRaw */ "Erweitertes / Kino-RAW\0"
+    /* Settings_Label_FileAssocCatArchive */ "Archive & Comics\0"
+    /* Settings_Tooltip_FileAssocArchive */ "Empfohlen: nur .cbz / .cbr. Aktivieren Sie .zip / .rar nur bei Bedarf für „Öffnen mit“.\0"
+    /* Settings_Status_AssocApplied */ "Dateizuordnungen mit der Registrierung synchronisiert\0"
+    /* Settings_Status_AssocSummaryFormat */ "%d ausgewählt · %d Systemstandard · %d nur Öffnen mit\0"
+    /* Settings_Status_AssocBrokenHint */ "Fehlerhafter Befehl ohne Anführungszeichen erkannt — zur Korrektur Anwenden klicken.\0"
+    /* Settings_Status_AssocPendingHint */ "Ausstehende Änderungen — klicken Sie auf \"Anwenden\", um Windows zu synchronisieren.\0"
+    /* Settings_Status_AssocStoreManaged */ "Microsoft Store (MSIX)-Modus: Kontextmenü & Öffnen mit werden nativ von Windows verwaltet. Klicken Sie auf „In Windows als Standard festlegen“.\0"
+    /* Settings_Label_StoreUpdatesManaged */ "Über Microsoft Store verwaltet\0"
+    /* Settings_Action_OpenStore */ "Store öffnen\0"
+    /* Settings_Status_AssocLegend */ "Grüner Punkt = Systemstandard · Hervorgehoben = Ausgewählt / Öffnen mit\0"
+    /* Context_OpenWithQuickView */ "Mit QuickView öffnen\0";
+static constexpr char kBlob_ES[] =
+    /* CurrentLocale */ "es-es\0"
+    /* OSD_NoImage */ "No hay imagen cargada\0"
+    /* OSD_FolderEmpty */ "No hay imágenes en esta carpeta\0"
+    /* OSD_SvgStaticFallback */ "SVG animado mostrado como imagen fija\0"
+    /* OSD_Lossless */ "Sin pérdida\0"
+    /* OSD_ReencodedLossless */ "Recodificado (sin pérdida)\0"
+    /* OSD_EdgeAdapted */ "Bordes optimizados\0"
+    /* OSD_Reencoded */ "Recodificado\0"
+    /* OSD_ReadOnly */ "Acceso denegado - el archivo está en uso o es de solo lectura\0"
+    /* OSD_NotPerfect */ "Transformación no perfecta (bordes optimizados)\0"
+    /* OSD_SpanOn */ "Video Wall: ON\0"
+    /* OSD_SpanOff */ "Video Wall: OFF\0"
+    /* OSD_CompareBefore */ "Antes (Original)\0"
+    /* OSD_CompareAfter */ "Después (Prueba)\0"
+    /* OSD_CompareAnimNotSupported */ "El modo comparación no está disponible para animaciones\0"
+    /* OSD_UndoDeleteSuccess */ "Eliminación deshecha\0"
+    /* OSD_UndoDeleteFailed */ "Error al deshacer eliminación\0"
+    /* OSD_UndoRenameSuccess */ "Nombre cambiado deshecho\0"
+    /* OSD_UndoRenameFailed */ "Error al deshacer cambio de nombre\0"
+    /* OSD_UndoTransformSuccess */ "Giro/volteo deshecho\0"
+    /* OSD_UndoTransformFailed */ "Error al deshacer giro/volteo\0"
+    /* Action_RotateCW */ "Girar 90° en sentido horario\0"
+    /* Action_RotateCCW */ "Girar 90° en sentido antihorario\0"
+    /* Action_Rotate180 */ "Girar 180°\0"
+    /* Action_FlipH */ "Voltear horizontal\0"
+    /* Action_FlipV */ "Voltear vertical\0"
+    /* Dialog_SaveTitle */ "¿Guardar cambios?\0"
+    /* Dialog_SaveContent */ "La imagen ha sido modificada. ¿Desea guardar los cambios?\0"
+    /* Dialog_ButtonSave */ "Guardar\0"
+    /* Dialog_ButtonSaveAs */ "Guardar como...\0"
+    /* Dialog_ButtonDiscard */ "Descartar\0"
+    /* Dialog_ButtonContinue */ "Continuar\0"
+    /* Dialog_CropUnsavedTitle */ "Cambios de recorte no guardados. ¿Guardar cambios?\0"
+    /* Dialog_SaveAsTitle */ "Guardar imagen\0"
+    /* Dialog_ExportTitle */ "Guardar y exportar\0"
+    /* Dialog_ButtonOverwrite */ "Sobrescribir\0"
+    /* Dialog_EmbedICC */ "Perfil ICC\0"
+    /* Dialog_SizeEstimating */ "Tamaño: Calculando...\0"
+    /* Dialog_ExportError */ "Error de exportación\0"
+    /* Context_Open */ "Abrir...\tCtrl+O\0"
+    /* Context_Crop */ "Recortar\0"
+    /* Context_SuperResolution */ "Superresolución IA\0"
+    /* Context_AiAction */ "Acciones IA\0"
+    /* Context_OpenWith */ "Abrir con...\0"
+    /* Context_Edit */ "Editar\tE\0"
+    /* Context_ShowInExplorer */ "Mostrar en Explorador\0"
+    /* Context_OpenFolder */ "Abrir carpeta\0"
+    /* Context_CopyPixels */ "Copiar píxeles\tCtrl+C\0"
+    /* Context_CopyFile */ "Copiar archivo\tCtrl+Shift+C\0"
+    /* Context_CopyPath */ "Copiar ruta\tCtrl+Alt+C\0"
+    /* Context_Print */ "Imprimir\tCtrl+P\0"
+    /* Context_RotateCW */ "Girar 90° horario\tR\0"
+    /* Context_RotateCCW */ "Girar 90° antihorario\tShift+R\0"
+    /* Context_FlipH */ "Voltear horizontal\tH\0"
+    /* Context_FlipV */ "Voltear vertical\tV\0"
+    /* Context_Transform */ "Transformar\0"
+    /* Context_ActualSize */ "Tamaño real (100%)\tZ\0"
+    /* Context_FitToScreen */ "Ajustar a pantalla\tF\0"
+    /* Context_FitWindow */ "Ajustar a ventana\0"
+    /* Context_FillWindow */ "Rellenar ventana\0"
+    /* Context_ZoomIn */ "Acercar\t+ / Ctrl +\0"
+    /* Context_ZoomOut */ "Alejar\t- / Ctrl -\0"
+    /* Context_LockWindow */ "Bloquear ventana\0"
+    /* Context_AlwaysOnTop */ "Siempre visible\tCtrl+T\0"
+    /* Context_HUDGallery */ "Galería HUD\tT\0"
+    /* Context_LiteInfoPanel */ "Panel de info compacto\tTab\0"
+    /* Context_FullInfoPanel */ "Panel de info completo\tI\0"
+    /* Context_RenderRAW */ "Renderizar RAW\0"
+    /* Context_PixelArtMode */ "Modo de Pixel Art\0"
+    /* Context_Fullscreen */ "Pantalla completa\tF11\0"
+    /* Context_SlideshowMode */ "Modo de presentación\0"
+    /* Context_SpanDisplays */ "Span Displays (Video Wall)\tCtrl+F11\0"
+    /* Context_View */ "Ver\0"
+    /* Context_WallpaperFill */ "Rellenar\0"
+    /* Context_WallpaperFit */ "Ajustar\0"
+    /* Context_WallpaperTile */ "Mosaico\0"
+    /* Context_SetAsWallpaper */ "Establecer como fondo\0"
+    /* Context_Rename */ "Renombrar\tF2\0"
+    /* Context_FixExtension */ "Corregir extensión\0"
+    /* Context_Delete */ "Eliminar\tSupr\0"
+    /* Context_UndoDelete */ "Deshacer eliminación\tCtrl+Z\0"
+    /* Context_UndoRename */ "Deshacer cambio de nombre\tCtrl+Z\0"
+    /* Context_UndoTransform */ "Deshacer rotar/voltear\tCtrl+Z\0"
+    /* Context_Undo */ "Deshacer\tCtrl+Z\0"
+    /* Context_SortBy */ "Ordenar por\0"
+    /* Context_NavOrder */ "Orden de navegación\0"
+    /* Context_SortAscending */ "Ascendente\0"
+    /* Context_SortDescending */ "Descendente\0"
+    /* Context_Settings */ "Configuración...\0"
+    /* Context_CompareMode */ "Modo comparación\tC\0"
+    /* Context_OverlayMode */ "Modo Calco\tCtrl+Shift+O\0"
+    /* Context_GalleryOpenCompare */ "Abrir en modo de comparación\0"
+    /* Context_GalleryOpenNewWindow */ "Abrir en una ventana nueva\0"
+    /* Context_Exit */ "Salir\tMButton/Esc\0"
+    /* Menu_ExitPassthrough */ "Salir del modo de paso de ratón\0"
+    /* Message_SaveErrorTitle */ "Error\0"
+    /* Message_SaveErrorContent */ "No se pudo guardar el archivo. ¿Está bloqueado?\0"
+    /* Toolbar_Tooltip_Prev */ "Anterior (Izquierda)\0"
+    /* Toolbar_Tooltip_Next */ "Siguiente (Derecha)\0"
+    /* Toolbar_Tooltip_RotateL */ "Girar izquierda (Shift+R)\0"
+    /* Toolbar_Tooltip_RotateR */ "Girar derecha (R)\0"
+    /* Toolbar_Tooltip_FlipH */ "Voltear horizontal (H)\0"
+    /* Toolbar_Tooltip_Lock */ "Bloquear ventana (temporal)\0"
+    /* Toolbar_Tooltip_Unlock */ "Desbloquear ventana\0"
+    /* Toolbar_Tooltip_Gallery */ "Galería (T)\0"
+    /* Toolbar_Tooltip_Info */ "Panel de información\0"
+    /* Toolbar_Tooltip_RawPreview */ "RAW: Vista previa (Clic para completo)\0"
+    /* Toolbar_Tooltip_RawFull */ "RAW: Decodificación completa (Clic para vista previa)\0"
+    /* Toolbar_Tooltip_RawPairView */ "RAW: Ver RAW emparejado (decodificación completa)\0"
+    /* Toolbar_Tooltip_RawPairBack */ "RAW: Volver a la imagen emparejada\0"
+    /* Toolbar_Tooltip_FixExtension */ "Extensión no coincide (Reparar)\0"
+    /* Toolbar_Tooltip_Pin */ "Fijar barra de herramientas\0"
+    /* Toolbar_Tooltip_Unpin */ "Soltar barra de herramientas\0"
+    /* Toolbar_Tooltip_GamutWarning */ "Mostrar áreas fuera de gama\0"
+    /* Toolbar_Tooltip_CropCopy */ "Copiar selección (Ctrl+C)\0"
+    /* Toolbar_Tooltip_CropSave */ "Guardar (Ctrl+S)\0"
+    /* Toolbar_Tooltip_CropApply */ "Aplicar (Enter)\0"
+    /* Toolbar_Tooltip_CropCancel */ "Salir (Esc)\0"
+    /* Toolbar_Tooltip_OverlayAlphaUp */ "Aumentar opacidad\0"
+    /* Toolbar_Tooltip_OverlayAlphaDown */ "Disminuir opacidad\0"
+    /* Toolbar_Tooltip_OverlayPassthroughOn */ "Activar paso de ratón\0"
+    /* Toolbar_Tooltip_OverlayPassthroughOff */ "Desactivar paso de ratón\0"
+    /* Toolbar_Tooltip_OverlayExit */ "Salir del modo calco\0"
+    /* Toolbar_Tooltip_OverlayZoomIn */ "Acercar (Calco)\0"
+    /* Toolbar_Tooltip_OverlayZoomOut */ "Alejar (Calco)\0"
+    /* Toolbar_Tooltip_NormalMode */ "Modo normal\0"
+    /* Toolbar_Tooltip_CompareMode */ "Modo comparación\0"
+    /* Toolbar_Tooltip_SinglePage */ "Modo de página única\0"
+    /* Toolbar_Tooltip_DualPage */ "Modo de doble página\0"
+    /* Toolbar_Tooltip_CompareOpen */ "Abrir nueva imagen en la selección\0"
+    /* Toolbar_Tooltip_CompareSwap */ "Intercambiar izquierda/derecha\0"
+    /* Toolbar_Tooltip_CompareLayout */ "Cambiar diseño\0"
+    /* Toolbar_Tooltip_CompareInfo */ "Información de comparación\0"
+    /* Toolbar_Tooltip_CompareDelete */ "Eliminar imagen seleccionada\0"
+    /* Toolbar_Tooltip_CompareZoomIn */ "Aumentar (Ajuste fino)\0"
+    /* Toolbar_Tooltip_CompareZoomOut */ "Reducir (Ajuste fino)\0"
+    /* Toolbar_Tooltip_CompareSyncZoomOn */ "Sincronizar zoom: ACTIVADO\0"
+    /* Toolbar_Tooltip_CompareSyncZoomOff */ "Sincronizar zoom: DESACTIVADO\0"
+    /* Toolbar_Tooltip_CompareSyncPanOn */ "Sincronizar panorámica: ACTIVADO\0"
+    /* Toolbar_Tooltip_CompareSyncPanOff */ "Sincronizar panorámica: DESACTIVADO\0"
+    /* Toolbar_Tooltip_SlideshowImmersiveToggle */ "Alternar efecto foco\0"
+    /* Toolbar_Tooltip_SlideshowExit */ "Salir de la presentación de diapositivas\0"
+    /* Toolbar_Tooltip_CompareExit */ "Salir de comparación\0"
+    /* Toolbar_Tooltip_AnimPlay */ "Reproducir animación\0"
+    /* Toolbar_Tooltip_AnimPause */ "Pausar animación\0"
+    /* Toolbar_Tooltip_AnimPrev */ "Marco anterior\0"
+    /* Toolbar_Tooltip_AnimNext */ "Marco siguiente\0"
+    /* Toolbar_Tooltip_AnimDirtyOn */ "Depuración de Dirty Rect: ACTIVADO\0"
+    /* Toolbar_Tooltip_AnimDirtyOff */ "Depuración de Dirty Rect: DESACTIVADO\0"
+    /* Toolbar_Tooltip_AnimSpeed */ "Velocidad de animación\0"
+    /* OSD_Copied */ "¡Copiado!\0"
+    /* OSD_PixelsCopied */ "¡Píxeles copiados al portapapeles!\0"
+    /* OSD_PixelsExtracting */ "Extrayendo píxeles...\0"
+    /* OSD_FileCopied */ "¡Archivo copiado al portapapeles!\0"
+    /* OSD_CoordinatesCopied */ "¡Coordenadas copiadas!\0"
+    /* OSD_FilePathCopied */ "¡Ruta del archivo copiada!\0"
+    /* OSD_Zoom100 */ "Zoom: 100%\0"
+    /* OSD_ZoomFit */ "Zoom: Ajustar a pantalla\0"
+    /* OSD_ZoomFitWindow */ "Zoom: Ajustar a ventana\0"
+    /* OSD_ZoomFill */ "Zoom: Rellenar ventana\0"
+    /* OSD_PrintInstruction */ "Imprimir: Use Ctrl+P en la aplicación abierta\0"
+    /* OSD_MovedToRecycleBin */ "Movido a la papelera\0"
+    /* OSD_WindowLocked */ "Ventana bloqueada\0"
+    /* OSD_WindowUnlocked */ "Ventana desbloqueada\0"
+    /* OSD_AlwaysOnTopOn */ "Siempre visible: ACTIVADO\0"
+    /* OSD_AlwaysOnTopOff */ "Siempre visible: DESACTIVADO\0"
+    /* OSD_WallpaperSet */ "Fondo de pantalla establecido\0"
+    /* OSD_WallpaperFailed */ "Error al establecer fondo de pantalla\0"
+    /* OSD_Renamed */ "Renombrado\0"
+    /* OSD_RenameFailed */ "Error al renombrar\0"
+    /* OSD_Restored */ "Restaurado\0"
+    /* OSD_ExtensionFixed */ "Extensión corregida\0"
+    /* OSD_FirstImage */ "Primera imagen\0"
+    /* OSD_LastImage */ "Última imagen\0"
+    /* OSD_HD */ "HD\0"
+    /* OSD_ZoomPrefix */ "Zoom: \0"
+    /* OSD_AnimPlaying */ "Reproduciendo\0"
+    /* OSD_AnimPaused */ "Pausado (Alt+Izquierda/Derecha para buscar)\0"
+    /* OSD_AnimDirtyOn */ "Dirty Rect: ACTIVADO\0"
+    /* OSD_AnimDirtyOff */ "Dirty Rect: DESACTIVADO\0"
+    /* OSD_GamutDetected */ "Colores fuera de gama detectados\0"
+    /* OSD_GamutIncompatible */ "Gama: Perfil incompatible\0"
+    /* OSD_GamutFailed */ "Gama: Error en el análisis\0"
+    /* OSD_SlideshowStarted */ "Presentación iniciada\0"
+    /* OSD_SlideshowStopped */ "Presentación detenida\0"
+    /* OSD_SlideshowResumed */ "Presentación reanudada\0"
+    /* OSD_SlideshowPaused */ "Presentación pausada\0"
+    /* OSD_ImmersiveSpotlight */ "Inmersivo: Foco\0"
+    /* OSD_ImmersiveNormal */ "Inmersivo: Normal\0"
+    /* OSD_PrintJobStarted */ "Trabajo de impresión enviado. Puede seguir navegando.\0"
+    /* OSD_PrintJobFinished */ "Trabajo de impresión enviado con éxito.\0"
+    /* OSD_EnterCropMode */ "Modo de recorte activado\0"
+    /* OSD_CropCopied */ "Selección de recorte copiada\0"
+    /* OSD_CropApplied */ "Recorte aplicado (sin guardar)\0"
+    /* Context_ColorSpace */ "Espacio de color\0"
+    /* Settings_Option_CmsUnmanaged */ "No gestionado (rápido)\0"
+    /* Settings_Option_CmssRGB */ "sRGB (estándar)\0"
+    /* Settings_Option_CmsP3 */ "Display P3 (gama amplia)\0"
+    /* Settings_Option_CmsAdobeRGB */ "Adobe RGB (1998)\0"
+    /* Settings_Option_CmsGray */ "Escala de grises (Control de tono)\0"
+    /* Settings_Option_CmsProPhoto */ "ProPhoto RGB\0"
+    /* Checkbox_AlwaysSaveLossless */ "Siempre guardar sin pérdida\0"
+    /* Checkbox_AlwaysSaveEdgeAdapted */ "Siempre guardar con bordes optimizados\0"
+    /* Checkbox_AlwaysSaveLossy */ "Siempre guardar recodificado\0"
+    /* Checkbox_NeverConfirmDelete */ "Enviar directamente a la papelera sin confirmar\0"
+    /* OSD_HEICCodecMissing */ "No se puede decodificar HEIC - Instale la extensión HEVC\0"
+    /* Dialog_HEICTitle */ "No se puede decodificar HEIC\0"
+    /* Dialog_HEICContent */ "Su sistema no tiene la extensión HEVC.\\nQuickView usa aceleración de hardware para mejor rendimiento.\0"
+    /* Dialog_HEICGetExtension */ "Obtener extensión (gratis)\0"
+    /* Dialog_Cancel */ "Cancelar\0"
+    /* Settings_Tab_General */ "General\0"
+    /* Settings_Tab_About */ "Acerca de\0"
+    /* Settings_Tab_Shortcuts */ "Atajos\0"
+    /* Settings_Hotkey_PressKey */ "Presione teclas...\0"
+    /* Settings_Hotkey_Conflict */ "Conflicto de teclas\0"
+    /* Settings_Hotkey_ConflictPrompt */ "Usado por \"%s\". Continuar borrará su asignación.\0"
+    /* Settings_Hotkey_Restore */ "Restablecer atajos predeterminados\0"
+    /* Settings_Hotkey_Restored */ "Restablecido\0"
+    /* Settings_Hotkey_MouseTip */ "Consejo: Admite el botón central del mouse, los botones laterales y otros botones multifunción. Asigne botones laterales adicionales a teclas del teclado en el controlador del mouse para vincularlos.\0"
+    /* Settings_Header_GalleryTrigger */ "Tira de imágenes de galería (Hover superior)\0"
+    /* Settings_Label_GalleryTriggerMode */ "Modo de activación de tira de imágenes\0"
+    /* Settings_Label_KeepGalleryVisibleOnThumbnailClick */ "Mantener visible tras clic\0"
+    /* Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick */ "Esta función habilitará automáticamente el bloqueo de ventana y mantener el tamaño de la ventana en la navegación.\0"
+    /* Settings_Label_GalleryExpandOnClickOnly */ "Modo de activación de flecha de expandir\0"
+    /* Settings_Tooltip_GalleryExpandOnClickOnly */ "Requiere hacer clic en la flecha para expandir, evitando activaciones accidentales al pasar el ratón.\0"
+    /* Settings_Option_TriggerClick */ "Clic\0"
+    /* Settings_Option_TriggerHover */ "Pasar cursor\0"
+    /* Settings_Option_GalleryTriggerAuto */ "Hover automático\0"
+    /* Settings_Option_GalleryTriggerDelay */ "Hover en punto caliente\0"
+    /* Settings_Option_GalleryTriggerClick */ "Clic en punto caliente\0"
+    /* Settings_Option_GalleryTriggerDisable */ "Deshabilitado\0"
+    /* Settings_Tooltip_GalleryTrigger */ "Esta función se desactiva automáticamente cuando la ventana es menor de 600x450.\0"
+    /* Settings_Label_GalleryTriggerAreaHeight */ "Altura del área de activación\0"
+    /* Settings_Label_GalleryDwellTime */ "Tiempo de permanencia\0"
+    /* Settings_Label_GalleryExitDelay */ "Retardo de salida\0"
+    /* Settings_Label_GalleryMinSize */ "Tamaño mínimo de galería\0"
+    /* Settings_Group_Foundation */ "Fundamentos\0"
+    /* Settings_Group_Startup */ "Inicio\0"
+    /* Settings_Group_Habits */ "Hábitos\0"
+    /* Settings_Label_Language */ "Idioma\0"
+    /* Settings_Label_SingleInstance */ "Instancia única\0"
+    /* Settings_Label_CheckUpdates */ "Buscar actualizaciones\0"
+    /* Settings_Label_UpdateChannel */ "Canal de actualización\0"
+    /* Settings_Option_UpdateStable */ "Estable\0"
+    /* Settings_Option_UpdatePreRelease */ "Versión preliminar (Pre-release)\0"
+    /* Settings_Tooltip_PreRelease */ "Estable: Se publica después de que una versión preliminar demuestre ser estable.\nVersión preliminar (Pre-release): Entrega los últimos cambios de código de inmediato para recopilar sus comentarios. Nota: Estos cambios no han sido probados estrictamente.\0"
+    /* Settings_Label_NavLoopMode */ "Navegación en bucle\0"
+    /* Settings_Label_SortOrder */ "Orden de clasificación\0"
+    /* Settings_Label_SortDescending */ "Descendente\0"
+    /* Settings_Label_SortArchivesByNameAscending */ "Ordenar archivos siempre por nombre\0"
+    /* Settings_Label_ConfirmDel */ "Confirmar antes de eliminar\0"
+    /* Settings_Label_Portable */ "Modo portátil / Limpieza\0"
+    /* Settings_Tooltip_Portable */ "Modo portátil y limpieza del registro:\nCuando está habilitado, QuickView se ejecuta en modo portátil. Limpiará automáticamente las asociaciones de registro existentes, deshabilitará la modificación automática del registro y almacenará los archivos de configuración en el directorio de la aplicación en lugar de AppData.\0"
+    /* Settings_Label_SpanDisplays */ "Span Displays (Video Wall)\0"
+    /* Settings_Label_UIScale */ "Escala de interfaz\0"
+    /* Settings_Status_RestartRequired */ "Reinicio requerido\0"
+    /* Settings_Status_NoWritePerm */ "¡Sin permisos de escritura!\0"
+    /* Settings_Status_Enabled */ "Habilitado\0"
+    /* Settings_Header_PoweredBy */ "Desarrollado con\0"
+    /* Settings_Text_Copyright */ "© 2025–%s Vivor Loong (GitHub: @justnullname)\0"
+    /* Settings_Text_License */ "Licensed under GNU GPL v3.0\0"
+    /* Settings_Tab_Visuals */ "Interfaz\0"
+    /* Settings_Tab_Controls */ "Controles\0"
+    /* Settings_ControlSub_Mouse */ "Gestos del ratón\0"
+    /* Settings_ControlSub_Keyboard */ "Atajos de teclado\0"
+    /* Settings_ControlSub_Behavior */ "Comportamiento\0"
+    /* Settings_Gesture_Preset */ "Preajuste\0"
+    /* Settings_Gesture_Preset_Default */ "QuickView Clásico\0"
+    /* Settings_Gesture_Preset_Standard */ "Visor estándar\0"
+    /* Settings_Gesture_Preset_Browser */ "Minimalista\0"
+    /* Settings_Gesture_Add */ "+ Añadir gesto\0"
+    /* Settings_Gesture_Reset */ "Restablecer gestos\0"
+    /* Settings_Tab_Image */ "Imagen\0"
+    /* Settings_Tab_Advanced */ "Avanzado\0"
+    /* Settings_Header_Backdrop */ "Fondo\0"
+    /* Settings_Header_Window */ "Ventana\0"
+    /* Settings_Header_WindowLock */ "Bloqueo de ventana\0"
+    /* Settings_Header_Panel */ "Panel\0"
+    /* Settings_Label_CanvasColor */ "Color del lienzo\0"
+    /* Settings_Option_Effects */ "Efectos\0"
+    /* Settings_Label_ContextMenuBackdrop */ "Menú contextual\0"
+    /* Settings_Label_CanvasEffectStyle */ "Estilo de efecto\0"
+    /* Settings_Tooltip_BackdropEffectsTip */ "Mica y Mica Alt solo se admiten en Windows 11. El efecto Acrylic consume más recursos del sistema que Mica/Mica Alt.\0"
+    /* Settings_Label_Overlay */ "Superposición\0"
+    /* Settings_Label_ShowGrid */ "Mostrar cuadrícula\0"
+    /* Settings_Label_AlwaysOnTop */ "Siempre visible\0"
+    /* Settings_Label_LockWindow */ "Bloquear ventana\0"
+    /* Settings_Tooltip_LockWindow */ "Controla si el programa bloquea el borde de la ventana de forma predeterminada al inicio, sin seguir la escala de la imagen.\0"
+    /* Settings_Label_AutoHideTitle */ "Ocultar barra de título\0"
+    /* Settings_Label_RoundedCorners */ "Esquinas Redondeadas\0"
+    /* Settings_Label_UIBorders */ "Mostrar Bordes de UI\0"
+    /* Settings_Tooltip_RoundedCorners */ "Controla las esquinas redondeadas de las ventanas y los menús. Requiere Windows 11.\0"
+    /* Settings_Label_LockToolbar */ "Bloquear barra inferior\0"
+    /* Settings_Label_WindowMinSize */ "Anchura mínima de ventana\0"
+    /* Settings_Label_WindowMaxSizePercent */ "Tamaño máximo de inicio (%)\0"
+    /* Settings_Label_ShowBorderIndicator */ "Mostrar indicadores de desbordamiento de borde\0"
+    /* Settings_Tooltip_ShowBorderIndicator */ "Muestra un brillo suave en los bordes hacia donde la imagen excede la ventana al desplazarse o hacer zoom, y se desvanece automáticamente.\0"
+    /* Settings_Label_ShowNavigator */ "Mostrar minimapa\0"
+    /* Settings_Tooltip_ShowNavigator */ "When mouse is over minimap, Wheel / Thumb Wheel (Shift + Wheel) pans image\0"
+    /* Settings_Label_KeepWindowSizeOnNav */ "Mantener el tamaño de la ventana al navegar\0"
+    /* Settings_Label_RememberLastWindowSizeAndPosition */ "Recordar el último tamaño y posición de la ventana\0"
+    /* Settings_Label_UpscaleSmallImagesWhenLocked */ "Adaptar imágenes pequeñas\0"
+    /* Settings_Label_SlideshowInterval */ "Intervalo (segundos)\0"
+    /* Settings_Label_SlideshowImmersive */ "Modo inmersivo\0"
+    /* Settings_Option_SlideshowNormal */ "Normal\0"
+    /* Settings_Option_SlideshowSpotlight */ "Foco\0"
+    /* Settings_Label_ExifMode */ "Modo panel EXIF\0"
+    /* Settings_Label_ToolbarInfoDefault */ "Info de barra por defecto\0"
+    /* Settings_Label_OpenFullScreenMode */ "Abrir en pantalla completa\0"
+    /* Settings_Label_FullScreenZoomMode */ "Modo de zoom a pantalla completa\0"
+    /* Settings_Label_CustomLiteInfoPanel */ "Personalizar panel de información compacto\0"
+    /* Settings_Label_CustomFullInfoPanel */ "Personalizar panel de información completo\0"
+    /* Settings_Label_InfoPanelScale */ "Zoom del panel de información\0"
+    /* Settings_Label_ItemsInNormalMode */ "Elementos en modo normal\0"
+    /* Settings_Label_ItemsInCompareMode */ "Elementos en modo de comparación\0"
+    /* Settings_Label_SeparatorPreset */ "Preajuste de separador\0"
+    /* Settings_Option_FitScreen */ "Ajustar a pantalla\0"
+    /* Settings_Option_Black */ "Negro\0"
+    /* Settings_Option_White */ "Blanco\0"
+    /* Settings_Option_Grid */ "Cuadrícula\0"
+    /* Settings_Option_Custom */ "Personalizado\0"
+    /* Settings_Option_Off */ "Desactivado\0"
+    /* Settings_Option_On */ "Activado\0"
+    /* Settings_Option_Lite */ "Compacto\0"
+    /* Settings_Option_Full */ "Completo\0"
+    /* Settings_Option_LargeOnly */ "Solo grandes\0"
+    /* Settings_Option_All */ "Todos\0"
+    /* Settings_Option_SoftProofing */ "Pruebas en pantalla\0"
+    /* Settings_Header_Mouse */ "Ratón\0"
+    /* Settings_Header_Edge */ "Borde\0"
+    /* Settings_Label_InvertWheel */ "Invertir rueda\0"
+    /* Settings_Label_MouseAnchorZoom */ "Zoom de ventana anclado al raton\0"
+    /* Settings_Label_RightButtonDragZoom */ "Zoom con arrastre derecho\0"
+    /* Settings_Label_WheelZoomSpeed */ "Velocidad de zoom con rueda\0"
+    /* Settings_Tooltip_WheelZoomSpeed */ "Alt + Wheel temporarily adjusts zoom speed\0"
+    /* Settings_Label_ThumbWheel */ "Rueda del pulgar\0"
+    /* Settings_Tooltip_ThumbWheel */ "Can be replaced with Shift + Wheel\0"
+    /* Settings_Tooltip_MiddleDrag */ "Can be replaced with Ctrl + Left Click\0"
+    /* Settings_Label_DoubleClick */ "Doble clic\0"
+    /* Settings_Option_DoubleClick_Smart */ "Smart\0"
+    /* Settings_Option_DoubleClick_WheelMode1 */ "Modo de rueda 1\0"
+    /* Settings_Option_DoubleClick_WheelMode2 */ "Modo de rueda 2\0"
+    /* Settings_Tooltip_DoubleClick */ "Smart: Default zoom/fullscreen toggle;\nWheel Mode 1: Double-click swaps main & thumb wheel functions;\nWheel Mode 2: Double-click toggles image pan mode;\nTip: Shift + Wheel acts as Thumb Wheel.\0"
+    /* Settings_Tooltip_PanStepNormal */ "Controls key pan and wheel pan speed\0"
+    /* OSD_WheelMode1_NextPrevZoom */ "Main Wheel: Next/Prev; Thumb/Shift+Wheel: Zoom\0"
+    /* OSD_WheelMode1_ZoomNextPrev */ "Main Wheel: Zoom; Thumb/Shift+Wheel: Next/Prev\0"
+    /* OSD_WheelMode2_Pan */ "Wheel: Pan Mode\0"
+    /* OSD_WheelMode2_Default */ "Wheel: Default Mode\0"
+    /* Settings_Label_RightDragZoomSpeed */ "Velocidad de zoom al arrastrar con ratón\0"
+    /* OSD_WheelZoomSpeed */ "Velocidad de zoom (temporal): \0"
+    /* Settings_Label_InvertButtons */ "Invertir botones laterales\0"
+    /* Settings_Header_KeyboardPan */ "Paso de pan\0"
+    /* Settings_Label_PanStepNormal */ "Paso de pan (Normal)\0"
+    /* Settings_Label_PanStepFast */ "Paso de pan con teclado (Rápido)\0"
+    /* Settings_Label_UseFixedZoom */ "Usar niveles de zoom fijos\0"
+    /* Settings_Tooltip_UseFixedZoom */ "Cuando está activado, Alt + Rueda realiza un zoom normal en lugar de cambiar la velocidad.\0"
+    /* Settings_Label_FixedZoomLevels */ "  └  Niveles de zoom personalizados\0"
+    /* Dialog_FixedZoomTitle */ "Editar niveles de zoom\0"
+    /* Dialog_FixedZoomMsg */ "Introduzca niveles de zoom separados por comas (p. ej., 0.5, 1, 2):\0"
+    /* Settings_Label_ZoomModeIn */ "Modo de acercar\0"
+    /* Settings_Tooltip_ZoomModeIn */ "Algoritmo de interpolación al ampliar:\n• Auto: Detección inteligente (FSR para fotos/CG, Cercano para pixel art)\n• Lineal: Suavizado bilineal rápido\n• Cercano: Cuadrícula de píxeles nítida para pixel art\n• Cúbico HQ: Filtro bicúbico ultrasuave\n• AMD FSR 1.0: Superresolución espacial adaptativa con nitidez RCAS\0"
+    /* Settings_Label_ZoomModeOut */ "Modo de alejar\0"
+    /* Settings_Label_LeftDrag */ "Arrastrar izquierdo\0"
+    /* Settings_Label_MiddleDrag */ "Arrastrar central\0"
+    /* Settings_Label_MiddleClick */ "Clic central\0"
+    /* Settings_Label_EdgeNavClick */ "Clic navegación borde\0"
+    /* Settings_Label_ShowOSD */ "Mostrar notificación OSD\0"
+    /* Settings_Label_DisableEdgeNavInCompare */ "Desactivar en modo de comparación\0"
+    /* Settings_Label_NavIndicator */ "Indicador navegación\0"
+    /* Settings_Option_Window */ "Ventana\0"
+    /* Settings_Option_Pan */ "Panorámica\0"
+    /* Settings_Option_None */ "Ninguno\0"
+    /* Settings_Option_Exit */ "Salir\0"
+    /* Settings_Option_Arrow */ "Flecha\0"
+    /* Settings_Option_Cursor */ "Cursor\0"
+    /* Settings_Option_Manual */ "Manual\0"
+    /* Settings_Option_SortAuto */ "Auto (Explorador)\0"
+    /* Settings_Option_SortName */ "Nombre\0"
+    /* Settings_Option_SortModified */ "Fecha de modificación\0"
+    /* Settings_Option_SortDateTaken */ "Fecha de captura (EXIF)\0"
+    /* Settings_Option_SortSize */ "Tamaño\0"
+    /* Settings_Option_SortType */ "Tipo\0"
+    /* Settings_Option_NavLoop */ "Bucle en carpeta\0"
+    /* Settings_Option_NavThrough */ "A través de subcarpetas\0"
+    /* Settings_Option_Linear */ "Lineal: Suavizado básico\0"
+    /* Settings_Option_Nearest */ "Cercano: Extrema nitidez\0"
+    /* Settings_Option_HighQualityCubic */ "Cúbico HQ: Extremo suavizado\0"
+    /* Settings_Option_FSR */ "AMD FSR 1.0 (EASU/RCAS)\0"
+    /* Settings_Header_Render */ "Renderizado\0"
+    /* Settings_Header_Hdr */ "HDR\0"
+    /* Settings_Header_Prompts */ "Indicaciones\0"
+    /* Settings_Header_System */ "Sistema\0"
+    /* Settings_Label_AutoRotate */ "Rotar automático (EXIF)\0"
+    /* Settings_Label_FsrSharpness */ "Nitidez FSR\0"
+    /* Settings_Tooltip_FsrSharpness */ "Ajusta la nitidez de bordes para la superresolución AMD FSR 1.0.\0"
+    /* Settings_Tab_Plugins */ "Complementos\0"
+    /* Settings_Label_EnableSrPlugin */ "Superresolución IA\0"
+    /* Settings_Label_SrModel */ "AI Model\0"
+    /* Settings_Label_SrAutoTrigger */ "Activación automática\0"
+    /* Settings_Label_SrAutoTriggerMaxWidth */ "Ancho máx. de origen\0"
+    /* Settings_Tooltip_SrAutoTriggerMaxWidth */ "Limita el ancho máximo de la imagen original (en píxeles) para la superresolución automática. 0 significa ilimitado.\0"
+    /* Settings_Label_SrAutoTriggerMaxHeight */ "Alto máx. de origen\0"
+    /* Settings_Tooltip_SrAutoTriggerMaxHeight */ "Limita el alto máximo de la imagen original (en píxeles) para la superresolución automática. 0 significa ilimitado.\0"
+    /* Settings_Value_Unlimited */ "Ilimitado\0"
+    /* Settings_Label_SrOpenInCompare */ "Mostrar en modo comparación al activar manualmente\0"
+    /* Settings_Label_SrPromptModel */ "Preguntar modelo al activar manualmente\0"
+    /* Export_Checkbox_SuperResolution */ "Exportar calidad de superresolución\0"
+    /* Settings_Label_SrDebounce */ "Retardo de activación\0"
+    /* Settings_Tooltip_SrDebounce */ "Retardo en milisegundos (0 - 5000 ms) antes de activar la superresolución neuronal tras finalizar el zoom.\0"
+    /* Settings_Header_PluginTriggers */ "Disparadores e Interacción\0"
+    /* Settings_Header_PluginParams */ "Parámetros del plugin\0"
+    /* Settings_Label_SrStorageFolder */ "Directorio de plugins y modelos\0"
+    /* Settings_Button_OpenModelFolder */ "📂 Abrir carpeta local\0"
+    /* Settings_Prompt_DownloadModelFirst */ "Descargue primero el modelo\0"
+    /* Settings_Segment_InstalledPlugins */ "Extensiones instaladas\0"
+    /* Settings_Segment_Marketplace */ "Catálogo\0"
+    /* Settings_Label_SrEngine */ "Motor de superresolución\0"
+    /* Settings_Label_SrModelStatus */ "Estado del modelo\0"
+    /* Settings_Format_DownloadModel */ "Descargar este modelo (~%llu MB)\0"
+    /* Settings_Header_SrComponent */ "Componente de superresolución IA\0"
+    /* Settings_Label_QuickEnableEngine */ "Activar motor de superresolución\0"
+    /* Settings_Button_QuickEnableNcnn */ "⚡ Activar motor Real-ESRGAN NCNN Vulkan\0"
+    /* Settings_Label_OnlineExtensions */ "Extensiones y modelos online\0"
+    /* Settings_Button_BrowseMarketplace */ "🌐 Explorar catálogo\0"
+    /* Settings_Label_MarketManifest */ "Lista de complementos\0"
+    /* Settings_Button_RefreshManifest */ "🔄 Actualizar lista\0"
+    /* Settings_Button_SyncingManifest */ "Sincronizando con la nube...\0"
+    /* Settings_Format_PluginPackageSize */ "Paquete del complemento (~%llu MB)\0"
+    /* Settings_Button_InstalledUpToDate */ "✓ Instalado\0"
+    /* Settings_Format_UpdateTo */ "⚡ Actualizar a v%ls\0"
+    /* Settings_Button_InstallPlugin */ "⚡ Obtener e instalar\0"
+    /* OSD_SrProcessing */ "Procesando superresolución IA...\0"
+    /* OSD_SrSuccessFormat */ "✓ Superresolución IA completada: %s [%.0fx] (%.1f ms)\0"
+    /* OSD_SrSuccessFormatSimple */ "✓ Superresolución IA completada: %s (%.1f ms)\0"
+    /* OSD_SrFailed */ "✗ Error al ejecutar superresolución IA\0"
+    /* OSD_SrPluginDisabledOrMissing */ "El plugin de superresolución IA no está habilitado o no está instalado\0"
+    /* OSD_SrAnimationProcessingFormat */ "Procesando secuencia de animación (%u/%u fotogramas)...\0"
+    /* OSD_SrAnimationSuccessFormat */ "✓ Superresolución IA de animación lista: %s (%u fotogramas en %.2f s)\0"
+    /* OSD_SrVectorLosslessSkipped */ "Los gráficos vectoriales escalan sin pérdidas, no requieren superresolución IA\0"
+    /* OSD_SrAnimationTooManyFrames */ "La animación tiene demasiados fotogramas (> %u), se omitió la superresolución completa\0"
+    /* OSD_SrImageTooLargeFormat */ "Resolución de imagen demasiado grande (%ux%u, >16 MP), escalado IA omitido para evitar desbordamiento de VRAM\0"
+    /* Dialog_Title_SelectSrModel */ "Seleccionar modelo de superresolución IA\0"
+    /* Dialog_Msg_SelectSrModel */ "Seleccione el modelo de superresolución IA que desea aplicar:\0"
+    /* Dialog_Checkbox_RememberSrModelChoice */ "Recordar elección y no preguntar al activar manualmente\0"
+    /* Dialog_Button_OK */ "Aceptar\0"
+    /* Settings_Label_CMS */ "Gestión de color (CMS)\0"
+    /* Settings_Label_AdvancedColor */ "Color avanzado (HDR)\0"
+    /* Settings_Label_CmsFallback */ "Perfil alternativo sin etiquetas\0"
+    /* Settings_Label_HdrToneMapping */ "Mapeo de tonos HDR\0"
+    /* Settings_Label_HdrSplineKnee */ "Spline Knee Point\0"
+    /* Settings_Tooltip_HdrToneMapping */ "Estrategia de mapeo de tonos (Tone Mapping) de HDR:\nDetermina cómo se muestran las imágenes HDR cuando exceden las capacidades del monitor.\nSpline: Roll-off de luces de alta fidelidad mediante splines por tramos (Recomendado).\nColorimétrico: Mapeo de luminancia estricto; las luces que exceden el límite del monitor se recortan.\nBT.2390 (EETF): Curva ITU-R BT.2390 EETF para mapeo de tonos de alta fidelidad.\0"
+    /* Settings_Tooltip_HdrSplineKnee */ "0 = Auto (Calculated based on image luminance).\nThe value represents the ratio of the monitor's peak luminance. Brightness below this knee point maps 1:1, while brightness above is smoothly compressed using a spline curve.\n(Recommended: 0.4 - 0.75)\0"
+    /* Settings_Label_HdrPeakNitsOverride */ "Brillo Máximo HDR (Nits)\0"
+    /* Settings_Tooltip_HdrPeakNitsOverride */ "Ajustar en 0 para usar el brillo detectado por el sistema.\0"
+    /* Settings_Label_HdrPeakPercentile */ "HDR Peak Percentile\0"
+    /* Settings_Tooltip_HdrPeakPercentile */ "Discard extremely bright pixels to raise overall brightness (mpv default: 99.995%).\0"
+    /* Settings_Option_HdrPeakPercentile_100 */ "100% (Absolute Peak)\0"
+    /* Settings_Option_HdrPeakPercentile_99995 */ "99.995% (Stable)\0"
+    /* Settings_Option_HdrPeakPercentile_999 */ "99.9% (Aggressive)\0"
+    /* Settings_Label_HdrDesatThreshold */ "Rango de desaturación de brillos HDR\0"
+    /* Settings_Tooltip_HdrDesatThreshold */ "Umbral de inicio para la desaturación de zonas brillantes. 0.0 significa desaturar todo el brillo, 1.0 significa sin desaturación. El valor predeterminado recomendado es 0.18.\0"
+    /* Settings_Label_HdrMaxDesat */ "Fuerza de desaturación de brillos HDR\0"
+    /* Settings_Tooltip_HdrMaxDesat */ "Intensidad máxima de la desaturación en brillos extremos. 0.0 significa sin desaturación, 1.0 significa completamente desaturado a blanco. El valor predeterminado recomendado es 0.75.\0"
+    /* Settings_Option_HdrColorimetric */ "Colorimétrico\0"
+    /* Settings_Option_HdrSpline */ "Spline\0"
+    /* Settings_Option_HdrLegacyReinhard */ "BT.2390 (EETF)\0"
+    /* Settings_Label_CustomProof */ "Perfil de prueba en pantalla (.icc)\0"
+    /* Settings_Label_CmsIntent */ "Intención de renderizado\0"
+    /* Settings_Label_GamutWarning */ "Detección de fuera de gama\0"
+    /* Settings_Tooltip_GamutWarning */ "Analizar y resaltar áreas fuera de gama. Opciones: Desactivado, solo en modo de prueba en pantalla (predeterminado), o tanto para la prueba como para la gama de la pantalla.\0"
+    /* Settings_Label_GamutAutoPrompt */ "Aviso automático de error de gama\0"
+    /* Settings_Tooltip_GamutAutoPrompt */ "Mostrar notificación OSD cuando se detecten errores de gama. Los resaltados se pueden activar manualmente en la barra de herramientas.\0"
+    /* Settings_Label_GamutColor */ "Color de resaltado de fuera de gama\0"
+    /* Settings_Option_CmsIntentRelative */ "Relativo colorimétrico\0"
+    /* Settings_Option_CmsIntentPerceptual */ "Perceptual\0"
+    /* Settings_Tooltip_CMS */ "Habilitar el Sistema de Gestión de Color (CMS).\nCuando se habilita, aplica una conversión de espacio de color de alta precisión a través de la GPU para restaurar los colores reales.\nDeshabilitarlo reduce la carga de la GPU, pero puede provocar colores sobresaturados en pantallas de amplia gama.\0"
+    /* Settings_Tooltip_CmsIntent */ "Propósito de representación (Rendering Intent) para la conversión del espacio de color.\nPerceptual: Comprime los colores fuera de gama para preservar los detalles y degradados (ideal para fotos).\nColorimétrico relativo: Preserva los colores dentro de la gama y recorta los que quedan fuera (ideal para UI e íconos).\nNota: Las diferencias visuales solo ocurren cuando se usan perfiles ICC avanzados que contienen LUT (tablas de búsqueda). Los perfiles de matriz estándar volverán automáticamente a Colorimétrico relativo.\0"
+    /* Settings_Tooltip_AdvancedColor */ "Habilitar el pipeline de renderizado de punto flotante de 16 bits (scRGB).\nCuando se habilita, renderiza perfectamente las luces de las fotos en pantallas compatibles con HDR rompiendo el límite SDR.\nDeshabilitarlo fuerza el mapeo a salida SDR.\nNota: Habilitarlo aumenta el uso de VRAM.\0"
+    /* Settings_Tooltip_ZoomAuto */ "Automático: Escala al 100% cuando la imagen es más pequeña que la pantalla, se ajusta a la pantalla cuando es más grande.\0"
+    /* Context_SoftProofing */ "Vista previa de prueba en pantalla\0"
+    /* Context_SoftProofProfile */ "Perfil de prueba\0"
+    /* Context_SoftProofCustom */ "Personalizado...\0"
+    /* Settings_Value_ComingSoon */ "Próximamente\0"
+    /* Settings_Label_ForceRaw */ "Forzar decodificación RAW\0"
+    /* Settings_Label_PairRawJpeg */ "Emparejamiento RAW+JPEG\0"
+    /* Settings_Tooltip_PairRawJpeg */ "Mostrar un archivo RAW y la imagen de cámara del mismo nombre (JPEG/HEIF) como una sola foto.\nEn la lista solo queda la imagen revelada, marcada con el formato RAW (p. ej. +CR3); las horas de captura se verifican en segundo plano y las parejas discordantes se separan.\nCambie entre la imagen de cámara y la decodificación RAW con el botón RAW o su atajo, o vea ambas con el atajo de comparación de pareja.\0"
+    /* Settings_Label_Exposure */ "Exposición (Brillo)\0"
+    /* Settings_Tooltip_Exposure */ "Ajusta el brillo de la imagen (compensación de exposición). Rango: 0.18x - 10.0x.\0"
+    /* Settings_Label_AddToOpenWith */ "Añadir a Abrir con\0"
+    /* Settings_Label_CustomEditor */ "Editor de imágenes personalizado\0"
+    /* Context_SelectEditor */ "Seleccionar editor\0"
+    /* OSD_EditorLaunchFailed */ "No se pudo iniciar el editor. Por favor, configúrelo de nuevo.\0"
+    /* Settings_Action_Add */ "Añadir\0"
+    /* Settings_Action_Added */ "Añadido\0"
+    /* Settings_Status_DisabledInPortable */ "Deshabilitado en modo portátil\0"
+    /* Settings_Header_Features */ "Funciones\0"
+    /* Settings_Header_Performance */ "Rendimiento\0"
+    /* Settings_Header_Transparency */ "Transparencia\0"
+    /* Settings_Label_DebugHUD */ "Habilitar HUD de depuración (F12)\0"
+    /* Settings_Label_Prefetch */ "Sistema de precarga\0"
+    /* Settings_Label_MemoryReclaim */ "Memory Reclaim Strategy:\0"
+    /* Settings_Option_MemSmart */ "Smart (Auto)\0"
+    /* Settings_Option_MemAggressive */ "Aggressive (Max Perf)\0"
+    /* Settings_Option_MemOnDemand */ "On-Demand (Min RAM)\0"
+    /* Settings_Tooltip_MemoryReclaim */ "Smart: Balance performance and RAM.\nAggressive: Maximize performance, high memory usage.\nOn-Demand: Release memory immediately when idle.\0"
+    /* Settings_Label_Reset */ "Restablecer toda la configuración\0"
+    /* Settings_Action_Restore */ "Restaurar\0"
+    /* Settings_Action_Done */ "Hecho\0"
+    /* Settings_Header_ConfigManagement */ "Importar / Exportar (.ini)\0"
+    /* Settings_Action_CheckUpdates */ "Buscar actualizaciones\0"
+    /* Settings_Action_ViewUpdate */ "Ver actualización\0"
+    /* Settings_Status_Checking */ "Comprobando...\0"
+    /* Settings_Status_UpToDate */ "Actualizado\0"
+    /* Settings_Link_GitHub */ "Repositorio GitHub\0"
+    /* Settings_Link_ReportIssue */ "Reportar problema\0"
+    /* Settings_Link_Hotkeys */ "Atajos de teclado\0"
+    /* Settings_Label_Version */ "Versión\0"
+    /* Settings_Label_Build */ "Compilación\0"
+    /* Dialog_UpdateTitle */ "¡Nueva versión disponible!\0"
+    /* Dialog_UpdateContent */ "v%s está listo.\0"
+    /* Dialog_UpdateLogHeader */ "Registro de cambios\0"
+    /* Dialog_ButtonUpdate */ "Actualizar ahora\0"
+    /* Dialog_ButtonLater */ "Más tarde\0"
+    /* Dialog_ButtonStar */ "Estrella en GitHub\0"
+    /* Dialog_Update_LoveTitle */ "QuickView está hecho con amor\0"
+    /* Dialog_Update_LoveMessage */ "Yo mantengo QuickView en mi tiempo libre porque creo que Windows merece un visor más rápido y limpio. Si disfrutas de esta actualización, la mayor contribución es darnos una estrella en GitHub.\0"
+    /* Dialog_PassthroughTitle */ "Modo de paso de ratón\0"
+    /* Dialog_PassthroughContent */ "Los eventos del ratón pasarán a la ventana de abajo.\nSolo se puede salir mediante el atajo global (Shift+Esc) o el menú de la barra de tareas.\n\n¿Continuar?\0"
+    /* OSD_PassthroughOn */ "Paso de ratón: ACTIVADO (Shift+Esc para salir)\0"
+    /* OSD_PassthroughOff */ "Paso de ratón: DESACTIVADO\0"
+    /* OSD_OverlayModeOn */ "Modo calco: ACTIVADO\0"
+    /* OSD_OverlayModeOff */ "Modo calco: DESACTIVADO\0"
+    /* OSD_Opacity */ "Opacidad\0"
+    /* Help_Desc_Edit */ "Edit\0"
+    /* Help_Header_Tips */ "Tips & Glossary\0"
+    /* Help_Tip_ContextScope */ "Consejo: QuickView ahora admite la personalización completa de atajos de teclado y gestos del ratón. Consulte y configure sus asignaciones en «Configuración -> Controles». El contenido de este panel de ayuda se migrará a la documentación en línea en una versión futura.\0"
+    /* Help_Tip_Rotation */ "Rotation: 'Edge Adapted' means minor cropping to fit block boundaries (lossless data). 'Lossy' means full re-encoding.\0"
+    /* Help_Tip_VideoWall */ "Video Wall (Ctrl+F11): Spans all monitors. If close button is hidden, double-click to exit.\0"
+    /* Help_Tip_DesignerMode */ "Modo Calco / Modo Película: Una vez activado, la imagen se vuelve semitransparente, revelando los elementos subyacentes. Puede ajustar su tamaño o transparencia. Haga clic en el interruptor de Paso de Mouse en la barra de herramientas para entrar en el Modo de Paso, donde se ignoran todas las entradas excepto Mayús+Esc, convirtiendo QuickView en una superposición transparente.\0"
+    /* Help_Tip_GamutDetection */ "Aviso de gama: detecta colores fuera de gama para la pantalla de destino o el perfil de prueba. Modos: Desactivado, solo prueba en pantalla o todo (predeterminado: prueba en pantalla). Alternar mediante la barra de herramientas.\0"
+    /* Help_Tip_Raw */ "RAW Button: QuickView shows embedded preview by default. Click to fully decode (may look different due to rendering parameters).\0"
+    /* Help_Tip_JpegQ */ "JPEG Quality: Estimated Q value (reverse engineered). May differ slightly from save setting due to algorithm variations.\0"
+    /* Help_Tip_SoftProofCompare */ "Comparación de pruebas: entrar en el modo de comparación mientras la prueba de color está activa comparará automáticamente la imagen original frente a la de prueba.\0"
+    /* Settings_Option_Auto */ "Automático\0"
+    /* Settings_Option_Eco */ "Eco\0"
+    /* Settings_Option_Balanced */ "Equilibrado\0"
+    /* Settings_Option_Ultra */ "Ultra\0"
+    /* HUD_Group_Physical */ "PHYSICAL ATTRIBUTES\0"
+    /* HUD_Group_Scientific */ "SCIENTIFIC QUALITY\0"
+    /* HUD_Group_Encoding */ "OPTICS & ENCODING\0"
+    /* HUD_Tip_Sharp_Desc */ "Edge definition (Laplacian Variance)\0"
+    /* HUD_Tip_Sharp_High */ "Crisp edges, high detail\0"
+    /* HUD_Tip_Sharp_Low */ "Soft focus or motion blur\0"
+    /* HUD_Tip_Sharp_Ref */ "> 500 is very sharp\0"
+    /* HUD_Tip_Ent_Desc */ "Information density (Shannon Entropy)\0"
+    /* HUD_Tip_Ent_High */ "Complex textures or high noise\0"
+    /* HUD_Tip_Ent_Low */ "Flat areas or low detail\0"
+    /* HUD_Tip_Ent_Ref */ "7.0-8.0 is high detail\0"
+    /* HUD_Tip_BPP_Desc */ "Bits Per Pixel (Compression Efficiency)\0"
+    /* HUD_Tip_BPP_High */ "Lower efficiency (more data preserved)\0"
+    /* HUD_Tip_BPP_Low */ "Higher efficiency (higher compression)\0"
+    /* HUD_Tip_BPP_Ref */ "24.0 (Raw RGB), ~2.0-3.0 (High JPEG), ~0.5-1.5 (WebP/AVIF)\0"
+    /* HUD_Label_High */ "High: \0"
+    /* HUD_Label_Low */ "Low: \0"
+    /* HUD_Label_Ref */ "Ref: \0"
+    /* Settings_Header_GeekGlass */ "Motor de cristal (GPU)\0"
+    /* Settings_Label_EnableGeekGlass */ "Efecto de cristal\0"
+    /* Settings_Label_GlassUIAnimations */ "Animaciones de interfaz\0"
+    /* Settings_Header_CoreMaterial */ "Material\0"
+    /* Settings_Label_BlurSigma */ "Radio de desenfoque\0"
+    /* Settings_Status_GlassDisabled */ "Efecto de cristal desactivado (Sistema)\0"
+    /* Settings_Label_TintDensity */ "Capa de tinte\0"
+    /* Settings_Tooltip_TintDensity */ "Intensidad de color general del efecto de cristal.\0"
+    /* Settings_Label_SpecularOpacity */ "Brillo (Especular)\0"
+    /* Settings_Tooltip_SpecularOpacity */ "Brillo de los reflejos de iluminación diagonal.\0"
+    /* Settings_Label_ShadowIntensity */ "Profundidad de sombra\0"
+    /* Settings_Tooltip_ShadowIntensity */ "Fuerza de las sombras de oclusión ambiental.\0"
+    /* Settings_Header_VectorAssets */ "Renderizado vectorial\0"
+    /* Settings_Label_VectorStrokeWeight */ "Grosor de trazo de iconos\0"
+    /* Settings_Option_StrokeStandard */ "Estándar (1.5px)\0"
+    /* Settings_Option_StrokeFine */ "Fino (1.0px)\0"
+    /* Settings_Header_GlassTint */ "Perfil de tinte\0"
+    /* Settings_Label_TintProfile */ "Lógica de color\0"
+    /* Settings_Option_TintAuto */ "Automático (Adaptativo)\0"
+    /* Settings_Option_TintCustom */ "Color personalizado\0"
+    /* Settings_Label_GlassCustomColor */ "Tinte manual\0"
+    /* Settings_Header_DensityMatrix */ "Densidad de superficie de control (%)\0"
+    /* Settings_Label_OsdDensity */ "OSD y HUD\0"
+    /* Settings_Tooltip_OsdDensity */ "Transparencia para pequeñas superposiciones flotantes.\0"
+    /* Settings_Label_PanelsDensity */ "Barra de herramientas y paneles laterales\0"
+    /* Settings_Tooltip_PanelsDensity */ "Transparencia para paneles de control persistentes.\0"
+    /* Settings_Label_ModalsDensity */ "Diálogos y configuración\0"
+    /* Settings_Tooltip_ModalsDensity */ "Transparencia para ventanas emergentes centradas.\0"
+    /* Settings_Label_MenusDensity */ "Menús\0"
+    /* Settings_Tooltip_MenusDensity */ "Densidad del menú contextual (Solo ajustable con material Acrylic).\0"
+    /* Settings_Header_Professional */ "Herramientas profesionales\0"
+    /* Settings_Label_ShowDirtyRect */ "Mostrar botón de regiones en animación\0"
+    /* Settings_Tooltip_ShowDirtyRect */ "Mostrar botón de depuración de Dirty Rect en la barra de herramientas de animación.\0"
+    /* Settings_Label_LoupeShape */ "Forma de la lupa\0"
+    /* Settings_Option_LoupeShapeSquare */ "Cuadrado\0"
+    /* Settings_Option_LoupeShapeCircle */ "Círculo\0"
+    /* Settings_Option_LoupeShapeFullscreen */ "Ventana completa\0"
+    /* Settings_Label_LoupeZoom */ "Zoom de la lupa\0"
+    /* Settings_Tooltip_LoupeHotkey */ "Mantenga presionada la tecla de acceso rápido y gire la rueda del mouse para ajustar el tamaño de la lupa.\0"
+    /* Settings_Tooltip_CropModeHotkey */ "Mantenga presionado Ctrl y arrastre con el botón izquierdo del mouse para un recorte rápido.\0"
+    /* Settings_Tab_Theme */ "Tema\0"
+    /* Settings_Label_ThemeMode */ "Ajuste\0"
+    /* Settings_Option_ThemeAuto */ "Sistema\0"
+    /* Settings_Option_ThemeDark */ "Oscuro\0"
+    /* Settings_Option_ThemeLight */ "Claro\0"
+    /* Settings_Option_ThemeCustom */ "Diseño\0"
+    /* Settings_Label_AmbientDimmer */ "Atenuador modal\0"
+    /* Settings_Tooltip_AmbientDimmer */ "Atenuar el fondo cuando hay una ventana modal o de configuración abierta.\0"
+    /* Settings_Label_AccentColor */ "Color de acento\0"
+    /* Settings_Option_AccentSystem */ "Sistema\0"
+    /* Settings_Option_AccentCustom */ "Personalizado\0"
+    /* Settings_Label_WindowBorderAccent */ "Borde de ventana activa\0"
+    /* Settings_Option_BorderFollowSystem */ "Sistema\0"
+    /* Settings_Option_BorderAccent */ "Acento\0"
+    /* Settings_Label_ResetGlass */ "Preajuste\0"
+    /* Settings_Action_ResetGlass */ "Restablecer\0"
+    /* Settings_Header_ThemeManagement */ "Gestión de temas\0"
+    /* Settings_Action_ExportTheme */ "Exportar\0"
+    /* Settings_Action_ImportTheme */ "Importar\0"
+    /* Toolbar_Tooltip_CompareSave */ "Guardar / Exportar (S)\0"
+    /* Dialog_MultiLineInputHint */ "[Ctrl+Enter] Guardar\0"
+    /* Dialog_AiApiKeyTitle */ "Configurar clave API\0"
+    /* Dialog_AiApiKeyPrompt */ "Ingrese la clave API (protegida localmente mediante Windows DPAPI):\0"
+    /* Dialog_AiPromptTitle */ "Editar plantilla de prompt\0"
+    /* Dialog_AiPromptPrompt */ "Configure el prompt de IA (soporta múltiples líneas, Ctrl+Enter para guardar):\0"
+    /* Dialog_AiActionNameTitle */ "Editar nombre de la acción\0"
+    /* Dialog_AiActionNamePrompt */ "Ingrese el nombre que se mostrará en el panel de IA:\0"
+    /* Dialog_AiBaseUrlTitle */ "Configurar URL del extremo\0"
+    /* Dialog_AiBaseUrlPrompt */ "Ingrese la URL base compatible con OpenAI / ComfyUI:\0"
+    /* AiAction_Title */ "Panel de Comandos IA\0"
+    /* AiAction_EscHint */ "[Esc] Cerrar\0"
+    /* AiAction_ScopeCropAndBlend */ "Reparar selección\0"
+    /* AiAction_ScopeForceFull */ "Imagen completa\0"
+    /* AiAction_FooterQuickKeys */ "Pulse 1~9 / 0 para ejecución rápida\0"
+    /* AiAction_Placeholder */ "Escribe un prompt o busca acciones...\0"
+    /* AiAction_InpaintTitle */ "Inpaint de Selección (AI Inpaint)\0"
+    /* AiAction_InpaintDesc */ "Selecciona un área para borrar o reemplazar sin marcas\0"
+    /* AiAction_InpaintTag */ "Modo Selección\0"
+    /* AiAction_AdhocPrefix */ "✨ Enviar prompt: \"\0"
+    /* AiAction_AdhocSend */ "Enter Enviar\0"
+    /* AiAction_CurrentModel */ "Modelo actual\0"
+    /* AiAction_NoModelSelected */ "Ningún modelo seleccionado\0"
+    /* OSD_AiProcessing */ "IA procesando: %s (Esc para cancelar)...\0"
+    /* OSD_AiGenerationSuccess */ "¡Generación completada! Modo de comparación cortina activo\0"
+    /* OSD_AiCompleted */ "Procesamiento de IA completado\0"
+    /* OSD_AiPreparing */ "IA: %s preparando (Esc para cancelar)...\0"
+    /* OSD_AiProcessingElapsed */ "IA: %s procesando [%ds, Esc para cancelar]...\0"
+    /* OSD_AiConnecting */ "IA conectando: %s (Esc para cancelar)...\0"
+    /* OSD_AiSamplingProgress */ "Muestreo IA: %d%% (%d/%d pasos) [%ds, Esc para cancelar]\0"
+    /* OSD_AiSamplingProgressEta */ "Muestreo IA: %d%% (%d/%d pasos, ~%.0fs restantes) [%ds, Esc para cancelar]\0"
+    /* OSD_AiAdhocPrompt */ "Prompt temporal\0"
+    /* OSD_AiTaskCancelled */ "Tarea de IA cancelada\0"
+    /* OSD_AiInpaintGuide */ "Seleccione un área con el botón izquierdo (Enter para ejecutar, Esc para cancelar)\0"
+    /* OSD_AiInpaintGuideActionFormat */ "Seleccione un área y pulse Enter para ejecutar [%s]\0"
+    /* OSD_AiSelectionTooSmall */ "Selección demasiado pequeña, elija un área para inpaint\0"
+    /* OSD_AiEmptyResult */ "El resultado de la generación IA está vacío\0"
+    /* OSD_AiDecodeFailed */ "Error al decodificar la imagen de IA\0"
+    /* OSD_AiTextureFailed */ "Error al crear la textura GPU\0"
+    /* OSD_AiEmptyPromptHint */ "Por favor, introduce un prompt o selecciona una acción preestablecida\0"
+    /* OSD_AiInpaintPromptEmptyHint */ "Por favor, introduce primero un prompt para repintar\0"
+    /* Settings_Tab_Ai */ "Acciones IA\0"
+    /* Settings_Header_AiProviders */ "Proveedores de modelos IA\0"
+    /* Settings_Desc_AiProviders */ "Administre extremos de API, claves cifradas (DPAPI) y modelos.\0"
+    /* Settings_Label_AiProviderName */ "Proveedor predeterminado\0"
+    /* Settings_Label_AiBaseUrl */ "URL base del extremo\0"
+    /* Settings_Label_AiApiKey */ "Clave API (cifrada con DPAPI)\0"
+    /* Settings_Label_AiModelId */ "Identificador del modelo\0"
+    /* Settings_Label_AiModelUnconfigured */ "[Sin configurar, obtener o ingresar]\0"
+    /* Settings_Label_AiMaxRes */ "Resolución máxima de entrada\0"
+    /* Settings_Label_AiDefaultProfile */ "★ Proveedor predeterminado\0"
+    /* Settings_Button_AiSetDefault */ "★ Establecer como predeterminado\0"
+    /* Settings_Button_AiTestConn */ "Probar conexión\0"
+    /* Settings_Button_AiSaveProf */ "Guardar configuración\0"
+    /* Settings_Button_AiDeleteProf */ "Eliminar proveedor\0"
+    /* Settings_Button_AiAddProf */ "+ Añadir proveedor\0"
+    /* Settings_Header_AiActions */ "Acciones IA personalizadas\0"
+    /* Settings_Button_AiAddAction */ "+ Nueva acción IA\0"
+    /* Settings_Label_AiActionName */ "Nombre de la acción\0"
+    /* Settings_Label_AiPromptTemplate */ "Plantilla de prompt\0"
+    /* Settings_Label_AiExecModel */ "Proveedor de ejecución\0"
+    /* Settings_Option_AiDefaultModel */ "Proveedor predeterminado\0"
+    /* Settings_Label_AiScopeMode */ "Modo de alcance\0"
+    /* Settings_Button_AiDeleteAction */ "Eliminar acción\0"
+    /* Settings_AiModelCustom */ "✎ Ingresar modelo manualmente...\0"
+    /* Settings_AiModelFetching */ "⏳ Obteniendo modelos disponibles...\0"
+    /* Settings_AiModelFetchAuto */ "↻ Consultar modelos del servidor...\0"
+    /* Settings_Option_AiRes4K */ "4K / Original (4096px)\0"
+    /* Settings_Option_AiRes2K */ "2K QHD (2048px)\0"
+    /* Settings_Option_AiRes1K */ "1K Estándar (1024px)\0"
+    /* Settings_Option_AiResOriginal */ "Sin límite (Nativo)\0"
+    /* Settings_Option_AiScopeForceFull */ "Imagen completa\0"
+    /* Settings_Option_AiScopeCropBlend */ "Inpaint y difuminar\0"
+    /* Settings_Option_AiCustomEndpoint */ "Personalizado (compatible OpenAI)\0"
+    /* Settings_Option_AiLocalComfyUI */ "ComfyUI local\0"
+    /* Settings_Option_AiLocalSdWebUI */ "SD WebUI / Forge local\0"
+    /* OSD_AiFetchingModels */ "Obteniendo lista de modelos...\0"
+    /* OSD_AiFetchModelsFailed */ "Error al obtener modelos: \0"
+    /* OSD_AiFetchModelsSuccessFormat */ "Se obtuvieron %zu modelos disponibles\0"
+    /* OSD_AiSetDefaultSuccessFormat */ "%s establecido como predeterminado\0"
+    /* OSD_AiTestingConnection */ "Probando conexión y autenticación...\0"
+    /* OSD_AiConnSuccessFormat */ "✓ ¡Conexión exitosa! Latencia: %dms (HTTP %d)\0"
+    /* OSD_AiSaveFailedBaseUrlEmpty */ "Error al guardar: la URL base no puede estar vacía\0"
+    /* OSD_AiSaveFailedApiKeyEmpty */ "Error al guardar: la clave API en la nube es obligatoria\0"
+    /* OSD_AiSaveFailedModelEmpty */ "Error al guardar: especifique o seleccione un modelo válido\0"
+    /* OSD_AiSaveProfileSuccess */ "✓ Configuración del proveedor guardada\0"
+    /* AiError_ApiKeyEmpty */ "Clave API vacía. Configúrela en Ajustes -> Acciones IA.\0"
+    /* AiError_ModelEmpty */ "Identificador de modelo vacío. Configúrelo en Ajustes -> Acciones IA.\0"
+    /* AiError_InvalidUrl */ "Formato de URL base no válido.\0"
+    /* AiError_InitWinHttpFailed */ "Error al inicializar la sesión WinHTTP.\0"
+    /* AiError_ConnectFailed */ "Error al conectar con el servidor.\0"
+    /* AiError_CreateReqFailed */ "Error al crear la solicitud HTTP.\0"
+    /* AiError_NoValidDataReturned */ "Respuesta HTTP 200 recibida, pero sin datos válidos de imagen o texto.\0"
+    /* AiError_RequestTimeout */ "Tiempo de espera agotado o el servidor no responde.\0"
+    /* AiError_HttpStatusPrefix */ "El proveedor devolvió un error (HTTP \0"
+    /* AiError_JsonParseFailed */ "No se pudo procesar la respuesta JSON del proveedor.\0"
+    /* AiError_NoModelsFound */ "Solicitud correcta, pero no se encontraron modelos disponibles.\0"
+    /* AiTest_ConnSuccess */ "Conexión exitosa y credenciales autorizadas.\0"
+    /* AiTest_AuthFailedPrefix */ "Clave de API no válida o no autorizada (HTTP \0"
+    /* AiTest_HttpErrorPrefix */ "El servidor devolvió HTTP \0"
+    /* AiError_NoAvailableProfile */ "No se encontró un perfil de modelo de IA disponible. Verifique la configuración.\0"
+    /* Settings_Tab_FileAssoc */ "Asociaciones\0"
+    /* Settings_Header_FileAssocStatus */ "Diagnóstico de asociaciones\0"
+    /* Settings_Header_FileAssocOptions */ "Comportamiento y personalización\0"
+    /* Settings_Header_FileAssocFormats */ "Formatos compatibles (92)\0"
+    /* Settings_Label_FileAssocIconStyle */ "Icono de archivo en el Explorador\0"
+    /* Settings_Option_FileAssocIconNative */ "Nativo del sistema\0"
+    /* Settings_Option_FileAssocIconApp */ "Logo de QuickView\0"
+    /* Settings_Label_FileAssocContextMenu */ "Menú contextual (\"Abrir con QuickView\")\0"
+    /* Settings_Label_FileAssocAutoRepair */ "Reparar rutas automáticamente al iniciar / actualizar\0"
+    /* Settings_Label_FileAssocPresets */ "Preajustes rápidos\0"
+    /* Settings_Action_PresetRecommended */ "Recomendados\0"
+    /* Settings_Action_PresetAllImages */ "Todas las imágenes\0"
+    /* Settings_Action_PresetPhotoRaw */ "Foto y RAW\0"
+    /* Settings_Action_PresetClearAll */ "Borrar todo\0"
+    /* Settings_Action_ApplyAssoc */ "Aplicar al sistema\0"
+    /* Settings_Action_ApplyPending */ "Aplicar*\0"
+    /* Settings_Action_SetDefaultWin */ "Predeterminar en Windows\0"
+    /* Settings_Action_RepairAssoc */ "Reparar rutas\0"
+    /* Settings_Label_FileAssocCatStandard */ "Ráster estándar\0"
+    /* Settings_Label_FileAssocCatModern */ "Modernos y vectoriales\0"
+    /* Settings_Label_FileAssocCatPro */ "Pro / HDR / Clásicos\0"
+    /* Settings_Label_FileAssocCatRaw */ "RAW de cámara\0"
+    /* Settings_Label_FileAssocCatExtRaw */ "RAW extendido / Cine\0"
+    /* Settings_Label_FileAssocCatArchive */ "Archivos y cómics\0"
+    /* Settings_Tooltip_FileAssocArchive */ "Recomendado: solo .cbz / .cbr. Habilite .zip / .rar solo si desea ver QuickView en Abrir con.\0"
+    /* Settings_Status_AssocApplied */ "Asociaciones sincronizadas con el registro\0"
+    /* Settings_Status_AssocSummaryFormat */ "%d seleccionados · %d predeterminados · %d solo Abrir con\0"
+    /* Settings_Status_AssocBrokenHint */ "Se detectó un comando sin comillas o inválido — haga clic en Aplicar para reparar.\0"
+    /* Settings_Status_AssocPendingHint */ "Cambios pendientes — haz clic en \"Aplicar\" para sincronizar con Windows.\0"
+    /* Settings_Status_AssocStoreManaged */ "Modo Microsoft Store (MSIX): el menú contextual y Abrir con son gestionados por Windows. Haz clic en «Establecer como predeterminado en Windows».\0"
+    /* Settings_Label_StoreUpdatesManaged */ "Gestionado por Microsoft Store\0"
+    /* Settings_Action_OpenStore */ "Abrir tienda\0"
+    /* Settings_Status_AssocLegend */ "Punto verde = Predeterminado · Resaltado = Seleccionado / Abrir con\0"
+    /* Context_OpenWithQuickView */ "Abrir con QuickView\0";
+static constexpr char kBlob_FR[] =
+    /* CurrentLocale */ "fr-fr\0"
+    /* OSD_NoImage */ "No image loaded\0"
+    /* OSD_FolderEmpty */ "Aucune image dans ce dossier\0"
+    /* OSD_SvgStaticFallback */ "SVG animé affiché comme image fixe\0"
+    /* OSD_Lossless */ "Lossless\0"
+    /* OSD_ReencodedLossless */ "Re-encoded (Lossless)\0"
+    /* OSD_EdgeAdapted */ "Cropped\0"
+    /* OSD_Reencoded */ "Lossy\0"
+    /* OSD_ReadOnly */ "Access denied - file may be in use or read-only\0"
+    /* OSD_NotPerfect */ "Transform is not perfect (Edge optimized)\0"
+    /* OSD_SpanOn */ "Video Wall: ON\0"
+    /* OSD_SpanOff */ "Video Wall: OFF\0"
+    /* OSD_CompareBefore */ "Avant (Original)\0"
+    /* OSD_CompareAfter */ "Après (Preuve)\0"
+    /* OSD_CompareAnimNotSupported */ "Le mode comparaison n'est pas disponible pour les animations\0"
+    /* OSD_UndoDeleteSuccess */ "Suppression annulée\0"
+    /* OSD_UndoDeleteFailed */ "Échec de l'annulation\0"
+    /* OSD_UndoRenameSuccess */ "Renommer annulé\0"
+    /* OSD_UndoRenameFailed */ "Échec de l'annulation du renommage\0"
+    /* OSD_UndoTransformSuccess */ "Rotation/retournement annulé\0"
+    /* OSD_UndoTransformFailed */ "Échec de l'annulation de la rotation/retournement\0"
+    /* Action_RotateCW */ "Rotate 90° CW\0"
+    /* Action_RotateCCW */ "Rotate 90° CCW\0"
+    /* Action_Rotate180 */ "Rotate 180°\0"
+    /* Action_FlipH */ "Flip Horizontal\0"
+    /* Action_FlipV */ "Flip Vertical\0"
+    /* Dialog_SaveTitle */ "Save changes?\0"
+    /* Dialog_SaveContent */ "The image has been modified. Do you want to save changes?\0"
+    /* Dialog_ButtonSave */ "Save\0"
+    /* Dialog_ButtonSaveAs */ "Save as...\0"
+    /* Dialog_ButtonDiscard */ "Discard\0"
+    /* Dialog_ButtonContinue */ "Continuer\0"
+    /* Dialog_CropUnsavedTitle */ "Modifications de recadrage non enregistrées. Enregistrer?\0"
+    /* Dialog_SaveAsTitle */ "Enregistrer l'image\0"
+    /* Dialog_ExportTitle */ "Enregistrer et exporter\0"
+    /* Dialog_ButtonOverwrite */ "Écraser\0"
+    /* Dialog_EmbedICC */ "Profil ICC\0"
+    /* Dialog_SizeEstimating */ "Taille: Estimation...\0"
+    /* Dialog_ExportError */ "Erreur d'exportation\0"
+    /* Context_Open */ "Open...\tCtrl+O\0"
+    /* Context_Crop */ "Recadrer\0"
+    /* Context_SuperResolution */ "Super-Résolution IA\0"
+    /* Context_AiAction */ "Actions IA\0"
+    /* Context_OpenWith */ "Open With...\0"
+    /* Context_Edit */ "Edit\tE\0"
+    /* Context_ShowInExplorer */ "Show in Explorer\0"
+    /* Context_OpenFolder */ "Open Folder\0"
+    /* Context_CopyPixels */ "Copier les pixels\tCtrl+C\0"
+    /* Context_CopyFile */ "Copier le fichier\tCtrl+Shift+C\0"
+    /* Context_CopyPath */ "Copy Path\tCtrl+Alt+C\0"
+    /* Context_Print */ "Print\tCtrl+P\0"
+    /* Context_RotateCW */ "Rotate 90° CW\tR\0"
+    /* Context_RotateCCW */ "Rotate 90° CCW\tShift+R\0"
+    /* Context_FlipH */ "Flip Horizontal\tH\0"
+    /* Context_FlipV */ "Flip Vertical\tV\0"
+    /* Context_Transform */ "Transform\0"
+    /* Context_ActualSize */ "Actual Size (100%)\tZ\0"
+    /* Context_FitToScreen */ "Fit to Screen\tF\0"
+    /* Context_FitWindow */ "Fit Window\0"
+    /* Context_FillWindow */ "Fill Window\0"
+    /* Context_ZoomIn */ "Zoom In\t+ / Ctrl +\0"
+    /* Context_ZoomOut */ "Zoom Out\t- / Ctrl -\0"
+    /* Context_LockWindow */ "Lock Window\0"
+    /* Context_AlwaysOnTop */ "Always on Top\tCtrl+T\0"
+    /* Context_HUDGallery */ "HUD Gallery\tT\0"
+    /* Context_LiteInfoPanel */ "Lite Info Panel\tTab\0"
+    /* Context_FullInfoPanel */ "Full Info Panel\tI\0"
+    /* Context_RenderRAW */ "Render RAW\0"
+    /* Context_PixelArtMode */ "Pixel Art Mode\0"
+    /* Context_Fullscreen */ "Fullscreen\tF11\0"
+    /* Context_SlideshowMode */ "Mode diaporama\0"
+    /* Context_SpanDisplays */ "Span Displays (Video Wall)\tCtrl+F11\0"
+    /* Context_View */ "View\0"
+    /* Context_WallpaperFill */ "Fill\0"
+    /* Context_WallpaperFit */ "Fit\0"
+    /* Context_WallpaperTile */ "Tile\0"
+    /* Context_SetAsWallpaper */ "Set as Wallpaper\0"
+    /* Context_Rename */ "Rename\tF2\0"
+    /* Context_FixExtension */ "Fix Extension\0"
+    /* Context_Delete */ "Delete\tDel\0"
+    /* Context_UndoDelete */ "Annuler la suppression\tCtrl+Z\0"
+    /* Context_UndoRename */ "Annuler le renommage\tCtrl+Z\0"
+    /* Context_UndoTransform */ "Annuler la rotation/retournement\tCtrl+Z\0"
+    /* Context_Undo */ "Annuler\tCtrl+Z\0"
+    /* Context_SortBy */ "Sort By\0"
+    /* Context_NavOrder */ "Navigation Order\0"
+    /* Context_SortAscending */ "Ascending\0"
+    /* Context_SortDescending */ "Descending\0"
+    /* Context_Settings */ "Settings...\0"
+    /* Context_CompareMode */ "Compare Mode\tC\0"
+    /* Context_OverlayMode */ "Mode Décalque\tCtrl+Shift+O\0"
+    /* Context_GalleryOpenCompare */ "Open in Compare Mode\0"
+    /* Context_GalleryOpenNewWindow */ "Open in New Window\0"
+    /* Context_Exit */ "Exit\tMButton/Esc\0"
+    /* Menu_ExitPassthrough */ "Quitter le mode clic à travers\0"
+    /* Message_SaveErrorTitle */ "Error\0"
+    /* Message_SaveErrorContent */ "Failed to save file. File locked?\0"
+    /* Toolbar_Tooltip_Prev */ "Previous (Left)\0"
+    /* Toolbar_Tooltip_Next */ "Next (Right)\0"
+    /* Toolbar_Tooltip_RotateL */ "Rotate Left (Shift+R)\0"
+    /* Toolbar_Tooltip_RotateR */ "Rotate Right (R)\0"
+    /* Toolbar_Tooltip_FlipH */ "Flip Horizontal (H)\0"
+    /* Toolbar_Tooltip_Lock */ "Lock Window (Temp)\0"
+    /* Toolbar_Tooltip_Unlock */ "Unlock Window\0"
+    /* Toolbar_Tooltip_Gallery */ "Gallery (T)\0"
+    /* Toolbar_Tooltip_Info */ "Info Panel\0"
+    /* Toolbar_Tooltip_RawPreview */ "RAW: Preview (Click for Full)\0"
+    /* Toolbar_Tooltip_RawFull */ "RAW: Full Decode (Click for Preview)\0"
+    /* Toolbar_Tooltip_RawPairView */ "RAW : Voir le RAW associé (décodage complet)\0"
+    /* Toolbar_Tooltip_RawPairBack */ "RAW : Revenir à l'image associée\0"
+    /* Toolbar_Tooltip_FixExtension */ "Extension Mismatch (Fix)\0"
+    /* Toolbar_Tooltip_Pin */ "Pin Toolbar\0"
+    /* Toolbar_Tooltip_Unpin */ "Unpin Toolbar\0"
+    /* Toolbar_Tooltip_GamutWarning */ "Afficher les zones hors gamme\0"
+    /* Toolbar_Tooltip_CropCopy */ "Copier la sélection (Ctrl+C)\0"
+    /* Toolbar_Tooltip_CropSave */ "Enregistrer (Ctrl+S)\0"
+    /* Toolbar_Tooltip_CropApply */ "Appliquer (Enter)\0"
+    /* Toolbar_Tooltip_CropCancel */ "Quitter (Esc)\0"
+    /* Toolbar_Tooltip_OverlayAlphaUp */ "Augmenter l'opacité\0"
+    /* Toolbar_Tooltip_OverlayAlphaDown */ "Diminuer l'opacité\0"
+    /* Toolbar_Tooltip_OverlayPassthroughOn */ "Activer le clic à travers\0"
+    /* Toolbar_Tooltip_OverlayPassthroughOff */ "Désactiver le clic à travers\0"
+    /* Toolbar_Tooltip_OverlayExit */ "Quitter le mode décalque\0"
+    /* Toolbar_Tooltip_OverlayZoomIn */ "Zoom avant (décalque)\0"
+    /* Toolbar_Tooltip_OverlayZoomOut */ "Zoom arrière (décalque)\0"
+    /* Toolbar_Tooltip_NormalMode */ "Normal Mode\0"
+    /* Toolbar_Tooltip_CompareMode */ "Compare Mode\0"
+    /* Toolbar_Tooltip_SinglePage */ "Mode page unique\0"
+    /* Toolbar_Tooltip_DualPage */ "Mode double page\0"
+    /* Toolbar_Tooltip_CompareOpen */ "Open New Image in Selection\0"
+    /* Toolbar_Tooltip_CompareSwap */ "Swap Left/Right\0"
+    /* Toolbar_Tooltip_CompareLayout */ "Toggle Layout\0"
+    /* Toolbar_Tooltip_CompareInfo */ "Compare Info\0"
+    /* Toolbar_Tooltip_CompareDelete */ "Delete Selected Image\0"
+    /* Toolbar_Tooltip_CompareZoomIn */ "Zoom In (Fine-tune)\0"
+    /* Toolbar_Tooltip_CompareZoomOut */ "Zoom Out (Fine-tune)\0"
+    /* Toolbar_Tooltip_CompareSyncZoomOn */ "Zoom Sync: ON\0"
+    /* Toolbar_Tooltip_CompareSyncZoomOff */ "Zoom Sync: OFF\0"
+    /* Toolbar_Tooltip_CompareSyncPanOn */ "Pan Sync: ON\0"
+    /* Toolbar_Tooltip_CompareSyncPanOff */ "Pan Sync: OFF\0"
+    /* Toolbar_Tooltip_SlideshowImmersiveToggle */ "Basculer le mode projecteur immersif\0"
+    /* Toolbar_Tooltip_SlideshowExit */ "Quitter le mode diaporama\0"
+    /* Toolbar_Tooltip_CompareExit */ "Exit Compare\0"
+    /* Toolbar_Tooltip_AnimPlay */ "Play Animation\0"
+    /* Toolbar_Tooltip_AnimPause */ "Pause Animation\0"
+    /* Toolbar_Tooltip_AnimPrev */ "Previous Frame\0"
+    /* Toolbar_Tooltip_AnimNext */ "Next Frame\0"
+    /* Toolbar_Tooltip_AnimDirtyOn */ "Dirty Rect Debug: ON\0"
+    /* Toolbar_Tooltip_AnimDirtyOff */ "Dirty Rect Debug: OFF\0"
+    /* Toolbar_Tooltip_AnimSpeed */ "Vitesse d'animation\0"
+    /* OSD_Copied */ "Copied!\0"
+    /* OSD_PixelsCopied */ "Pixels copiés dans le presse-papiers !\0"
+    /* OSD_PixelsExtracting */ "Extraction des pixels...\0"
+    /* OSD_FileCopied */ "Fichier copié dans le presse-papiers !\0"
+    /* OSD_CoordinatesCopied */ "Coordinates copied!\0"
+    /* OSD_FilePathCopied */ "File path copied!\0"
+    /* OSD_Zoom100 */ "Zoom: 100%\0"
+    /* OSD_ZoomFit */ "Zoom: Fit Screen\0"
+    /* OSD_ZoomFitWindow */ "Zoom: Fit Window\0"
+    /* OSD_ZoomFill */ "Zoom: Fill Window\0"
+    /* OSD_PrintInstruction */ "Print: Use Ctrl+P in opened app\0"
+    /* OSD_MovedToRecycleBin */ "Moved to Recycle Bin\0"
+    /* OSD_WindowLocked */ "Window Locked\0"
+    /* OSD_WindowUnlocked */ "Window Unlocked\0"
+    /* OSD_AlwaysOnTopOn */ "Always on Top: ON\0"
+    /* OSD_AlwaysOnTopOff */ "Always on Top: OFF\0"
+    /* OSD_WallpaperSet */ "Wallpaper Set\0"
+    /* OSD_WallpaperFailed */ "Failed to set wallpaper\0"
+    /* OSD_Renamed */ "Renamed\0"
+    /* OSD_RenameFailed */ "Rename Failed\0"
+    /* OSD_Restored */ "Restored\0"
+    /* OSD_ExtensionFixed */ "Extension Fixed\0"
+    /* OSD_FirstImage */ "First image\0"
+    /* OSD_LastImage */ "Last image\0"
+    /* OSD_HD */ "HD\0"
+    /* OSD_ZoomPrefix */ "Zoom: \0"
+    /* OSD_AnimPlaying */ "Playing\0"
+    /* OSD_AnimPaused */ "Paused (Inspector Mode: Alt+Left/Right to Seek)\0"
+    /* OSD_AnimDirtyOn */ "Dirty Rect: ON\0"
+    /* OSD_AnimDirtyOff */ "Dirty Rect: OFF\0"
+    /* OSD_GamutDetected */ "Couleurs hors gamme détectées\0"
+    /* OSD_GamutIncompatible */ "Gamme : Profil incompatible\0"
+    /* OSD_GamutFailed */ "Gamme : Échec de l'analyse\0"
+    /* OSD_SlideshowStarted */ "Diaporama démarré\0"
+    /* OSD_SlideshowStopped */ "Diaporama arrêté\0"
+    /* OSD_SlideshowResumed */ "Diaporama repris\0"
+    /* OSD_SlideshowPaused */ "Diaporama en pause\0"
+    /* OSD_ImmersiveSpotlight */ "Immersif : Projecteur\0"
+    /* OSD_ImmersiveNormal */ "Immersif : Normal\0"
+    /* OSD_PrintJobStarted */ "Tâche d'impression envoyée. Vous pouvez continuer à naviguer.\0"
+    /* OSD_PrintJobFinished */ "Tâche d'impression envoyée avec succès.\0"
+    /* OSD_EnterCropMode */ "Mode recadrage activé\0"
+    /* OSD_CropCopied */ "Sélection de recadrage copiée\0"
+    /* OSD_CropApplied */ "Recadrage appliqué (non enregistré)\0"
+    /* Context_ColorSpace */ "Color Space\0"
+    /* Settings_Option_CmsUnmanaged */ "Non géré\0"
+    /* Settings_Option_CmssRGB */ "sRGB\0"
+    /* Settings_Option_CmsP3 */ "Display P3\0"
+    /* Settings_Option_CmsAdobeRGB */ "Adobe RGB (1998)\0"
+    /* Settings_Option_CmsGray */ "Niveaux de gris (Vérification tonale)\0"
+    /* Settings_Option_CmsProPhoto */ "ProPhoto RGB\0"
+    /* Checkbox_AlwaysSaveLossless */ "Always Save Lossless Transforms\0"
+    /* Checkbox_AlwaysSaveEdgeAdapted */ "Always Save Edge-Adapted\0"
+    /* Checkbox_AlwaysSaveLossy */ "Always Save Re-Encoded\0"
+    /* Checkbox_NeverConfirmDelete */ "Envoyer directement à la corbeille sans confirmer\0"
+    /* OSD_HEICCodecMissing */ "Cannot decode HEIC - Install HEVC Video Extension\0"
+    /* Dialog_HEICTitle */ "Cannot decode HEIC\0"
+    /* Dialog_HEICContent */ "Your system is missing the HEVC Video Extension.\nQuickView uses system hardware acceleration for best performance.\0"
+    /* Dialog_HEICGetExtension */ "Get Extension (Free)\0"
+    /* Dialog_Cancel */ "Cancel\0"
+    /* Settings_Tab_General */ "General\0"
+    /* Settings_Tab_About */ "About\0"
+    /* Settings_Tab_Shortcuts */ "Raccourcis\0"
+    /* Settings_Hotkey_PressKey */ "Appuyez sur les touches...\0"
+    /* Settings_Hotkey_Conflict */ "Conflit de raccourcis\0"
+    /* Settings_Hotkey_ConflictPrompt */ "Déjà utilisé par « %s ». Continuer effacera son raccourci.\0"
+    /* Settings_Hotkey_Restore */ "Restaurer les raccourcis par défaut\0"
+    /* Settings_Hotkey_Restored */ "Restauré\0"
+    /* Settings_Hotkey_MouseTip */ "Conseil : Prend en charge le bouton central de la souris, les boutons latéraux et autres boutons multifonctions. Mappez les boutons latéraux supplémentaires sur les touches du clavier dans le pilote de votre souris pour les lier.\0"
+    /* Settings_Header_GalleryTrigger */ "Film fixe de la galerie (Survol supérieur)\0"
+    /* Settings_Label_GalleryTriggerMode */ "Mode de déclenchement du film\0"
+    /* Settings_Label_KeepGalleryVisibleOnThumbnailClick */ "Maintenir visible après clic\0"
+    /* Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick */ "Cette fonction activera automatiquement le verrouillage de la fenêtre et le maintien de la taille de la fenêtre lors de la navigation.\0"
+    /* Settings_Label_GalleryExpandOnClickOnly */ "Mode de déclenchement de la flèche\0"
+    /* Settings_Tooltip_GalleryExpandOnClickOnly */ "Exige un clic sur la flèche pour développer, évitant les déclenchements accidentels par survol.\0"
+    /* Settings_Option_TriggerClick */ "Clic\0"
+    /* Settings_Option_TriggerHover */ "Survol\0"
+    /* Settings_Option_GalleryTriggerAuto */ "Survol automatique\0"
+    /* Settings_Option_GalleryTriggerDelay */ "Survol du point chaud\0"
+    /* Settings_Option_GalleryTriggerClick */ "Clic sur le point chaud\0"
+    /* Settings_Option_GalleryTriggerDisable */ "Désactivé\0"
+    /* Settings_Tooltip_GalleryTrigger */ "Cette fonctionnalité est automatiquement désactivée lorsque la fenêtre est plus petite que 600x450.\0"
+    /* Settings_Label_GalleryTriggerAreaHeight */ "Hauteur de la zone de déclenchement\0"
+    /* Settings_Label_GalleryDwellTime */ "Temps de maintien\0"
+    /* Settings_Label_GalleryExitDelay */ "Délai de sortie\0"
+    /* Settings_Label_GalleryMinSize */ "Taille minimale de la galerie\0"
+    /* Settings_Group_Foundation */ "Foundation\0"
+    /* Settings_Group_Startup */ "Startup\0"
+    /* Settings_Group_Habits */ "Habits\0"
+    /* Settings_Label_Language */ "Language\0"
+    /* Settings_Label_SingleInstance */ "Single Instance\0"
+    /* Settings_Label_CheckUpdates */ "Check Updates\0"
+    /* Settings_Label_UpdateChannel */ "Canal de mise à jour\0"
+    /* Settings_Option_UpdateStable */ "Stable\0"
+    /* Settings_Option_UpdatePreRelease */ "Pré-version (Pre-release)\0"
+    /* Settings_Tooltip_PreRelease */ "Stable : Publié après qu'une pré-version se soit avérée stable.\nPré-version (Pre-release) : Fournit immédiatement les dernières modifications pour recueillir vos retours. Remarque : Ces modifications ne sont pas strictement testées.\0"
+    /* Settings_Label_NavLoopMode */ "Loop\0"
+    /* Settings_Label_SortOrder */ "Sort Order\0"
+    /* Settings_Label_SortDescending */ "Descending\0"
+    /* Settings_Label_SortArchivesByNameAscending */ "Toujours trier les archives par nom\0"
+    /* Settings_Label_ConfirmDel */ "Confirm Before Delete\0"
+    /* Settings_Label_Portable */ "Portable Mode / Cleanup\0"
+    /* Settings_Tooltip_Portable */ "Portable Mode / Registry Cleanup:\nWhen enabled, QuickView runs in portable mode. It will automatically clean up existing registry associations, disable automatic registry modification, and store configuration files in the application folder instead of AppData.\0"
+    /* Settings_Label_SpanDisplays */ "Span Displays\0"
+    /* Settings_Label_UIScale */ "UI Scale\0"
+    /* Settings_Status_RestartRequired */ "Restart required\0"
+    /* Settings_Status_NoWritePerm */ "No Write Permission!\0"
+    /* Settings_Status_Enabled */ "Enabled\0"
+    /* Settings_Header_PoweredBy */ "Powered by\0"
+    /* Settings_Text_Copyright */ "© 2025–%s Vivor Loong (GitHub: @justnullname)\0"
+    /* Settings_Text_License */ "Licensed under GNU GPL v3.0\0"
+    /* Settings_Tab_Visuals */ "Interface\0"
+    /* Settings_Tab_Controls */ "Controls\0"
+    /* Settings_ControlSub_Mouse */ "Gestes de souris\0"
+    /* Settings_ControlSub_Keyboard */ "Raccourcis clavier\0"
+    /* Settings_ControlSub_Behavior */ "Comportement\0"
+    /* Settings_Gesture_Preset */ "Préréglage\0"
+    /* Settings_Gesture_Preset_Default */ "QuickView Classique\0"
+    /* Settings_Gesture_Preset_Standard */ "Visionneuse standard\0"
+    /* Settings_Gesture_Preset_Browser */ "Minimaliste\0"
+    /* Settings_Gesture_Add */ "+ Ajouter un geste\0"
+    /* Settings_Gesture_Reset */ "Réinitialiser les gestes\0"
+    /* Settings_Tab_Image */ "Image\0"
+    /* Settings_Tab_Advanced */ "Advanced\0"
+    /* Settings_Header_Backdrop */ "Backdrop\0"
+    /* Settings_Header_Window */ "Window\0"
+    /* Settings_Header_WindowLock */ "Window Lock\0"
+    /* Settings_Header_Panel */ "Panel\0"
+    /* Settings_Label_CanvasColor */ "Canvas Color\0"
+    /* Settings_Option_Effects */ "Effects\0"
+    /* Settings_Label_ContextMenuBackdrop */ "Right-Click Menu\0"
+    /* Settings_Label_CanvasEffectStyle */ "Effect Style\0"
+    /* Settings_Tooltip_BackdropEffectsTip */ "Mica and Mica Alt are supported only on Windows 11. Acrylic uses more system resources than Mica/Mica Alt.\0"
+    /* Settings_Label_Overlay */ "Overlay\0"
+    /* Settings_Label_ShowGrid */ "Show Grid Overlay\0"
+    /* Settings_Label_AlwaysOnTop */ "Always on Top\0"
+    /* Settings_Label_LockWindow */ "Lock Window\0"
+    /* Settings_Tooltip_LockWindow */ "Controls whether the program locks the window border by default on startup, rather than following image scaling.\0"
+    /* Settings_Label_AutoHideTitle */ "Auto-Hide Title Bar\0"
+    /* Settings_Label_RoundedCorners */ "Rounded Corners\0"
+    /* Settings_Label_UIBorders */ "Show UI Borders\0"
+    /* Settings_Tooltip_RoundedCorners */ "Controls window and context menu rounded corners. Requires Windows 11.\0"
+    /* Settings_Label_LockToolbar */ "Lock Bottom Toolbar\0"
+    /* Settings_Label_WindowMinSize */ "Minimum Window Width\0"
+    /* Settings_Label_WindowMaxSizePercent */ "Maximum Start Size (%)\0"
+    /* Settings_Label_ShowBorderIndicator */ "Show Edge Overflow Indicators\0"
+    /* Settings_Tooltip_ShowBorderIndicator */ "Shows a soft edge glow along directions where the image exceeds the viewport while panning or zooming, then fades out automatically.\0"
+    /* Settings_Label_ShowNavigator */ "Show Minimap\0"
+    /* Settings_Tooltip_ShowNavigator */ "When mouse is over minimap, Wheel / Thumb Wheel (Shift + Wheel) pans image\0"
+    /* Settings_Label_KeepWindowSizeOnNav */ "Keep Window Size on Navigation\0"
+    /* Settings_Label_RememberLastWindowSizeAndPosition */ "Remember Last Window Size and Position\0"
+    /* Settings_Label_UpscaleSmallImagesWhenLocked */ "Adapt Small Images\0"
+    /* Settings_Label_SlideshowInterval */ "Intervalle (secondes)\0"
+    /* Settings_Label_SlideshowImmersive */ "Mode immersif\0"
+    /* Settings_Option_SlideshowNormal */ "Normal\0"
+    /* Settings_Option_SlideshowSpotlight */ "Projecteur\0"
+    /* Settings_Label_ExifMode */ "EXIF Panel Mode\0"
+    /* Settings_Label_ToolbarInfoDefault */ "Toolbar Info Default\0"
+    /* Settings_Label_OpenFullScreenMode */ "Open Fullscreen\0"
+    /* Settings_Label_FullScreenZoomMode */ "Fullscreen Zoom Mode\0"
+    /* Settings_Label_CustomLiteInfoPanel */ "Personnaliser le panneau d'infos compact\0"
+    /* Settings_Label_CustomFullInfoPanel */ "Personnaliser le panneau d'infos complet\0"
+    /* Settings_Label_InfoPanelScale */ "Zoom du panneau d'informations\0"
+    /* Settings_Label_ItemsInNormalMode */ "Éléments en mode normal\0"
+    /* Settings_Label_ItemsInCompareMode */ "Éléments en mode comparaison\0"
+    /* Settings_Label_SeparatorPreset */ "Séparateur prédéfini\0"
+    /* Settings_Option_FitScreen */ "Fit to Screen\0"
+    /* Settings_Option_Black */ "Black\0"
+    /* Settings_Option_White */ "White\0"
+    /* Settings_Option_Grid */ "Grid\0"
+    /* Settings_Option_Custom */ "Custom\0"
+    /* Settings_Option_Off */ "Off\0"
+    /* Settings_Option_On */ "On\0"
+    /* Settings_Option_Lite */ "Lite\0"
+    /* Settings_Option_Full */ "Full\0"
+    /* Settings_Option_LargeOnly */ "Large Only\0"
+    /* Settings_Option_All */ "All\0"
+    /* Settings_Option_SoftProofing */ "Épreuvage écran\0"
+    /* Settings_Header_Mouse */ "Mouse\0"
+    /* Settings_Header_Edge */ "Edge\0"
+    /* Settings_Label_InvertWheel */ "Invert Wheel\0"
+    /* Settings_Label_MouseAnchorZoom */ "Mouse-Anchored Window Zoom\0"
+    /* Settings_Label_RightButtonDragZoom */ "Right Button Drag Zoom\0"
+    /* Settings_Label_WheelZoomSpeed */ "Wheel Zoom Speed\0"
+    /* Settings_Tooltip_WheelZoomSpeed */ "Alt + Wheel temporarily adjusts zoom speed\0"
+    /* Settings_Label_ThumbWheel */ "Thumb Wheel\0"
+    /* Settings_Tooltip_ThumbWheel */ "Can be replaced with Shift + Wheel\0"
+    /* Settings_Tooltip_MiddleDrag */ "Can be replaced with Ctrl + Left Click\0"
+    /* Settings_Label_DoubleClick */ "Double-Clic\0"
+    /* Settings_Option_DoubleClick_Smart */ "Smart\0"
+    /* Settings_Option_DoubleClick_WheelMode1 */ "Mode Molette 1\0"
+    /* Settings_Option_DoubleClick_WheelMode2 */ "Mode Molette 2\0"
+    /* Settings_Tooltip_DoubleClick */ "Smart: Default zoom/fullscreen toggle;\nWheel Mode 1: Double-click swaps main & thumb wheel functions;\nWheel Mode 2: Double-click toggles image pan mode;\nTip: Shift + Wheel acts as Thumb Wheel.\0"
+    /* Settings_Tooltip_PanStepNormal */ "Controls key pan and wheel pan speed\0"
+    /* OSD_WheelMode1_NextPrevZoom */ "Main Wheel: Next/Prev; Thumb/Shift+Wheel: Zoom\0"
+    /* OSD_WheelMode1_ZoomNextPrev */ "Main Wheel: Zoom; Thumb/Shift+Wheel: Next/Prev\0"
+    /* OSD_WheelMode2_Pan */ "Wheel: Pan Mode\0"
+    /* OSD_WheelMode2_Default */ "Wheel: Default Mode\0"
+    /* Settings_Label_RightDragZoomSpeed */ "Mouse Drag Zoom Speed\0"
+    /* OSD_WheelZoomSpeed */ "Zoom Speed (Temp): \0"
+    /* Settings_Label_InvertButtons */ "Invert Side Buttons\0"
+    /* Settings_Header_KeyboardPan */ "Pas de pan\0"
+    /* Settings_Label_PanStepNormal */ "Pas de pan (Normal)\0"
+    /* Settings_Label_PanStepFast */ "Pas de pan clavier (Rapide)\0"
+    /* Settings_Label_UseFixedZoom */ "Use Fixed Zoom Levels\0"
+    /* Settings_Tooltip_UseFixedZoom */ "When enabled, Alt + Wheel performs regular zoom instead of changing zoom speed.\0"
+    /* Settings_Label_FixedZoomLevels */ "  └  Custom Zoom Levels\0"
+    /* Dialog_FixedZoomTitle */ "Edit Zoom Levels\0"
+    /* Dialog_FixedZoomMsg */ "Enter comma-separated zoom ratios (e.g. 0.5, 1, 2):\0"
+    /* Settings_Label_ZoomModeIn */ "Zoom Mode (In)\0"
+    /* Settings_Tooltip_ZoomModeIn */ "Algorithme de mise à l'échelle lors du zoom :\n• Auto : Détection intelligente (FSR pour photos/CG, Plus proche pour pixel art)\n• Linéaire : Lissage bilinéaire rapide\n• Plus proche : Grille nette pour le pixel art\n• HQ Cubique : Filtrage bicubique ultra-fluide\n• AMD FSR 1.0 : Super-résolution spatiale adaptative avec netteté RCAS\0"
+    /* Settings_Label_ZoomModeOut */ "Zoom Mode (Out)\0"
+    /* Settings_Label_LeftDrag */ "Left Drag\0"
+    /* Settings_Label_MiddleDrag */ "Middle Drag\0"
+    /* Settings_Label_MiddleClick */ "Middle Click\0"
+    /* Settings_Label_EdgeNavClick */ "Clic de navigation sur les bords\0"
+    /* Settings_Label_ShowOSD */ "Afficher la notification OSD\0"
+    /* Settings_Label_DisableEdgeNavInCompare */ "Désactiver en mode comparaison\0"
+    /* Settings_Label_NavIndicator */ "Indicateur de navigation\0"
+    /* Settings_Option_Window */ "Window\0"
+    /* Settings_Option_Pan */ "Pan\0"
+    /* Settings_Option_None */ "None\0"
+    /* Settings_Option_Exit */ "Exit\0"
+    /* Settings_Option_Arrow */ "Arrow\0"
+    /* Settings_Option_Cursor */ "Cursor\0"
+    /* Settings_Option_Manual */ "Manual\0"
+    /* Settings_Option_SortAuto */ "Auto (Explorer)\0"
+    /* Settings_Option_SortName */ "Name\0"
+    /* Settings_Option_SortModified */ "Date Modified\0"
+    /* Settings_Option_SortDateTaken */ "Date Taken (EXIF)\0"
+    /* Settings_Option_SortSize */ "Size\0"
+    /* Settings_Option_SortType */ "Type\0"
+    /* Settings_Option_NavLoop */ "Loop\0"
+    /* Settings_Option_NavThrough */ "Through Subfolders\0"
+    /* Settings_Option_Linear */ "Linear: Basic smoothing\0"
+    /* Settings_Option_Nearest */ "Nearest: Extreme sharpness\0"
+    /* Settings_Option_HighQualityCubic */ "HQ Cubic: Extreme smoothing\0"
+    /* Settings_Option_FSR */ "AMD FSR 1.0 (EASU/RCAS)\0"
+    /* Settings_Header_Render */ "Render\0"
+    /* Settings_Header_Hdr */ "HDR\0"
+    /* Settings_Header_Prompts */ "Prompts\0"
+    /* Settings_Header_System */ "System\0"
+    /* Settings_Label_AutoRotate */ "Rotation automatique (EXIF)\0"
+    /* Settings_Label_FsrSharpness */ "Netteté FSR\0"
+    /* Settings_Tooltip_FsrSharpness */ "Ajuste la netteté des contours pour la super-résolution AMD FSR 1.0.\0"
+    /* Settings_Tab_Plugins */ "Plugins\0"
+    /* Settings_Label_EnableSrPlugin */ "Super-résolution IA\0"
+    /* Settings_Label_SrModel */ "AI Model\0"
+    /* Settings_Label_SrAutoTrigger */ "Déclenchement automatique\0"
+    /* Settings_Label_SrAutoTriggerMaxWidth */ "Largeur max de la source\0"
+    /* Settings_Tooltip_SrAutoTriggerMaxWidth */ "Limite la largeur maximale de l'image d'origine (en pixels) pour la super-résolution automatique. 0 pour illimité.\0"
+    /* Settings_Label_SrAutoTriggerMaxHeight */ "Hauteur max de la source\0"
+    /* Settings_Tooltip_SrAutoTriggerMaxHeight */ "Limite la hauteur maximale de l'image d'origine (en pixels) pour la super-résolution automatique. 0 pour illimité.\0"
+    /* Settings_Value_Unlimited */ "Illimité\0"
+    /* Settings_Label_SrOpenInCompare */ "Afficher en mode comparaison après déclenchement manuel\0"
+    /* Settings_Label_SrPromptModel */ "Demander le modèle lors du déclenchement manuel\0"
+    /* Export_Checkbox_SuperResolution */ "Exporter la qualité de super-résolution\0"
+    /* Settings_Label_SrDebounce */ "Délai de déclenchement\0"
+    /* Settings_Tooltip_SrDebounce */ "Délai en millisecondes (0 - 5000 ms) avant le déclenchement de la super-résolution neuronale après l'arrêt du zoom.\0"
+    /* Settings_Header_PluginTriggers */ "Déclencheurs et Interaction\0"
+    /* Settings_Header_PluginParams */ "Paramètres du plugin\0"
+    /* Settings_Label_SrStorageFolder */ "Répertoire des plugins et modèles\0"
+    /* Settings_Button_OpenModelFolder */ "📂 Ouvrir le répertoire local\0"
+    /* Settings_Prompt_DownloadModelFirst */ "Téléchargez d'abord le modèle\0"
+    /* Settings_Segment_InstalledPlugins */ "Extensions installées\0"
+    /* Settings_Segment_Marketplace */ "Catalogue\0"
+    /* Settings_Label_SrEngine */ "Moteur de super-résolution\0"
+    /* Settings_Label_SrModelStatus */ "État du modèle\0"
+    /* Settings_Format_DownloadModel */ "Télécharger ce modèle (~%llu MB)\0"
+    /* Settings_Header_SrComponent */ "Composant de super-résolution IA\0"
+    /* Settings_Label_QuickEnableEngine */ "Activer le moteur de super-résolution\0"
+    /* Settings_Button_QuickEnableNcnn */ "⚡ Activer le moteur Real-ESRGAN NCNN Vulkan\0"
+    /* Settings_Label_OnlineExtensions */ "Extensions et modèles en ligne\0"
+    /* Settings_Button_BrowseMarketplace */ "🌐 Explorer le catalogue\0"
+    /* Settings_Label_MarketManifest */ "Liste des plugins\0"
+    /* Settings_Button_RefreshManifest */ "🔄 Actualiser la liste\0"
+    /* Settings_Button_SyncingManifest */ "Synchronisation avec le cloud...\0"
+    /* Settings_Format_PluginPackageSize */ "Package du plugin (~%llu MB)\0"
+    /* Settings_Button_InstalledUpToDate */ "✓ Installé\0"
+    /* Settings_Format_UpdateTo */ "⚡ Mettre à jour vers v%ls\0"
+    /* Settings_Button_InstallPlugin */ "⚡ Obtenir et installer\0"
+    /* OSD_SrProcessing */ "Calcul de super-résolution IA en cours...\0"
+    /* OSD_SrSuccessFormat */ "✓ Super-résolution IA prête: %s [%.0fx] (%.1f ms)\0"
+    /* OSD_SrSuccessFormatSimple */ "✓ Super-résolution IA prête: %s (%.1f ms)\0"
+    /* OSD_SrFailed */ "✗ Échec de la super-résolution IA\0"
+    /* OSD_SrPluginDisabledOrMissing */ "Le plugin de super-résolution IA n'est pas activé ou non installé\0"
+    /* OSD_SrAnimationProcessingFormat */ "Super-résolution de la séquence d'animation en cours (%u/%u images)...\0"
+    /* OSD_SrAnimationSuccessFormat */ "✓ Super-résolution IA d'animation prête: %s (%u images en %.2f s)\0"
+    /* OSD_SrVectorLosslessSkipped */ "Les graphiques vectoriels s'adaptent sans perte, la super-résolution IA n'est pas nécessaire\0"
+    /* OSD_SrAnimationTooManyFrames */ "L'animation contient trop d'images (> %u), super-résolution complète ignorée\0"
+    /* OSD_SrImageTooLargeFormat */ "Résolution d'image trop élevée (%ux%u, >16 MP), mise à l'échelle IA ignorée pour éviter le dépassement de VRAM\0"
+    /* Dialog_Title_SelectSrModel */ "Sélectionner le modèle de super-résolution IA\0"
+    /* Dialog_Msg_SelectSrModel */ "Choisissez le modèle de super-résolution IA à appliquer :\0"
+    /* Dialog_Checkbox_RememberSrModelChoice */ "Mémoriser le choix et ne plus demander lors du déclenchement manuel\0"
+    /* Dialog_Button_OK */ "OK\0"
+    /* Settings_Label_CMS */ "Gestion des couleurs (CMS)\0"
+    /* Settings_Label_AdvancedColor */ "Couleurs avancées (HDR)\0"
+    /* Settings_Label_CmsFallback */ "Profil de repli pour images non étiquetées\0"
+    /* Settings_Label_HdrToneMapping */ "Mappage de tons HDR\0"
+    /* Settings_Label_HdrSplineKnee */ "Spline Knee Point\0"
+    /* Settings_Tooltip_HdrToneMapping */ "Stratégie de mappage de tons HDR (Tone Mapping) :\nDétermine comment les images HDR sont affichées lorsqu'elles dépassent les capacités du moniteur.\nSpline : Atténuation des hautes lumières haute fidélité utilisant une spline par morceaux (Recommandé).\nColorimétrique : Mappage de luminance strict ; les hautes lumières dépassant la limite du moniteur sont tronquées.\nBT.2390 (EETF) : Courbe ITU-R BT.2390 EETF pour un mappage de tons haute fidélité.\0"
+    /* Settings_Tooltip_HdrSplineKnee */ "0 = Auto (Calculated based on image luminance).\nThe value represents the ratio of the monitor's peak luminance. Brightness below this knee point maps 1:1, while brightness above is smoothly compressed using a spline curve.\n(Recommended: 0.4 - 0.75)\0"
+    /* Settings_Label_HdrPeakNitsOverride */ "Luminosité maximale HDR (Nits)\0"
+    /* Settings_Tooltip_HdrPeakNitsOverride */ "Réglez sur 0 pour utiliser la luminosité détectée par le système.\0"
+    /* Settings_Label_HdrPeakPercentile */ "HDR Peak Percentile\0"
+    /* Settings_Tooltip_HdrPeakPercentile */ "Discard extremely bright pixels to raise overall brightness (mpv default: 99.995%).\0"
+    /* Settings_Option_HdrPeakPercentile_100 */ "100% (Absolute Peak)\0"
+    /* Settings_Option_HdrPeakPercentile_99995 */ "99.995% (Stable)\0"
+    /* Settings_Option_HdrPeakPercentile_999 */ "99.9% (Aggressive)\0"
+    /* Settings_Label_HdrDesatThreshold */ "Plage de désaturation des hautes lumières HDR\0"
+    /* Settings_Tooltip_HdrDesatThreshold */ "Seuil de début de désaturation des hautes lumières. 0.0 signifie désaturer toute la luminosité, 1.0 signifie pas de désaturation. Par défaut recommandé : 0.18.\0"
+    /* Settings_Label_HdrMaxDesat */ "Force de désaturation des hautes lumières HDR\0"
+    /* Settings_Tooltip_HdrMaxDesat */ "Intensité maximale de désaturation des hautes lumières extrêmes. 0.0 signifie pas de désaturation, 1.0 signifie désaturé à 100% en blanc. Par défaut recommandé : 0.75.\0"
+    /* Settings_Option_HdrColorimetric */ "Colorimétrique\0"
+    /* Settings_Option_HdrSpline */ "Spline\0"
+    /* Settings_Option_HdrLegacyReinhard */ "BT.2390 (EETF)\0"
+    /* Settings_Label_CustomProof */ "Profil d'épreuvage écran (.icc)\0"
+    /* Settings_Label_CmsIntent */ "Intention de rendu\0"
+    /* Settings_Label_GamutWarning */ "Détection de dépassement de gamme\0"
+    /* Settings_Tooltip_GamutWarning */ "Analyser et mettre en évidence les zones hors gamme. Options : Désactivé, uniquement en mode épreuvage écran (par défaut), ou pour l'épreuvage et la gamme de l'écran simultanément.\0"
+    /* Settings_Label_GamutAutoPrompt */ "Notification automatique d'erreur de gamme\0"
+    /* Settings_Tooltip_GamutAutoPrompt */ "Afficher une notification OSD en cas d'erreur de gamme. Les points forts peuvent être activés manuellement via la barre d'outils.\0"
+    /* Settings_Label_GamutColor */ "Couleur de mise en évidence de gamme\0"
+    /* Settings_Option_CmsIntentRelative */ "Colorimétrie relative\0"
+    /* Settings_Option_CmsIntentPerceptual */ "Perceptuelle\0"
+    /* Settings_Tooltip_CMS */ "Enable Color Management System.\nWhen enabled, applies high-precision color space conversion via GPU to restore true colors.\nDisabling it reduces GPU load, but may result in oversaturated colors on wide-gamut displays.\0"
+    /* Settings_Tooltip_CmsIntent */ "Mode de rendu pour la conversion de l'espace colorimétrique (Rendering Intent).\nPerceptuel : Compresse les couleurs hors gamme pour préserver les détails et les dégradés (idéal pour les photos).\nColorimétrique relatif : Préserve les couleurs dans la gamme et coupe celles qui sont en dehors (idéal pour l'interface et les icônes).\nNote : Des différences visuelles n'apparaissent que lors de l'utilisation de profils ICC avancés contenant des LUT (tables de correspondance). Les profils matriciels standard reviendront automatiquement au colorimétrique relatif.\0"
+    /* Settings_Tooltip_AdvancedColor */ "Enable 16-bit floating-point rendering pipeline (scRGB).\nWhen enabled, perfectly renders photo highlights on HDR-capable displays by breaking the SDR limit.\nDisabling it forces mapping to SDR output.\nNote: Enabling increases VRAM usage.\0"
+    /* Settings_Tooltip_ZoomAuto */ "Auto: 100% scale when image is smaller than screen, fit to screen when larger.\0"
+    /* Context_SoftProofing */ "Aperçu de l'épreuvage écran\0"
+    /* Context_SoftProofProfile */ "Profil de preuve\0"
+    /* Context_SoftProofCustom */ "Personnalisé...\0"
+    /* Settings_Value_ComingSoon */ "Bientôt disponible\0"
+    /* Settings_Label_ForceRaw */ "Forcer le décodage RAW\0"
+    /* Settings_Label_PairRawJpeg */ "Appairage RAW+JPEG\0"
+    /* Settings_Tooltip_PairRawJpeg */ "Afficher un fichier RAW et l'image boîtier du même nom (JPEG/HEIF) comme une seule photo.\nSeule l'image rendue reste dans la liste, marquée du format RAW (ex. +CR3) ; les heures de prise de vue sont vérifiées en arrière-plan et les paires discordantes sont séparées.\nBasculez entre l'image boîtier et le décodage RAW avec le bouton RAW ou son raccourci, ou affichez les deux avec le raccourci de comparaison de paire.\0"
+    /* Settings_Label_Exposure */ "Exposition (Luminosité)\0"
+    /* Settings_Tooltip_Exposure */ "Ajuste la luminosité de l'image (compensation d'exposition). Plage : 0.18x - 10.0x.\0"
+    /* Settings_Label_AddToOpenWith */ "Ajouter à 'Ouvrir avec'\0"
+    /* Settings_Label_CustomEditor */ "Éditeur d'images personnalisé\0"
+    /* Context_SelectEditor */ "Sélectionner l'éditeur\0"
+    /* OSD_EditorLaunchFailed */ "Échec du lancement de l'éditeur. Veuillez le reconfigurer.\0"
+    /* Settings_Action_Add */ "Ajouter\0"
+    /* Settings_Action_Added */ "Ajouté\0"
+    /* Settings_Status_DisabledInPortable */ "Désactivé en mode portable\0"
+    /* Settings_Header_Features */ "Features\0"
+    /* Settings_Header_Performance */ "Performance\0"
+    /* Settings_Header_Transparency */ "Transparency\0"
+    /* Settings_Label_DebugHUD */ "Activer le HUD de débogage (F12)\0"
+    /* Settings_Label_Prefetch */ "Système de préchargement\0"
+    /* Settings_Label_MemoryReclaim */ "Memory Reclaim Strategy:\0"
+    /* Settings_Option_MemSmart */ "Smart (Auto)\0"
+    /* Settings_Option_MemAggressive */ "Aggressive (Max Perf)\0"
+    /* Settings_Option_MemOnDemand */ "On-Demand (Min RAM)\0"
+    /* Settings_Tooltip_MemoryReclaim */ "Smart: Balance performance and RAM.\nAggressive: Maximize performance, high memory usage.\nOn-Demand: Release memory immediately when idle.\0"
+    /* Settings_Label_Reset */ "Réinitialiser tous les paramètres\0"
+    /* Settings_Action_Restore */ "Restaurer\0"
+    /* Settings_Action_Done */ "Terminé\0"
+    /* Settings_Header_ConfigManagement */ "Importer / Exporter (.ini)\0"
+    /* Settings_Action_CheckUpdates */ "Rechercher des mises à jour\0"
+    /* Settings_Action_ViewUpdate */ "Voir la mise à jour\0"
+    /* Settings_Status_Checking */ "Vérification...\0"
+    /* Settings_Status_UpToDate */ "À jour\0"
+    /* Settings_Link_GitHub */ "Dépôt GitHub\0"
+    /* Settings_Link_ReportIssue */ "Signaler un problème\0"
+    /* Settings_Link_Hotkeys */ "Aide (F1)\0"
+    /* Settings_Label_Version */ "Version\0"
+    /* Settings_Label_Build */ "Build\0"
+    /* Dialog_UpdateTitle */ "New Version Available!\0"
+    /* Dialog_UpdateContent */ "v%s is ready.\0"
+    /* Dialog_UpdateLogHeader */ "Changelog\0"
+    /* Dialog_ButtonUpdate */ "Update Now\0"
+    /* Dialog_ButtonLater */ "Later\0"
+    /* Dialog_ButtonStar */ "Star on GitHub\0"
+    /* Dialog_Update_LoveTitle */ "QuickView is built with love\0"
+    /* Dialog_Update_LoveMessage */ "I maintain QuickView in my spare time because I believe Windows deserves a faster, cleaner viewer. I don't have a marketing budget or a team. If you enjoy this update, the biggest contribution you can make is to Star us on GitHub or share it with a friend.\0"
+    /* Dialog_PassthroughTitle */ "Mode Clic à Travers\0"
+    /* Dialog_PassthroughContent */ "Les événements de souris passeront à travers la fenêtre.\nQuitter via le raccourci global (Shift+Esc) ou le menu de la barre des tâches.\n\nContinuer ?\0"
+    /* OSD_PassthroughOn */ "Clic à travers : ON (Shift+Esc pour quitter)\0"
+    /* OSD_PassthroughOff */ "Clic à travers : OFF\0"
+    /* OSD_OverlayModeOn */ "Mode décalque : ON\0"
+    /* OSD_OverlayModeOff */ "Mode décalque : OFF\0"
+    /* OSD_Opacity */ "Opacité\0"
+    /* Help_Desc_Edit */ "Edit\0"
+    /* Help_Header_Tips */ "Tips & Glossary\0"
+    /* Help_Tip_ContextScope */ "Conseil : QuickView prend désormais en charge la personnalisation complète des raccourcis clavier et des gestes de la souris. Veuillez consulter et configurer vos attributions dans « Paramètres -> Contrôles ». Le contenu de ce panneau d'aide sera migré vers la documentation en ligne dans une prochaine version.\0"
+    /* Help_Tip_Rotation */ "Rotation: 'Edge Adapted' means minor cropping to align with codec blocks (lossless). 'Lossy' means re-encoding is required.\0"
+    /* Help_Tip_VideoWall */ "Video Wall (Ctrl+F11): Spans all screens. If the close button is hidden, double-click anywhere to exit.\0"
+    /* Help_Tip_DesignerMode */ "Mode Calque / Mode Pellicule : Une fois activé, l'image devient semi-transparente, révélant les éléments sous-jacents. Vous pouvez ajuster sa taille ou sa transparence. Cliquez sur le commutateur de passage de la souris dans la barre d'outils pour passer en mode passage, où toutes les entrées sauf Shift+Esc sont ignorées, transformant QuickView en une superposition transparente.\0"
+    /* Help_Tip_GamutDetection */ "Alerte de gamme : détecte les couleurs hors gamme pour l'écran cible ou le profil d'épreuvage. Modes : Désactivé, épreuvage écran uniquement, ou tout (par défaut : épreuvage écran). Basculement via la barre d'outils.\0"
+    /* Help_Tip_Raw */ "RAW: Shows embedded preview by default for speed. Click the RAW button to fully decode (colors may vary).\0"
+    /* Help_Tip_JpegQ */ "JPEG Quality: Estimated value (e.g. Photoshop 100% ≈ 98%). May vary slightly from save settings due to encoder variance, which is normal.\0"
+    /* Help_Tip_SoftProofCompare */ "Comparaison d'épreuves : entrer en mode comparaison alors que le mode épreuvage est actif comparera automatiquement l'image originale et l'image épreuve.\0"
+    /* Settings_Option_Auto */ "Auto\0"
+    /* Settings_Option_Eco */ "Eco\0"
+    /* Settings_Option_Balanced */ "Balanced\0"
+    /* Settings_Option_Ultra */ "Ultra\0"
+    /* HUD_Group_Physical */ "PHYSICAL ATTRIBUTES\0"
+    /* HUD_Group_Scientific */ "SCIENTIFIC QUALITY\0"
+    /* HUD_Group_Encoding */ "OPTICS & ENCODING\0"
+    /* HUD_Tip_Sharp_Desc */ "Edge definition (Laplacian Variance)\0"
+    /* HUD_Tip_Sharp_High */ "Crisp edges, high detail\0"
+    /* HUD_Tip_Sharp_Low */ "Soft focus or motion blur\0"
+    /* HUD_Tip_Sharp_Ref */ "> 500 is very sharp\0"
+    /* HUD_Tip_Ent_Desc */ "Information density (Shannon Entropy)\0"
+    /* HUD_Tip_Ent_High */ "Complex textures or high noise\0"
+    /* HUD_Tip_Ent_Low */ "Flat areas or low detail\0"
+    /* HUD_Tip_Ent_Ref */ "7.0-8.0 is high detail\0"
+    /* HUD_Tip_BPP_Desc */ "Bits Per Pixel (Compression Efficiency)\0"
+    /* HUD_Tip_BPP_High */ "Lower efficiency (more data preserved)\0"
+    /* HUD_Tip_BPP_Low */ "Higher efficiency (higher compression)\0"
+    /* HUD_Tip_BPP_Ref */ "24.0 (Raw RGB), ~2.0-3.0 (High JPEG), ~0.5-1.5 (WebP/AVIF)\0"
+    /* HUD_Label_High */ "High: \0"
+    /* HUD_Label_Low */ "Low: \0"
+    /* HUD_Label_Ref */ "Ref: \0"
+    /* Settings_Header_GeekGlass */ "Glass Engine (GPU)\0"
+    /* Settings_Label_EnableGeekGlass */ "Enable Glass\0"
+    /* Settings_Label_GlassUIAnimations */ "UI Animations\0"
+    /* Settings_Header_CoreMaterial */ "Component Material\0"
+    /* Settings_Label_BlurSigma */ "Glass Blur Sigma\0"
+    /* Settings_Status_GlassDisabled */ "Glass Disabled (System)\0"
+    /* Settings_Label_TintDensity */ "Tint Layer\0"
+    /* Settings_Tooltip_TintDensity */ "Overall color intensity of the glass frost effect.\0"
+    /* Settings_Label_SpecularOpacity */ "Reflex (Specular)\0"
+    /* Settings_Tooltip_SpecularOpacity */ "Brightness of the diagonal lighting reflections.\0"
+    /* Settings_Label_ShadowIntensity */ "Shadow Depth\0"
+    /* Settings_Tooltip_ShadowIntensity */ "Strength of the ambient occlusion shadows.\0"
+    /* Settings_Header_VectorAssets */ "Vector Rendering\0"
+    /* Settings_Label_VectorStrokeWeight */ "Icon Stroke weight\0"
+    /* Settings_Option_StrokeStandard */ "Standard (1.5px)\0"
+    /* Settings_Option_StrokeFine */ "Fine (1.0px)\0"
+    /* Settings_Header_GlassTint */ "Tint Profile\0"
+    /* Settings_Label_TintProfile */ "Color Logic\0"
+    /* Settings_Option_TintAuto */ "Auto (Adaptive)\0"
+    /* Settings_Option_TintCustom */ "Custom Color\0"
+    /* Settings_Label_GlassCustomColor */ "Manual Tint\0"
+    /* Settings_Header_DensityMatrix */ "Control Surface Density (%)\0"
+    /* Settings_Label_OsdDensity */ "OSD & HUD\0"
+    /* Settings_Tooltip_OsdDensity */ "Transparency for small floating overlays.\0"
+    /* Settings_Label_PanelsDensity */ "Toolbar & Sidebars\0"
+    /* Settings_Tooltip_PanelsDensity */ "Transparency for persistent control panels.\0"
+    /* Settings_Label_ModalsDensity */ "Dialogs & Settings\0"
+    /* Settings_Tooltip_ModalsDensity */ "Transparency for centered popups.\0"
+    /* Settings_Label_MenusDensity */ "Menus\0"
+    /* Settings_Tooltip_MenusDensity */ "Control context menu material density (Only adjustable when using Acrylic backdrop).\0"
+    /* Settings_Header_Professional */ "Professional Tools\0"
+    /* Settings_Label_ShowDirtyRect */ "Show Update Regions Button in Animation\0"
+    /* Settings_Tooltip_ShowDirtyRect */ "Show the update region debug button in animation mode to visualize which parts of the frame are being redrawn.\0"
+    /* Settings_Label_LoupeShape */ "Forme de la loupe\0"
+    /* Settings_Option_LoupeShapeSquare */ "Carré\0"
+    /* Settings_Option_LoupeShapeCircle */ "Cercle\0"
+    /* Settings_Option_LoupeShapeFullscreen */ "Plein écran\0"
+    /* Settings_Label_LoupeZoom */ "Zoom de la loupe\0"
+    /* Settings_Tooltip_LoupeHotkey */ "Maintenez la touche de raccourci enfoncée et faites défiler la molette de la souris pour ajuster la taille de la loupe.\0"
+    /* Settings_Tooltip_CropModeHotkey */ "Maintenez la touche Ctrl enfoncée et faites glisser avec le bouton gauche de la souris pour un recadrage rapide.\0"
+    /* Settings_Tab_Theme */ "Theme\0"
+    /* Settings_Label_ThemeMode */ "Preset\0"
+    /* Settings_Option_ThemeAuto */ "System\0"
+    /* Settings_Option_ThemeDark */ "Dark\0"
+    /* Settings_Option_ThemeLight */ "Light\0"
+    /* Settings_Option_ThemeCustom */ "Design\0"
+    /* Settings_Label_AmbientDimmer */ "Modal Dimmer\0"
+    /* Settings_Tooltip_AmbientDimmer */ "Dim the background when a modal or settings window is open.\0"
+    /* Settings_Label_AccentColor */ "Accent Color\0"
+    /* Settings_Option_AccentSystem */ "System\0"
+    /* Settings_Option_AccentCustom */ "Custom\0"
+    /* Settings_Label_WindowBorderAccent */ "Active Window Border\0"
+    /* Settings_Option_BorderFollowSystem */ "System\0"
+    /* Settings_Option_BorderAccent */ "Accent\0"
+    /* Settings_Label_ResetGlass */ "Material Preset\0"
+    /* Settings_Action_ResetGlass */ "Reset Defaults\0"
+    /* Settings_Header_ThemeManagement */ "Theme Engine\0"
+    /* Settings_Action_ExportTheme */ "Export\0"
+    /* Settings_Action_ImportTheme */ "Import\0"
+    /* Toolbar_Tooltip_CompareSave */ "Enregistrer / Exporter (S)\0"
+    /* Dialog_MultiLineInputHint */ "[Ctrl+Entrée] Enregistrer\0"
+    /* Dialog_AiApiKeyTitle */ "Configurer la clé API\0"
+    /* Dialog_AiApiKeyPrompt */ "Saisissez la clé API (protégée localement par Windows DPAPI) :\0"
+    /* Dialog_AiPromptTitle */ "Modifier le modèle de prompt\0"
+    /* Dialog_AiPromptPrompt */ "Configurez le prompt IA (multiligne, Ctrl+Entrée pour valider) :\0"
+    /* Dialog_AiActionNameTitle */ "Modifier le nom de l'action\0"
+    /* Dialog_AiActionNamePrompt */ "Saisissez le nom affiché pour l'action IA :\0"
+    /* Dialog_AiBaseUrlTitle */ "Configurer l'adresse du point de terminaison\0"
+    /* Dialog_AiBaseUrlPrompt */ "Saisissez l'URL de base compatible OpenAI / ComfyUI :\0"
+    /* AiAction_Title */ "Palette de Commandes IA\0"
+    /* AiAction_EscHint */ "[Échap] Fermer\0"
+    /* AiAction_ScopeCropAndBlend */ "Inpainting de la sélection\0"
+    /* AiAction_ScopeForceFull */ "Image entière\0"
+    /* AiAction_FooterQuickKeys */ "Appuyez sur 1~9 / 0 pour exécution rapide\0"
+    /* AiAction_Placeholder */ "Saisir un prompt ou rechercher une action...\0"
+    /* AiAction_InpaintTitle */ "Inpaint de Sélection (AI Inpaint)\0"
+    /* AiAction_InpaintDesc */ "Sélectionner une zone pour effacer ou remplacer sans raccord\0"
+    /* AiAction_InpaintTag */ "Mode Sélection\0"
+    /* AiAction_AdhocPrefix */ "✨ Envoyer le prompt: \"\0"
+    /* AiAction_AdhocSend */ "Enter Envoyer\0"
+    /* AiAction_CurrentModel */ "Modèle actuel\0"
+    /* AiAction_NoModelSelected */ "Aucun modèle sélectionné\0"
+    /* OSD_AiProcessing */ "IA en cours de traitement : %s (Échap pour annuler)...\0"
+    /* OSD_AiGenerationSuccess */ "Génération IA terminée ! Mode comparaison par volet activé\0"
+    /* OSD_AiCompleted */ "Traitement IA terminé\0"
+    /* OSD_AiPreparing */ "IA : %s préparation (Échap pour annuler)...\0"
+    /* OSD_AiProcessingElapsed */ "IA : %s traitement en cours [%ds, Échap pour annuler]...\0"
+    /* OSD_AiConnecting */ "IA connexion : %s (Échap pour annuler)...\0"
+    /* OSD_AiSamplingProgress */ "Échantillonnage IA : %d%% (%d/%d étapes) [%ds, Échap pour annuler]\0"
+    /* OSD_AiSamplingProgressEta */ "Échantillonnage IA : %d%% (%d/%d étapes, reste env. %.0fs) [%ds, Échap pour annuler]\0"
+    /* OSD_AiAdhocPrompt */ "Prompt temporaire\0"
+    /* OSD_AiTaskCancelled */ "Tâche IA annulée\0"
+    /* OSD_AiInpaintGuide */ "Sélectionnez une zone avec le clic gauche (Entrée pour exécuter, Échap pour annuler)\0"
+    /* OSD_AiInpaintGuideActionFormat */ "Sélectionnez une zone et appuyez sur Entrée pour exécuter [%s]\0"
+    /* OSD_AiSelectionTooSmall */ "Zone trop petite, veuillez sélectionner une zone à retoucher\0"
+    /* OSD_AiEmptyResult */ "La génération IA a renvoyé un résultat vide\0"
+    /* OSD_AiDecodeFailed */ "Échec du décodage de l'image IA\0"
+    /* OSD_AiTextureFailed */ "Échec de création de la texture GPU\0"
+    /* OSD_AiEmptyPromptHint */ "Veuillez saisir un prompt ou sélectionner une action prédéfinie\0"
+    /* OSD_AiInpaintPromptEmptyHint */ "Veuillez d'abord saisir un prompt pour la retouche partielle\0"
+    /* Settings_Tab_Ai */ "Actions IA\0"
+    /* Settings_Header_AiProviders */ "Fournisseurs de modèles IA\0"
+    /* Settings_Desc_AiProviders */ "Gérez les points de terminaison, les clés (DPAPI) et les modèles.\0"
+    /* Settings_Label_AiProviderName */ "Préréglage du fournisseur\0"
+    /* Settings_Label_AiBaseUrl */ "URL de base (Base URL)\0"
+    /* Settings_Label_AiApiKey */ "Clé API (chiffrée via DPAPI)\0"
+    /* Settings_Label_AiModelId */ "Identifiant du modèle\0"
+    /* Settings_Label_AiModelUnconfigured */ "[Non configuré, récupérer ou saisir]\0"
+    /* Settings_Label_AiMaxRes */ "Résolution d'entrée maximale\0"
+    /* Settings_Label_AiDefaultProfile */ "★ Fournisseur par défaut\0"
+    /* Settings_Button_AiSetDefault */ "★ Définir comme fournisseur par défaut\0"
+    /* Settings_Button_AiTestConn */ "Tester la connexion\0"
+    /* Settings_Button_AiSaveProf */ "Enregistrer la configuration\0"
+    /* Settings_Button_AiDeleteProf */ "Supprimer ce fournisseur\0"
+    /* Settings_Button_AiAddProf */ "+ Ajouter un fournisseur\0"
+    /* Settings_Header_AiActions */ "Actions IA personnalisées\0"
+    /* Settings_Button_AiAddAction */ "+ Nouvelle action IA\0"
+    /* Settings_Label_AiActionName */ "Nom de l'action\0"
+    /* Settings_Label_AiPromptTemplate */ "Modèle de prompt\0"
+    /* Settings_Label_AiExecModel */ "Fournisseur d'exécution\0"
+    /* Settings_Option_AiDefaultModel */ "Fournisseur par défaut\0"
+    /* Settings_Label_AiScopeMode */ "Mode de portée\0"
+    /* Settings_Button_AiDeleteAction */ "Supprimer l'action\0"
+    /* Settings_AiModelCustom */ "✎ Saisir le modèle manuellement...\0"
+    /* Settings_AiModelFetching */ "⏳ Récupération des modèles...\0"
+    /* Settings_AiModelFetchAuto */ "↻ Interroger les modèles du serveur...\0"
+    /* Settings_Option_AiRes4K */ "4K / Original (4096px)\0"
+    /* Settings_Option_AiRes2K */ "2K QHD (2048px)\0"
+    /* Settings_Option_AiRes1K */ "1K Standard (1024px)\0"
+    /* Settings_Option_AiResOriginal */ "Illimité (Natif)\0"
+    /* Settings_Option_AiScopeForceFull */ "Image entière\0"
+    /* Settings_Option_AiScopeCropBlend */ "Inpainting et fusion\0"
+    /* Settings_Option_AiCustomEndpoint */ "Personnalisé (compatible OpenAI)\0"
+    /* Settings_Option_AiLocalComfyUI */ "ComfyUI local\0"
+    /* Settings_Option_AiLocalSdWebUI */ "SD WebUI / Forge local\0"
+    /* OSD_AiFetchingModels */ "Récupération de la liste des modèles...\0"
+    /* OSD_AiFetchModelsFailed */ "Échec de récupération des modèles : \0"
+    /* OSD_AiFetchModelsSuccessFormat */ "%zu modèles disponibles récupérés\0"
+    /* OSD_AiSetDefaultSuccessFormat */ "%s défini comme fournisseur par défaut\0"
+    /* OSD_AiTestingConnection */ "Test de la connexion et de l'authentification...\0"
+    /* OSD_AiConnSuccessFormat */ "✓ Connecté avec succès ! Latence : %dms (HTTP %d)\0"
+    /* OSD_AiSaveFailedBaseUrlEmpty */ "Échec : l'URL de base ne peut pas être vide\0"
+    /* OSD_AiSaveFailedApiKeyEmpty */ "Échec : la clé API cloud est obligatoire\0"
+    /* OSD_AiSaveFailedModelEmpty */ "Échec : veuillez sélectionner ou saisir un modèle valide\0"
+    /* OSD_AiSaveProfileSuccess */ "✓ Configuration du fournisseur enregistrée\0"
+    /* AiError_ApiKeyEmpty */ "La clé API est vide. Configurez-la dans Paramètres -> Actions IA.\0"
+    /* AiError_ModelEmpty */ "L'identifiant de modèle est vide. Configurez-le dans Paramètres -> Actions IA.\0"
+    /* AiError_InvalidUrl */ "Format d'URL de base non valide.\0"
+    /* AiError_InitWinHttpFailed */ "Échec de l'initialisation de la session WinHTTP.\0"
+    /* AiError_ConnectFailed */ "Impossible de se connecter au serveur hôte.\0"
+    /* AiError_CreateReqFailed */ "Échec de création de la requête HTTP.\0"
+    /* AiError_NoValidDataReturned */ "Réponse HTTP 200 reçue, mais aucune image ou texte valide extrait.\0"
+    /* AiError_RequestTimeout */ "Délai d'attente réseau dépassé ou serveur sans réponse.\0"
+    /* AiError_HttpStatusPrefix */ "Le fournisseur a renvoyé une erreur (HTTP \0"
+    /* AiError_JsonParseFailed */ "Impossible d'analyser les données JSON renvoyées par le fournisseur.\0"
+    /* AiError_NoModelsFound */ "Requête réussie, mais aucun modèle disponible trouvé.\0"
+    /* AiTest_ConnSuccess */ "Connexion réussie et informations d'identification validées.\0"
+    /* AiTest_AuthFailedPrefix */ "Clé API invalide ou non autorisée (HTTP \0"
+    /* AiTest_HttpErrorPrefix */ "Le serveur a renvoyé HTTP \0"
+    /* AiError_NoAvailableProfile */ "Aucun profil de modèle IA disponible trouvé. Veuillez vérifier les paramètres.\0"
+    /* Settings_Tab_FileAssoc */ "Associations\0"
+    /* Settings_Header_FileAssocStatus */ "Diagnostic des associations\0"
+    /* Settings_Header_FileAssocOptions */ "Comportement et personnalisation\0"
+    /* Settings_Header_FileAssocFormats */ "Formats pris en charge (92)\0"
+    /* Settings_Label_FileAssocIconStyle */ "Icône de fichier dans l'Explorateur\0"
+    /* Settings_Option_FileAssocIconNative */ "Natif du système\0"
+    /* Settings_Option_FileAssocIconApp */ "Logo QuickView\0"
+    /* Settings_Label_FileAssocContextMenu */ "Menu contextuel (\"Ouvrir avec QuickView\")\0"
+    /* Settings_Label_FileAssocAutoRepair */ "Réparer les chemins automatiquement au démarrage\0"
+    /* Settings_Label_FileAssocPresets */ "Préréglages rapides\0"
+    /* Settings_Action_PresetRecommended */ "Recommandés\0"
+    /* Settings_Action_PresetAllImages */ "Toutes les images\0"
+    /* Settings_Action_PresetPhotoRaw */ "Photo & RAW\0"
+    /* Settings_Action_PresetClearAll */ "Tout effacer\0"
+    /* Settings_Action_ApplyAssoc */ "Appliquer au système\0"
+    /* Settings_Action_ApplyPending */ "Appliquer*\0"
+    /* Settings_Action_SetDefaultWin */ "Définir par défaut dans Windows\0"
+    /* Settings_Action_RepairAssoc */ "Réparer les chemins\0"
+    /* Settings_Label_FileAssocCatStandard */ "Matriciel standard\0"
+    /* Settings_Label_FileAssocCatModern */ "Moderne & Vectoriel\0"
+    /* Settings_Label_FileAssocCatPro */ "Pro / HDR / Hérité\0"
+    /* Settings_Label_FileAssocCatRaw */ "RAW appareil photo\0"
+    /* Settings_Label_FileAssocCatExtRaw */ "RAW étendu / Cinéma\0"
+    /* Settings_Label_FileAssocCatArchive */ "Archives & BD\0"
+    /* Settings_Tooltip_FileAssocArchive */ "Recommandé : .cbz / .cbr uniquement. N'activez .zip / .rar que pour le menu Ouvrir avec.\0"
+    /* Settings_Status_AssocApplied */ "Associations synchronisées avec le registre\0"
+    /* Settings_Status_AssocSummaryFormat */ "%d sélectionnés · %d par défaut · %d Ouvrir avec uniquement\0"
+    /* Settings_Status_AssocBrokenHint */ "Commande invalide ou sans guillemets détectée — cliquez sur Appliquer pour corriger.\0"
+    /* Settings_Status_AssocPendingHint */ "Modifications en attente — cliquez sur « Appliquer » pour synchroniser avec Windows.\0"
+    /* Settings_Status_AssocStoreManaged */ "Mode Microsoft Store (MSIX) : le menu contextuel et Ouvrir avec sont gérés nativement par Windows. Cliquez sur « Définir par défaut dans Windows ».\0"
+    /* Settings_Label_StoreUpdatesManaged */ "Géré par Microsoft Store\0"
+    /* Settings_Action_OpenStore */ "Ouvrir le Store\0"
+    /* Settings_Status_AssocLegend */ "Point vert = Par défaut · Surligné = Sélectionné / Ouvrir avec\0"
+    /* Context_OpenWithQuickView */ "Ouvrir avec QuickView\0";
 
-// --- Static Constants ---
-const wchar_t *Settings_Text_Copyright = L"\u00A9 2025\u2013%s Vivor Loong (GitHub: @justnullname)";
-const wchar_t *Settings_Text_License = L"Licensed under GNU GPL v3.0";
-
-// ----------------------------------------------------------------
-// Language Table Structure
-// ----------------------------------------------------------------
-struct LanguageTable {
-    const wchar_t *OSD_NoImage;
-    const wchar_t *OSD_FolderEmpty;
-    const wchar_t *OSD_SvgStaticFallback;
-    const wchar_t *OSD_Lossless;
-    const wchar_t *OSD_ReencodedLossless;
-    const wchar_t *OSD_EdgeAdapted;
-    const wchar_t *OSD_Reencoded;
-    const wchar_t *OSD_ReadOnly;
-    const wchar_t *OSD_NotPerfect;
-    const wchar_t *OSD_SpanOn;
-    const wchar_t *OSD_SpanOff;
-    const wchar_t *OSD_CompareBefore;
-    const wchar_t *OSD_CompareAfter;
-    const wchar_t *OSD_UndoDeleteSuccess;
-    const wchar_t *OSD_UndoDeleteFailed;
-    const wchar_t *OSD_UndoRenameSuccess;
-    const wchar_t *OSD_UndoRenameFailed;
-    const wchar_t *OSD_UndoTransformSuccess;
-    const wchar_t *OSD_UndoTransformFailed;
-    const wchar_t *OSD_GamutDetected;
-    const wchar_t *OSD_GamutIncompatible;
-    const wchar_t *OSD_GamutFailed;
-    const wchar_t *Action_RotateCW;
-    const wchar_t *Action_RotateCCW;
-    const wchar_t *Action_Rotate180;
-    const wchar_t *Action_FlipH;
-    const wchar_t *Action_FlipV;
-    const wchar_t *Dialog_SaveTitle;
-    const wchar_t *Dialog_SaveContent;
-    const wchar_t *Dialog_ButtonSave;
-    const wchar_t *Dialog_ButtonSaveAs;
-    const wchar_t *Dialog_ButtonDiscard;
-    const wchar_t *Dialog_ButtonContinue;
-    const wchar_t *Dialog_CropUnsavedTitle;
-    const wchar_t *Dialog_SaveAsTitle;
-    const wchar_t *Dialog_ExportTitle;
-    const wchar_t *Dialog_ButtonOverwrite;
-    const wchar_t *Dialog_EmbedICC;
-    const wchar_t *Dialog_SizeEstimating;
-    const wchar_t *Dialog_ExportError;
-    const wchar_t *Toolbar_Tooltip_CropCopy;
-    const wchar_t *Toolbar_Tooltip_CropSave;
-    const wchar_t *Toolbar_Tooltip_CropApply;
-    const wchar_t *Toolbar_Tooltip_CropCancel;
-    const wchar_t *OSD_EnterCropMode;
-    const wchar_t *OSD_CropCopied;
-    const wchar_t *Context_Crop;
-    const wchar_t *Checkbox_AlwaysSaveLossless;
-    const wchar_t *Checkbox_AlwaysSaveEdgeAdapted;
-    const wchar_t *Checkbox_AlwaysSaveLossy;
-    const wchar_t *Checkbox_NeverConfirmDelete;
-    const wchar_t *OSD_HEICCodecMissing;
-    const wchar_t *Dialog_HEICTitle;
-    const wchar_t *Dialog_HEICContent;
-    const wchar_t *Dialog_HEICGetExtension;
-    const wchar_t *Dialog_Cancel;
-    const wchar_t *Settings_Tab_General;
-    const wchar_t *Settings_Tab_About;
-    const wchar_t *Settings_Group_Foundation;
-    const wchar_t *Settings_Group_Startup;
-    const wchar_t *Settings_Group_Habits;
-    const wchar_t *Settings_Label_Language;
-    const wchar_t *Settings_Label_SingleInstance;
-    const wchar_t *Settings_Label_CheckUpdates;
-    const wchar_t *Settings_Label_UpdateChannel;
-    const wchar_t *Settings_Option_UpdateStable;
-    const wchar_t *Settings_Option_UpdatePreRelease;
-    const wchar_t *Settings_Tooltip_PreRelease;
-    const wchar_t *Settings_Label_NavLoopMode;
-    const wchar_t *Settings_Label_SortOrder;
-    const wchar_t *Settings_Label_SortDescending;
-    const wchar_t *Settings_Label_SortArchivesByNameAscending;
-    const wchar_t *Settings_Label_ConfirmDel;
-    const wchar_t *Settings_Label_Portable;
-    const wchar_t *Settings_Tooltip_Portable;
-    const wchar_t *Settings_Label_SpanDisplays;
-    const wchar_t *Settings_Label_UIScale;
-    const wchar_t *Settings_Status_RestartRequired;
-    const wchar_t *Settings_Status_NoWritePerm;
-    const wchar_t *Settings_Status_Enabled;
-    const wchar_t *Settings_Header_PoweredBy;
-    const wchar_t *Context_Open;
-    const wchar_t *Context_OpenWith;
-    const wchar_t *Context_Edit;
-    const wchar_t *Context_ShowInExplorer;
-    const wchar_t *Context_OpenFolder;
-    const wchar_t *Context_CopyPixels;
-    const wchar_t *Context_CopyFile;
-    const wchar_t *Context_CopyImage;
-    const wchar_t *Context_CopyPath;
-    const wchar_t *Context_Print;
-    const wchar_t *Context_RotateCW;
-    const wchar_t *Context_RotateCCW;
-    const wchar_t *Context_FlipH;
-    const wchar_t *Context_FlipV;
-    const wchar_t *Context_Transform;
-    const wchar_t *Context_ActualSize;
-    const wchar_t *Context_FitToScreen;
-    const wchar_t *Context_FitWindow;
-    const wchar_t *Context_FillWindow;
-    const wchar_t *Context_ZoomIn;
-    const wchar_t *Context_ZoomOut;
-    const wchar_t *Context_LockWindow;
-    const wchar_t *Context_AlwaysOnTop;
-    const wchar_t *Context_HUDGallery;
-    const wchar_t *Context_LiteInfoPanel;
-    const wchar_t *Context_FullInfoPanel;
-    const wchar_t *Context_RenderRAW;
-    const wchar_t *Context_PixelArtMode;
-    const wchar_t *Context_ColorSpace;
-    const wchar_t *Context_Fullscreen;
-    const wchar_t *Context_View;
-    const wchar_t *Context_WallpaperFill;
-    const wchar_t *Context_WallpaperFit;
-    const wchar_t *Context_WallpaperTile;
-    const wchar_t *Context_SetAsWallpaper;
-    const wchar_t *Context_Rename;
-    const wchar_t *Context_FixExtension;
-    const wchar_t *Context_Delete;
-    const wchar_t *Context_UndoDelete;
-    const wchar_t *Context_UndoRename;
-    const wchar_t *Context_UndoTransform;
-    const wchar_t *Context_Undo;
-    const wchar_t *Context_SortBy;
-    const wchar_t *Context_NavOrder;
-    const wchar_t *Context_SortAscending;
-    const wchar_t *Context_SortDescending;
-    const wchar_t *Context_Settings;
-    const wchar_t *Context_CompareMode;
-    const wchar_t *Context_OverlayMode;
-    const wchar_t *Context_GalleryOpenCompare;
-    const wchar_t *Context_GalleryOpenNewWindow;
-    const wchar_t *Context_Exit;
-    const wchar_t *Menu_ExitPassthrough;
-    const wchar_t *Dialog_PassthroughTitle;
-    const wchar_t *Dialog_PassthroughContent;
-    const wchar_t *OSD_PassthroughOn;
-    const wchar_t *OSD_PassthroughOff;
-    const wchar_t *OSD_OverlayModeOn;
-    const wchar_t *OSD_OverlayModeOff;
-    const wchar_t *OSD_Opacity;
-    const wchar_t *Toolbar_Tooltip_OverlayZoomIn;
-    const wchar_t *Toolbar_Tooltip_OverlayZoomOut;
-    const wchar_t *Toolbar_Tooltip_OverlayAlphaUp;
-    const wchar_t *Toolbar_Tooltip_OverlayAlphaDown;
-    const wchar_t *Toolbar_Tooltip_OverlayPassthroughOn;
-    const wchar_t *Toolbar_Tooltip_OverlayPassthroughOff;
-    const wchar_t *Toolbar_Tooltip_OverlayExit;
-    const wchar_t *Message_SaveErrorTitle;
-    const wchar_t *Message_SaveErrorContent;
-    const wchar_t *Toolbar_Tooltip_Prev;
-    const wchar_t *Toolbar_Tooltip_Next;
-    const wchar_t *Toolbar_Tooltip_RotateL;
-    const wchar_t *Toolbar_Tooltip_RotateR;
-    const wchar_t *Toolbar_Tooltip_FlipH;
-    const wchar_t *Toolbar_Tooltip_Lock;
-    const wchar_t *Toolbar_Tooltip_Unlock;
-    const wchar_t *Toolbar_Tooltip_Gallery;
-    const wchar_t *Toolbar_Tooltip_Info;
-    const wchar_t *Toolbar_Tooltip_RawPreview;
-    const wchar_t *Toolbar_Tooltip_RawFull;
-    const wchar_t *Toolbar_Tooltip_RawPairView;
-    const wchar_t *Toolbar_Tooltip_RawPairBack;
-    const wchar_t *Toolbar_Tooltip_FixExtension;
-    const wchar_t *Toolbar_Tooltip_Pin;
-    const wchar_t *Toolbar_Tooltip_Unpin;
-    const wchar_t *Toolbar_Tooltip_GamutWarning;
-    const wchar_t *Toolbar_Tooltip_NormalMode;
-    const wchar_t *Toolbar_Tooltip_CompareMode;
-    const wchar_t *Toolbar_Tooltip_SinglePage;
-    const wchar_t *Toolbar_Tooltip_DualPage;
-    const wchar_t *Toolbar_Tooltip_CompareOpen;
-    const wchar_t *Toolbar_Tooltip_CompareSwap;
-    const wchar_t *Toolbar_Tooltip_CompareLayout;
-    const wchar_t *Toolbar_Tooltip_CompareInfo;
-    const wchar_t *Toolbar_Tooltip_CompareDelete;
-    const wchar_t *Toolbar_Tooltip_CompareZoomIn;
-    const wchar_t *Toolbar_Tooltip_CompareZoomOut;
-    const wchar_t *Toolbar_Tooltip_CompareSyncZoomOn;
-    const wchar_t *Toolbar_Tooltip_CompareSyncZoomOff;
-    const wchar_t *Toolbar_Tooltip_CompareSyncPanOn;
-    const wchar_t *Toolbar_Tooltip_CompareSyncPanOff;
-    const wchar_t *Toolbar_Tooltip_SlideshowImmersiveToggle;
-    const wchar_t *Toolbar_Tooltip_SlideshowExit;
-    const wchar_t *Toolbar_Tooltip_CompareExit;
-    const wchar_t *Toolbar_Tooltip_AnimPlay;
-    const wchar_t *Toolbar_Tooltip_AnimPause;
-    const wchar_t *Toolbar_Tooltip_AnimPrev;
-    const wchar_t *Toolbar_Tooltip_AnimNext;
-    const wchar_t *Toolbar_Tooltip_AnimDirtyOn;
-    const wchar_t *Toolbar_Tooltip_AnimDirtyOff;
-    const wchar_t *Toolbar_Tooltip_AnimSpeed;
-    const wchar_t *Settings_Header_Performance;
-    const wchar_t *Settings_Header_Professional;
-    const wchar_t *Settings_Label_MemoryReclaim;
-    const wchar_t *Settings_Option_MemSmart;
-    const wchar_t *Settings_Option_MemAggressive;
-    const wchar_t *Settings_Option_MemOnDemand;
-    const wchar_t *Settings_Tooltip_MemoryReclaim;
-    const wchar_t *Settings_Label_ShowDirtyRect;
-    const wchar_t *Settings_Tooltip_ShowDirtyRect;
-    const wchar_t *OSD_Copied;
-    const wchar_t *OSD_PixelsCopied;
-    const wchar_t *OSD_PixelsExtracting;
-    const wchar_t *OSD_FileCopied;
-    const wchar_t *OSD_CoordinatesCopied;
-    const wchar_t *OSD_FilePathCopied;
-    const wchar_t *OSD_Zoom100;
-    const wchar_t *OSD_ZoomFit;
-    const wchar_t *OSD_ZoomFitWindow;
-    const wchar_t *OSD_ZoomFill;
-    const wchar_t *OSD_PrintInstruction;
-    const wchar_t *OSD_MovedToRecycleBin;
-    const wchar_t *OSD_WindowLocked;
-    const wchar_t *OSD_WindowUnlocked;
-    const wchar_t *OSD_AlwaysOnTopOn;
-    const wchar_t *OSD_AlwaysOnTopOff;
-    const wchar_t *OSD_WallpaperSet;
-    const wchar_t *OSD_WallpaperFailed;
-    const wchar_t *OSD_Renamed;
-    const wchar_t *OSD_RenameFailed;
-    const wchar_t *OSD_ExtensionFixed;
-    const wchar_t *OSD_Restored;
-    const wchar_t *OSD_FirstImage;
-    const wchar_t *OSD_LastImage;
-    const wchar_t *OSD_HD;
-    const wchar_t *OSD_ZoomPrefix;
-    const wchar_t *OSD_AnimPlaying;
-    const wchar_t *OSD_AnimPaused;
-    const wchar_t *OSD_AnimDirtyOn;
-    const wchar_t *OSD_AnimDirtyOff;
-    const wchar_t *Context_SpanDisplays;
-    const wchar_t *Settings_Tab_Visuals;
-    const wchar_t *Settings_Tab_Controls;
-    const wchar_t *Settings_Tab_Image;
-    const wchar_t *Settings_Tab_Advanced;
-    const wchar_t *Settings_Header_Backdrop;
-    const wchar_t *Settings_Header_Window;
-    const wchar_t *Settings_Header_WindowLock;
-    const wchar_t *Settings_Header_Panel;
-    const wchar_t *Settings_Header_Mouse;
-    const wchar_t *Settings_Header_Edge;
-    const wchar_t *Settings_Header_Render;
-    const wchar_t *Settings_Header_Hdr;
-    const wchar_t *Settings_Header_Prompts;
-    const wchar_t *Settings_Header_System;
-    const wchar_t *Settings_Header_Features;
-    const wchar_t *Settings_Header_Transparency;
-    const wchar_t *Settings_Header_GeekGlass;
-    const wchar_t *Settings_Label_EnableGeekGlass;
-    const wchar_t *Settings_Label_GlassUIAnimations;
-    const wchar_t *Settings_Header_CoreMaterial;
-    const wchar_t *Settings_Label_BlurSigma;
-    const wchar_t *Settings_Status_GlassDisabled;
-    const wchar_t *Settings_Label_TintDensity;
-    const wchar_t *Settings_Tooltip_TintDensity;
-    const wchar_t *Settings_Label_SpecularOpacity;
-    const wchar_t *Settings_Tooltip_SpecularOpacity;
-    const wchar_t *Settings_Label_ShadowIntensity;
-    const wchar_t *Settings_Tooltip_ShadowIntensity;
-    const wchar_t *Settings_Header_VectorAssets;
-    const wchar_t *Settings_Label_VectorStrokeWeight;
-    const wchar_t *Settings_Option_StrokeStandard;
-    const wchar_t *Settings_Option_StrokeFine;
-    const wchar_t *Settings_Header_GlassTint;
-    const wchar_t *Settings_Label_TintProfile;
-    const wchar_t *Settings_Option_TintAuto;
-    const wchar_t *Settings_Option_TintCustom;
-    const wchar_t *Settings_Label_GlassCustomColor;
-    const wchar_t *Settings_Header_DensityMatrix;
-    const wchar_t *Settings_Label_OsdDensity;
-    const wchar_t *Settings_Tooltip_OsdDensity;
-    const wchar_t *Settings_Label_PanelsDensity;
-    const wchar_t *Settings_Tooltip_PanelsDensity;
-    const wchar_t *Settings_Label_ModalsDensity;
-    const wchar_t *Settings_Tooltip_ModalsDensity;
-    const wchar_t *Settings_Label_MenusDensity;
-    const wchar_t *Settings_Tooltip_MenusDensity;
-    const wchar_t *Settings_Tab_Theme;
-    const wchar_t *Settings_Label_ThemeMode;
-    const wchar_t *Settings_Option_ThemeAuto;
-    const wchar_t *Settings_Option_ThemeDark;
-    const wchar_t *Settings_Option_ThemeLight;
-    const wchar_t *Settings_Option_ThemeCustom;
-    const wchar_t *Settings_Label_AmbientDimmer;
-    const wchar_t *Settings_Tooltip_AmbientDimmer;
-    const wchar_t *Settings_Label_AccentColor;
-    const wchar_t *Settings_Label_TextColor;
-    const wchar_t *Settings_Header_ThemeManagement;
-    const wchar_t *Settings_Action_ExportTheme;
-    const wchar_t *Settings_Action_ImportTheme;
-    const wchar_t *Settings_Label_CanvasColor;
-    const wchar_t *Settings_Label_Overlay;
-    const wchar_t *Settings_Label_ShowGrid;
-    const wchar_t *Settings_Label_AlwaysOnTop;
-    const wchar_t *Settings_Label_LockWindow;
-    const wchar_t *Settings_Tooltip_LockWindow;
-    const wchar_t *Settings_Label_AutoHideTitle;
-    const wchar_t *Settings_Label_RoundedCorners;
-    const wchar_t *Settings_Label_UIBorders;
-    const wchar_t *Settings_Tooltip_RoundedCorners;
-    const wchar_t *Settings_Label_LockToolbar;
-    const wchar_t *Settings_Label_WindowMinSize;
-    const wchar_t *Settings_Label_WindowMaxSizePercent;
-    const wchar_t *Settings_Label_ShowBorderIndicator;
-    const wchar_t *Settings_Tooltip_ShowBorderIndicator;
-    const wchar_t *Settings_Label_ShowNavigator;
-    const wchar_t *Settings_Tooltip_ShowNavigator;
-    const wchar_t *Settings_Option_NavigatorAuto;
-    const wchar_t *Settings_Option_NavigatorOn;
-    const wchar_t *Settings_Option_NavigatorOff;
-    const wchar_t *Settings_Label_KeepWindowSizeOnNav;
-    const wchar_t *Settings_Label_RememberLastWindowSizeAndPosition;
-    const wchar_t *Settings_Label_UpscaleSmallImagesWhenLocked;
-    const wchar_t *Settings_Label_EnableSmoothScaling;
-    const wchar_t *Settings_Label_ExifMode;
-    const wchar_t *Settings_Label_ToolbarInfoDefault;
-    const wchar_t *Settings_Label_OpenFullScreenMode;
-    const wchar_t *Settings_Label_FullScreenZoomMode;
-    const wchar_t *Settings_Option_FitScreen;
-    const wchar_t *Settings_Option_AutoFit;
-    const wchar_t *Settings_Label_InvertWheel;
-    const wchar_t *Settings_Label_ZoomSnapDamping;
-    const wchar_t *Settings_Label_MouseAnchorZoom;
-    const wchar_t *Settings_Label_RightButtonDragZoom;
-    const wchar_t *Settings_Label_WheelZoomSpeed;
-    const wchar_t *Settings_Label_ThumbWheel;
-    const wchar_t *Settings_Tooltip_ThumbWheel;
-    const wchar_t *Settings_Tooltip_WheelZoomSpeed;
-    const wchar_t *Settings_Tooltip_MiddleDrag;
-    const wchar_t *Settings_Label_DoubleClick;
-    const wchar_t *Settings_Option_DoubleClick_Smart;
-    const wchar_t *Settings_Option_DoubleClick_WheelMode1;
-    const wchar_t *Settings_Option_DoubleClick_WheelMode2;
-    const wchar_t *Settings_Tooltip_DoubleClick;
-    const wchar_t *Settings_Tooltip_PanStepNormal;
-    const wchar_t *OSD_WheelMode1_NextPrevZoom;
-    const wchar_t *OSD_WheelMode1_ZoomNextPrev;
-    const wchar_t *OSD_WheelMode2_Pan;
-    const wchar_t *OSD_WheelMode2_Default;
-    const wchar_t *Settings_Label_RightDragZoomSpeed;
-    const wchar_t *OSD_WheelZoomSpeed;
-    const wchar_t *Help_Action_AdjustZoomSpeed;
-    const wchar_t *Help_Action_LockWindowZoom;
-    const wchar_t *Settings_Label_InvertButtons;
-    const wchar_t *Settings_Label_UseFixedZoom;
-    const wchar_t *Settings_Tooltip_UseFixedZoom;
-    const wchar_t *Settings_Label_FixedZoomLevels;
-    const wchar_t *Dialog_FixedZoomTitle;
-    const wchar_t *Dialog_FixedZoomMsg;
-    const wchar_t *Settings_Label_ZoomModeIn;
-    const wchar_t *Settings_Label_ZoomModeOut;
-    const wchar_t *Settings_Label_LeftDrag;
-    const wchar_t *Settings_Label_MiddleDrag;
-    const wchar_t *Settings_Label_MiddleClick;
-    const wchar_t *Settings_Label_EdgeNavClick;
-    const wchar_t *Settings_Label_ShowOSD;
-    const wchar_t *Settings_Label_DisableEdgeNavInCompare;
-    const wchar_t *Settings_Label_NavIndicator;
-    const wchar_t *Settings_Label_AutoRotate;
-    const wchar_t *Settings_Label_CMS;
-    const wchar_t *Settings_Label_AdvancedColor;
-    const wchar_t *Settings_Label_HdrToneMapping;
-    const wchar_t *Settings_Label_HdrSplineKnee;
-    const wchar_t *Settings_Tooltip_HdrToneMapping;
-    const wchar_t *Settings_Tooltip_HdrSplineKnee;
-    const wchar_t *Settings_Label_HdrPeakNitsOverride;
-    const wchar_t *Settings_Tooltip_HdrPeakNitsOverride;
-    const wchar_t *Settings_Label_HdrPeakPercentile;
-    const wchar_t *Settings_Tooltip_HdrPeakPercentile;
-    const wchar_t *Settings_Option_HdrPeakPercentile_100;
-    const wchar_t *Settings_Option_HdrPeakPercentile_99995;
-    const wchar_t *Settings_Option_HdrPeakPercentile_999;
-    const wchar_t *Settings_Label_HdrDesatThreshold;
-    const wchar_t *Settings_Tooltip_HdrDesatThreshold;
-    const wchar_t *Settings_Label_HdrMaxDesat;
-    const wchar_t *Settings_Tooltip_HdrMaxDesat;
-    const wchar_t *Settings_Option_HdrColorimetric;
-    const wchar_t *Settings_Option_HdrSpline;
-    const wchar_t *Settings_Option_HdrLegacyReinhard;
-    const wchar_t *Settings_Label_CmsFallback;
-    const wchar_t *Settings_Label_CustomProof;
-    const wchar_t *Context_SoftProofing;
-    const wchar_t *Context_SoftProofProfile;
-    const wchar_t *Context_SoftProofCustom;
-    const wchar_t *Settings_Value_ComingSoon;
-    const wchar_t *Settings_Label_ForceRaw;
-    const wchar_t *Settings_Label_PairRawJpeg;
-    const wchar_t *Settings_Tooltip_PairRawJpeg;
-    const wchar_t *Settings_Label_Exposure;
-    const wchar_t *Settings_Tooltip_Exposure;
-    const wchar_t *Settings_Label_AddToOpenWith;
-    const wchar_t *Settings_Label_CustomEditor;
-    const wchar_t *Context_SelectEditor;
-    const wchar_t *OSD_EditorLaunchFailed;
-    const wchar_t *Settings_Action_Add;
-    const wchar_t *Settings_Action_Added;
-    const wchar_t *Settings_Status_DisabledInPortable;
-    const wchar_t *Settings_Label_DebugHUD;
-    const wchar_t *Settings_Label_Prefetch;
-    const wchar_t *Settings_Label_InfoPanelAlpha;
-    const wchar_t *Settings_Label_ToolbarAlpha;
-    const wchar_t *Settings_Label_SettingsAlpha;
-    const wchar_t *Settings_Label_Reset;
-    const wchar_t *Settings_Action_Restore;
-    const wchar_t *Settings_Action_Done;
-    const wchar_t *Settings_Header_ConfigManagement;
-    const wchar_t *Settings_Option_CmsUnmanaged;
-    const wchar_t *Settings_Option_CmssRGB;
-    const wchar_t *Settings_Option_CmsP3;
-    const wchar_t *Settings_Option_CmsAdobeRGB;
-    const wchar_t *Settings_Option_CmsGray;
-    const wchar_t *Settings_Option_CmsProPhoto;
-    const wchar_t *Settings_Label_CmsIntent;
-    const wchar_t *Settings_Label_GamutWarning;
-    const wchar_t *Settings_Tooltip_GamutWarning;
-    const wchar_t *Settings_Label_GamutAutoPrompt;
-    const wchar_t *Settings_Tooltip_GamutAutoPrompt;
-    const wchar_t *Settings_Label_GamutColor;
-    const wchar_t *Settings_Option_CmsIntentRelative;
-    const wchar_t *Settings_Option_CmsIntentPerceptual;
-    const wchar_t *Settings_Tooltip_CMS;
-    const wchar_t *Settings_Tooltip_CmsIntent;
-    const wchar_t *Settings_Tooltip_AdvancedColor;
-    const wchar_t *Settings_Tooltip_ZoomAuto;
-    const wchar_t *Settings_Action_CheckUpdates;
-    const wchar_t *Settings_Action_ViewUpdate;
-    const wchar_t *Settings_Status_Checking;
-    const wchar_t *Settings_Status_UpToDate;
-    const wchar_t *Settings_Link_GitHub;
-    const wchar_t *Settings_Link_ReportIssue;
-    const wchar_t *Settings_Link_Hotkeys;
-    const wchar_t *Settings_Label_Version;
-    const wchar_t *Settings_Label_Build;
-    const wchar_t *Settings_Option_Black;
-    const wchar_t *Settings_Option_Effects;
-    const wchar_t *Settings_Label_ContextMenuBackdrop;
-    const wchar_t *Settings_Label_CanvasEffectStyle;
-    const wchar_t *Settings_Tooltip_BackdropEffectsTip;
-    const wchar_t *Settings_Option_White;
-    const wchar_t *Settings_Option_Grid;
-    const wchar_t *Settings_Option_Custom;
-    const wchar_t *Settings_Option_Off;
-    const wchar_t *Settings_Option_On;
-    const wchar_t *Settings_Option_Lite;
-    const wchar_t *Settings_Option_Full;
-    const wchar_t *Settings_Option_LargeOnly;
-    const wchar_t *Settings_Option_All;
-    const wchar_t *Settings_Option_SoftProofing;
-    const wchar_t *Settings_Option_Window;
-    const wchar_t *Settings_Option_Pan;
-    const wchar_t *Settings_Option_None;
-    const wchar_t *Settings_Option_Exit;
-    const wchar_t *Settings_Option_Arrow;
-    const wchar_t *Settings_Option_Cursor;
-    const wchar_t *Settings_Option_Manual;
-    const wchar_t *Settings_Option_SortAuto;
-    const wchar_t *Settings_Option_SortName;
-    const wchar_t *Settings_Option_SortModified;
-    const wchar_t *Settings_Option_SortDateTaken;
-    const wchar_t *Settings_Option_SortSize;
-    const wchar_t *Settings_Option_SortType;
-    const wchar_t *Settings_Option_NavLoop;
-    const wchar_t *Settings_Option_NavThrough;
-    const wchar_t *Settings_Option_Linear;
-    const wchar_t *Settings_Option_Nearest;
-    const wchar_t *Settings_Option_HighQualityCubic;
-    const wchar_t *Settings_Option_ZoomAuto;
-    const wchar_t *Settings_Option_Auto;
-    const wchar_t *Settings_Option_Eco;
-    const wchar_t *Settings_Option_Balanced;
-    const wchar_t *Settings_Option_Ultra;
-    const wchar_t *Help_Header_Shortcuts;
-    const wchar_t *Help_Header_Mouse;
-    const wchar_t *Help_Item_NextPrev;
-    const wchar_t *Help_Item_Zoom;
-    const wchar_t *Help_Item_Pan;
-    const wchar_t *Help_Item_Rotate;
-    const wchar_t *Help_Item_Fit;
-    const wchar_t *Help_Item_Delete;
-    const wchar_t *Help_Item_Fullscreen;
-    const wchar_t *Help_Item_Close;
-    const wchar_t *Help_Mouse_Left;
-    const wchar_t *Help_Mouse_Middle;
-    const wchar_t *Help_Mouse_Wheel;
-    const wchar_t *Help_Mouse_Right;
-    const wchar_t *Help_Mouse_RightVerticalDrag;
-    const wchar_t *Help_Action_MoveWindow;
-    const wchar_t *Help_Action_PanImage;
-    const wchar_t *Help_Action_ContextMenu;
-    const wchar_t *Help_Action_NextPrev;
-    const wchar_t *Help_Action_Zoom;
-    const wchar_t *Help_Action_SmartZoom;
-    const wchar_t *Help_Desc_Copy;
-    const wchar_t *Help_Desc_Edit;
-    const wchar_t *Help_Header_Tips;
-    const wchar_t *Help_Tip_ContextScope;
-    const wchar_t *Help_Tip_Rotation;
-    const wchar_t *Help_Tip_VideoWall;
-    const wchar_t *Help_Tip_DesignerMode;
-    const wchar_t *Help_Tip_GamutDetection;
-    const wchar_t *Help_Tip_Raw;
-    const wchar_t *Help_Tip_JpegQ;
-    const wchar_t *Help_Tip_SoftProofCompare;
-    const wchar_t *Dialog_UpdateTitle;
-    const wchar_t *Dialog_UpdateContent;
-    const wchar_t *Dialog_UpdateLogHeader;
-    const wchar_t *Dialog_ButtonUpdate;
-    const wchar_t *Dialog_ButtonLater;
-    const wchar_t *Dialog_ButtonStar;
-    const wchar_t *Dialog_Update_LoveTitle;
-    const wchar_t *Dialog_Update_LoveMessage;
-    const wchar_t *Help_Item_Compare;
-    const wchar_t *Help_Item_FirstLast;
-    const wchar_t *HUD_Group_Physical;
-    const wchar_t *HUD_Group_Scientific;
-    const wchar_t *HUD_Group_Encoding;
-    const wchar_t *HUD_Tip_Sharp_Desc;
-    const wchar_t *HUD_Tip_Sharp_High;
-    const wchar_t *HUD_Tip_Sharp_Low;
-    const wchar_t *HUD_Tip_Sharp_Ref;
-    const wchar_t *HUD_Tip_Ent_Desc;
-    const wchar_t *HUD_Tip_Ent_High;
-    const wchar_t *HUD_Tip_Ent_Low;
-    const wchar_t *HUD_Tip_Ent_Ref;
-    const wchar_t *HUD_Tip_BPP_Desc;
-    const wchar_t *HUD_Tip_BPP_High;
-    const wchar_t *HUD_Tip_BPP_Low;
-    const wchar_t *HUD_Tip_BPP_Ref;
-    const wchar_t *HUD_Label_High;
-    const wchar_t *HUD_Label_Low;
-    const wchar_t *HUD_Label_Ref;
-    const wchar_t *Settings_Header_GalleryTrigger;
-    const wchar_t *Settings_Label_GalleryTriggerMode;
-    const wchar_t *Settings_Label_KeepGalleryVisibleOnThumbnailClick;
-    const wchar_t *Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick;
-    const wchar_t *Settings_Option_GalleryTriggerAuto;
-    const wchar_t *Settings_Option_GalleryTriggerDelay;
-    const wchar_t *Settings_Option_GalleryTriggerClick;
-    const wchar_t *Settings_Option_GalleryTriggerDisable;
-    const wchar_t *Settings_Tooltip_GalleryTrigger;
-    const wchar_t *Settings_Label_GalleryTriggerAreaHeight;
-    const wchar_t *Settings_Label_GalleryDwellTime;
-    const wchar_t *Settings_Label_GalleryExitDelay;
-    const wchar_t *Settings_Label_GalleryMinSize;
-
-    const wchar_t *OSD_SlideshowStarted;
-    const wchar_t *OSD_SlideshowStopped;
-    const wchar_t *OSD_SlideshowResumed;
-    const wchar_t *OSD_SlideshowPaused;
-    const wchar_t *OSD_ImmersiveSpotlight;
-    const wchar_t *OSD_ImmersiveNormal;
-    const wchar_t *OSD_PrintJobStarted;
-    const wchar_t *OSD_PrintJobFinished;
-    const wchar_t *Context_SlideshowMode;
-    const wchar_t *Settings_Label_SlideshowInterval;
-    const wchar_t *Settings_Label_SlideshowImmersive;
-    const wchar_t *Settings_Label_CustomLiteInfoPanel;
-    const wchar_t *Settings_Label_CustomFullInfoPanel;
-    const wchar_t *Settings_Label_InfoPanelScale;
-    const wchar_t *Settings_Label_ItemsInNormalMode;
-    const wchar_t *Settings_Label_ItemsInCompareMode;
-    const wchar_t *Settings_Label_SeparatorPreset;
-    const wchar_t *Settings_Option_SlideshowNormal;
-    const wchar_t *Settings_Option_SlideshowSpotlight;
-    const wchar_t *Settings_Label_LoupeShape;
-    const wchar_t *Settings_Option_LoupeShapeSquare;
-    const wchar_t *Settings_Option_LoupeShapeCircle;
-    const wchar_t *Settings_Tooltip_LoupeHotkey;
-    const wchar_t *Settings_Tooltip_CropModeHotkey;
+struct PackedLangBlob {
+    const char* data;
+    int bytes; // excludes trailing compiler NUL (includes all 759 string NUL terminators)
 };
 
-// ----------------------------------------------------------------
-// EN Table
-// ----------------------------------------------------------------
-static const LanguageTable Table_EN = {
-    L"No image loaded", // OSD_NoImage
-    L"No images in this folder", // OSD_FolderEmpty
-    L"Animated SVG shown as a still image", // OSD_SvgStaticFallback
-    L"Lossless", // OSD_Lossless
-    L"Re-encoded (Lossless)", // OSD_ReencodedLossless
-    L"Cropped", // OSD_EdgeAdapted
-    L"Lossy", // OSD_Reencoded
-    L"Access denied - file may be in use or read-only", // OSD_ReadOnly
-    L"Transform is not perfect (edge optimized)", // OSD_NotPerfect
-    L"Video Wall: ON", // OSD_SpanOn
-    L"Video Wall: OFF", // OSD_SpanOff
-    L"Before (original)", // OSD_CompareBefore
-    L"After (proofed)", // OSD_CompareAfter
-    L"Undo delete succeeded", // OSD_UndoDeleteSuccess
-    L"Undo delete failed", // OSD_UndoDeleteFailed
-    L"Undo rename succeeded", // OSD_UndoRenameSuccess
-    L"Undo rename failed", // OSD_UndoRenameFailed
-    L"Undo rotate/flip succeeded", // OSD_UndoTransformSuccess
-    L"Undo rotate/flip failed", // OSD_UndoTransformFailed
-    L"Detected out-of-gamut colors", // OSD_GamutDetected
-    L"Gamut: Incompatible profile or parsing failed", // OSD_GamutIncompatible
-    L"Gamut: Analysis failed", // OSD_GamutFailed
-    L"Rotate 90\x00B0 CW", // Action_RotateCW
-    L"Rotate 90\x00B0 CCW", // Action_RotateCCW
-    L"Rotate 180\x00B0", // Action_Rotate180
-    L"Flip Horizontal", // Action_FlipH
-    L"Flip Vertical", // Action_FlipV
-    L"Save changes?", // Dialog_SaveTitle
-    L"The image has been modified. Do you want to save changes?", // Dialog_SaveContent
-    L"Save", // Dialog_ButtonSave
-    L"Save as...", // Dialog_ButtonSaveAs
-    L"Discard", // Dialog_ButtonDiscard
-    L"Continue", // Dialog_ButtonContinue
-    L"Unsaved crop modifications. Save changes?", // Dialog_CropUnsavedTitle
-    L"Save Image", // Dialog_SaveAsTitle
-    L"Save & Export", // Dialog_ExportTitle
-    L"Overwrite", // Dialog_ButtonOverwrite
-    L"ICC Profile", // Dialog_EmbedICC
-    L"Size: Estimating...", // Dialog_SizeEstimating
-    L"Export Error", // Dialog_ExportError
-    L"Copy Selection (Ctrl+C)", // Toolbar_Tooltip_CropCopy
-    L"Save (Ctrl+S)", // Toolbar_Tooltip_CropSave
-    L"Apply (Enter)", // Toolbar_Tooltip_CropApply
-    L"Exit (Esc)", // Toolbar_Tooltip_CropCancel
-    L"Entered Crop Mode", // OSD_EnterCropMode
-    L"Crop selection has been copied", // OSD_CropCopied
-    L"Crop", // Context_Crop
-    L"Always Save Lossless Transforms", // Checkbox_AlwaysSaveLossless
-    L"Always Save Edge-Adapted", // Checkbox_AlwaysSaveEdgeAdapted
-    L"Always Save Re-Encoded", // Checkbox_AlwaysSaveLossy
-    L"Directly to Recycle Bin, do not confirm again", // Checkbox_NeverConfirmDelete
-    L"Cannot decode HEIC - Install HEVC Video Extension", // OSD_HEICCodecMissing
-    L"Cannot decode HEIC", // Dialog_HEICTitle
-    L"Your system is missing the HEVC Video Extension.\nQuickView uses " L"system hardware acceleration for best performance.", // Dialog_HEICContent
-    L"Get Extension (Free)", // Dialog_HEICGetExtension
-    L"Cancel", // Dialog_Cancel
-    L"General", // Settings_Tab_General
-    L"About", // Settings_Tab_About
-    L"Foundation", // Settings_Group_Foundation
-    L"Startup", // Settings_Group_Startup
-    L"Habits", // Settings_Group_Habits
-    L"Language", // Settings_Label_Language
-    L"Single Instance", // Settings_Label_SingleInstance
-    L"Check Updates", // Settings_Label_CheckUpdates
-    L"Update Channel", // Settings_Label_UpdateChannel
-    L"Stable", // Settings_Option_UpdateStable
-    L"Pre-release", // Settings_Option_UpdatePreRelease
-    L"Stable: Published after a preview version proves stable.\nPre-release: Delivers the latest code changes immediately to collect your feedback. Note: These changes are not strictly tested.", // Settings_Tooltip_PreRelease
-    L"Loop", // Settings_Label_NavLoopMode
-    L"Sort Order", // Settings_Label_SortOrder
-    L"Descending", // Settings_Label_SortDescending
-    L"Always Sort Archives by Name", // Settings_Label_SortArchivesByNameAscending
-    L"Confirm Before Delete", // Settings_Label_ConfirmDel
-    L"Portable Mode / Cleanup", // Settings_Label_Portable
-    L"Portable Mode / Registry Cleanup:\nWhen enabled, QuickView runs in " L"portable mode. It will automatically clean up existing registry " L"associations, disable automatic registry modification, and store " L"configuration files in the application folder instead of AppData.", // Settings_Tooltip_Portable
-    L"Span Displays", // Settings_Label_SpanDisplays
-    L"UI Scale", // Settings_Label_UIScale
-    L"Restart required", // Settings_Status_RestartRequired
-    L"No Write Permission!", // Settings_Status_NoWritePerm
-    L"Enabled", // Settings_Status_Enabled
-    L"Powered by", // Settings_Header_PoweredBy
-    L"Open...\tCtrl+O", // Context_Open
-    L"Open with...", // Context_OpenWith
-    L"Edit\tE", // Context_Edit
-    L"Show in Explorer", // Context_ShowInExplorer
-    L"Open Folder", // Context_OpenFolder
-    L"Copy Pixels\tCtrl+C", // Context_CopyPixels
-    L"Copy File\tCtrl+Shift+C", // Context_CopyFile
-    L"Copy Pixels\tCtrl+C", // Context_CopyImage
-    L"Copy Path\tCtrl+Alt+C", // Context_CopyPath
-    L"Print\tCtrl+P", // Context_Print
-    L"Rotate 90\x00B0 CW\tR", // Context_RotateCW
-    L"Rotate 90\x00B0 CCW\tShift+R", // Context_RotateCCW
-    L"Flip Horizontal\tH", // Context_FlipH
-    L"Flip Vertical\tV", // Context_FlipV
-    L"Transform", // Context_Transform
-    L"Actual Size (100%)\t1 / Z", // Context_ActualSize
-    L"Fit to Screen\t0 / F", // Context_FitToScreen
-    L"Fit Window", // Context_FitWindow
-    L"Fill Window", // Context_FillWindow
-    L"Zoom In\t+ / Ctrl +", // Context_ZoomIn
-    L"Zoom Out\t- / Ctrl -", // Context_ZoomOut
-    L"Lock Window", // Context_LockWindow
-    L"Always on Top\tCtrl+T", // Context_AlwaysOnTop
-    L"HUD Gallery\tT", // Context_HUDGallery
-    L"Lite Info Panel\tTab", // Context_LiteInfoPanel
-    L"Full Info Panel\tI", // Context_FullInfoPanel
-    L"Render RAW", // Context_RenderRAW
-    L"Pixel Art Mode", // Context_PixelArtMode
-    L"Color Space", // Context_ColorSpace
-    L"Fullscreen\tF11", // Context_Fullscreen
-    L"View", // Context_View
-    L"Fill", // Context_WallpaperFill
-    L"Fit", // Context_WallpaperFit
-    L"Tile", // Context_WallpaperTile
-    L"Set as Wallpaper", // Context_SetAsWallpaper
-    L"Rename\tF2", // Context_Rename
-    L"Fix Extension", // Context_FixExtension
-    L"Delete\tDel", // Context_Delete
-    L"Undo Delete\tCtrl+Z", // Context_UndoDelete
-    L"Undo Rename\tCtrl+Z", // Context_UndoRename
-    L"Undo Rotate/Flip\tCtrl+Z", // Context_UndoTransform
-    L"Undo\tCtrl+Z", // Context_Undo
-    L"Sort By", // Context_SortBy
-    L"Navigation Order", // Context_NavOrder
-    L"Ascending", // Context_SortAscending
-    L"Descending", // Context_SortDescending
-    L"Settings...", // Context_Settings
-    L"Compare Mode\tC", // Context_CompareMode
-    L"Overlay Mode\tCtrl+Shift+O", // Context_OverlayMode
-    L"Open in Compare Mode", // Context_GalleryOpenCompare
-    L"Open in New Window", // Context_GalleryOpenNewWindow
-    L"Exit\tMButton/Esc", // Context_Exit
-    L"Exit Mouse Passthrough", // Menu_ExitPassthrough
-    L"Mouse Passthrough Mode", // Dialog_PassthroughTitle
-    L"Mouse events will pass through to the window below.\nOnly global hotkey (Shift+Esc) or taskbar menu can exit this mode.\n\nContinue?", // Dialog_PassthroughContent
-    L"Click-Through: ON (Shift+Esc to exit)", // OSD_PassthroughOn
-    L"Click-Through: OFF", // OSD_PassthroughOff
-    L"Overlay Mode: ON", // OSD_OverlayModeOn
-    L"Overlay Mode: OFF", // OSD_OverlayModeOff
-    L"Opacity", // OSD_Opacity
-    L"Zoom In (Overlay)", // Toolbar_Tooltip_OverlayZoomIn
-    L"Zoom Out (Overlay)", // Toolbar_Tooltip_OverlayZoomOut
-    L"Increase Opacity", // Toolbar_Tooltip_OverlayAlphaUp
-    L"Decrease Opacity", // Toolbar_Tooltip_OverlayAlphaDown
-    L"Enter Mouse Passthrough", // Toolbar_Tooltip_OverlayPassthroughOn
-    L"Exit Mouse Passthrough", // Toolbar_Tooltip_OverlayPassthroughOff
-    L"Exit Overlay Mode", // Toolbar_Tooltip_OverlayExit
-    L"Error", // Message_SaveErrorTitle
-    L"Failed to save file. File locked?", // Message_SaveErrorContent
-    L"Previous (Left)", // Toolbar_Tooltip_Prev
-    L"Next (Right)", // Toolbar_Tooltip_Next
-    L"Rotate Left (Shift+R)", // Toolbar_Tooltip_RotateL
-    L"Rotate Right (R)", // Toolbar_Tooltip_RotateR
-    L"Flip Horizontal (H)", // Toolbar_Tooltip_FlipH
-    L"Lock Window (Temp)", // Toolbar_Tooltip_Lock
-    L"Unlock Window", // Toolbar_Tooltip_Unlock
-    L"Gallery (T)", // Toolbar_Tooltip_Gallery
-    L"Info Panel", // Toolbar_Tooltip_Info
-    L"RAW: Preview (Click for Full)", // Toolbar_Tooltip_RawPreview
-    L"RAW: Full Decode (Click for Preview)", // Toolbar_Tooltip_RawFull
-    L"RAW: View paired RAW (Full Decode)", // Toolbar_Tooltip_RawPairView
-    L"RAW: Back to paired image", // Toolbar_Tooltip_RawPairBack
-    L"Extension Mismatch (Fix)", // Toolbar_Tooltip_FixExtension
-    L"Pin Toolbar", // Toolbar_Tooltip_Pin
-    L"Unpin Toolbar", // Toolbar_Tooltip_Unpin
-    L"Show out-of-gamut highlight areas", // Toolbar_Tooltip_GamutWarning
-    L"Normal Mode", // Toolbar_Tooltip_NormalMode
-    L"Compare Mode", // Toolbar_Tooltip_CompareMode
-    L"Single Page Mode", // Toolbar_Tooltip_SinglePage
-    L"Dual Page Mode", // Toolbar_Tooltip_DualPage
-    L"Open New Image in Selection", // Toolbar_Tooltip_CompareOpen
-    L"Swap Left/Right", // Toolbar_Tooltip_CompareSwap
-    L"Toggle Layout", // Toolbar_Tooltip_CompareLayout
-    L"Compare Info", // Toolbar_Tooltip_CompareInfo
-    L"Delete Selected Image", // Toolbar_Tooltip_CompareDelete
-    L"Zoom In (Fine-tune)", // Toolbar_Tooltip_CompareZoomIn
-    L"Zoom Out (Fine-tune)", // Toolbar_Tooltip_CompareZoomOut
-    L"Zoom Sync: ON", // Toolbar_Tooltip_CompareSyncZoomOn
-    L"Zoom Sync: OFF", // Toolbar_Tooltip_CompareSyncZoomOff
-    L"Pan Sync: ON", // Toolbar_Tooltip_CompareSyncPanOn
-    L"Pan Sync: OFF", // Toolbar_Tooltip_CompareSyncPanOff
-    L"Toggle Immersive Spotlight", // Toolbar_Tooltip_SlideshowImmersiveToggle
-    L"Exit Slideshow Mode", // Toolbar_Tooltip_SlideshowExit
-    L"Exit Compare", // Toolbar_Tooltip_CompareExit
-    L"Play Animation", // Toolbar_Tooltip_AnimPlay
-    L"Pause Animation", // Toolbar_Tooltip_AnimPause
-    L"Previous Frame", // Toolbar_Tooltip_AnimPrev
-    L"Next Frame", // Toolbar_Tooltip_AnimNext
-    L"Dirty Rect Debug: ON", // Toolbar_Tooltip_AnimDirtyOn
-    L"Dirty Rect Debug: OFF", // Toolbar_Tooltip_AnimDirtyOff
-    L"Animation Speed", // Toolbar_Tooltip_AnimSpeed
-    L"Performance", // Settings_Header_Performance
-    L"Professional Tools", // Settings_Header_Professional
-    L"Smart Memory Management", // Settings_Label_MemoryReclaim
-    L"Smart", // Settings_Option_MemSmart
-    L"Aggressive", // Settings_Option_MemAggressive
-    L"On-Demand", // Settings_Option_MemOnDemand
-    L"Smart: Automatically reclaim memory only when system RAM < 4GB.\n" L"Aggressive: Keep memory reserved for absolute 0ns allocation speed.\n" L"On-Demand: Always reclaim idle memory to save physical RAM.", // Settings_Tooltip_MemoryReclaim
-    L"Show Update Regions Button in Animation", // Settings_Label_ShowDirtyRect
-    L"Show the update region debug button in animation mode to visualize which parts of the frame are being redrawn.", // Settings_Tooltip_ShowDirtyRect
-    L"Copied!", // OSD_Copied
-    L"Pixels copied to clipboard!", // OSD_PixelsCopied
-    L"Extracting raw pixels...", // OSD_PixelsExtracting
-    L"File copied to clipboard!", // OSD_FileCopied
-    L"Coordinates copied!", // OSD_CoordinatesCopied
-    L"File path copied!", // OSD_FilePathCopied
-    L"Zoom: 100%", // OSD_Zoom100
-    L"Zoom: Fit Screen", // OSD_ZoomFit
-    L"Zoom: Fit Window", // OSD_ZoomFitWindow
-    L"Zoom: Fill Window", // OSD_ZoomFill
-    L"Print: Use Ctrl+P in opened app", // OSD_PrintInstruction
-    L"Moved to Recycle Bin", // OSD_MovedToRecycleBin
-    L"Window Locked", // OSD_WindowLocked
-    L"Window Unlocked", // OSD_WindowUnlocked
-    L"Always on Top: ON", // OSD_AlwaysOnTopOn
-    L"Always on Top: OFF", // OSD_AlwaysOnTopOff
-    L"Wallpaper Set", // OSD_WallpaperSet
-    L"Failed to set wallpaper", // OSD_WallpaperFailed
-    L"Renamed", // OSD_Renamed
-    L"Rename Failed", // OSD_RenameFailed
-    L"Extension Fixed", // OSD_ExtensionFixed
-    L"Restored", // OSD_Restored
-    L"First image", // OSD_FirstImage
-    L"Last image", // OSD_LastImage
-    L"HD", // OSD_HD
-    L"Zoom: ", // OSD_ZoomPrefix
-    L"Playing", // OSD_AnimPlaying
-    L"Paused (Inspector Mode: Alt+Left/Right to Seek)", // OSD_AnimPaused
-    L"Dirty Rect: ON", // OSD_AnimDirtyOn
-    L"Dirty Rect: OFF", // OSD_AnimDirtyOff
-    L"Span Displays (Video Wall)\tCtrl+F11", // Context_SpanDisplays
-    L"Interface", // Settings_Tab_Visuals
-    L"Controls", // Settings_Tab_Controls
-    L"Image", // Settings_Tab_Image
-    L"Advanced", // Settings_Tab_Advanced
-    L"Backdrop", // Settings_Header_Backdrop
-    L"Window", // Settings_Header_Window
-    L"Window Lock", // Settings_Header_WindowLock
-    L"Panel", // Settings_Header_Panel
-    L"Mouse", // Settings_Header_Mouse
-    L"Edge", // Settings_Header_Edge
-    L"Render", // Settings_Header_Render
-    L"HDR", // Settings_Header_Hdr
-    L"Prompts", // Settings_Header_Prompts
-    L"System", // Settings_Header_System
-    L"Features", // Settings_Header_Features
-    L"Transparency", // Settings_Header_Transparency
-    L"Glass Engine (GPU)", // Settings_Header_GeekGlass
-    L"Enable Glass", // Settings_Label_EnableGeekGlass
-    L"UI Animations", // Settings_Label_GlassUIAnimations
-    L"Component Material", // Settings_Header_CoreMaterial
-    L"Glass Blur Sigma", // Settings_Label_BlurSigma
-    L"Glass Disabled (System)", // Settings_Status_GlassDisabled
-    L"Tint Layer", // Settings_Label_TintDensity
-    L"Overall color intensity of the glass frost effect.", // Settings_Tooltip_TintDensity
-    L"Reflex (Specular)", // Settings_Label_SpecularOpacity
-    L"Brightness of the diagonal lighting reflections.", // Settings_Tooltip_SpecularOpacity
-    L"Shadow Depth", // Settings_Label_ShadowIntensity
-    L"Strength of the ambient occlusion shadows.", // Settings_Tooltip_ShadowIntensity
-    L"Vector Rendering", // Settings_Header_VectorAssets
-    L"Icon Stroke weight", // Settings_Label_VectorStrokeWeight
-    L"Standard (1.5px)", // Settings_Option_StrokeStandard
-    L"Fine (1.0px)", // Settings_Option_StrokeFine
-    L"Tint Profile", // Settings_Header_GlassTint
-    L"Color Logic", // Settings_Label_TintProfile
-    L"Auto (Adaptive)", // Settings_Option_TintAuto
-    L"Custom Color", // Settings_Option_TintCustom
-    L"Manual Tint", // Settings_Label_GlassCustomColor
-    L"Control Surface Density (%)", // Settings_Header_DensityMatrix
-    L"OSD & HUD", // Settings_Label_OsdDensity
-    L"Transparency for small floating overlays.", // Settings_Tooltip_OsdDensity
-    L"Toolbar & Sidebars", // Settings_Label_PanelsDensity
-    L"Transparency for the bottom toolbar, information panel, gallery, and top-right window controls.", // Settings_Tooltip_PanelsDensity
-    L"Dialogs & Settings", // Settings_Label_ModalsDensity
-    L"Transparency for centered popups.", // Settings_Tooltip_ModalsDensity
-    L"Menus", // Settings_Label_MenusDensity
-    L"Control context menu material density (Only adjustable when using Acrylic backdrop).", // Settings_Tooltip_MenusDensity
-    L"Theme", // Settings_Tab_Theme
-    L"Preset", // Settings_Label_ThemeMode
-    L"System", // Settings_Option_ThemeAuto
-    L"Dark", // Settings_Option_ThemeDark
-    L"Light", // Settings_Option_ThemeLight
-    L"Design", // Settings_Option_ThemeCustom
-    L"Modal Dimmer", // Settings_Label_AmbientDimmer
-    L"Dim the background when a modal or settings window is open.", // Settings_Tooltip_AmbientDimmer
-    L"Accent Color", // Settings_Label_AccentColor
-    L"Text Color", // Settings_Label_TextColor
-    L"Theme Engine", // Settings_Header_ThemeManagement
-    L"Export", // Settings_Action_ExportTheme
-    L"Import", // Settings_Action_ImportTheme
-    L"Canvas Color", // Settings_Label_CanvasColor
-    L"Overlay", // Settings_Label_Overlay
-    L"Show Grid Overlay", // Settings_Label_ShowGrid
-    L"Always on Top", // Settings_Label_AlwaysOnTop
-    L"Lock Window", // Settings_Label_LockWindow
-    L"Controls whether the program locks the window border by default on startup, rather than following image scaling.", // Settings_Tooltip_LockWindow
-    L"Auto-Hide Title Bar", // Settings_Label_AutoHideTitle
-    L"Rounded Corners", // Settings_Label_RoundedCorners
-    L"Show UI Borders", // Settings_Label_UIBorders
-    L"Controls window and context menu rounded corners. Requires Windows 11.", // Settings_Tooltip_RoundedCorners
-    L"Lock Bottom Toolbar", // Settings_Label_LockToolbar
-    L"Minimum Window Width", // Settings_Label_WindowMinSize
-    L"Maximum Start Size (%)", // Settings_Label_WindowMaxSizePercent
-    L"Show Edge Overflow Indicators", // Settings_Label_ShowBorderIndicator
-    L"Shows an indicator line in the direction where the image exceeds the window borders.", // Settings_Tooltip_ShowBorderIndicator
-    L"Show Minimap", // Settings_Label_ShowNavigator
-    L"When mouse is over minimap, Wheel / Thumb Wheel (Shift + Wheel) pans image", // Settings_Tooltip_ShowNavigator
-    L"Auto", // Settings_Option_NavigatorAuto
-    L"On", // Settings_Option_NavigatorOn
-    L"Off", // Settings_Option_NavigatorOff
-    L"Keep Window Size on Navigation", // Settings_Label_KeepWindowSizeOnNav
-    L"Remember Last Window Size and Position", // Settings_Label_RememberLastWindowSizeAndPosition
-    L"Adapt Small Images", // Settings_Label_UpscaleSmallImagesWhenLocked
-    L"Smooth Window Scaling (GPU)", // Settings_Label_EnableSmoothScaling
-    L"EXIF Panel Mode", // Settings_Label_ExifMode
-    L"Toolbar Info Default", // Settings_Label_ToolbarInfoDefault
-    L"Open Fullscreen", // Settings_Label_OpenFullScreenMode
-    L"Fullscreen Zoom Mode", // Settings_Label_FullScreenZoomMode
-    L"Fit to Screen", // Settings_Option_FitScreen
-    L"Auto", // Settings_Option_AutoFit
-    L"Invert Wheel", // Settings_Label_InvertWheel
-    L"Zoom 100% Snap Damping", // Settings_Label_ZoomSnapDamping
-    L"Mouse-Anchored Window Zoom", // Settings_Label_MouseAnchorZoom
-    L"Right Button Drag Zoom", // Settings_Label_RightButtonDragZoom
-    L"Wheel Zoom Speed", // Settings_Label_WheelZoomSpeed
-    L"Thumb Wheel", // Settings_Label_ThumbWheel
-    L"Can be replaced with Shift + Wheel", // Settings_Tooltip_ThumbWheel
-    L"Alt + Wheel temporarily adjusts zoom speed", // Settings_Tooltip_WheelZoomSpeed
-    L"Can be replaced with Ctrl + Left Click", // Settings_Tooltip_MiddleDrag
-    L"Double-Click", // Settings_Label_DoubleClick
-    L"Smart", // Settings_Option_DoubleClick_Smart
-    L"Wheel Mode 1", // Settings_Option_DoubleClick_WheelMode1
-    L"Wheel Mode 2", // Settings_Option_DoubleClick_WheelMode2
-    L"Smart: Automatically cycles between Fit Screen / 100% / Initial Size;\nWheel Mode 1: Double-click swaps main & thumb wheel functions;\nWheel Mode 2: Double-click toggles image pan mode;\nTip: Shift + Wheel acts as Thumb Wheel.", // Settings_Tooltip_DoubleClick
-    L"Controls key pan and wheel pan speed", // Settings_Tooltip_PanStepNormal
-    L"Main Wheel: Next/Prev; Thumb/Shift+Wheel: Zoom", // OSD_WheelMode1_NextPrevZoom
-    L"Main Wheel: Zoom; Thumb/Shift+Wheel: Next/Prev", // OSD_WheelMode1_ZoomNextPrev
-    L"Wheel: Pan Mode", // OSD_WheelMode2_Pan
-    L"Wheel: Default Mode", // OSD_WheelMode2_Default
-    L"Right Drag Zoom Speed", // Settings_Label_RightDragZoomSpeed
-    L"Zoom Speed (Temp): ", // OSD_WheelZoomSpeed
-    L"Temporarily Adjust Zoom Speed", // Help_Action_AdjustZoomSpeed
-    L"Temporarily Lock Window Zoom", // Help_Action_LockWindowZoom
-    L"Invert Side Buttons", // Settings_Label_InvertButtons
-    L"Use Fixed Zoom Levels", // Settings_Label_UseFixedZoom
-    L"When enabled, Alt + Wheel performs regular zoom instead of changing zoom speed.", // Settings_Tooltip_UseFixedZoom
-    L"  └  Custom Zoom Levels", // Settings_Label_FixedZoomLevels
-    L"Edit Zoom Levels", // Dialog_FixedZoomTitle
-    L"Enter comma-separated zoom ratios (e.g. 0.5, 1, 2):", // Dialog_FixedZoomMsg
-    L"Zoom Mode (In)", // Settings_Label_ZoomModeIn
-    L"Zoom Mode (Out)", // Settings_Label_ZoomModeOut
-    L"Left Drag", // Settings_Label_LeftDrag
-    L"Middle Drag", // Settings_Label_MiddleDrag
-    L"Middle Click", // Settings_Label_MiddleClick
-    L"Edge Nav Click", // Settings_Label_EdgeNavClick
-    L"Show OSD Notification", // Settings_Label_ShowOSD
-    L"Disable in Compare Mode", // Settings_Label_DisableEdgeNavInCompare
-    L"Nav Indicator", // Settings_Label_NavIndicator
-    L"Auto Rotate (EXIF)", // Settings_Label_AutoRotate
-    L"Color Management", // Settings_Label_CMS
-    L"Advanced Color (HDR)", // Settings_Label_AdvancedColor
-    L"HDR Tone Mapping", // Settings_Label_HdrToneMapping
-    L"Spline Knee Point", // Settings_Label_HdrSplineKnee
-    L"HDR Tone Mapping strategy:\nDetermines how HDR images are displayed when " L"exceeding monitor capabilities.\nSpline: High-fidelity highlight " L"roll-off using piecewise spline (Recommended).\nColorimetric: Strict " L"luminance mapping; highlights exceeding the monitor limit are " L"clipped.\nBT.2390 (EETF): ITU-R BT.2390 EETF curve for high-fidelity tone mapping.", // Settings_Tooltip_HdrToneMapping
-    L"0 = Auto (Calculated based on image luminance).\nThe value represents the ratio of the monitor's peak luminance. Brightness below this knee point maps 1:1, while brightness above is smoothly compressed using a spline curve.\n(Recommended: 0.4 - 0.75)", // Settings_Tooltip_HdrSplineKnee
-    L"HDR Peak Brightness (Nits)", // Settings_Label_HdrPeakNitsOverride
-    L"Set to 0 to use system detected brightness.", // Settings_Tooltip_HdrPeakNitsOverride
-    L"HDR Peak Percentile", // Settings_Label_HdrPeakPercentile
-    L"Discard extremely bright pixels to raise overall brightness (mpv default: 99.995%).", // Settings_Tooltip_HdrPeakPercentile
-    L"100% (Absolute Peak)", // Settings_Option_HdrPeakPercentile_100
-    L"99.995% (Stable)", // Settings_Option_HdrPeakPercentile_99995
-    L"99.9% (Aggressive)", // Settings_Option_HdrPeakPercentile_999
-    L"HDR Highlight Desaturation Range", // Settings_Label_HdrDesatThreshold
-    L"Start threshold for highlight desaturation. 0.0 means desaturate all brightness, 1.0 means no desaturation. Recommended default is 0.18.", // Settings_Tooltip_HdrDesatThreshold
-    L"HDR Highlight Desaturation Strength", // Settings_Label_HdrMaxDesat
-    L"Maximum intensity of desaturation at extreme highlights. 0.0 means no desaturation, 1.0 means fully desaturated to white. Recommended default is 0.75.", // Settings_Tooltip_HdrMaxDesat
-    L"Colorimetric", // Settings_Option_HdrColorimetric
-    L"Spline", // Settings_Option_HdrSpline
-    L"BT.2390 (EETF)", // Settings_Option_HdrLegacyReinhard
-    L"Untagged Image Fallback", // Settings_Label_CmsFallback
-    L"Soft Proof Profile (.icc)", // Settings_Label_CustomProof
-    L"Soft Proofing Preview", // Context_SoftProofing
-    L"Proof Profile", // Context_SoftProofProfile
-    L"Custom...", // Context_SoftProofCustom
-    L"Coming Soon", // Settings_Value_ComingSoon
-    L"Force RAW Decode", // Settings_Label_ForceRaw
-    L"RAW+JPEG Pairing", // Settings_Label_PairRawJpeg
-    L"Show a RAW file and its same-name camera image (JPEG/HEIF) as one photo.\nOnly the rendered image stays in the list, marked with the RAW format (e.g. +CR3); capture times are verified in the background and mismatched pairs are split.\nSwitch between the camera image and the RAW decode with the RAW toolbar button or its hotkey, or view both with the pair-compare hotkey.", // Settings_Tooltip_PairRawJpeg
-    L"Exposure (Brightness)", // Settings_Label_Exposure
-    L"Adjust image brightness (Exposure Compensation). Range: 0.18x to 10.0x.", // Settings_Tooltip_Exposure
-    L"Add to Open With", // Settings_Label_AddToOpenWith
-    L"Custom Image Editor", // Settings_Label_CustomEditor
-    L"Select Editor", // Context_SelectEditor
-    L"Failed to launch editor. Please configure it again.", // OSD_EditorLaunchFailed
-    L"Add", // Settings_Action_Add
-    L"Added", // Settings_Action_Added
-    L"Disabled in Portable Mode", // Settings_Status_DisabledInPortable
-    L"Enable Debug HUD (F12)", // Settings_Label_DebugHUD
-    L"Prefetch System", // Settings_Label_Prefetch
-    L"Info Panel", // Settings_Label_InfoPanelAlpha
-    L"Toolbar", // Settings_Label_ToolbarAlpha
-    L"Settings", // Settings_Label_SettingsAlpha
-    L"Reset All Settings", // Settings_Label_Reset
-    L"Restore", // Settings_Action_Restore
-    L"Done", // Settings_Action_Done
-    L"Import / Export (.ini)", // Settings_Header_ConfigManagement
-    L"Unmanaged", // Settings_Option_CmsUnmanaged
-    L"sRGB", // Settings_Option_CmssRGB
-    L"Display P3", // Settings_Option_CmsP3
-    L"Adobe RGB (1998)", // Settings_Option_CmsAdobeRGB
-    L"Grayscale (Tonal Check)", // Settings_Option_CmsGray
-    L"ProPhoto RGB", // Settings_Option_CmsProPhoto
-    L"Rendering Intent", // Settings_Label_CmsIntent
-    L"Gamut Warning Detection", // Settings_Label_GamutWarning
-    L"Analyze and highlight out-of-gamut areas. Options: Off, detect only in soft proofing mode, or detect both soft proofing and screen gamut.", // Settings_Tooltip_GamutWarning
-    L"Auto Prompt on Gamut Error", // Settings_Label_GamutAutoPrompt
-    L"Show OSD notification when gamut errors are detected. Highlights can be manually toggled via toolbar.", // Settings_Tooltip_GamutAutoPrompt
-    L"Gamut Warning Highlight Color", // Settings_Label_GamutColor
-    L"Relative Colorimetric", // Settings_Option_CmsIntentRelative
-    L"Perceptual", // Settings_Option_CmsIntentPerceptual
-    L"Enable Color Management System.\nWhen enabled, applies high-precision color space conversion via GPU to restore true colors.\nDisabling it reduces GPU load, but may result in oversaturated colors on wide-gamut displays.", // Settings_Tooltip_CMS
-    L"Rendering Intent for color space conversion.\nPerceptual: Compresses out-of-gamut colors to preserve details and gradients (ideal for photos).\nRelative Colorimetric: Preserves in-gamut colors and clips out-of-gamut ones (ideal for UI and icons).\nNote: Visual differences only occur when using advanced ICC profiles containing LUTs (Lookup Tables). Standard matrix profiles will automatically fallback to Relative Colorimetric.", // Settings_Tooltip_CmsIntent
-    L"Enable 16-bit floating-point rendering pipeline (scRGB).\nWhen enabled, perfectly renders photo highlights on HDR-capable displays by breaking the SDR limit.\nDisabling it forces mapping to SDR output.\nNote: Enabling increases VRAM usage.", // Settings_Tooltip_AdvancedColor
-    L"Auto: 100% scale when image is smaller than screen, fit to screen when larger.", // Settings_Tooltip_ZoomAuto
-    L"Check for Updates", // Settings_Action_CheckUpdates
-    L"View Update", // Settings_Action_ViewUpdate
-    L"Checking...", // Settings_Status_Checking
-    L"Up to date", // Settings_Status_UpToDate
-    L"GitHub Repo", // Settings_Link_GitHub
-    L"Report Issue", // Settings_Link_ReportIssue
-    L"Help (F1)", // Settings_Link_Hotkeys
-    L"Version", // Settings_Label_Version
-    L"Build", // Settings_Label_Build
-    L"Black", // Settings_Option_Black
-    L"Effects", // Settings_Option_Effects
-    L"Right-Click Menu", // Settings_Label_ContextMenuBackdrop
-    L"Effect Style", // Settings_Label_CanvasEffectStyle
-    L"Mica and Mica Alt are supported only on Windows 11. Acrylic uses more system resources than Mica/Mica Alt.", // Settings_Tooltip_BackdropEffectsTip
-    L"White", // Settings_Option_White
-    L"Grid", // Settings_Option_Grid
-    L"Custom", // Settings_Option_Custom
-    L"Off", // Settings_Option_Off
-    L"On", // Settings_Option_On
-    L"Lite", // Settings_Option_Lite
-    L"Full", // Settings_Option_Full
-    L"Large Only", // Settings_Option_LargeOnly
-    L"All", // Settings_Option_All
-    L"Soft Proofing", // Settings_Option_SoftProofing
-    L"Window", // Settings_Option_Window
-    L"Pan", // Settings_Option_Pan
-    L"None", // Settings_Option_None
-    L"Exit", // Settings_Option_Exit
-    L"Arrow", // Settings_Option_Arrow
-    L"Cursor", // Settings_Option_Cursor
-    L"Manual", // Settings_Option_Manual
-    L"Auto (Explorer)", // Settings_Option_SortAuto
-    L"Name", // Settings_Option_SortName
-    L"Date Modified", // Settings_Option_SortModified
-    L"Date Taken (EXIF)", // Settings_Option_SortDateTaken
-    L"Size", // Settings_Option_SortSize
-    L"Type", // Settings_Option_SortType
-    L"Loop", // Settings_Option_NavLoop
-    L"Through Subfolders", // Settings_Option_NavThrough
-    L"Linear: Basic smoothing", // Settings_Option_Linear
-    L"Nearest: Extreme sharpness", // Settings_Option_Nearest
-    L"HQ Cubic: Extreme smoothing", // Settings_Option_HighQualityCubic
-    L"Auto", // Settings_Option_ZoomAuto
-    L"Auto", // Settings_Option_Auto
-    L"Eco", // Settings_Option_Eco
-    L"Balanced", // Settings_Option_Balanced
-    L"Ultra", // Settings_Option_Ultra
-    L"Keyboard Shortcuts", // Help_Header_Shortcuts
-    L"Mouse Actions", // Help_Header_Mouse
-    L"Next / Previous Image", // Help_Item_NextPrev
-    L"Zoom In / Out", // Help_Item_Zoom
-    L"Pan Image", // Help_Item_Pan
-    L"Rotate", // Help_Item_Rotate
-    L"Fit to Screen", // Help_Item_Fit
-    L"Delete Image", // Help_Item_Delete
-    L"Fullscreen", // Help_Item_Fullscreen
-    L"Close", // Help_Item_Close
-    L"Left Button", // Help_Mouse_Left
-    L"Middle Button", // Help_Mouse_Middle
-    L"Wheel", // Help_Mouse_Wheel
-    L"Right Button", // Help_Mouse_Right
-    L"Right Button Vertical Drag", // Help_Mouse_RightVerticalDrag
-    L"Move Window / Exit Fullscreen / Exit Maximized", // Help_Action_MoveWindow
-    L"Pan Image", // Help_Action_PanImage
-    L"Context Menu", // Help_Action_ContextMenu
-    L"Next/Prev Image", // Help_Action_NextPrev
-    L"Zoom", // Help_Action_Zoom
-    L"Smart Zoom (100% / Fit / Restore)", // Help_Action_SmartZoom
-    L"Copy Image", // Help_Desc_Copy
-    L"Edit", // Help_Desc_Edit
-    L"Tips & Glossary", // Help_Header_Tips
-    L"Note: Shortcuts apply to the current window only. Settings are global.", // Help_Tip_ContextScope
-    L"Rotation: 'Edge Adapted' means minor cropping to align with codec " L"blocks (lossless). 'Lossy' means re-encoding is required.", // Help_Tip_Rotation
-    L"Video Wall (Ctrl+F11): Spans all screens. If the close button is " L"hidden, double-click anywhere to exit.", // Help_Tip_VideoWall
-    L"Tracing Mode / Film Mode: Once enabled, the image becomes semi-transparent, revealing underlying elements. You can adjust its size or transparency. Click the Mouse Passthrough toggle in the toolbar to enter Passthrough Mode, where all inputs except Shift+Esc are ignored, turning QuickView into a transparent overlay.", // Help_Tip_DesignerMode
-    L"Gamut Warning: Detects out-of-gamut colors for the target display or soft proofing profile. Modes: Off, Soft Proofing only, or All (Default: Soft Proofing). Toggle via toolbar.", // Help_Tip_GamutDetection
-    L"RAW: Shows embedded preview by default for speed. Click the RAW button " L"to fully decode (colors may vary).", // Help_Tip_Raw
-    L"JPEG Quality: Estimated value (e.g. Photoshop 100% ≈ 98%). May vary " L"slightly from save settings due to encoder variance, which is normal.", // Help_Tip_JpegQ
-    L"Soft Proof Comparison: Entering Compare Mode while Soft Proofing is active " L"will automatically compare the original vs. proofed image.", // Help_Tip_SoftProofCompare
-    L"New Version Available!", // Dialog_UpdateTitle
-    L"v%s is ready.", // Dialog_UpdateContent
-    L"Changelog", // Dialog_UpdateLogHeader
-    L"Update Now", // Dialog_ButtonUpdate
-    L"Later", // Dialog_ButtonLater
-    L"Star on GitHub", // Dialog_ButtonStar
-    L"QuickView is built with love", // Dialog_Update_LoveTitle
-    L"I maintain QuickView in my spare time because I believe Windows " L"deserves a faster, cleaner viewer. I don't have a marketing budget or " L"a team. If you enjoy this update, the biggest contribution you can " L"make is to Star us on GitHub or share it with a friend.", // Dialog_Update_LoveMessage
-    L"Compare Mode", // Help_Item_Compare
-    L"First / Last Image", // Help_Item_FirstLast
-    L"PHYSICAL ATTRIBUTES", // HUD_Group_Physical
-    L"SCIENTIFIC QUALITY", // HUD_Group_Scientific
-    L"OPTICS & ENCODING", // HUD_Group_Encoding
-    L"Edge definition (Laplacian Variance)", // HUD_Tip_Sharp_Desc
-    L"Crisp edges, high detail", // HUD_Tip_Sharp_High
-    L"Soft focus or motion blur", // HUD_Tip_Sharp_Low
-    L"> 500 is very sharp", // HUD_Tip_Sharp_Ref
-    L"Information density (Shannon Entropy)", // HUD_Tip_Ent_Desc
-    L"Complex textures or high noise", // HUD_Tip_Ent_High
-    L"Flat areas or low detail", // HUD_Tip_Ent_Low
-    L"7.0-8.0 is high detail", // HUD_Tip_Ent_Ref
-    L"Bits Per Pixel (Compression Efficiency)", // HUD_Tip_BPP_Desc
-    L"Lower efficiency (more data preserved)", // HUD_Tip_BPP_High
-    L"Higher efficiency (higher compression)", // HUD_Tip_BPP_Low
-    L"24.0 (Raw RGB), ~2.0-3.0 (High JPEG), ~0.5-1.5 (WebP/AVIF)", // HUD_Tip_BPP_Ref
-    L"High: ", // HUD_Label_High
-    L"Low: ", // HUD_Label_Low
-    L"Ref: ", // HUD_Label_Ref
-    L"Gallery Filmstrip (Top Hover)", // Settings_Header_GalleryTrigger
-    L"Trigger Mode", // Settings_Label_GalleryTriggerMode
-    L"Keep Visible After Clicking Thumbnail", // Settings_Label_KeepGalleryVisibleOnThumbnailClick
-    L"This feature will automatically enable Window Lock and Keep Window Size On Navigation.", // Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick
-    L"Auto Hover", // Settings_Option_GalleryTriggerAuto
-    L"Hotspot Hover", // Settings_Option_GalleryTriggerDelay
-    L"Click Hotspot", // Settings_Option_GalleryTriggerClick
-    L"Disabled", // Settings_Option_GalleryTriggerDisable
-    L"This feature is automatically disabled when the window is smaller than 600x450.", // Settings_Tooltip_GalleryTrigger
-    L"Trigger Area Height", // Settings_Label_GalleryTriggerAreaHeight
-    L"Dwell Time", // Settings_Label_GalleryDwellTime
-    L"Exit Delay", // Settings_Label_GalleryExitDelay
-    L"Gallery Minimum Size", // Settings_Label_GalleryMinSize
-
-    L"Slideshow Started", // OSD_SlideshowStarted
-    L"Slideshow Stopped", // OSD_SlideshowStopped
-    L"Slideshow Resumed", // OSD_SlideshowResumed
-    L"Slideshow Paused", // OSD_SlideshowPaused
-    L"Immersive: Spotlight", // OSD_ImmersiveSpotlight
-    L"Immersive: Normal", // OSD_ImmersiveNormal
-    L"Print job submitted. You can continue browsing.", // OSD_PrintJobStarted
-    L"Print job sent successfully.", // OSD_PrintJobFinished
-    L"Slideshow Mode", // Context_SlideshowMode
-    L"Interval (seconds)", // Settings_Label_SlideshowInterval
-    L"Immersive Mode", // Settings_Label_SlideshowImmersive
-    L"Custom Lite Info Panel", // Settings_Label_CustomLiteInfoPanel
-    L"Custom Full Info Panel", // Settings_Label_CustomFullInfoPanel
-    L"Info Panel Full/Lite Zoom", // Settings_Label_InfoPanelScale
-    L"Items in Normal Mode", // Settings_Label_ItemsInNormalMode
-    L"Items in Compare Mode", // Settings_Label_ItemsInCompareMode
-    L"Separator Preset", // Settings_Label_SeparatorPreset
-    L"Normal", // Settings_Option_SlideshowNormal
-    L"Spotlight", // Settings_Option_SlideshowSpotlight
-    L"Magnifier Shape", // Settings_Label_LoupeShape
-    L"Square", // Settings_Option_LoupeShapeSquare
-    L"Circle", // Settings_Option_LoupeShapeCircle
-    L"Hold the shortcut key and scroll the mouse wheel to adjust the magnifier size.", // Settings_Tooltip_LoupeHotkey
-    L"Hold Ctrl and drag with the left mouse button to quick-crop.", // Settings_Tooltip_CropModeHotkey
+static constexpr PackedLangBlob kLangBlobs[8] = {
+    { kBlob_EN, static_cast<int>(sizeof(kBlob_EN) - 1) },
+    { kBlob_CN, static_cast<int>(sizeof(kBlob_CN) - 1) },
+    { kBlob_TW, static_cast<int>(sizeof(kBlob_TW) - 1) },
+    { kBlob_JA, static_cast<int>(sizeof(kBlob_JA) - 1) },
+    { kBlob_RU, static_cast<int>(sizeof(kBlob_RU) - 1) },
+    { kBlob_DE, static_cast<int>(sizeof(kBlob_DE) - 1) },
+    { kBlob_ES, static_cast<int>(sizeof(kBlob_ES) - 1) },
+    { kBlob_FR, static_cast<int>(sizeof(kBlob_FR) - 1) }
 };
 
-// ----------------------------------------------------------------
-// CN Table
-// ----------------------------------------------------------------
-static const LanguageTable Table_CN = {
-    L"没有加载图片", // OSD_NoImage
-    L"文件夹中没有图片", // OSD_FolderEmpty
-    L"动态 SVG 已显示为静态图像", // OSD_SvgStaticFallback
-    L"无损", // OSD_Lossless
-    L"重编码 (无损)", // OSD_ReencodedLossless
-    L"边缘优化", // OSD_EdgeAdapted
-    L"重编码", // OSD_Reencoded
-    L"拒绝访问 - 文件即使被占用或只读", // OSD_ReadOnly
-    L"变换不完美 (已进行边缘优化)", // OSD_NotPerfect
-    L"跨屏模式: 开启", // OSD_SpanOn
-    L"跨屏模式: 关闭", // OSD_SpanOff
-    L"打样前 (Original)", // OSD_CompareBefore
-    L"打样后 (Proofed)", // OSD_CompareAfter
-    L"已撤销删除", // OSD_UndoDeleteSuccess
-    L"撤销删除失败", // OSD_UndoDeleteFailed
-    L"已撤销重命名", // OSD_UndoRenameSuccess
-    L"撤销重命名失败", // OSD_UndoRenameFailed
-    L"已撤销旋转/翻转", // OSD_UndoTransformSuccess
-    L"撤销旋转/翻转失败", // OSD_UndoTransformFailed
-    L"检测到色彩溢出", // OSD_GamutDetected
-    L"色彩空间不匹配 / 配置文件解析失败", // OSD_GamutIncompatible
-    L"色彩溢出分析失败", // OSD_GamutFailed
-    L"顺时针旋转 90\x00B0", // Action_RotateCW
-    L"逆时针旋转 90\x00B0", // Action_RotateCCW
-    L"旋转 180\x00B0", // Action_Rotate180
-    L"水平翻转", // Action_FlipH
-    L"垂直翻转", // Action_FlipV
-    L"保存更改?", // Dialog_SaveTitle
-    L"图像已被修改。是否保存更改?", // Dialog_SaveContent
-    L"保存", // Dialog_ButtonSave
-    L"另存为...", // Dialog_ButtonSaveAs
-    L"放弃", // Dialog_ButtonDiscard
-    L"继续", // Dialog_ButtonContinue
-    L"裁剪修改未保存，是否保存更改？", // Dialog_CropUnsavedTitle
-    L"另存图片", // Dialog_SaveAsTitle
-    L"保存与导出", // Dialog_ExportTitle
-    L"覆盖保存", // Dialog_ButtonOverwrite
-    L"嵌入 ICC 配置", // Dialog_EmbedICC
-    L"大小: 估算中...", // Dialog_SizeEstimating
-    L"导出错误", // Dialog_ExportError
-    L"复制选区 (Ctrl+C)", // Toolbar_Tooltip_CropCopy
-    L"保存 (Ctrl+S)", // Toolbar_Tooltip_CropSave
-    L"应用 (Enter)", // Toolbar_Tooltip_CropApply
-    L"退出 (Esc)", // Toolbar_Tooltip_CropCancel
-    L"已进入裁剪模式", // OSD_EnterCropMode
-    L"已复制裁剪选区", // OSD_CropCopied
-    L"裁剪", // Context_Crop
-    L"总是保存无损变换", // Checkbox_AlwaysSaveLossless
-    L"总是保存边缘优化结果", // Checkbox_AlwaysSaveEdgeAdapted
-    L"总是保存重编码结果", // Checkbox_AlwaysSaveLossy
-    L"直接放入回收站，不再确认", // Checkbox_NeverConfirmDelete
-    L"无法解码 HEIC - 请安装 HEVC 视频扩展", // OSD_HEICCodecMissing
-    L"无法解码 HEIC", // Dialog_HEICTitle
-    L"系统缺少 HEVC 视频扩展。\nQuickView 需要系统硬件加速以获得最佳性能。", // Dialog_HEICContent
-    L"获取扩展 (免费)", // Dialog_HEICGetExtension
-    L"取消", // Dialog_Cancel
-    L"常规", // Settings_Tab_General
-    L"关于", // Settings_Tab_About
-    L"基础", // Settings_Group_Foundation
-    L"启动", // Settings_Group_Startup
-    L"习惯", // Settings_Group_Habits
-    L"语言", // Settings_Label_Language
-    L"单实例模式", // Settings_Label_SingleInstance
-    L"检查更新", // Settings_Label_CheckUpdates
-    L"更新通道", // Settings_Label_UpdateChannel
-    L"正式版", // Settings_Option_UpdateStable
-    L"预览版 (Pre-release)", // Settings_Option_UpdatePreRelease
-    L"正式版：预览版发布一段时间后未收到Bug报告，将发布正式版。\n预览版：第一时间发布最新的代码修改，用于收集您的测试反馈。注意，这些修改并未经过严格测试。", // Settings_Tooltip_PreRelease
-    L"循环播放", // Settings_Label_NavLoopMode
-    L"列表排序方式", // Settings_Label_SortOrder
-    L"降序", // Settings_Label_SortDescending
-    L"始终以文件名升序浏览存档文件", // Settings_Label_SortArchivesByNameAscending
-    L"删除前确认", // Settings_Label_ConfirmDel
-    L"便携模式 / 清理", // Settings_Label_Portable
-    L"便携模式与注册表清理：\n开启后，QuickView " L"将以便携方式运行。程序将自动清理已有的注册表关联，并禁用自动注册表修改功" L"能。同时，配置文件将存放在程序所在目录而非 AppData 目录。", // Settings_Tooltip_Portable
-    L"跨屏模式 (电视墙)", // Settings_Label_SpanDisplays
-    L"界面缩放", // Settings_Label_UIScale
-    L"需要重启", // Settings_Status_RestartRequired
-    L"无写入权限!", // Settings_Status_NoWritePerm
-    L"已启用", // Settings_Status_Enabled
-    L"驱动技术", // Settings_Header_PoweredBy
-    L"打开...\tCtrl+O", // Context_Open
-    L"打开方式...", // Context_OpenWith
-    L"编辑\tE", // Context_Edit
-    L"在资源管理器中显示", // Context_ShowInExplorer
-    L"打开文件夹", // Context_OpenFolder
-    L"复制像素\tCtrl+C", // Context_CopyPixels
-    L"复制文件\tCtrl+Shift+C", // Context_CopyFile
-    L"复制像素\tCtrl+C", // Context_CopyImage
-    L"复制路径\tCtrl+Alt+C", // Context_CopyPath
-    L"打印\tCtrl+P", // Context_Print
-    L"顺时针旋转 90\x00B0\tR", // Context_RotateCW
-    L"逆时针旋转 90\x00B0\tShift+R", // Context_RotateCCW
-    L"水平翻转\tH", // Context_FlipH
-    L"垂直翻转\tV", // Context_FlipV
-    L"变换", // Context_Transform
-    L"实际大小 (100%)\t1 / Z", // Context_ActualSize
-    L"适应屏幕\t0 / F", // Context_FitToScreen
-    L"适应窗口", // Context_FitWindow
-    L"填充窗口", // Context_FillWindow
-    L"放大\t+ / Ctrl +", // Context_ZoomIn
-    L"缩小\t- / Ctrl -", // Context_ZoomOut
-    L"锁定窗口", // Context_LockWindow
-    L"窗口置顶\tCtrl+T", // Context_AlwaysOnTop
-    L"HUD 照片墙\tT", // Context_HUDGallery
-    L"简略信息面板\tTab", // Context_LiteInfoPanel
-    L"详细信息面板\tI", // Context_FullInfoPanel
-    L"渲染 RAW", // Context_RenderRAW
-    L"像素画模式", // Context_PixelArtMode
-    L"色彩空间", // Context_ColorSpace
-    L"全屏\tF11", // Context_Fullscreen
-    L"视图", // Context_View
-    L"填充", // Context_WallpaperFill
-    L"适应", // Context_WallpaperFit
-    L"平铺", // Context_WallpaperTile
-    L"设为壁纸", // Context_SetAsWallpaper
-    L"重命名\tF2", // Context_Rename
-    L"修复扩展名", // Context_FixExtension
-    L"删除\tDel", // Context_Delete
-    L"撤销删除\tCtrl+Z", // Context_UndoDelete
-    L"撤销重命名\tCtrl+Z", // Context_UndoRename
-    L"撤销旋转/翻转\tCtrl+Z", // Context_UndoTransform
-    L"撤销\tCtrl+Z", // Context_Undo
-    L"排序方式", // Context_SortBy
-    L"导航顺序", // Context_NavOrder
-    L"升序", // Context_SortAscending
-    L"降序", // Context_SortDescending
-    L"设置...", // Context_Settings
-    L"对比模式\tC", // Context_CompareMode
-    L"临摹模式\tCtrl+Shift+O", // Context_OverlayMode
-    L"在对比模式中打开", // Context_GalleryOpenCompare
-    L"在新窗口中打开", // Context_GalleryOpenNewWindow
-    L"退出\tMButton/Esc", // Context_Exit
-    L"退出鼠标穿透", // Menu_ExitPassthrough
-    L"鼠标穿透模式", // Dialog_PassthroughTitle
-    L"鼠标操作将透传至底层窗口。\n只能通过全局快捷键 (Shift+Esc) 或任务栏菜单退出该模式。\n\n是否继续？", // Dialog_PassthroughContent
-    L"鼠标穿透：开启 (Shift+Esc 退出)", // OSD_PassthroughOn
-    L"鼠标穿透：关闭", // OSD_PassthroughOff
-    L"临摹模式：开启", // OSD_OverlayModeOn
-    L"临摹模式：关闭", // OSD_OverlayModeOff
-    L"不透明度", // OSD_Opacity
-    L"放大 (临摹)", // Toolbar_Tooltip_OverlayZoomIn
-    L"缩小 (临摹)", // Toolbar_Tooltip_OverlayZoomOut
-    L"增加不透明度", // Toolbar_Tooltip_OverlayAlphaUp
-    L"减小不透明度", // Toolbar_Tooltip_OverlayAlphaDown
-    L"进入鼠标穿透", // Toolbar_Tooltip_OverlayPassthroughOn
-    L"退出鼠标穿透", // Toolbar_Tooltip_OverlayPassthroughOff
-    L"退出临摹模式", // Toolbar_Tooltip_OverlayExit
-    L"错误", // Message_SaveErrorTitle
-    L"保存文件失败。文件是否被占用?", // Message_SaveErrorContent
-    L"上一张 (方向键左)", // Toolbar_Tooltip_Prev
-    L"下一张 (方向键右)", // Toolbar_Tooltip_Next
-    L"向左旋转 (Shift+R)", // Toolbar_Tooltip_RotateL
-    L"向右旋转 (R)", // Toolbar_Tooltip_RotateR
-    L"水平翻转 (H)", // Toolbar_Tooltip_FlipH
-    L"锁定窗口(临时)", // Toolbar_Tooltip_Lock
-    L"解锁窗口", // Toolbar_Tooltip_Unlock
-    L"缩略图 (T)", // Toolbar_Tooltip_Gallery
-    L"信息面板", // Toolbar_Tooltip_Info
-    L"RAW: 快速预览 (点击切换完整)", // Toolbar_Tooltip_RawPreview
-    L"RAW: 完整解码 (点击切换预览)", // Toolbar_Tooltip_RawFull
-    L"RAW: 查看配对 RAW (完整解码)", // Toolbar_Tooltip_RawPairView
-    L"RAW: 返回配对图像", // Toolbar_Tooltip_RawPairBack
-    L"扩展名不匹配 (修复)", // Toolbar_Tooltip_FixExtension
-    L"固定工具栏", // Toolbar_Tooltip_Pin
-    L"取消固定工具栏", // Toolbar_Tooltip_Unpin
-    L"显示色彩溢出高亮区域", // Toolbar_Tooltip_GamutWarning
-    L"普通模式", // Toolbar_Tooltip_NormalMode
-    L"对比模式", // Toolbar_Tooltip_CompareMode
-    L"单页模式", // Toolbar_Tooltip_SinglePage
-    L"双页模式", // Toolbar_Tooltip_DualPage
-    L"在选区打开新图", // Toolbar_Tooltip_CompareOpen
-    L"交换左右", // Toolbar_Tooltip_CompareSwap
-    L"切换布局", // Toolbar_Tooltip_CompareLayout
-    L"对比信息", // Toolbar_Tooltip_CompareInfo
-    L"删除所选图片", // Toolbar_Tooltip_CompareDelete
-    L"放大 (微调)", // Toolbar_Tooltip_CompareZoomIn
-    L"缩小 (微调)", // Toolbar_Tooltip_CompareZoomOut
-    L"缩放同步: 开", // Toolbar_Tooltip_CompareSyncZoomOn
-    L"缩放同步: 关", // Toolbar_Tooltip_CompareSyncZoomOff
-    L"平移同步: 开", // Toolbar_Tooltip_CompareSyncPanOn
-    L"平移同步: 关", // Toolbar_Tooltip_CompareSyncPanOff
-    L"切换沉浸聚光灯", // Toolbar_Tooltip_SlideshowImmersiveToggle
-    L"退出幻灯片模式", // Toolbar_Tooltip_SlideshowExit
-    L"退出对比", // Toolbar_Tooltip_CompareExit
-    L"播放动画", // Toolbar_Tooltip_AnimPlay
-    L"暂停动画", // Toolbar_Tooltip_AnimPause
-    L"上一帧", // Toolbar_Tooltip_AnimPrev
-    L"下一帧", // Toolbar_Tooltip_AnimNext
-    L"脏矩形调试: 开", // Toolbar_Tooltip_AnimDirtyOn
-    L"脏矩形调试: 关", // Toolbar_Tooltip_AnimDirtyOff
-    L"动画速度调节", // Toolbar_Tooltip_AnimSpeed
-    L"性能", // Settings_Header_Performance
-    L"专业工具", // Settings_Header_Professional
-    L"智能内存管理", // Settings_Label_MemoryReclaim
-    L"智能", // Settings_Option_MemSmart
-    L"激进", // Settings_Option_MemAggressive
-    L"按需", // Settings_Option_MemOnDemand
-    L"智能 (推荐): 仅当系统可用内存 < 4GB 时，回收图片空闲内存。\n" L"激进: 永不回收，保持 2GB 内存独占以换取绝对 0ns 的看图切换极速。\n" L"按需: 图片切换时立刻回收空闲内存，保持最低物理内存占用。", // Settings_Tooltip_MemoryReclaim
-    L"动画模式下显示重绘区域预览按钮", // Settings_Label_ShowDirtyRect
-    L"在播放动画时显示用于调试重绘区域的工具按钮，以便可视化哪些部分正在更新。", // Settings_Tooltip_ShowDirtyRect
-    L"已复制!", // OSD_Copied
-    L"像素已复制到剪贴板!", // OSD_PixelsCopied
-    L"正在提取原片像素...", // OSD_PixelsExtracting
-    L"文件已复制到剪贴板!", // OSD_FileCopied
-    L"坐标已复制!", // OSD_CoordinatesCopied
-    L"文件路径已复制!", // OSD_FilePathCopied
-    L"缩放: 100%", // OSD_Zoom100
-    L"缩放: 适应屏幕", // OSD_ZoomFit
-    L"缩放: 适应窗口", // OSD_ZoomFitWindow
-    L"缩放: 填充窗口", // OSD_ZoomFill
-    L"打印: 请在打开的应用中使用 Ctrl+P", // OSD_PrintInstruction
-    L"已移至回收站", // OSD_MovedToRecycleBin
-    L"窗口已锁定", // OSD_WindowLocked
-    L"窗口已解锁", // OSD_WindowUnlocked
-    L"窗口置顶: 开", // OSD_AlwaysOnTopOn
-    L"窗口置顶: 关", // OSD_AlwaysOnTopOff
-    L"壁纸已设置", // OSD_WallpaperSet
-    L"设置壁纸失败", // OSD_WallpaperFailed
-    L"重命名成功", // OSD_Renamed
-    L"重命名失败", // OSD_RenameFailed
-    L"扩展名已修复", // OSD_ExtensionFixed
-    L"已恢复原状", // OSD_Restored
-    L"已是第一张", // OSD_FirstImage
-    L"已是最后一张", // OSD_LastImage
-    L"全高清", // OSD_HD
-    L"缩放: ", // OSD_ZoomPrefix
-    L"播放中", // OSD_AnimPlaying
-    L"已暂停 (检查模式: Alt+左右方向键逐帧查看)", // OSD_AnimPaused
-    L"脏矩形: 开", // OSD_AnimDirtyOn
-    L"脏矩形: 关", // OSD_AnimDirtyOff
-    L"跨越显示器 (电视墙模式)\tCtrl+F11", // Context_SpanDisplays
-    L"界面", // Settings_Tab_Visuals
-    L"操作", // Settings_Tab_Controls
-    L"图像", // Settings_Tab_Image
-    L"高级", // Settings_Tab_Advanced
-    L"背景", // Settings_Header_Backdrop
-    L"窗口", // Settings_Header_Window
-    L"锁定窗口时", // Settings_Header_WindowLock
-    L"面板", // Settings_Header_Panel
-    L"鼠标", // Settings_Header_Mouse
-    L"边缘", // Settings_Header_Edge
-    L"渲染", // Settings_Header_Render
-    L"高动态范围 (HDR)", // Settings_Header_Hdr
-    L"提示", // Settings_Header_Prompts
-    L"系统", // Settings_Header_System
-    L"功能", // Settings_Header_Features
-    L"透明度", // Settings_Header_Transparency
-    L"玻璃引擎 (GPU加速)", // Settings_Header_GeekGlass
-    L"启用玻璃渲染", // Settings_Label_EnableGeekGlass
-    L"交互动画", // Settings_Label_GlassUIAnimations
-    L"核心材质", // Settings_Header_CoreMaterial
-    L"模糊半径", // Settings_Label_BlurSigma
-    L"启用玻璃渲染后生效", // Settings_Status_GlassDisabled
-    L"厚度 (浓度)", // Settings_Label_TintDensity
-    L"控制玻璃底色深度。", // Settings_Tooltip_TintDensity
-    L"光泽亮度", // Settings_Label_SpecularOpacity
-    L"控制玻璃面板光泽强度。", // Settings_Tooltip_SpecularOpacity
-    L"阴影强度", // Settings_Label_ShadowIntensity
-    L"调节 GPU 加速物理落影的深浅。", // Settings_Tooltip_ShadowIntensity
-    L"边缘", // Settings_Header_VectorAssets
-    L"线框粗细", // Settings_Label_VectorStrokeWeight
-    L"标准 (1.5px)", // Settings_Option_StrokeStandard
-    L"极细 (1.0px)", // Settings_Option_StrokeFine
-    L"玻璃着色", // Settings_Header_GlassTint
-    L"着色模式", // Settings_Label_TintProfile
-    L"自动", // Settings_Option_TintAuto
-    L"自定义", // Settings_Option_TintCustom
-    L"自定义底色", // Settings_Label_GlassCustomColor
-    L"材质浓度", // Settings_Header_DensityMatrix
-    L"信息提示 (OSD)", // Settings_Label_OsdDensity
-    L"控制加载进度条、播放提示、缩放信息等浮层的厚度。", // Settings_Tooltip_OsdDensity
-    L"工具面板", // Settings_Label_PanelsDensity
-    L"控制底部工具栏、信息面板、画廊胶卷以及右上角窗口控制按钮的厚度。", // Settings_Tooltip_PanelsDensity
-    L"模态窗口", // Settings_Label_ModalsDensity
-    L"控制设置面板、帮助面板和对话框等弹出窗口的厚度。", // Settings_Tooltip_ModalsDensity
-    L"右键菜单", // Settings_Label_MenusDensity
-    L"控制右键菜单材质浓度（仅在 Acrylic 材质下可以调节）。", // Settings_Tooltip_MenusDensity
-    L"主题", // Settings_Tab_Theme
-    L"主题模式", // Settings_Label_ThemeMode
-    L"自动", // Settings_Option_ThemeAuto
-    L"深色", // Settings_Option_ThemeDark
-    L"浅色", // Settings_Option_ThemeLight
-    L"自定义", // Settings_Option_ThemeCustom
-    L"环境遮罩", // Settings_Label_AmbientDimmer
-    L"在画廊模式、设置窗口或对话框开启时，在后端添加沉浸式阴影遮罩。", // Settings_Tooltip_AmbientDimmer
-    L"强调色", // Settings_Label_AccentColor
-    L"文本颜色", // Settings_Label_TextColor
-    L"导入导出 (.qvtheme)", // Settings_Header_ThemeManagement
-    L"导出", // Settings_Action_ExportTheme
-    L"导入", // Settings_Action_ImportTheme
-    L"画布颜色", // Settings_Label_CanvasColor
-    L"叠加层", // Settings_Label_Overlay
-    L"显示网格", // Settings_Label_ShowGrid
-    L"窗口置顶", // Settings_Label_AlwaysOnTop
-    L"锁定窗口", // Settings_Label_LockWindow
-    L"此处控制程序启动时默认锁定窗口边框，不跟随图片缩放。", // Settings_Tooltip_LockWindow
-    L"自动隐藏标题栏", // Settings_Label_AutoHideTitle
-    L"圆角窗口", // Settings_Label_RoundedCorners
-    L"显示组件边框", // Settings_Label_UIBorders
-    L"控制主窗口及右键菜单圆角，仅支持Windows 11。", // Settings_Tooltip_RoundedCorners
-    L"锁定底部工具栏", // Settings_Label_LockToolbar
-    L"默认最小窗口宽度", // Settings_Label_WindowMinSize
-    L"默认最大启动尺寸 (%)", // Settings_Label_WindowMaxSizePercent
-    L"显示边界溢出指示器", // Settings_Label_ShowBorderIndicator
-    L"在图片超出窗口边框的方向上显示提示线条。", // Settings_Tooltip_ShowBorderIndicator
-    L"显示缩略导航图", // Settings_Label_ShowNavigator
-    L"鼠标位于导航图上方时，使用滚轮 / 拇指滚轮 (Shift + 滚轮) 可直接平移图片", // Settings_Tooltip_ShowNavigator
-    L"自动", // Settings_Option_NavigatorAuto
-    L"开启", // Settings_Option_NavigatorOn
-    L"关闭", // Settings_Option_NavigatorOff
-    L"导航时保持窗口尺寸不变", // Settings_Label_KeepWindowSizeOnNav
-    L"记住最后窗口位置和尺寸", // Settings_Label_RememberLastWindowSizeAndPosition
-    L"小于窗口尺寸图片适应窗口", // Settings_Label_UpscaleSmallImagesWhenLocked
-    L"启用窗口平滑缩放 (GPU)", // Settings_Label_EnableSmoothScaling
-    L"EXIF 面板模式", // Settings_Label_ExifMode
-    L"工具栏信息默认值", // Settings_Label_ToolbarInfoDefault
-    L"打开时全屏", // Settings_Label_OpenFullScreenMode
-    L"全屏时缩放模式", // Settings_Label_FullScreenZoomMode
-    L"适应屏幕", // Settings_Option_FitScreen
-    L"自动", // Settings_Option_AutoFit
-    L"反转滚轮", // Settings_Label_InvertWheel
-    L"缩放 100% 吸附阻尼", // Settings_Label_ZoomSnapDamping
-    L"窗口缩放以鼠标为中线", // Settings_Label_MouseAnchorZoom
-    L"右键拖动缩放", // Settings_Label_RightButtonDragZoom
-    L"滚轮缩放速度", // Settings_Label_WheelZoomSpeed
-    L"拇指滚轮", // Settings_Label_ThumbWheel
-    L"可用 Shift + 滚轮 替代", // Settings_Tooltip_ThumbWheel
-    L"Alt + 滚轮可临时调整缩放速度", // Settings_Tooltip_WheelZoomSpeed
-    L"可用 Ctrl + 左键 替代", // Settings_Tooltip_MiddleDrag
-    L"双击", // Settings_Label_DoubleClick
-    L"智能双击", // Settings_Option_DoubleClick_Smart
-    L"滚轮模式一", // Settings_Option_DoubleClick_WheelMode1
-    L"滚轮模式二", // Settings_Option_DoubleClick_WheelMode2
-    L"智能双击：自动在 适应屏幕 / 100% / 初始尺寸间切换；\n滚轮模式一：双击快速互换主滚轮与拇指滚轮功能；\n滚轮模式二：双击切换主滚轮上下平移、拇指滚轮左右平移；\n提示：Shift + 滚轮 相当于 拇指滚轮。", // Settings_Tooltip_DoubleClick
-    L"控制按键平移和滚轮平移速度", // Settings_Tooltip_PanStepNormal
-    L"主滚轮：切图；拇指滚轮/shift+滚轮：缩放", // OSD_WheelMode1_NextPrevZoom
-    L"主滚轮：缩放；拇指滚轮/shift+滚轮：切图", // OSD_WheelMode1_ZoomNextPrev
-    L"滚轮：平移模式", // OSD_WheelMode2_Pan
-    L"滚轮：默认模式", // OSD_WheelMode2_Default
-    L"右键拖拽缩放速度", // Settings_Label_RightDragZoomSpeed
-    L"缩放速度(临时): ", // OSD_WheelZoomSpeed
-    L"临时调节缩放速度", // Help_Action_AdjustZoomSpeed
-    L"临时锁定窗口缩放", // Help_Action_LockWindowZoom
-    L"反转侧键", // Settings_Label_InvertButtons
-    L"使用固定的缩放级别", // Settings_Label_UseFixedZoom
-    L"启用时，Alt + 滚轮将执行普通缩放而非修改缩放速率。", // Settings_Tooltip_UseFixedZoom
-    L"  └  自定义缩放级别", // Settings_Label_FixedZoomLevels
-    L"编辑固定缩放级别", // Dialog_FixedZoomTitle
-    L"输入逗号分隔的缩放级别 (例如 0.5, 1, 2):", // Dialog_FixedZoomMsg
-    L"放大插值算法", // Settings_Label_ZoomModeIn
-    L"缩小插值算法", // Settings_Label_ZoomModeOut
-    L"左键拖动", // Settings_Label_LeftDrag
-    L"中键拖动", // Settings_Label_MiddleDrag
-    L"中键点击", // Settings_Label_MiddleClick
-    L"边缘点击翻页", // Settings_Label_EdgeNavClick
-    L"显示 OSD 提示", // Settings_Label_ShowOSD
-    L"在对比模式下禁用", // Settings_Label_DisableEdgeNavInCompare
-    L"翻页指示器", // Settings_Label_NavIndicator
-    L"自动旋转 (EXIF)", // Settings_Label_AutoRotate
-    L"色彩管理 (CMS)", // Settings_Label_CMS
-    L"高级色彩与 HDR (scRGB)", // Settings_Label_AdvancedColor
-    L"HDR 色调映射", // Settings_Label_HdrToneMapping
-    L"Spline 拐点", // Settings_Label_HdrSplineKnee
-    L"HDR 降级策略 (Tone Mapping)：\n当 HDR 图片超出显示器极限时的映射方式。\n" L"Spline 样条映射：采用分段样条曲线，实现高保真的高光细节还原（推荐）。\n" L"色度模式：保持严格亮度映射，超出显示器极限的亮度将被直接裁剪。\n" L"BT.2390 EETF：ITU-R BT.2390 标准高保真降级曲线。", // Settings_Tooltip_HdrToneMapping
-    L"0 = 自动模式（根据图片亮度自动计算）。\n数值表示显示器峰值亮度的比例。该拐点以下的亮度将进行 1:1 绝对映射，拐点以上的亮度将使用平滑曲线进行压缩映射。\n（推荐值：0.4 - 0.75）", // Settings_Tooltip_HdrSplineKnee
-    L"HDR 峰值亮度 (Nits)", // Settings_Label_HdrPeakNitsOverride
-    L"设为 0 表示通过系统自动检测亮度.", // Settings_Tooltip_HdrPeakNitsOverride
-    L"HDR 峰值百分位", // Settings_Label_HdrPeakPercentile
-    L"丢弃极少数过亮的像素以提升整体亮度 (mpv 默认: 99.995%).", // Settings_Tooltip_HdrPeakPercentile
-    L"100% (绝对峰值)", // Settings_Option_HdrPeakPercentile_100
-    L"99.995% (稳定)", // Settings_Option_HdrPeakPercentile_99995
-    L"99.9% (激进)", // Settings_Option_HdrPeakPercentile_999
-    L"高光去饱和范围", // Settings_Label_HdrDesatThreshold
-    L"高光去饱和开始介入的亮度阈值。0.0 表示对所有亮度进行去饱和，1.0 表示完全不进行去饱和。推荐默认值 0.18。", // Settings_Tooltip_HdrDesatThreshold
-    L"高光去饱和强度", // Settings_Label_HdrMaxDesat
-    L"高光去饱和的最大强度。0.0 表示不进行去饱和，1.0 表示在高光处完全去饱和为白色。推荐默认值 0.75。", // Settings_Tooltip_HdrMaxDesat
-    L"色度", // Settings_Option_HdrColorimetric
-    L"样条映射", // Settings_Option_HdrSpline
-    L"BT.2390 (EETF)", // Settings_Option_HdrLegacyReinhard
-    L"无配置图片的默认回退", // Settings_Label_CmsFallback
-    L"自定义软打样配置 (.icc)", // Settings_Label_CustomProof
-    L"软打样预览", // Context_SoftProofing
-    L"打样配置文件", // Context_SoftProofProfile
-    L"自定义...", // Context_SoftProofCustom
-    L"敬请期待", // Settings_Value_ComingSoon
-    L"强制 RAW 解码", // Settings_Label_ForceRaw
-    L"RAW+JPEG 配对", // Settings_Label_PairRawJpeg
-    L"将 RAW 与同名的相机直出图 (JPEG/HEIF) 显示为同一张照片。\n列表中仅保留直出图，并标注 RAW 格式（如 +CR3）；后台会校验两者拍摄时间，不一致的配对自动拆开。\n可用 RAW 工具栏按钮或其热键切换相机直出和本机渲染，也可用配对对比热键并排查看。", // Settings_Tooltip_PairRawJpeg
-    L"曝光度 (亮度)", // Settings_Label_Exposure
-    L"调节图像亮度 (曝光补偿)。范围: 0.18x 至 10.0x。", // Settings_Tooltip_Exposure
-    L"添加到打开方式", // Settings_Label_AddToOpenWith
-    L"自定义图片编辑器", // Settings_Label_CustomEditor
-    L"选择编辑器", // Context_SelectEditor
-    L"编辑器启动失败，请重新配置。", // OSD_EditorLaunchFailed
-    L"添加", // Settings_Action_Add
-    L"已添加", // Settings_Action_Added
-    L"便携模式下停用", // Settings_Status_DisabledInPortable
-    L"启用调试 HUD (F12)", // Settings_Label_DebugHUD
-    L"预加载系统", // Settings_Label_Prefetch
-    L"信息面板", // Settings_Label_InfoPanelAlpha
-    L"工具栏", // Settings_Label_ToolbarAlpha
-    L"设置菜单", // Settings_Label_SettingsAlpha
-    L"重置所有设置", // Settings_Label_Reset
-    L"恢复", // Settings_Action_Restore
-    L"完成", // Settings_Action_Done
-    L"导入导出 (.ini)", // Settings_Header_ConfigManagement
-    L"无管理", // Settings_Option_CmsUnmanaged
-    L"sRGB", // Settings_Option_CmssRGB
-    L"Display P3", // Settings_Option_CmsP3
-    L"Adobe RGB (1998)", // Settings_Option_CmsAdobeRGB
-    L"灰度模式 (影调检查)", // Settings_Option_CmsGray
-    L"ProPhoto RGB", // Settings_Option_CmsProPhoto
-    L"渲染意图", // Settings_Label_CmsIntent
-    L"色彩溢出检测", // Settings_Label_GamutWarning
-    L"分析并标出溢出区域：关闭、仅在软打样模式下检测（默认）、或者同时检测软打样和屏幕色彩溢出。", // Settings_Tooltip_GamutWarning
-    L"自动提示色彩溢出", // Settings_Label_GamutAutoPrompt
-    L"检测到溢出后弹出 OSD 提示。高亮区域可通过工具栏按钮手动查看。", // Settings_Tooltip_GamutAutoPrompt
-    L"溢出高亮颜色", // Settings_Label_GamutColor
-    L"相对色度", // Settings_Option_CmsIntentRelative
-    L"感知意图", // Settings_Option_CmsIntentPerceptual
-    L"启用色彩管理 (Color Management System)。\n开启后，将通过 GPU 进行高精度色彩空间转换以还原真实色彩。\n关闭可降低性能消耗，但在广色域屏幕上可能导致颜色过饱和。", // Settings_Tooltip_CMS
-    L"色彩空间转换策略 (Rendering Intent)。\n感知模式 (Perceptual)：压缩超出色域的颜色，保留细节和渐变，适合照片。\n相对比色 (Relative Colorimetric)：保留在色域内的颜色，超出部分裁剪，适合 UI 和图标。\n注意：仅当图像或显示器使用包含 LUT（查找表）的高级 ICC 配置文件时，切换此选项才会有视觉差异。普通矩阵型配置文件会自动回退至相对色度。", // Settings_Tooltip_CmsIntent
-    L"启用 16-bit 浮点渲染管线 (scRGB)。\n开启后，在支持 HDR 的显示器上能突破 SDR 亮度限制，完美呈现照片高光。\n关闭将强制降级映射至 SDR 输出。\n注意：开启会增加显存占用。", // Settings_Tooltip_AdvancedColor
-    L"自动：图片小于屏幕尺寸时 100% 缩放，图片大于屏幕尺寸时适应屏幕尺寸缩放。", // Settings_Tooltip_ZoomAuto
-    L"检查更新", // Settings_Action_CheckUpdates
-    L"查看更新", // Settings_Action_ViewUpdate
-    L"检查中...", // Settings_Status_Checking
-    L"已是最新", // Settings_Status_UpToDate
-    L"GitHub 仓库", // Settings_Link_GitHub
-    L"反馈问题", // Settings_Link_ReportIssue
-    L"帮助 (F1)", // Settings_Link_Hotkeys
-    L"版本", // Settings_Label_Version
-    L"构建", // Settings_Label_Build
-    L"黑色", // Settings_Option_Black
-    L"特效", // Settings_Option_Effects
-    L"右键菜单", // Settings_Label_ContextMenuBackdrop
-    L"特效类型", // Settings_Label_CanvasEffectStyle
-    L"Mica 与 Mica Alt 特效仅在 Windows 11 上支持；Acrylic（亚克力）相比 Mica/Mica Alt 会占用更多系统资源。", // Settings_Tooltip_BackdropEffectsTip
-    L"白色", // Settings_Option_White
-    L"网格", // Settings_Option_Grid
-    L"自定义", // Settings_Option_Custom
-    L"关闭", // Settings_Option_Off
-    L"开启", // Settings_Option_On
-    L"简略", // Settings_Option_Lite
-    L"详细", // Settings_Option_Full
-    L"仅大图", // Settings_Option_LargeOnly
-    L"全部", // Settings_Option_All
-    L"软打样", // Settings_Option_SoftProofing
-    L"窗口", // Settings_Option_Window
-    L"平移", // Settings_Option_Pan
-    L"无", // Settings_Option_None
-    L"退出", // Settings_Option_Exit
-    L"箭头", // Settings_Option_Arrow
-    L"光标", // Settings_Option_Cursor
-    L"手动", // Settings_Option_Manual
-    L"自动 (资源管理器)", // Settings_Option_SortAuto
-    L"文件名", // Settings_Option_SortName
-    L"修改时间", // Settings_Option_SortModified
-    L"拍摄时间 (EXIF)", // Settings_Option_SortDateTaken
-    L"大小", // Settings_Option_SortSize
-    L"类型", // Settings_Option_SortType
-    L"循环播放", // Settings_Option_NavLoop
-    L"穿透子文件夹", // Settings_Option_NavThrough
-    L"线性 (Linear)：基础平滑", // Settings_Option_Linear
-    L"最近邻 (Nearest)：极端锐利", // Settings_Option_Nearest
-    L"高质量双三次 (HQ Cubic)：极端平滑", // Settings_Option_HighQualityCubic
-    L"自动", // Settings_Option_ZoomAuto
-    L"自动", // Settings_Option_Auto
-    L"节能", // Settings_Option_Eco
-    L"平衡", // Settings_Option_Balanced
-    L"极速", // Settings_Option_Ultra
-    L"键盘快捷键", // Help_Header_Shortcuts
-    L"鼠标操作", // Help_Header_Mouse
-    L"切换图片", // Help_Item_NextPrev
-    L"缩放", // Help_Item_Zoom
-    L"平移图片", // Help_Item_Pan
-    L"旋转", // Help_Item_Rotate
-    L"适应屏幕", // Help_Item_Fit
-    L"删除图片", // Help_Item_Delete
-    L"全屏", // Help_Item_Fullscreen
-    L"关闭", // Help_Item_Close
-    L"左键", // Help_Mouse_Left
-    L"中键", // Help_Mouse_Middle
-    L"滚轮", // Help_Mouse_Wheel
-    L"右键", // Help_Mouse_Right
-    L"右键上下拖动", // Help_Mouse_RightVerticalDrag
-    L"平移窗口/退出全屏/退出最大化", // Help_Action_MoveWindow
-    L"平移图片", // Help_Action_PanImage
-    L"上下文菜单", // Help_Action_ContextMenu
-    L"切换图片", // Help_Action_NextPrev
-    L"缩放", // Help_Action_Zoom
-    L"智能缩放 (100% / 适应窗口 / 恢复)", // Help_Action_SmartZoom
-    L"复制图像", // Help_Desc_Copy
-    L"编辑", // Help_Desc_Edit
-    L"提示与术语", // Help_Header_Tips
-    L"注意：快捷键仅对当前窗口生效，设置选项为全局永久生效。", // Help_Tip_ContextScope
-    L"旋转说明：'边缘适配' 指为匹配编码块边界进行的微量裁剪(无损)；'有损' " L"指必须要进行重编码。", // Help_Tip_Rotation
-    L"跨屏模式 " L"(Ctrl+F11)：合并所有显示器。若关闭按钮不可见(如L型布局)" L"，双击任意处即可退出。", // Help_Tip_VideoWall
-    L"临摹模式/薄膜模式：开启后图像将变为半透明并露出底部元素，此时您可调整尺寸或透明度。" L"点击工具栏中的鼠标穿透模式开关，可进入鼠标穿透模式，此时除了退出快捷键 Shift+Esc 外的任何按键和鼠标输入均被忽略，" L"QuickView 将变为一层透明薄膜覆盖层。", // Help_Tip_DesignerMode
-    L"色彩溢出检测：检测当前图片是否超出显示器或软打样配置的色域。模式：关闭、仅软打样（默认）、全部（包含屏幕）。可从工具栏手动开关。", // Help_Tip_GamutDetection
-    L"RAW 渲染：默认显示内嵌预览图以提升速度。点击 RAW " L"按钮可进行完整解码(色彩可能不同)。", // Help_Tip_Raw
-    L"JPEG 质量：基于算法估算的质量值 (例如 Photoshop 100% ≈ 98%)。因" L"编码器差异，测算结果可能与保存时的设置略有偏差，属正常现象。", // Help_Tip_JpegQ
-    L"软打样对比：软打样后进入对比模式，将自动进行打样前后对比。", // Help_Tip_SoftProofCompare
-    L"发现新版本！", // Dialog_UpdateTitle
-    L"v%s 已准备就緒", // Dialog_UpdateContent
-    L"更新日志", // Dialog_UpdateLogHeader
-    L"立即更新", // Dialog_ButtonUpdate
-    L"稍后", // Dialog_ButtonLater
-    L"在 GitHub 点星", // Dialog_ButtonStar
-    L"QuickView 源自热爱", // Dialog_Update_LoveTitle
-    L"我利用业余时间维护 QuickView，只因我相信 Windows " L"值得拥有一个更快、更纯粹的看图工具。 " L"我没有推广预算，也没有团队。如果您喜欢这次更新，在 GitHub " L"上点一颗星或分享给朋友，就是对我最大的支持。", // Dialog_Update_LoveMessage
-    L"对比模式", // Help_Item_Compare
-    L"第一张 / 最后一张图片", // Help_Item_FirstLast
-    L"物理属性", // HUD_Group_Physical
-    L"科学指标", // HUD_Group_Scientific
-    L"光学与编码", // HUD_Group_Encoding
-    L"边缘清晰度 (拉普拉斯方差)", // HUD_Tip_Sharp_Desc
-    L"边缘锐利，细节丰富", // HUD_Tip_Sharp_High
-    L"软焦点或运动模糊", // HUD_Tip_Sharp_Low
-    L"> 500 为非常锐利", // HUD_Tip_Sharp_Ref
-    L"信息密度 (香农熵)", // HUD_Tip_Ent_Desc
-    L"复杂纹理或高噪点", // HUD_Tip_Ent_High
-    L"平坦区域或低细节", // HUD_Tip_Ent_Low
-    L"7.0-8.0 为高细节", // HUD_Tip_Ent_Ref
-    L"每像素比特数 (压缩效率)", // HUD_Tip_BPP_Desc
-    L"低压缩率 (保留更多原始数据)", // HUD_Tip_BPP_High
-    L"高压缩率 (空间利用率更高)", // HUD_Tip_BPP_Low
-    L"24.0 (原始RGB), ~2.0-3.0 (高质量JPEG), ~0.5-1.5 (WebP/AVIF)", // HUD_Tip_BPP_Ref
-    L"高: ", // HUD_Label_High
-    L"低: ", // HUD_Label_Low
-    L"参考: ", // HUD_Label_Ref
-    L"图库胶片带 (顶部悬浮)", // Settings_Header_GalleryTrigger
-    L"触发模式", // Settings_Label_GalleryTriggerMode
-    L"缩略图切图时不自动隐藏", // Settings_Label_KeepGalleryVisibleOnThumbnailClick
-    L"开启此功能将自动开启“锁定窗口”和“导航时保持窗口尺寸不变”。", // Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick
-    L"自动悬停", // Settings_Option_GalleryTriggerAuto
-    L"热点停留", // Settings_Option_GalleryTriggerDelay
-    L"点击热点", // Settings_Option_GalleryTriggerClick
-    L"停用", // Settings_Option_GalleryTriggerDisable
-    L"该功能在窗口小于 600x450 时将自动禁用。", // Settings_Tooltip_GalleryTrigger
-    L"触发区域高度", // Settings_Label_GalleryTriggerAreaHeight
-    L"停留时长", // Settings_Label_GalleryDwellTime
-    L"退出延迟", // Settings_Label_GalleryExitDelay
-    L"画廊最小尺寸", // Settings_Label_GalleryMinSize
-
-    L"开始播放幻灯片", // OSD_SlideshowStarted
-    L"停止播放幻灯片", // OSD_SlideshowStopped
-    L"继续播放幻灯片", // OSD_SlideshowResumed
-    L"幻灯片已暂停", // OSD_SlideshowPaused
-    L"沉浸模式: 聚光灯", // OSD_ImmersiveSpotlight
-    L"沉浸模式: 普通", // OSD_ImmersiveNormal
-    L"打印任务已发送，您可以继续浏览。", // OSD_PrintJobStarted
-    L"打印任务已发送完毕。", // OSD_PrintJobFinished
-    L"幻灯片模式", // Context_SlideshowMode
-    L"切换间隔 (秒)", // Settings_Label_SlideshowInterval
-    L"沉浸模式", // Settings_Label_SlideshowImmersive
-    L"自定义精简信息栏", // Settings_Label_CustomLiteInfoPanel
-    L"自定义完整信息栏", // Settings_Label_CustomFullInfoPanel
-    L"完整/精简信息栏缩放", // Settings_Label_InfoPanelScale
-    L"普通模式显示项", // Settings_Label_ItemsInNormalMode
-    L"对比模式显示项", // Settings_Label_ItemsInCompareMode
-    L"分隔符预设", // Settings_Label_SeparatorPreset
-    L"普通", // Settings_Option_SlideshowNormal
-    L"聚光灯", // Settings_Option_SlideshowSpotlight
-    L"放大镜形状", // Settings_Label_LoupeShape
-    L"正方形", // Settings_Option_LoupeShapeSquare
-    L"圆形", // Settings_Option_LoupeShapeCircle
-    L"按住快捷键并滚动鼠标滚轮可调节放大镜尺寸。", // Settings_Tooltip_LoupeHotkey
-    L"按住 Ctrl 并使用鼠标左键拖动可快速进入框选剪裁模式。", // Settings_Tooltip_CropModeHotkey
+static const char* const kPluginLangCodes[8] = {
+    "en-US", "zh-CN", "zh-TW", "ja-JP", "ru-RU", "de-DE", "es-ES", "fr-FR"
 };
-
-// ----------------------------------------------------------------
-// TW Table
-// ----------------------------------------------------------------
-static const LanguageTable Table_TW = {
-    L"沒有載入圖片", // OSD_NoImage
-    L"資料夾中沒有圖片", // OSD_FolderEmpty
-    L"動態 SVG 已顯示為靜態圖像", // OSD_SvgStaticFallback
-    L"無損", // OSD_Lossless
-    L"重新編碼 (無損)", // OSD_ReencodedLossless
-    L"剪裁", // OSD_EdgeAdapted
-    L"有損", // OSD_Reencoded
-    L"拒絕存取 - 檔案可能被佔用或唯讀", // OSD_ReadOnly
-    L"變換不完美 (已進行邊緣優化)", // OSD_NotPerfect
-    L"跨屏模式: 開啟", // OSD_SpanOn
-    L"跨屏模式: 關閉", // OSD_SpanOff
-    L"打樣前 (Original)", // OSD_CompareBefore
-    L"打樣後 (Proofed)", // OSD_CompareAfter
-    L"已撤銷刪除", // OSD_UndoDeleteSuccess
-    L"撤銷刪除失敗", // OSD_UndoDeleteFailed
-    L"已撤銷重命名", // OSD_UndoRenameSuccess
-    L"撤銷重命名失敗", // OSD_UndoRenameFailed
-    L"已撤銷旋轉/翻轉", // OSD_UndoTransformSuccess
-    L"撤銷旋轉/翻轉失敗", // OSD_UndoTransformFailed
-    L"檢測到色彩溢出", // OSD_GamutDetected
-    L"色彩空間不匹配 / 設定檔解析失敗", // OSD_GamutIncompatible
-    L"色彩溢出分析失敗", // OSD_GamutFailed
-    L"順時針旋轉 90\x00B0", // Action_RotateCW
-    L"逆時針旋轉 90\x00B0", // Action_RotateCCW
-    L"旋轉 180\x00B0", // Action_Rotate180
-    L"水平翻轉", // Action_FlipH
-    L"垂直翻轉", // Action_FlipV
-    L"儲存變更?", // Dialog_SaveTitle
-    L"圖像已被修改。是否儲存變更?", // Dialog_SaveContent
-    L"儲存", // Dialog_ButtonSave
-    L"另存為...", // Dialog_ButtonSaveAs
-    L"放棄", // Dialog_ButtonDiscard
-    L"繼續", // Dialog_ButtonContinue
-    L"裁剪修改未儲存，是否儲存變更？", // Dialog_CropUnsavedTitle
-    L"另存圖片", // Dialog_SaveAsTitle
-    L"儲存與匯出", // Dialog_ExportTitle
-    L"覆蓋儲存", // Dialog_ButtonOverwrite
-    L"嵌入 ICC 設定", // Dialog_EmbedICC
-    L"大小: 估算中...", // Dialog_SizeEstimating
-    L"匯出錯誤", // Dialog_ExportError
-    L"複製選區 (Ctrl+C)", // Toolbar_Tooltip_CropCopy
-    L"儲存 (Ctrl+S)", // Toolbar_Tooltip_CropSave
-    L"應用 (Enter)", // Toolbar_Tooltip_CropApply
-    L"退出 (Esc)", // Toolbar_Tooltip_CropCancel
-    L"已進入裁剪模式", // OSD_EnterCropMode
-    L"已複製裁剪選區", // OSD_CropCopied
-    L"裁剪", // Context_Crop
-    L"總是儲存無損變換", // Checkbox_AlwaysSaveLossless
-    L"總是儲存邊緣優化結果", // Checkbox_AlwaysSaveEdgeAdapted
-    L"總是儲存重新編碼結果", // Checkbox_AlwaysSaveLossy
-    L"直接放入回收站，不再確認", // Checkbox_NeverConfirmDelete
-    L"無法解碼 HEIC - 請安裝 HEVC 視訊延伸模組", // OSD_HEICCodecMissing
-    L"無法解碼 HEIC", // Dialog_HEICTitle
-    L"系統缺少 HEVC 視訊延伸模組。\\nQuickView " L"需要系統硬體加速以獲得最佳效能。", // Dialog_HEICContent
-    L"取得延伸模組 (免費)", // Dialog_HEICGetExtension
-    L"取消", // Dialog_Cancel
-    L"一般", // Settings_Tab_General
-    L"關於", // Settings_Tab_About
-    L"基礎", // Settings_Group_Foundation
-    L"啟動", // Settings_Group_Startup
-    L"習慣", // Settings_Group_Habits
-    L"語言", // Settings_Label_Language
-    L"單一實例模式", // Settings_Label_SingleInstance
-    L"檢查更新", // Settings_Label_CheckUpdates
-    L"更新通道", // Settings_Label_UpdateChannel
-    L"正式版", // Settings_Option_UpdateStable
-    L"預覽版 (Pre-release)", // Settings_Option_UpdatePreRelease
-    L"正式版：預覽版發布一段時間後未收到Bug報告，將發布正式版。\n預覽版：第一時間發布最新的代碼修改，用於收集您的測試反饋。注意，這些修改並未經過嚴格測試。", // Settings_Tooltip_PreRelease
-    L"循環導覽", // Settings_Label_NavLoopMode
-    L"排序方式", // Settings_Label_SortOrder
-    L"降冪", // Settings_Label_SortDescending
-    L"始終以檔名升序瀏覽封存檔案", // Settings_Label_SortArchivesByNameAscending
-    L"刪除前確認", // Settings_Label_ConfirmDel
-    L"可攜式模式 / 清理", // Settings_Label_Portable
-    L"可攜式模式與登錄檔清理：\n開啟後，QuickView " L"將以可攜式方式執行。程式将自動清理已有的登錄檔關聯，並禁用自動登錄檔修改功" L"能。同時，設定檔將存放在程式所在目錄而非 AppData 目錄。", // Settings_Tooltip_Portable
-    L"跨屏模式 (電視牆)", // Settings_Label_SpanDisplays
-    L"介面縮放", // Settings_Label_UIScale
-    L"需要重新啟動", // Settings_Status_RestartRequired
-    L"無寫入權限!", // Settings_Status_NoWritePerm
-    L"已啟用", // Settings_Status_Enabled
-    L"驅動技術", // Settings_Header_PoweredBy
-    L"開啟...\tCtrl+O", // Context_Open
-    L"開啟方式...", // Context_OpenWith
-    L"編輯\tE", // Context_Edit
-    L"在檔案總管中顯示", // Context_ShowInExplorer
-    L"開啟資料夾", // Context_OpenFolder
-    L"複製像素\tCtrl+C", // Context_CopyPixels
-    L"複製檔案\tCtrl+Shift+C", // Context_CopyFile
-    L"複製像素\tCtrl+C", // Context_CopyImage
-    L"複製路徑\tCtrl+Alt+C", // Context_CopyPath
-    L"列印\tCtrl+P", // Context_Print
-    L"順時針旋轉 90\x00B0\tR", // Context_RotateCW
-    L"逆時針旋轉 90\x00B0\tShift+R", // Context_RotateCCW
-    L"水平翻轉\tH", // Context_FlipH
-    L"垂直翻轉\tV", // Context_FlipV
-    L"變換", // Context_Transform
-    L"實際大小 (100%)\t1 / Z", // Context_ActualSize
-    L"適應螢幕\t0 / F", // Context_FitToScreen
-    L"適應視窗", // Context_FitWindow
-    L"填滿視窗", // Context_FillWindow
-    L"放大\t+ / Ctrl +", // Context_ZoomIn
-    L"縮小\t- / Ctrl -", // Context_ZoomOut
-    L"鎖定視窗", // Context_LockWindow
-    L"視窗置頂\tCtrl+T", // Context_AlwaysOnTop
-    L"HUD 照片牆\tT", // Context_HUDGallery
-    L"簡略資訊面板\tTab", // Context_LiteInfoPanel
-    L"詳細資訊面板\tI", // Context_FullInfoPanel
-    L"渲染 RAW", // Context_RenderRAW
-    L"像素畫模式", // Context_PixelArtMode
-    L"色彩空間", // Context_ColorSpace
-    L"全螢幕\tF11", // Context_Fullscreen
-    L"檢視", // Context_View
-    L"填滿", // Context_WallpaperFill
-    L"適應", // Context_WallpaperFit
-    L"並排", // Context_WallpaperTile
-    L"設為桌布", // Context_SetAsWallpaper
-    L"重新命名\tF2", // Context_Rename
-    L"修復副檔名", // Context_FixExtension
-    L"刪除\tDel", // Context_Delete
-    L"撤銷刪除\tCtrl+Z", // Context_UndoDelete
-    L"撤銷重命名\tCtrl+Z", // Context_UndoRename
-    L"撤銷旋轉/翻轉\tCtrl+Z", // Context_UndoTransform
-    L"撤銷\tCtrl+Z", // Context_Undo
-    L"排序方式", // Context_SortBy
-    L"導覽順序", // Context_NavOrder
-    L"升冪", // Context_SortAscending
-    L"降冪", // Context_SortDescending
-    L"設定...", // Context_Settings
-    L"對比模式\tC", // Context_CompareMode
-    L"臨摹模式\tCtrl+Shift+O", // Context_OverlayMode
-    L"在對比模式中打開", // Context_GalleryOpenCompare
-    L"在新視窗中打開", // Context_GalleryOpenNewWindow
-    L"結束\tMButton/Esc", // Context_Exit
-    L"退出滑鼠穿透", // Menu_ExitPassthrough
-    L"滑鼠穿透模式", // Dialog_PassthroughTitle
-    L"滑鼠操作將透傳至底層窗口。\n只能通過全局快捷鍵 (Shift+Esc) 或任務欄菜單退出該模式。\n\n是否繼續？", // Dialog_PassthroughContent
-    L"滑鼠穿透：開啟 (Shift+Esc 退出)", // OSD_PassthroughOn
-    L"滑鼠穿透：關閉", // OSD_PassthroughOff
-    L"臨摹模式：開啟", // OSD_OverlayModeOn
-    L"臨摹模式：關閉", // OSD_OverlayModeOff
-    L"不透明度", // OSD_Opacity
-    L"放大 (臨摹)", // Toolbar_Tooltip_OverlayZoomIn
-    L"縮小 (臨摹)", // Toolbar_Tooltip_OverlayZoomOut
-    L"增加不透明度", // Toolbar_Tooltip_OverlayAlphaUp
-    L"減小不透明度", // Toolbar_Tooltip_OverlayAlphaDown
-    L"進入滑鼠穿透", // Toolbar_Tooltip_OverlayPassthroughOn
-    L"退出滑鼠穿透", // Toolbar_Tooltip_OverlayPassthroughOff
-    L"退出臨摹模式", // Toolbar_Tooltip_OverlayExit
-    L"錯誤", // Message_SaveErrorTitle
-    L"儲存檔案失敗。檔案是否被佔用?", // Message_SaveErrorContent
-    L"上一張 (方向鍵左)", // Toolbar_Tooltip_Prev
-    L"下一張 (方向鍵右)", // Toolbar_Tooltip_Next
-    L"向左旋轉 (Shift+R)", // Toolbar_Tooltip_RotateL
-    L"向右旋轉 (R)", // Toolbar_Tooltip_RotateR
-    L"水平翻轉 (H)", // Toolbar_Tooltip_FlipH
-    L"鎖定視窗(臨時)", // Toolbar_Tooltip_Lock
-    L"解鎖視窗", // Toolbar_Tooltip_Unlock
-    L"縮圖 (T)", // Toolbar_Tooltip_Gallery
-    L"資訊面板", // Toolbar_Tooltip_Info
-    L"RAW: 快速預覽 (點選切換完整)", // Toolbar_Tooltip_RawPreview
-    L"RAW: 完整解碼 (點選切換預覽)", // Toolbar_Tooltip_RawFull
-    L"RAW: 檢視配對 RAW (完整解碼)", // Toolbar_Tooltip_RawPairView
-    L"RAW: 返回配對圖像", // Toolbar_Tooltip_RawPairBack
-    L"副檔名不符 (修復)", // Toolbar_Tooltip_FixExtension
-    L"固定工具列", // Toolbar_Tooltip_Pin
-    L"取消固定工具列", // Toolbar_Tooltip_Unpin
-    L"顯示色彩溢出高亮區域", // Toolbar_Tooltip_GamutWarning
-    L"普通模式", // Toolbar_Tooltip_NormalMode
-    L"對比模式", // Toolbar_Tooltip_CompareMode
-    L"單頁模式", // Toolbar_Tooltip_SinglePage
-    L"雙頁模式", // Toolbar_Tooltip_DualPage
-    L"在選區開啟新圖", // Toolbar_Tooltip_CompareOpen
-    L"交換左右", // Toolbar_Tooltip_CompareSwap
-    L"切換佈局", // Toolbar_Tooltip_CompareLayout
-    L"對比資訊", // Toolbar_Tooltip_CompareInfo
-    L"刪除所選圖片", // Toolbar_Tooltip_CompareDelete
-    L"放大 (微調)", // Toolbar_Tooltip_CompareZoomIn
-    L"縮小 (微調)", // Toolbar_Tooltip_CompareZoomOut
-    L"縮放同步: 開", // Toolbar_Tooltip_CompareSyncZoomOn
-    L"縮放同步: 關", // Toolbar_Tooltip_CompareSyncZoomOff
-    L"平移同步: 開", // Toolbar_Tooltip_CompareSyncPanOn
-    L"平移同步: 關", // Toolbar_Tooltip_CompareSyncPanOff
-    L"切換沉浸聚光燈", // Toolbar_Tooltip_SlideshowImmersiveToggle
-    L"退出幻燈片模式", // Toolbar_Tooltip_SlideshowExit
-    L"退出對比", // Toolbar_Tooltip_CompareExit
-    L"播放動畫", // Toolbar_Tooltip_AnimPlay
-    L"暫停動畫", // Toolbar_Tooltip_AnimPause
-    L"上一幀", // Toolbar_Tooltip_AnimPrev
-    L"下一幀", // Toolbar_Tooltip_AnimNext
-    L"髒矩形偵錯: 開", // Toolbar_Tooltip_AnimDirtyOn
-    L"髒矩形偵錯: 關", // Toolbar_Tooltip_AnimDirtyOff
-    L"動畫速度調節", // Toolbar_Tooltip_AnimSpeed
-    L"效能", // Settings_Header_Performance
-    L"專業工具", // Settings_Header_Professional
-    L"Memory Reclaim Strategy:", // Settings_Label_MemoryReclaim
-    L"Smart (Auto)", // Settings_Option_MemSmart
-    L"Aggressive (Max Perf)", // Settings_Option_MemAggressive
-    L"On-Demand (Min RAM)", // Settings_Option_MemOnDemand
-    L"Smart: Balance performance and RAM.\nAggressive: Maximize performance, high memory usage.\nOn-Demand: Release memory immediately when idle.", // Settings_Tooltip_MemoryReclaim
-    L"動畫模式下顯示髒矩形按鈕", // Settings_Label_ShowDirtyRect
-    L"在動畫模式工具欄顯示髒矩形調試按鈕，用於觀察局部刷新區域。", // Settings_Tooltip_ShowDirtyRect
-    L"已複製!", // OSD_Copied
-    L"像素已複製到剪貼簿!", // OSD_PixelsCopied
-    L"正在擷取原圖像素...", // OSD_PixelsExtracting
-    L"檔案已複製到剪貼簿!", // OSD_FileCopied
-    L"座標已複製!", // OSD_CoordinatesCopied
-    L"檔案路徑已複製!", // OSD_FilePathCopied
-    L"縮放: 100%", // OSD_Zoom100
-    L"縮放: 適應螢幕", // OSD_ZoomFit
-    L"縮放: 適應視窗", // OSD_ZoomFitWindow
-    L"縮放: 填滿視窗", // OSD_ZoomFill
-    L"列印: 請在開啟的應用程式中使用 Ctrl+P", // OSD_PrintInstruction
-    L"已移至資源回收筒", // OSD_MovedToRecycleBin
-    L"視窗已鎖定", // OSD_WindowLocked
-    L"視窗已解鎖", // OSD_WindowUnlocked
-    L"視窗置頂: 開", // OSD_AlwaysOnTopOn
-    L"視窗置頂: 關", // OSD_AlwaysOnTopOff
-    L"桌布已設定", // OSD_WallpaperSet
-    L"設定桌布失敗", // OSD_WallpaperFailed
-    L"重新命名成功", // OSD_Renamed
-    L"重新命名失敗", // OSD_RenameFailed
-    L"副檔名已修復", // OSD_ExtensionFixed
-    L"已恢復原狀", // OSD_Restored
-    L"已是第一張", // OSD_FirstImage
-    L"已是最後一張", // OSD_LastImage
-    L"高畫質", // OSD_HD
-    L"縮放: ", // OSD_ZoomPrefix
-    L"播放中", // OSD_AnimPlaying
-    L"已暫停 (檢查模式: Alt+左右方向鍵逐幀查看)", // OSD_AnimPaused
-    L"髒矩形: 開", // OSD_AnimDirtyOn
-    L"髒矩形: 關", // OSD_AnimDirtyOff
-    L"跨越顯示器 (電視牆模式)\tCtrl+F11", // Context_SpanDisplays
-    L"界面", // Settings_Tab_Visuals
-    L"操作", // Settings_Tab_Controls
-    L"圖像", // Settings_Tab_Image
-    L"進階", // Settings_Tab_Advanced
-    L"背景", // Settings_Header_Backdrop
-    L"視窗", // Settings_Header_Window
-    L"鎖定視窗時", // Settings_Header_WindowLock
-    L"面板", // Settings_Header_Panel
-    L"滑鼠", // Settings_Header_Mouse
-    L"邊緣", // Settings_Header_Edge
-    L"渲染", // Settings_Header_Render
-    L"高動態範圍 (HDR)", // Settings_Header_Hdr
-    L"提示", // Settings_Header_Prompts
-    L"系統", // Settings_Header_System
-    L"功能", // Settings_Header_Features
-    L"透明度", // Settings_Header_Transparency
-    L"玻璃引擎 (GPU加速)", // Settings_Header_GeekGlass
-    L"啟用玻璃渲染", // Settings_Label_EnableGeekGlass
-    L"交互動畫", // Settings_Label_GlassUIAnimations
-    L"核心材質", // Settings_Header_CoreMaterial
-    L"模糊半徑", // Settings_Label_BlurSigma
-    L"啟用玻璃渲染後生效", // Settings_Status_GlassDisabled
-    L"厚度 (濃度)", // Settings_Label_TintDensity
-    L"控制玻璃底色深度。", // Settings_Tooltip_TintDensity
-    L"光澤亮度", // Settings_Label_SpecularOpacity
-    L"控制玻璃面板光澤強度。", // Settings_Tooltip_SpecularOpacity
-    L"陰影強度", // Settings_Label_ShadowIntensity
-    L"調節 GPU 加速物理落影的深淺。", // Settings_Tooltip_ShadowIntensity
-    L"邊緣", // Settings_Header_VectorAssets
-    L"線框粗细", // Settings_Label_VectorStrokeWeight
-    L"標準 (1.5px)", // Settings_Option_StrokeStandard
-    L"極細 (1.0px)", // Settings_Option_StrokeFine
-    L"玻璃著色", // Settings_Header_GlassTint
-    L"著色模式", // Settings_Label_TintProfile
-    L"自動", // Settings_Option_TintAuto
-    L"自定義", // Settings_Option_TintCustom
-    L"自定義底色", // Settings_Label_GlassCustomColor
-    L"材質濃度", // Settings_Header_DensityMatrix
-    L"信息提示 (OSD)", // Settings_Label_OsdDensity
-    L"控制加載進度條、播放提示、縮放資訊等浮層的厚度。", // Settings_Tooltip_OsdDensity
-    L"工具面板", // Settings_Label_PanelsDensity
-    L"控制底部工具列、資訊面板、畫廊底片以及右上角窗口控制按鈕的厚度。", // Settings_Tooltip_PanelsDensity
-    L"模態視窗", // Settings_Label_ModalsDensity
-    L"控制設定面板、幫助面板和對話方塊等彈出窗口的厚度。", // Settings_Tooltip_ModalsDensity
-    L"右鍵選單", // Settings_Label_MenusDensity
-    L"控制右鍵菜單材質濃度（僅在 Acrylic 材質下可以調節）。", // Settings_Tooltip_MenusDensity
-    L"主題", // Settings_Tab_Theme
-    L"主題模式", // Settings_Label_ThemeMode
-    L"自動", // Settings_Option_ThemeAuto
-    L"深色", // Settings_Option_ThemeDark
-    L"淺色", // Settings_Option_ThemeLight
-    L"自定義", // Settings_Option_ThemeCustom
-    L"環境遮罩", // Settings_Label_AmbientDimmer
-    L"在畫廊模式、設定視窗或對話方塊開啟時，為背景添加沉浸式陰影。", // Settings_Tooltip_AmbientDimmer
-    L"強調色", // Settings_Label_AccentColor
-    L"文字顏色", // Settings_Label_TextColor
-    L"匯入匯出 (.qvtheme)", // Settings_Header_ThemeManagement
-    L"匯出", // Settings_Action_ExportTheme
-    L"匯入", // Settings_Action_ImportTheme
-    L"畫布顏色", // Settings_Label_CanvasColor
-    L"疊加層", // Settings_Label_Overlay
-    L"顯示網格", // Settings_Label_ShowGrid
-    L"視窗置頂", // Settings_Label_AlwaysOnTop
-    L"鎖定視窗", // Settings_Label_LockWindow
-    L"此處控制程式啟動時預設鎖定視窗邊框，不跟隨圖片縮放。", // Settings_Tooltip_LockWindow
-    L"自動隱藏標題列", // Settings_Label_AutoHideTitle
-    L"圓角視窗", // Settings_Label_RoundedCorners
-    L"顯示組件邊框", // Settings_Label_UIBorders
-    L"控制主視窗及右鍵選單圓角，僅支援Windows 11。", // Settings_Tooltip_RoundedCorners
-    L"鎖定底部工具列", // Settings_Label_LockToolbar
-    L"預設最小視窗寬度", // Settings_Label_WindowMinSize
-    L"預設最大啟動尺寸 (%)", // Settings_Label_WindowMaxSizePercent
-    L"顯示邊界溢出指示器", // Settings_Label_ShowBorderIndicator
-    L"在圖片超出視窗邊框的方向上顯示提示線條。", // Settings_Tooltip_ShowBorderIndicator
-    L"顯示縮略導航圖", // Settings_Label_ShowNavigator
-    L"滑鼠位於導航圖上方時，使用滾輪 / 側鍵滾輪 (Shift + 滾輪) 可直接平移圖片", // Settings_Tooltip_ShowNavigator
-    L"自動", // Settings_Option_NavigatorAuto
-    L"開啟", // Settings_Option_NavigatorOn
-    L"關閉", // Settings_Option_NavigatorOff
-    L"導航時保持視窗尺寸不變", // Settings_Label_KeepWindowSizeOnNav
-    L"記住最後視窗位置和尺寸", // Settings_Label_RememberLastWindowSizeAndPosition
-    L"小於視窗尺寸圖片適應視窗", // Settings_Label_UpscaleSmallImagesWhenLocked
-    L"起動視窗平滑縮放 (GPU)", // Settings_Label_EnableSmoothScaling
-    L"EXIF 面板模式", // Settings_Label_ExifMode
-    L"工具列資訊預設值", // Settings_Label_ToolbarInfoDefault
-    L"開啟時全螢幕", // Settings_Label_OpenFullScreenMode
-    L"全螢幕縮放模式", // Settings_Label_FullScreenZoomMode
-    L"適應螢幕", // Settings_Option_FitScreen
-    L"自動", // Settings_Option_AutoFit
-    L"反轉滾輪", // Settings_Label_InvertWheel
-    L"縮放 100% 吸附阻尼", // Settings_Label_ZoomSnapDamping
-    L"視窗縮放以滑鼠為中線", // Settings_Label_MouseAnchorZoom
-    L"右鍵拖曳縮放", // Settings_Label_RightButtonDragZoom
-    L"滾輪縮放速度", // Settings_Label_WheelZoomSpeed
-    L"拇指滾輪", // Settings_Label_ThumbWheel
-    L"可用 Shift + 滾輪 替代", // Settings_Tooltip_ThumbWheel
-    L"Alt + 滾輪可臨時調整縮放速度", // Settings_Tooltip_WheelZoomSpeed
-    L"可用 Ctrl + 左鍵 替代", // Settings_Tooltip_MiddleDrag
-    L"雙擊", // Settings_Label_DoubleClick
-    L"智能雙擊", // Settings_Option_DoubleClick_Smart
-    L"滾輪模式一", // Settings_Option_DoubleClick_WheelMode1
-    L"滾輪模式二", // Settings_Option_DoubleClick_WheelMode2
-    L"智能雙擊：自動在 適應螢幕 / 100% / 初始尺寸間切換；\n滾輪模式一：雙擊快速互換主滾輪與拇指滾輪功能；\n滾輪模式二：雙擊切換主滾輪上下平移、拇指滾輪左右平移；\n提示：Shift + 滾輪 相當於 拇指滾輪。", // Settings_Tooltip_DoubleClick
-    L"控制按鍵平移和滾輪平移速度", // Settings_Tooltip_PanStepNormal
-    L"主滾輪：切圖；拇指滾輪/shift+滾輪：縮放", // OSD_WheelMode1_NextPrevZoom
-    L"主滾輪：縮放；拇指滾輪/shift+滾轮：切圖", // OSD_WheelMode1_ZoomNextPrev
-    L"滾輪：平移模式", // OSD_WheelMode2_Pan
-    L"滾輪：預設模式", // OSD_WheelMode2_Default
-    L"右鍵拖曳縮放速度", // Settings_Label_RightDragZoomSpeed
-    L"縮放速度(臨時): ", // OSD_WheelZoomSpeed
-    L"臨時調節縮放速度", // Help_Action_AdjustZoomSpeed
-    L"臨時鎖定視窗縮放", // Help_Action_LockWindowZoom
-    L"反轉側鍵", // Settings_Label_InvertButtons
-    L"使用固定的縮放級別", // Settings_Label_UseFixedZoom
-    L"啟用時，Alt + 滾輪將執行普通縮放而非修改縮放速率。", // Settings_Tooltip_UseFixedZoom
-    L"  └  自定義縮放級別", // Settings_Label_FixedZoomLevels
-    L"編輯固定縮放級別", // Dialog_FixedZoomTitle
-    L"輸入逗號分隔的縮放級別 (例如 0.5, 1, 2):", // Dialog_FixedZoomMsg
-    L"放大插值演算法", // Settings_Label_ZoomModeIn
-    L"縮小插值演算法", // Settings_Label_ZoomModeOut
-    L"左鍵拖曳", // Settings_Label_LeftDrag
-    L"中鍵拖曳", // Settings_Label_MiddleDrag
-    L"中鍵點選", // Settings_Label_MiddleClick
-    L"邊緣點選翻頁", // Settings_Label_EdgeNavClick
-    L"顯示 OSD 提示", // Settings_Label_ShowOSD
-    L"在對比模式下停用", // Settings_Label_DisableEdgeNavInCompare
-    L"翻頁指示器", // Settings_Label_NavIndicator
-    L"自動旋轉 (EXIF)", // Settings_Label_AutoRotate
-    L"色彩管理 (CMS)", // Settings_Label_CMS
-    L"高級色彩與 HDR (scRGB)", // Settings_Label_AdvancedColor
-    L"HDR 色調映射", // Settings_Label_HdrToneMapping
-    L"Spline 拐點", // Settings_Label_HdrSplineKnee
-    L"HDR 降級策略 (Tone Mapping)：\n當 HDR 圖片超出顯示器極限時的對映方式。\n" L"Spline 樣條對映：採用分段樣條曲線，實現高保真的高光細節還原（推薦）。\n" L"色度模式：保持嚴格亮度對映，超出顯示器極限的亮度將被直接裁剪。\n" L"BT.2390 EETF：ITU-R BT.2390 標準高保真降級曲線。", // Settings_Tooltip_HdrToneMapping
-    L"0 = 自動模式（根據圖片亮度自動計算）。\n數值表示顯示器峰值亮度的比例。該拐點以下的亮度將進行 1:1 絕對映射，拐點以上的亮度將使用平滑曲線進行壓縮映射。\n（推薦值：0.4 - 0.75）", // Settings_Tooltip_HdrSplineKnee
-    L"HDR 峰值亮度 (Nits)", // Settings_Label_HdrPeakNitsOverride
-    L"設為 0 表示通過系統自動檢測亮度.", // Settings_Tooltip_HdrPeakNitsOverride
-    L"HDR 峰值百分位", // Settings_Label_HdrPeakPercentile
-    L"丟棄極少數過亮的像素以提升整體亮度 (mpv 預設: 99.995%).", // Settings_Tooltip_HdrPeakPercentile
-    L"100% (絕對峰值)", // Settings_Option_HdrPeakPercentile_100
-    L"99.995% (穩定)", // Settings_Option_HdrPeakPercentile_99995
-    L"99.9% (激進)", // Settings_Option_HdrPeakPercentile_999
-    L"高光去飽和範圍", // Settings_Label_HdrDesatThreshold
-    L"高光去飽和開始介入的亮度閾值。0.0 表示對所有亮度進行去飽和，1.0 表示完全不進行去飽和。推薦預設值 0.18。", // Settings_Tooltip_HdrDesatThreshold
-    L"高光去飽和強度", // Settings_Label_HdrMaxDesat
-    L"高光去飽和的最大強度。0.0 表示不進行去飽和，1.0 表示在高光處完全去飽和為白色。推薦預設值 0.75。", // Settings_Tooltip_HdrMaxDesat
-    L"色度", // Settings_Option_HdrColorimetric
-    L"樣條映射", // Settings_Option_HdrSpline
-    L"BT.2390 (EETF)", // Settings_Option_HdrLegacyReinhard
-    L"無配置圖片的預設回退", // Settings_Label_CmsFallback
-    L"自訂軟打樣配置 (.icc)", // Settings_Label_CustomProof
-    L"軟打樣預覽", // Context_SoftProofing
-    L"打樣設定檔", // Context_SoftProofProfile
-    L"自訂...", // Context_SoftProofCustom
-    L"敬請期待", // Settings_Value_ComingSoon
-    L"強制 RAW 解碼", // Settings_Label_ForceRaw
-    L"RAW+JPEG 配對", // Settings_Label_PairRawJpeg
-    L"將 RAW 與同名的相機直出圖 (JPEG/HEIF) 顯示為同一張照片。\n清單中僅保留直出圖，並標註 RAW 格式（如 +CR3）；背景會校驗兩者拍攝時間，不一致的配對自動拆開。\n可用 RAW 工具列按鈕或其快速鍵切換相機直出與本機渲染，也可用配對比較快速鍵並排檢視。", // Settings_Tooltip_PairRawJpeg
-    L"曝光度 (亮度)", // Settings_Label_Exposure
-    L"調節圖像亮度 (曝光補償)。範圍: 0.18x 至 10.0x。", // Settings_Tooltip_Exposure
-    L"新增至開啟方式", // Settings_Label_AddToOpenWith
-    L"自訂圖片編輯器", // Settings_Label_CustomEditor
-    L"選擇編輯器", // Context_SelectEditor
-    L"編輯器啟動失敗，請重新配置。", // OSD_EditorLaunchFailed
-    L"新增", // Settings_Action_Add
-    L"已新增", // Settings_Action_Added
-    L"可攜式模式下停用", // Settings_Status_DisabledInPortable
-    L"啟用偵錯 HUD (F12)", // Settings_Label_DebugHUD
-    L"預先載入系統", // Settings_Label_Prefetch
-    L"資訊面板", // Settings_Label_InfoPanelAlpha
-    L"工具列", // Settings_Label_ToolbarAlpha
-    L"設定選單", // Settings_Label_SettingsAlpha
-    L"重設所有設定", // Settings_Label_Reset
-    L"還原", // Settings_Action_Restore
-    L"完成", // Settings_Action_Done
-    L"匯入匯出 (.ini)", // Settings_Header_ConfigManagement
-    L"無管理", // Settings_Option_CmsUnmanaged
-    L"sRGB", // Settings_Option_CmssRGB
-    L"Display P3", // Settings_Option_CmsP3
-    L"Adobe RGB (1998)", // Settings_Option_CmsAdobeRGB
-    L"灰度模式 (影調檢查)", // Settings_Option_CmsGray
-    L"ProPhoto RGB", // Settings_Option_CmsProPhoto
-    L"渲染意圖", // Settings_Label_CmsIntent
-    L"色彩溢出檢測", // Settings_Label_GamutWarning
-    L"分析並標出溢出區域：關閉、僅在軟打樣模式下檢測（預設）、或者同時檢測軟打樣和螢幕色彩溢出。", // Settings_Tooltip_GamutWarning
-    L"自動提示色彩溢出", // Settings_Label_GamutAutoPrompt
-    L"檢測到溢出後彈出 OSD 提示。高亮區域可透過工具欄按鈕手動查看。", // Settings_Tooltip_GamutAutoPrompt
-    L"溢出高亮顏色", // Settings_Label_GamutColor
-    L"相對色度", // Settings_Option_CmsIntentRelative
-    L"感知意圖", // Settings_Option_CmsIntentPerceptual
-    L"啟用色彩管理 (Color Management System)。\n開啟後，將透過 GPU 進行高精度色彩空間轉換以還原真實色彩。\n關閉可降低效能消耗，但在廣色域螢幕上可能導致顏色過飽和。", // Settings_Tooltip_CMS
-    L"色彩空間轉換策略 (Rendering Intent)。\n感知模式 (Perceptual)：壓縮超出色域的顏色，保留細節和漸變，適合照片。\n相對比色 (Relative Colorimetric)：保留在色域內的顏色，超出部分裁剪，適合 UI 和圖示。\n注意：僅當圖像或顯示器使用包含 LUT（查找表）的高級 ICC 配置文件時，切換此選項才會有視覺差異。普通矩陣型配置文件會自動回退至相對色度。", // Settings_Tooltip_CmsIntent
-    L"啟用 16-bit 浮點渲染管線 (scRGB)。\n開啟後，在支援 HDR 的顯示器上能突破 SDR 亮度限制，完美呈現照片高光。\n關閉將強制降級對映至 SDR 輸出。\n注意：開啟會增加顯示卡記憶體佔用。", // Settings_Tooltip_AdvancedColor
-    L"自動：圖片小於螢幕尺寸時 100% 縮放，圖片大於螢幕尺寸時適應螢幕尺寸縮放。", // Settings_Tooltip_ZoomAuto
-    L"檢查更新", // Settings_Action_CheckUpdates
-    L"檢視更新", // Settings_Action_ViewUpdate
-    L"檢查中...", // Settings_Status_Checking
-    L"已是最新", // Settings_Status_UpToDate
-    L"GitHub 儲存庫", // Settings_Link_GitHub
-    L"回報問題", // Settings_Link_ReportIssue
-    L"快速鍵", // Settings_Link_Hotkeys
-    L"版本", // Settings_Label_Version
-    L"建置", // Settings_Label_Build
-    L"黑色", // Settings_Option_Black
-    L"特效", // Settings_Option_Effects
-    L"右鍵菜單", // Settings_Label_ContextMenuBackdrop
-    L"特效類型", // Settings_Label_CanvasEffectStyle
-    L"Mica 與 Mica Alt 特效僅在 Windows 11 上支援；Acrylic（亞克力）相比 Mica/Mica Alt 會佔用更多系統資源。", // Settings_Tooltip_BackdropEffectsTip
-    L"白色", // Settings_Option_White
-    L"網格", // Settings_Option_Grid
-    L"自訂", // Settings_Option_Custom
-    L"關閉", // Settings_Option_Off
-    L"開啟", // Settings_Option_On
-    L"簡略", // Settings_Option_Lite
-    L"詳細", // Settings_Option_Full
-    L"僅大圖", // Settings_Option_LargeOnly
-    L"全部", // Settings_Option_All
-    L"軟打樣", // Settings_Option_SoftProofing
-    L"視窗", // Settings_Option_Window
-    L"平移", // Settings_Option_Pan
-    L"無", // Settings_Option_None
-    L"結束", // Settings_Option_Exit
-    L"箭頭", // Settings_Option_Arrow
-    L"游標", // Settings_Option_Cursor
-    L"手動", // Settings_Option_Manual
-    L"自動 (檔案總管)", // Settings_Option_SortAuto
-    L"檔案名稱", // Settings_Option_SortName
-    L"修改時間", // Settings_Option_SortModified
-    L"拍攝時間 (EXIF)", // Settings_Option_SortDateTaken
-    L"大小", // Settings_Option_SortSize
-    L"類型", // Settings_Option_SortType
-    L"資料夾內循環", // Settings_Option_NavLoop
-    L"穿透子資料夾", // Settings_Option_NavThrough
-    L"線性 (Linear)：基礎平滑", // Settings_Option_Linear
-    L"最近鄰 (Nearest)：極端銳利", // Settings_Option_Nearest
-    L"高品質雙三次 (HQ Cubic)：極端平滑", // Settings_Option_HighQualityCubic
-    L"自動", // Settings_Option_ZoomAuto
-    L"自動", // Settings_Option_Auto
-    L"節能", // Settings_Option_Eco
-    L"平衡", // Settings_Option_Balanced
-    L"極速", // Settings_Option_Ultra
-    L"鍵盤快速鍵", // Help_Header_Shortcuts
-    L"滑鼠操作", // Help_Header_Mouse
-    L"切換圖片", // Help_Item_NextPrev
-    L"縮放", // Help_Item_Zoom
-    L"平移圖片", // Help_Item_Pan
-    L"旋轉", // Help_Item_Rotate
-    L"適應螢幕", // Help_Item_Fit
-    L"刪除圖片", // Help_Item_Delete
-    L"全螢幕", // Help_Item_Fullscreen
-    L"關閉", // Help_Item_Close
-    L"左鍵", // Help_Mouse_Left
-    L"中鍵", // Help_Mouse_Middle
-    L"滾輪", // Help_Mouse_Wheel
-    L"右鍵", // Help_Mouse_Right
-    L"右鍵上下拖曳", // Help_Mouse_RightVerticalDrag
-    L"平移視窗/退出全屏/退出最大化", // Help_Action_MoveWindow
-    L"平移圖片", // Help_Action_PanImage
-    L"右鍵選單", // Help_Action_ContextMenu
-    L"切換圖片", // Help_Action_NextPrev
-    L"縮放", // Help_Action_Zoom
-    L"智能縮放 (100% / 適應窗口 / 恢復)", // Help_Action_SmartZoom
-    L"復制圖像", // Help_Desc_Copy
-    L"編輯", // Help_Desc_Edit
-    L"提示與術語", // Help_Header_Tips
-    L"注意：快捷鍵或右鍵操作僅影響當前進程，設置中的配置為程序永久配置。", // Help_Tip_ContextScope
-    L"旋轉說明：/邊緣適配/有損 " L"是由於某些圖片格式特性造成的無法完整無損操作。邊緣適配通常只損失邊緣N個" L"像素，接近無損。", // Help_Tip_Rotation
-    L"電視牆模式 " L"(Ctrl+F11)：將所有顯示器視為一塊屏幕。若關閉按鈕位於顯示區外 " L"(如L型排布)，雙擊即可退出全屏。", // Help_Tip_VideoWall
-    L"臨摹模式/薄膜模式：開啟後圖像將變為半透明並露出底部元素，此時您可調整尺寸或透明度。" L"點擊工具列中的滑鼠穿透模式開關，可進入滑鼠穿透模式，此時除了退出快捷鍵 Shift+Esc 外的任何按鍵和滑鼠輸入均被忽略，" L"QuickView 將變為一層透明薄膜覆蓋層。", // Help_Tip_DesignerMode
-    L"色彩溢出檢測：檢測當前圖片是否超出顯示器或軟打樣配置的色域。模式：關閉、僅軟打樣（預設）、全部（包含螢幕）。可從工具列手動開關。", // Help_Tip_GamutDetection
-    L"RAW 按鈕：QuickView 默認顯示 RAW " L"預覽圖。點擊此按鈕將使用默認參數完整渲染 RAW 文件 " L"(結果可能與預覽不同)。", // Help_Tip_Raw
-    L"JPEG 壓縮率：信息面板顯示的 Q " L"值是逆向推算值。因算法差異，可能與保存時的數值略有出入 (例如 PS 100% " L"可能顯示為 98)，屬正常情況。", // Help_Tip_JpegQ
-    L"軟打樣對比：軟打樣後進入對比模式，將自動進行打樣前後對比。", // Help_Tip_SoftProofCompare
-    L"發現新版本！", // Dialog_UpdateTitle
-    L"v%s 已準備就緒", // Dialog_UpdateContent
-    L"更新日誌", // Dialog_UpdateLogHeader
-    L"立即更新", // Dialog_ButtonUpdate
-    L"稍後", // Dialog_ButtonLater
-    L"在 GitHub 點星", // Dialog_ButtonStar
-    L"QuickView 源自熱愛", // Dialog_Update_LoveTitle
-    L"我利用業餘時間維護 QuickView，只因我相信 Windows " L"值得擁有一個更快、更純粹的看圖工具。 " L"我沒有推廣預算，也沒有團隊。如果您喜歡這次更新，在 GitHub " L"上點一顆星或分享給朋友，就是對我最大的支持。", // Dialog_Update_LoveMessage
-    L"對比模式", // Help_Item_Compare
-    L"第一張 / 最後一張圖片", // Help_Item_FirstLast
-    L"物理屬性", // HUD_Group_Physical
-    L"科學指標", // HUD_Group_Scientific
-    L"光學與編碼", // HUD_Group_Encoding
-    L"邊緣清晰度 (拉普拉斯方差)", // HUD_Tip_Sharp_Desc
-    L"邊緣銳利，細節豐富", // HUD_Tip_Sharp_High
-    L"軟焦點或運動模糊", // HUD_Tip_Sharp_Low
-    L"> 500 為非常銳利", // HUD_Tip_Sharp_Ref
-    L"信息密度 (香農熵)", // HUD_Tip_Ent_Desc
-    L"複雜紋理或高噪點", // HUD_Tip_Ent_High
-    L"平坦區域或低細節", // HUD_Tip_Ent_Low
-    L"7.0-8.0 為高細節", // HUD_Tip_Ent_Ref
-    L"每像素比特數 (壓縮效率)", // HUD_Tip_BPP_Desc
-    L"低壓縮率 (保留更多原始數據)", // HUD_Tip_BPP_High
-    L"高壓縮率 (空間利用率更高)", // HUD_Tip_BPP_Low
-    L"24.0 (原始RGB), ~2.0-3.0 (高品質JPEG), ~0.5-1.5 (WebP/AVIF)", // HUD_Tip_BPP_Ref
-    L"高: ", // HUD_Label_High
-    L"低: ", // HUD_Label_Low
-    L"參考: ", // HUD_Label_Ref
-    L"圖庫底片帶 (頂部懸浮)", // Settings_Header_GalleryTrigger
-    L"觸發模式", // Settings_Label_GalleryTriggerMode
-    L"縮圖切圖時不自動隱藏", // Settings_Label_KeepGalleryVisibleOnThumbnailClick
-    L"開啟此功能將自動開啟「鎖定視窗」和「導覽時保持視窗尺寸不變」。", // Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick
-    L"自動懸停", // Settings_Option_GalleryTriggerAuto
-    L"熱點停留", // Settings_Option_GalleryTriggerDelay
-    L"點擊熱點", // Settings_Option_GalleryTriggerClick
-    L"停用", // Settings_Option_GalleryTriggerDisable
-    L"該功能在視窗小於 600x450 時將自動禁用。", // Settings_Tooltip_GalleryTrigger
-    L"觸發區域高度", // Settings_Label_GalleryTriggerAreaHeight
-    L"停留時長", // Settings_Label_GalleryDwellTime
-    L"退出延遲", // Settings_Label_GalleryExitDelay
-    L"畫廊最小尺寸", // Settings_Label_GalleryMinSize
-
-    L"開始播放幻燈片", // OSD_SlideshowStarted
-    L"停止播放幻燈片", // OSD_SlideshowStopped
-    L"繼續播放幻燈片", // OSD_SlideshowResumed
-    L"幻燈片已暫停", // OSD_SlideshowPaused
-    L"沉浸模式: 聚光燈", // OSD_ImmersiveSpotlight
-    L"沉浸模式: 普通", // OSD_ImmersiveNormal
-    L"打印任務已發送，您可以繼續瀏覽。", // OSD_PrintJobStarted
-    L"打印任务已发送完毕。", // OSD_PrintJobFinished
-    L"幻燈片模式", // Context_SlideshowMode
-    L"切換間隔 (秒)", // Settings_Label_SlideshowInterval
-    L"沉浸模式", // Settings_Label_SlideshowImmersive
-    L"自定義精簡信息欄", // Settings_Label_CustomLiteInfoPanel
-    L"自定義完整信息欄", // Settings_Label_CustomFullInfoPanel
-    L"完整/精簡信息欄縮放", // Settings_Label_InfoPanelScale
-    L"普通模式顯示項", // Settings_Label_ItemsInNormalMode
-    L"對比模式顯示項", // Settings_Label_ItemsInCompareMode
-    L"分隔符預設", // Settings_Label_SeparatorPreset
-    L"普通", // Settings_Option_SlideshowNormal
-    L"聚光燈", // Settings_Option_SlideshowSpotlight
-    L"放大鏡形狀", // Settings_Label_LoupeShape
-    L"正方形", // Settings_Option_LoupeShapeSquare
-    L"圓形", // Settings_Option_LoupeShapeCircle
-    L"按住快捷鍵並滾動滑鼠滾輪可調節放大鏡尺寸。", // Settings_Tooltip_LoupeHotkey
-    L"按住 Ctrl 並使用滑鼠左鍵拖曳可快速進入框選剪裁模式。", // Settings_Tooltip_CropModeHotkey
-};
-
-// ----------------------------------------------------------------
-// JP Table
-// ----------------------------------------------------------------
-static const LanguageTable Table_JA = {
-    L"画像が読み込まれていません", // OSD_NoImage
-    L"このフォルダーに画像がありません", // OSD_FolderEmpty
-    L"アニメーション SVG を静止画として表示しています", // OSD_SvgStaticFallback
-    L"ロスレス", // OSD_Lossless
-    L"再エンコード (ロスレス)", // OSD_ReencodedLossless
-    L"クロップ済み", // OSD_EdgeAdapted
-    L"非可逆", // OSD_Reencoded
-    L"アクセスが拒否されました - ファイルが使用中か読み取り専用の可能性があります", // OSD_ReadOnly
-    L"完全な変換ではありません (エッジ最適化済み)", // OSD_NotPerfect
-    L"ビデオウォール : オン", // OSD_SpanOn
-    L"ビデオウォール : オフ", // OSD_SpanOff
-    L"変更前 (オリジナル)", // OSD_CompareBefore
-    L"変更後 (校正済み)", // OSD_CompareAfter
-    L"削除の取り消しに成功しました", // OSD_UndoDeleteSuccess
-    L"削除の取り消しに失敗しました", // OSD_UndoDeleteFailed
-    L"名前の変更の取り消しに成功しました", // OSD_UndoRenameSuccess
-    L"名前の変更の取り消しに失敗しました", // OSD_UndoRenameFailed
-    L"回転/反転の取り消しに成功しました", // OSD_UndoTransformSuccess
-    L"回転/反転の取り消しに失敗しました", // OSD_UndoTransformFailed
-    L"色域外の色を検出しました", // OSD_GamutDetected
-    L"色域 : 互換性のないプロファイルか解析に失敗しました", // OSD_GamutIncompatible
-    L"色域 : 解析に失敗しました", // OSD_GamutFailed
-    L"右に90\x00B0回転", // Action_RotateCW
-    L"左に90\x00B0回転", // Action_RotateCCW
-    L"180\x00B0回転", // Action_Rotate180
-    L"左右反転", // Action_FlipH
-    L"上下反転", // Action_FlipV
-    L"変更を保存しますか？", // Dialog_SaveTitle
-    L"画像が変更されています。変更を保存しますか？", // Dialog_SaveContent
-    L"保存", // Dialog_ButtonSave
-    L"名前を付けて保存...", // Dialog_ButtonSaveAs
-    L"破棄", // Dialog_ButtonDiscard
-    L"続行", // Dialog_ButtonContinue
-    L"クロップの変更が保存されていません。保存しますか？", // Dialog_CropUnsavedTitle
-    L"画像を保存", // Dialog_SaveAsTitle
-    L"保存とエクスポート", // Dialog_ExportTitle
-    L"上書き保存", // Dialog_ButtonOverwrite
-    L"ICCプロファイル", // Dialog_EmbedICC
-    L"サイズ: 計算中...", // Dialog_SizeEstimating
-    L"エクスポートエラー", // Dialog_ExportError
-    L"選択範囲をコピー (Ctrl+C)", // Toolbar_Tooltip_CropCopy
-    L"保存 (Ctrl+S)", // Toolbar_Tooltip_CropSave
-    L"適用 (Enter)", // Toolbar_Tooltip_CropApply
-    L"終了 (Esc)", // Toolbar_Tooltip_CropCancel
-    L"クロップモードに入りました", // OSD_EnterCropMode
-    L"クロップ範囲をコピーしました", // OSD_CropCopied
-    L"クロップ", // Context_Crop
-    L"常にロスレス変換で保存する", // Checkbox_AlwaysSaveLossless
-    L"常にエッジ最適化で保存する", // Checkbox_AlwaysSaveEdgeAdapted
-    L"常に再エンコードして保存する", // Checkbox_AlwaysSaveLossy
-    L"確認なしで直接ゴミ箱へ移動する", // Checkbox_NeverConfirmDelete
-    L"HEIC をデコードできません - HEVCビデオ拡張機能をインストールしてください", // OSD_HEICCodecMissing
-    L"HEIC をデコードできません", // Dialog_HEICTitle
-    L"システムに HEVC ビデオ拡張機能がありません。\nQuickView は最高のパフォーマンスを得るために" L"システムのハードウェアアクセラレーションを使用します。", // Dialog_HEICContent
-    L"拡張機能を取得 (無料)", // Dialog_HEICGetExtension
-    L"キャンセル", // Dialog_Cancel
-    L"全般", // Settings_Tab_General
-    L"バージョン情報", // Settings_Tab_About
-    L"基本設定", // Settings_Group_Foundation
-    L"スタートアップ", // Settings_Group_Startup
-    L"操作習慣", // Settings_Group_Habits
-    L"言語", // Settings_Label_Language
-    L"単一インスタンス", // Settings_Label_SingleInstance
-    L"更新を確認", // Settings_Label_CheckUpdates
-    L"更新チャンネル", // Settings_Label_UpdateChannel
-    L"安定版", // Settings_Option_UpdateStable
-    L"プレリリース版", // Settings_Option_UpdatePreRelease
-    L"安定版 : プレビュー版の安定性が確認された後に配信されます。\nプレリリース版: フィードバック収集のため最新のコード変更を即座に提供します。注 : 厳密なテストは行われていません。", // Settings_Tooltip_PreRelease
-    L"ループ再生", // Settings_Label_NavLoopMode
-    L"並べ替え順序", // Settings_Label_SortOrder
-    L"降順", // Settings_Label_SortDescending
-    L"アーカイブ内は常に名前順(昇順)で並べ替える", // Settings_Label_SortArchivesByNameAscending
-    L"削除前に確認する", // Settings_Label_ConfirmDel
-    L"ポータブルモード / クリーンアップ", // Settings_Label_Portable
-    L"ポータブルモード / レジストリクリーンアップ:\n有効にすると、QuickViewは" L"ポータブルモードで動作します。既存のレジストリ関連付けを自動的にクリーンアップし、" L"自動レジストリ変更を無効化して、設定ファイルをAppDataではなく" L"アプリケーションディレクトリに保存します。", // Settings_Tooltip_Portable
-    L"マルチディスプレイ展開", // Settings_Label_SpanDisplays
-    L"UI スケール", // Settings_Label_UIScale
-    L"再起動が必要です", // Settings_Status_RestartRequired
-    L"書き込み権限がありません！", // Settings_Status_NoWritePerm
-    L"有効", // Settings_Status_Enabled
-    L"Powered by", // Settings_Header_PoweredBy
-    L"開く...\tCtrl+O", // Context_Open
-    L"プログラムから開く...", // Context_OpenWith
-    L"編集\tE", // Context_Edit
-    L"エクスプローラーで表示", // Context_ShowInExplorer
-    L"フォルダーを開く", // Context_OpenFolder
-    L"ピクセルをコピー\tCtrl+C", // Context_CopyPixels
-    L"ファイルをコピー\tCtrl+Shift+C", // Context_CopyFile
-    L"ピクセルをコピー\tCtrl+C", // Context_CopyImage
-    L"パスをコピー\tCtrl+Alt+C", // Context_CopyPath
-    L"印刷\tCtrl+P", // Context_Print
-    L"右に90\x00B0回転\tR", // Context_RotateCW
-    L"左に90\x00B0回転\tShift+R", // Context_RotateCCW
-    L"左右反転\tH", // Context_FlipH
-    L"上下反転\tV", // Context_FlipV
-    L"変形", // Context_Transform
-    L"原寸大 (100%)\t1 / Z", // Context_ActualSize
-    L"画面に合わせる\t0 / F", // Context_FitToScreen
-    L"ウィンドウに合わせる", // Context_FitWindow
-    L"ウィンドウを埋める", // Context_FillWindow
-    L"拡大\t+ / Ctrl +", // Context_ZoomIn
-    L"縮小\t- / Ctrl -", // Context_ZoomOut
-    L"ウィンドウを固定", // Context_LockWindow
-    L"常に手前に表示\tCtrl+T", // Context_AlwaysOnTop
-    L"HUD ギャラリー\tT", // Context_HUDGallery
-    L"簡易情報パネル\tTab", // Context_LiteInfoPanel
-    L"詳細情報パネル\tI", // Context_FullInfoPanel
-    L"RAW レンダリング", // Context_RenderRAW
-    L"ピクセルアートモード", // Context_PixelArtMode
-    L"色空間", // Context_ColorSpace
-    L"全画面表示\tF11", // Context_Fullscreen
-    L"表示", // Context_View
-    L"全画面表示(壁紙)", // Context_WallpaperFill
-    L"サイズ変更(壁紙)", // Context_WallpaperFit
-    L"並べて表示(壁紙)", // Context_WallpaperTile
-    L"デスクトップの背景に設定", // Context_SetAsWallpaper
-    L"名前の変更\tF2", // Context_Rename
-    L"拡張子を修正", // Context_FixExtension
-    L"削除\tDel", // Context_Delete
-    L"削除を取り消す\tCtrl+Z", // Context_UndoDelete
-    L"名前の変更を取り消す\tCtrl+Z", // Context_UndoRename
-    L"回転/反転を取り消す\tCtrl+Z", // Context_UndoTransform
-    L"元に戻す\tCtrl+Z", // Context_Undo
-    L"並べ替え", // Context_SortBy
-    L"移動順序", // Context_NavOrder
-    L"昇順", // Context_SortAscending
-    L"降順", // Context_SortDescending
-    L"設定...", // Context_Settings
-    L"比較モード\tC", // Context_CompareMode
-    L"オーバーレイモード\tCtrl+Shift+O", // Context_OverlayMode
-    L"比較モードで開く", // Context_GalleryOpenCompare
-    L"新しいウィンドウで開く", // Context_GalleryOpenNewWindow
-    L"終了\tMButton/Esc", // Context_Exit
-    L"マウススルーモードを解除", // Menu_ExitPassthrough
-    L"マウススルーモード", // Dialog_PassthroughTitle
-    L"マウスイベントが下のウィンドウに透過されます。\nグローバルショートカット (Shift+Esc) またはタスクバーメニューからのみこのモードを解除できます。\n\n続行しますか？", // Dialog_PassthroughContent
-    L"クリックスルー : オン (Shift+Esc で解除)", // OSD_PassthroughOn
-    L"クリックスルー : オフ", // OSD_PassthroughOff
-    L"オーバーレイモード : オン", // OSD_OverlayModeOn
-    L"オーバーレイモード : オフ", // OSD_OverlayModeOff
-    L"不透明度", // OSD_Opacity
-    L"拡大 (オーバーレイ)", // Toolbar_Tooltip_OverlayZoomIn
-    L"縮小 (オーバーレイ)", // Toolbar_Tooltip_OverlayZoomOut
-    L"不透明度を上げる", // Toolbar_Tooltip_OverlayAlphaUp
-    L"不透明度を下げる", // Toolbar_Tooltip_OverlayAlphaDown
-    L"マウススルーを開始", // Toolbar_Tooltip_OverlayPassthroughOn
-    L"マウススルーを解除", // Toolbar_Tooltip_OverlayPassthroughOff
-    L"オーバーレイモードを終了", // Toolbar_Tooltip_OverlayExit
-    L"エラー", // Message_SaveErrorTitle
-    L"ファイルの保存に失敗しました。ファイルがロックされている可能性があります。", // Message_SaveErrorContent
-    L"前へ (左)", // Toolbar_Tooltip_Prev
-    L"次へ (右)", // Toolbar_Tooltip_Next
-    L"左に回転 (Shift+R)", // Toolbar_Tooltip_RotateL
-    L"右に回転 (R)", // Toolbar_Tooltip_RotateR
-    L"左右反転 (H)", // Toolbar_Tooltip_FlipH
-    L"ウィンドウを固定 (一時)", // Toolbar_Tooltip_Lock
-    L"ウィンドウの固定を解除", // Toolbar_Tooltip_Unlock
-    L"ギャラリー (T)", // Toolbar_Tooltip_Gallery
-    L"情報パネル", // Toolbar_Tooltip_Info
-    L"RAW : プレビュー (クリックで完全デコード)", // Toolbar_Tooltip_RawPreview
-    L"RAW : 完全デコード (クリックでプレビュー)", // Toolbar_Tooltip_RawFull
-    L"RAW : ペアの RAW を表示 (完全デコード)", // Toolbar_Tooltip_RawPairView
-    L"RAW : ペアの画像に戻る", // Toolbar_Tooltip_RawPairBack
-    L"拡張子の不一致 (修正)", // Toolbar_Tooltip_FixExtension
-    L"ツールバーをピン留め", // Toolbar_Tooltip_Pin
-    L"ツールバーのピン留めを解除", // Toolbar_Tooltip_Unpin
-    L"色域外ハイライト領域を表示", // Toolbar_Tooltip_GamutWarning
-    L"通常モード", // Toolbar_Tooltip_NormalMode
-    L"比較モード", // Toolbar_Tooltip_CompareMode
-    L"単一ページモード", // Toolbar_Tooltip_SinglePage
-    L"見開きページモード", // Toolbar_Tooltip_DualPage
-    L"選択範囲に新しい画像を開く", // Toolbar_Tooltip_CompareOpen
-    L"左右を入れ替え", // Toolbar_Tooltip_CompareSwap
-    L"レイアウトを切り替え", // Toolbar_Tooltip_CompareLayout
-    L"比較情報", // Toolbar_Tooltip_CompareInfo
-    L"選択した画像を削除", // Toolbar_Tooltip_CompareDelete
-    L"拡大 (微調整)", // Toolbar_Tooltip_CompareZoomIn
-    L"縮小 (微調整)", // Toolbar_Tooltip_CompareZoomOut
-    L"ズーム同期 : オン", // Toolbar_Tooltip_CompareSyncZoomOn
-    L"ズーム同期 : オフ", // Toolbar_Tooltip_CompareSyncZoomOff
-    L"パン同期 : オン", // Toolbar_Tooltip_CompareSyncPanOn
-    L"パン同期 : オフ", // Toolbar_Tooltip_CompareSyncPanOff
-    L"イマーシブスポットライトの切り替え", // Toolbar_Tooltip_SlideshowImmersiveToggle
-    L"スライドショーモードを終了", // Toolbar_Tooltip_SlideshowExit
-    L"比較モードを終了", // Toolbar_Tooltip_CompareExit
-    L"アニメーションを再生", // Toolbar_Tooltip_AnimPlay
-    L"アニメーションを一時停止", // Toolbar_Tooltip_AnimPause
-    L"前のフレーム", // Toolbar_Tooltip_AnimPrev
-    L"次のフレーム", // Toolbar_Tooltip_AnimNext
-    L"更新領域デバッグ : オン", // Toolbar_Tooltip_AnimDirtyOn
-    L"更新領域デバッグ : オフ", // Toolbar_Tooltip_AnimDirtyOff
-    L"アニメーション速度", // Toolbar_Tooltip_AnimSpeed
-    L"パフォーマンス", // Settings_Header_Performance
-    L"プロフェッショナルツール", // Settings_Header_Professional
-    L"スマートメモリ管理", // Settings_Label_MemoryReclaim
-    L"スマート", // Settings_Option_MemSmart
-    L"アグレッシブ", // Settings_Option_MemAggressive
-    L"オンデマンド", // Settings_Option_MemOnDemand
-    L"スマート : システムメモリが 4GB 未満の場合のみ自動的にメモリを解放します。\n" L"アグレッシブ : 0ns の即時割り当て速度を維持するためメモリを確保し続けます。\n" L"オンデマンド : 物理メモリを節約するため、常にアイドル状態のメモリを解放します。", // Settings_Tooltip_MemoryReclaim
-    L"アニメーションモードで更新領域ボタン表示", // Settings_Label_ShowDirtyRect
-    L"フレームのどの部分が再描画されているかを視覚化するため、アニメーションモードで更新領域のデバッグボタンを表示します。", // Settings_Tooltip_ShowDirtyRect
-    L"コピーしました！", // OSD_Copied
-    L"ピクセルをコピーしました！", // OSD_PixelsCopied
-    L"生ピクセルを抽出中...", // OSD_PixelsExtracting
-    L"ファイルをコピーしました！", // OSD_FileCopied
-    L"座標をコピーしました！", // OSD_CoordinatesCopied
-    L"ファイルパスをコピーしました！", // OSD_FilePathCopied
-    L"ズーム : 100%", // OSD_Zoom100
-    L"ズーム : 画面に合わせる", // OSD_ZoomFit
-    L"ズーム : ウィンドウに合わせる", // OSD_ZoomFitWindow
-    L"ズーム : ウィンドウを埋める", // OSD_ZoomFill
-    L"印刷 : 開いたアプリで Ctrl+P を使用してください", // OSD_PrintInstruction
-    L"ゴミ箱に移動しました", // OSD_MovedToRecycleBin
-    L"ウィンドウを固定しました", // OSD_WindowLocked
-    L"ウィンドウの固定を解除しました", // OSD_WindowUnlocked
-    L"常に手前に表示 : オン", // OSD_AlwaysOnTopOn
-    L"常に手前に表示 : オフ", // OSD_AlwaysOnTopOff
-    L"壁紙に設定", // OSD_WallpaperSet
-    L"壁紙の設定に失敗しました", // OSD_WallpaperFailed
-    L"名前を変更しました", // OSD_Renamed
-    L"名前の変更に失敗しました", // OSD_RenameFailed
-    L"拡張子を修正しました", // OSD_ExtensionFixed
-    L"元に戻しました", // OSD_Restored
-    L"最初の画像", // OSD_FirstImage
-    L"最後の画像", // OSD_LastImage
-    L"HD", // OSD_HD
-    L"ズーム : ", // OSD_ZoomPrefix
-    L"再生中", // OSD_AnimPlaying
-    L"一時停止中 (インスペクターモード: Alt+Left/Right でシーク)", // OSD_AnimPaused
-    L"更新領域 : オン", // OSD_AnimDirtyOn
-    L"更新領域 : オフ", // OSD_AnimDirtyOff
-    L"マルチディスプレイ展開 (ビデオウォール)\tCtrl+F11", // Context_SpanDisplays
-    L"インターフェース", // Settings_Tab_Visuals
-    L"操作", // Settings_Tab_Controls
-    L"画像", // Settings_Tab_Image
-    L"詳細設定", // Settings_Tab_Advanced
-    L"背景", // Settings_Header_Backdrop
-    L"ウィンドウ", // Settings_Header_Window
-    L"ウィンドウ固定", // Settings_Header_WindowLock
-    L"パネル", // Settings_Header_Panel
-    L"マウス", // Settings_Header_Mouse
-    L"画面端", // Settings_Header_Edge
-    L"レンダリング", // Settings_Header_Render
-    L"HDR", // Settings_Header_Hdr
-    L"確認ダイアログ", // Settings_Header_Prompts
-    L"システム", // Settings_Header_System
-    L"機能", // Settings_Header_Features
-    L"透明度", // Settings_Header_Transparency
-    L"Glass エンジン (GPU)", // Settings_Header_GeekGlass
-    L"Glass を有効化", // Settings_Label_EnableGeekGlass
-    L"UI アニメーション", // Settings_Label_GlassUIAnimations
-    L"コンポーネント素材", // Settings_Header_CoreMaterial
-    L"Glass ブラー シグマ", // Settings_Label_BlurSigma
-    L"Glass 無効 (システム)", // Settings_Status_GlassDisabled
-    L"色合い層", // Settings_Label_TintDensity
-    L"Glass すりガラス効果の全体的な色の濃さ。", // Settings_Tooltip_TintDensity
-    L"反射 (反射光)", // Settings_Label_SpecularOpacity
-    L"斜めからの照明反射の明るさ。", // Settings_Tooltip_SpecularOpacity
-    L"影の深さ", // Settings_Label_ShadowIntensity
-    L"アンビエントオクルージョン影の強度。", // Settings_Tooltip_ShadowIntensity
-    L"ベクターレンダリング", // Settings_Header_VectorAssets
-    L"アイコンの線の太さ", // Settings_Label_VectorStrokeWeight
-    L"標準 (1.5px)", // Settings_Option_StrokeStandard
-    L"細線 (1.0px)", // Settings_Option_StrokeFine
-    L"色合いプロファイル", // Settings_Header_GlassTint
-    L"カラーロジック", // Settings_Label_TintProfile
-    L"自動 (適応)", // Settings_Option_TintAuto
-    L"カスタムカラー", // Settings_Option_TintCustom
-    L"手動色合い", // Settings_Label_GlassCustomColor
-    L"操作面の不透明度 (%)", // Settings_Header_DensityMatrix
-    L"OSD & HUD", // Settings_Label_OsdDensity
-    L"小さなフローティングオーバーレイの透明度。", // Settings_Tooltip_OsdDensity
-    L"ツールバー & サイドバー", // Settings_Label_PanelsDensity
-    L"下部ツールバー、情報パネル、ギャラリー、右上ウィンドウコントロールの透明度。", // Settings_Tooltip_PanelsDensity
-    L"ダイアログ & 設定", // Settings_Label_ModalsDensity
-    L"中央ポップアップの透明度。", // Settings_Tooltip_ModalsDensity
-    L"メニュー", // Settings_Label_MenusDensity
-    L"右クリックメニューの材質濃度（Acrylic 素材でのみ調整可能）。", // Settings_Tooltip_MenusDensity
-    L"テーマ", // Settings_Tab_Theme
-    L"プリセット", // Settings_Label_ThemeMode
-    L"システム", // Settings_Option_ThemeAuto
-    L"ダーク", // Settings_Option_ThemeDark
-    L"ライト", // Settings_Option_ThemeLight
-    L"デザイン", // Settings_Option_ThemeCustom
-    L"モーダル減光", // Settings_Label_AmbientDimmer
-    L"モーダルや設定ウィンドウが開いているときに背景を暗くします。", // Settings_Tooltip_AmbientDimmer
-    L"アクセントカラー", // Settings_Label_AccentColor
-    L"文字色", // Settings_Label_TextColor
-    L"テーマエンジン", // Settings_Header_ThemeManagement
-    L"エクスポート", // Settings_Action_ExportTheme
-    L"インポート", // Settings_Action_ImportTheme
-    L"キャンバスの色", // Settings_Label_CanvasColor
-    L"オーバーレイ", // Settings_Label_Overlay
-    L"グリッドオーバーレイを表示", // Settings_Label_ShowGrid
-    L"常に手前に表示", // Settings_Label_AlwaysOnTop
-    L"ウィンドウを固定", // Settings_Label_LockWindow
-    L"起動時に画像の倍率に追従せず、既定でウィンドウ枠を固定するかどうかを制御します。", // Settings_Tooltip_LockWindow
-    L"タイトルバーを自動的に非表示", // Settings_Label_AutoHideTitle
-    L"ウィンドウの角を丸くする", // Settings_Label_RoundedCorners
-    L"UI の境界線を表示", // Settings_Label_UIBorders
-    L"ウィンドウとコンテキストメニューの角の丸みを制御します。Windows 11 が必要です。", // Settings_Tooltip_RoundedCorners
-    L"下部ツールバーを固定", // Settings_Label_LockToolbar
-    L"最小ウィンドウ幅", // Settings_Label_WindowMinSize
-    L"最大初期サイズ (%)", // Settings_Label_WindowMaxSizePercent
-    L"境界オーバーフローインジケーターを表示", // Settings_Label_ShowBorderIndicator
-    L"画像がウィンドウ枠からはみ出している方向にインジケーター線を表示します。", // Settings_Tooltip_ShowBorderIndicator
-    L"ミニマップを表示", // Settings_Label_ShowNavigator
-    L"When mouse is over minimap, Wheel / Thumb Wheel (Shift + Wheel) pans image", // Settings_Tooltip_ShowNavigator
-    L"自動", // Settings_Option_NavigatorAuto
-    L"オン", // Settings_Option_NavigatorOn
-    L"オフ", // Settings_Option_NavigatorOff
-    L"画像移動時にウィンドウサイズを維持", // Settings_Label_KeepWindowSizeOnNav
-    L"前回のウィンドウサイズと位置を記憶", // Settings_Label_RememberLastWindowSizeAndPosition
-    L"小さい画像を拡大適応", // Settings_Label_UpscaleSmallImagesWhenLocked
-    L"スムーズなウィンドウ拡大縮小 (GPU)", // Settings_Label_EnableSmoothScaling
-    L"EXIF パネルモード", // Settings_Label_ExifMode
-    L"ツールバー情報の既定値", // Settings_Label_ToolbarInfoDefault
-    L"全画面で開く", // Settings_Label_OpenFullScreenMode
-    L"全画面ズームモード", // Settings_Label_FullScreenZoomMode
-    L"画面に合わせる", // Settings_Option_FitScreen
-    L"自動", // Settings_Option_AutoFit
-    L"ホイールの回転を反転", // Settings_Label_InvertWheel
-    L"100% ズーム吸着ダンピング", // Settings_Label_ZoomSnapDamping
-    L"マウス位置基準のウィンドウズーム", // Settings_Label_MouseAnchorZoom
-    L"右ボタンドラッグでズーム", // Settings_Label_RightButtonDragZoom
-    L"ホイールズーム速度", // Settings_Label_WheelZoomSpeed
-    L"サムホイール", // Settings_Label_ThumbWheel
-    L"Can be replaced with Shift + Wheel", // Settings_Tooltip_ThumbWheel
-    L"Alt + Wheel temporarily adjusts zoom speed", // Settings_Tooltip_WheelZoomSpeed
-    L"Can be replaced with Ctrl + Left Click", // Settings_Tooltip_MiddleDrag
-    L"ダブルクリック", // Settings_Label_DoubleClick
-    L"スマート", // Settings_Option_DoubleClick_Smart
-    L"ホイールモード 1", // Settings_Option_DoubleClick_WheelMode1
-    L"ホイールモード 2", // Settings_Option_DoubleClick_WheelMode2
-    L"Smart: Default zoom/fullscreen toggle;\nWheel Mode 1: Double-click swaps main & thumb wheel functions;\nWheel Mode 2: Double-click toggles image pan mode;\nTip: Shift + Wheel acts as Thumb Wheel.", // Settings_Tooltip_DoubleClick
-    L"Controls key pan and wheel pan speed", // Settings_Tooltip_PanStepNormal
-    L"Main Wheel: Next/Prev; Thumb/Shift+Wheel: Zoom", // OSD_WheelMode1_NextPrevZoom
-    L"Main Wheel: Zoom; Thumb/Shift+Wheel: Next/Prev", // OSD_WheelMode1_ZoomNextPrev
-    L"Wheel: Pan Mode", // OSD_WheelMode2_Pan
-    L"Wheel: Default Mode", // OSD_WheelMode2_Default
-    L"右ドラッグズーム速度", // Settings_Label_RightDragZoomSpeed
-    L"ズーム速度 (一時的): ", // OSD_WheelZoomSpeed
-    L"ズーム速度を一時的に調整", // Help_Action_AdjustZoomSpeed
-    L"ウィンドウズームを一時的に固定", // Help_Action_LockWindowZoom
-    L"サイドボタンを反転", // Settings_Label_InvertButtons
-    L"固定ズーム倍率を使用", // Settings_Label_UseFixedZoom
-    L"有効にすると、Alt + ホイールでズーム速度変更ではなく通常のズームを行います。", // Settings_Tooltip_UseFixedZoom
-    L"  └  カスタムズーム倍率", // Settings_Label_FixedZoomLevels
-    L"ズーム倍率を編集", // Dialog_FixedZoomTitle
-    L"カンマ区切りでズーム倍率を入力してください (例: 0.5, 1, 2):", // Dialog_FixedZoomMsg
-    L"ズームモード (拡大)", // Settings_Label_ZoomModeIn
-    L"ズームモード (縮小)", // Settings_Label_ZoomModeOut
-    L"左ドラッグ", // Settings_Label_LeftDrag
-    L"中ドラッグ", // Settings_Label_MiddleDrag
-    L"中クリック", // Settings_Label_MiddleClick
-    L"エッジナビゲーションクリック", // Settings_Label_EdgeNavClick
-    L"OSD通知を表示", // Settings_Label_ShowOSD
-    L"比較モードでは無効化", // Settings_Label_DisableEdgeNavInCompare
-    L"ナビゲーションインジケーター", // Settings_Label_NavIndicator
-    L"自動回転 (EXIF)", // Settings_Label_AutoRotate
-    L"カラーマネジメント", // Settings_Label_CMS
-    L"高度なカラー (HDR)", // Settings_Label_AdvancedColor
-    L"HDR トーンマッピング", // Settings_Label_HdrToneMapping
-    L"スプラインニーポイント", // Settings_Label_HdrSplineKnee
-    L"HDR トーンマッピング戦略 :\nHDR 画像がモニターの性能を超える場合の表示方法を決定します。\n" L"Spline: 区分スプラインによる高精度なハイライトロールオフ (推奨)。\n" L"Colorimetric: 厳密な輝度マッピング。モニター上限を超えるハイライトはクリップされます。\n" L"BT.2390 (EETF): 高精度トーンマッピング用 ITU-R BT.2390 EETF 曲線。", // Settings_Tooltip_HdrToneMapping
-    L"0 = 自動 (画像の輝度に基づいて計算)。\n値はモニターのピーク輝度の比率を表します。このニーポイント以下の明るさは 1:1 でマッピングされ、上の明るさはスプライン曲線で滑らかに圧縮されます。\n(推奨: 0.4 - 0.75)", // Settings_Tooltip_HdrSplineKnee
-    L"HDR ピーク輝度 (Nits)", // Settings_Label_HdrPeakNitsOverride
-    L"システム検出の輝度を使用するには 0 に設定します。", // Settings_Tooltip_HdrPeakNitsOverride
-    L"HDR ピークパーセンタイル", // Settings_Label_HdrPeakPercentile
-    L"全体の明るさを上げるため極端に明るいピクセルを除外します (mpv既定値 : 99.995%)。", // Settings_Tooltip_HdrPeakPercentile
-    L"100% (絶対ピーク)", // Settings_Option_HdrPeakPercentile_100
-    L"99.995% (安定)", // Settings_Option_HdrPeakPercentile_99995
-    L"99.9% (アグレッシブ)", // Settings_Option_HdrPeakPercentile_999
-    L"HDR ハイライト減色開始範囲", // Settings_Label_HdrDesatThreshold
-    L"ハイライト減色の開始しきい値。0.0 は全輝度を減色、1.0 は減色なし。推奨既定値は 0.18 です。", // Settings_Tooltip_HdrDesatThreshold
-    L"HDR ハイライト減色強度", // Settings_Label_HdrMaxDesat
-    L"極端なハイライトにおける減色の最大強度。0.0 は減色なし、1.0 は完全に白へ減色。推奨既定値は 0.75 です。", // Settings_Tooltip_HdrMaxDesat
-    L"Colorimetric", // Settings_Option_HdrColorimetric
-    L"Spline", // Settings_Option_HdrSpline
-    L"BT.2390 (EETF)", // Settings_Option_HdrLegacyReinhard
-    L"タグなし画像のフォールバック", // Settings_Label_CmsFallback
-    L"ソフトプルーフプロファイル (.icc)", // Settings_Label_CustomProof
-    L"ソフトプルーフィングプレビュー", // Context_SoftProofing
-    L"校正プロファイル", // Context_SoftProofProfile
-    L"カスタム...", // Context_SoftProofCustom
-    L"近日公開", // Settings_Value_ComingSoon
-    L"RAW 強制デコード", // Settings_Label_ForceRaw
-    L"RAW + JPEG ペアリング", // Settings_Label_PairRawJpeg
-    L"RAW ファイルと同名のカメラ画像 (JPEG/HEIF) を1つの写真として表示します。\nレンダリングされた画像のみがリストに残り、RAWフォーマットマーク (例 : +CR3) が付きます。撮影時刻はバックグラウンドで検証され、不一致のペアは分離されます。\nカメラ画像と RAW デコードの切り替えは RAW ツールバーボタンまたはホットキーで行い、ペア比較ホットキーで両方を表示できます。", // Settings_Tooltip_PairRawJpeg
-    L"露出 (明るさ)", // Settings_Label_Exposure
-    L"画像の明るさ (露出補正) を調整します。範囲: 0.18x ～ 10.0x。", // Settings_Tooltip_Exposure
-    L"「アプリで開く」に追加", // Settings_Label_AddToOpenWith
-    L"カスタム画像エディタ", // Settings_Label_CustomEditor
-    L"エディタを選択", // Context_SelectEditor
-    L"エディタの起動に失敗しました。再設定してください。", // OSD_EditorLaunchFailed
-    L"追加", // Settings_Action_Add
-    L"追加済み", // Settings_Action_Added
-    L"ポータブルモードでは無効", // Settings_Status_DisabledInPortable
-    L"デバッグ HUD を有効化 (F12)", // Settings_Label_DebugHUD
-    L"先読みシステム", // Settings_Label_Prefetch
-    L"情報パネル", // Settings_Label_InfoPanelAlpha
-    L"ツールバー", // Settings_Label_ToolbarAlpha
-    L"設定", // Settings_Label_SettingsAlpha
-    L"すべての設定をリセット", // Settings_Label_Reset
-    L"復元", // Settings_Action_Restore
-    L"完了", // Settings_Action_Done
-    L"設定の入出力 (.ini)", // Settings_Header_ConfigManagement
-    L"管理なし", // Settings_Option_CmsUnmanaged
-    L"sRGB", // Settings_Option_CmssRGB
-    L"Display P3", // Settings_Option_CmsP3
-    L"Adobe RGB (1998)", // Settings_Option_CmsAdobeRGB
-    L"グレースケール (トーン確認)", // Settings_Option_CmsGray
-    L"ProPhoto RGB", // Settings_Option_CmsProPhoto
-    L"レンダリングインテント", // Settings_Label_CmsIntent
-    L"色域外警告検出", // Settings_Label_GamutWarning
-    L"色域外の領域を解析してハイライト表示します。オプション: オフ、ソフトプルーフィングモードのみで検出、またはソフトプルーフィングと画面色域の両方で検出。", // Settings_Tooltip_GamutWarning
-    L"色域エラー時の自動提示", // Settings_Label_GamutAutoPrompt
-    L"色域エラーが検出されたときに OSD 通知を表示します。ハイライト表示はツールバーから手動で切り替えることができます。", // Settings_Tooltip_GamutAutoPrompt
-    L"色域外警告のハイライト色", // Settings_Label_GamutColor
-    L"相対的な色域を維持", // Settings_Option_CmsIntentRelative
-    L"知覚的", // Settings_Option_CmsIntentPerceptual
-    L"カラーマネジメントシステムを有効にします。\n有効にすると、GPU を介して高精度な色空間変換を適用し、本来の色を復元します。\n無効にすると GPU の負荷は下がりますが、広色域ディスプレイで色が過鮮やかになる場合があります。", // Settings_Tooltip_CMS
-    L"色空間変換のレンダリングインテント。\n知覚的 : 細部やグラデーションを維持するために色域外の色を圧縮します (写真に最適)。\n相対的な色域を維持: 色域内の色を保持し、色域外の色をクリップします (UI やアイコンに最適)。\n注 : 視覚的な違いは、LUT (ルックアップテーブル) を含む高度な ICC プロファイルを使用する場合にのみ発生します。標準的なマトリックスプロファイルは自動的に「相対的な色域を維持」へフォールバックします。", // Settings_Tooltip_CmsIntent
-    L"16ビット浮動小数点レンダリングパイプライン (scRGB) を有効にします。\n有効にすると、SDR の限界を超えて HDR 対応ディスプレイ上で写真のハイライトを完全に描画します。\n無効にすると強制的に SDR 出力へマッピングされます。\n注 : 有効にすると VRAM の使用量が増加します。", // Settings_Tooltip_AdvancedColor
-    L"自動 : 画像が画面より小さい場合は 100% スケール、大きい場合は画面に合わせます。", // Settings_Tooltip_ZoomAuto
-    L"更新を確認", // Settings_Action_CheckUpdates
-    L"更新を表示", // Settings_Action_ViewUpdate
-    L"確認中...", // Settings_Status_Checking
-    L"最新です", // Settings_Status_UpToDate
-    L"GitHub リポジトリ", // Settings_Link_GitHub
-    L"問題を報告", // Settings_Link_ReportIssue
-    L"ヘルプ (F1)", // Settings_Link_Hotkeys
-    L"バージョン", // Settings_Label_Version
-    L"ビルド", // Settings_Label_Build
-    L"ブラック", // Settings_Option_Black
-    L"エフェクト", // Settings_Option_Effects
-    L"右クリックメニュー", // Settings_Label_ContextMenuBackdrop
-    L"エフェクトスタイル", // Settings_Label_CanvasEffectStyle
-    L"Mica と Mica Alt エフェクトは Windows 11 のみ対応。Acrylic は Mica/Mica Alt よりリソースを多く消費します。", // Settings_Tooltip_BackdropEffectsTip
-    L"ホワイト", // Settings_Option_White
-    L"グリッド", // Settings_Option_Grid
-    L"カスタム", // Settings_Option_Custom
-    L"オフ", // Settings_Option_Off
-    L"オン", // Settings_Option_On
-    L"簡易", // Settings_Option_Lite
-    L"詳細", // Settings_Option_Full
-    L"大きなサイズのみ", // Settings_Option_LargeOnly
-    L"すべて", // Settings_Option_All
-    L"ソフトプルーフィング", // Settings_Option_SoftProofing
-    L"ウィンドウ", // Settings_Option_Window
-    L"パン (移動)", // Settings_Option_Pan
-    L"なし", // Settings_Option_None
-    L"終了", // Settings_Option_Exit
-    L"矢印", // Settings_Option_Arrow
-    L"カーソル", // Settings_Option_Cursor
-    L"手動", // Settings_Option_Manual
-    L"自動 (エクスプローラー順)", // Settings_Option_SortAuto
-    L"名前", // Settings_Option_SortName
-    L"更新日時", // Settings_Option_SortModified
-    L"撮影日時 (EXIF)", // Settings_Option_SortDateTaken
-    L"サイズ", // Settings_Option_SortSize
-    L"種類", // Settings_Option_SortType
-    L"ループ", // Settings_Option_NavLoop
-    L"サブフォルダーを含める", // Settings_Option_NavThrough
-    L"バイリニア: 基本的な平滑化", // Settings_Option_Linear
-    L"ニアレストネイバー : 極限の鮮明さ", // Settings_Option_Nearest
-    L"HQ バイキュービック : 高精度な平滑化", // Settings_Option_HighQualityCubic
-    L"自動", // Settings_Option_ZoomAuto
-    L"自動", // Settings_Option_Auto
-    L"エコ", // Settings_Option_Eco
-    L"バランス", // Settings_Option_Balanced
-    L"ウルトラ", // Settings_Option_Ultra
-    L"キーボードショートカット", // Help_Header_Shortcuts
-    L"マウス操作", // Help_Header_Mouse
-    L"次へ / 前の画像", // Help_Item_NextPrev
-    L"拡大 / 縮小", // Help_Item_Zoom
-    L"画像の移動 (パン)", // Help_Item_Pan
-    L"回転", // Help_Item_Rotate
-    L"画面に合わせる", // Help_Item_Fit
-    L"画像を削除", // Help_Item_Delete
-    L"全画面表示", // Help_Item_Fullscreen
-    L"閉じる", // Help_Item_Close
-    L"左ボタン", // Help_Mouse_Left
-    L"中ボタン", // Help_Mouse_Middle
-    L"ホイール", // Help_Mouse_Wheel
-    L"右ボタン", // Help_Mouse_Right
-    L"右ボタン垂直ドラッグ", // Help_Mouse_RightVerticalDrag
-    L"ウィンドウ移動 / 全画面解除 / 最大化解除", // Help_Action_MoveWindow
-    L"画像を移動 (パン)", // Help_Action_PanImage
-    L"コンテキストメニュー", // Help_Action_ContextMenu
-    L"次へ/前の画像", // Help_Action_NextPrev
-    L"ズーム", // Help_Action_Zoom
-    L"スマートズーム (100% / 画面に合わせる / 復元)", // Help_Action_SmartZoom
-    L"画像をコピー", // Help_Desc_Copy
-    L"編集", // Help_Desc_Edit
-    L"ヒントと用語集", // Help_Header_Tips
-    L"注 : ショートカットは現在のウィンドウにのみ適用されます。設定は全体に適用されます。", // Help_Tip_ContextScope
-    L"回転 : 「エッジ適合」はコーデックブロックに合わせるためのわずかなクロップ(ロスレス)を意味します。「非可逆」は再エンコードが必要であることを意味します。", // Help_Tip_Rotation
-    L"ビデオウォール (Ctrl+F11): すべての画面に展開します。閉じるボタンが隠れている場合は、任意の場所をダブルクリックして終了します。", // Help_Tip_VideoWall
-    L"トレースモード / フィルムモード : 有効にすると画像が半透明になり、下の要素が透けて見えます。サイズや透明度を調整できます。ツールバーのマウススルー切替をクリックするとスルーモードに入り、Shift+Esc 以外のすべての入力が無視され、QuickView が透明なオーバーレイになります。", // Help_Tip_DesignerMode
-    L"色域警告 : ターゲットディスプレイまたはソフトプルーフィングプロファイルの色域外の色を検出します。モード : オフ、ソフトプルーフィングのみ、またはすべて (既定 : ソフトプルーフィング)。ツールバーから切り替えます。", // Help_Tip_GamutDetection
-    L"RAW : 速度を優先するため、既定では埋め込みプレビューを表示します。RAW ボタンをクリックすると完全デコードします (色が異なる場合があります)。", // Help_Tip_Raw
-    L"JPEG品質 : 推定値です (例 : Photoshop 100% ≈ 98%)。エンコーダーの差によるものであり、保存設定とわずかに異なる場合がありますが正常です。", // Help_Tip_JpegQ
-    L"ソフトプルーフ比較 : ソフトプルーフィングが有効な状態で比較モードに入ると、オリジナル画像と校正後の画像が自動的に比較されます。", // Help_Tip_SoftProofCompare
-    L"新しいバージョンが利用可能です！", // Dialog_UpdateTitle
-    L"v%s の準備ができました。", // Dialog_UpdateContent
-    L"変更履歴", // Dialog_UpdateLogHeader
-    L"今すぐ更新", // Dialog_ButtonUpdate
-    L"後で", // Dialog_ButtonLater
-    L"GitHub で Star をつける", // Dialog_ButtonStar
-    L"QuickView は愛を込めて開発されています", // Dialog_Update_LoveTitle
-    L"Windowsにはより高速でクリーンなビューアーが必要だと信じているため、" L"余暇を使って QuickView をメンテナンスしています。" L"マーケティング予算もチームもありません。このアップデートを気に入っていただけたら、" L"GitHub で Star をつけるか、友人に共有していただけることが最大の貢献になります。", // Dialog_Update_LoveMessage
-    L"比較モード", // Help_Item_Compare
-    L"最初の画像 / 最後の画像", // Help_Item_FirstLast
-    L"物理的特性", // HUD_Group_Physical
-    L"科学的解析品質", // HUD_Group_Scientific
-    L"光学 & エンコーディング", // HUD_Group_Encoding
-    L"エッジ鮮明度 (ラプラシアン分散)", // HUD_Tip_Sharp_Desc
-    L"くっきりしたエッジ、高い詳細感", // HUD_Tip_Sharp_High
-    L"ソフトフォーカスまたは被写体ぶれ", // HUD_Tip_Sharp_Low
-    L"> 500 は非常に鮮明です", // HUD_Tip_Sharp_Ref
-    L"情報密度 (シャノンエントロピー)", // HUD_Tip_Ent_Desc
-    L"複雑なテクスチャまたは高いノイズ", // HUD_Tip_Ent_High
-    L"単調な領域または低ディテール", // HUD_Tip_Ent_Low
-    L"7.0～8.0 は高ディテール", // HUD_Tip_Ent_Ref
-    L"ピクセルあたりのビット数 (圧縮効率)", // HUD_Tip_BPP_Desc
-    L"低い効率 (より多くのデータが保持される)", // HUD_Tip_BPP_High
-    L"高い効率 (より高い圧縮率)", // HUD_Tip_BPP_Low
-    L"24.0 (Raw RGB), ~2.0-3.0 (高画質 JPEG), ~0.5-1.5 (WebP/AVIF)", // HUD_Tip_BPP_Ref
-    L"高 : ", // HUD_Label_High
-    L"低 : ", // HUD_Label_Low
-    L"参考 : ", // HUD_Label_Ref
-    L"ギャラリー フィルムストリップ (上部ホバー)", // Settings_Header_GalleryTrigger
-    L"トリガーモード", // Settings_Label_GalleryTriggerMode
-    L"サムネイルクリック後に表示を維持", // Settings_Label_KeepGalleryVisibleOnThumbnailClick
-    L"この機能をオンにすると、「ウィンドウをロック」と「ナビゲーション時にウィンドウサイズを維持」が自動的にオンになります。", // Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick
-    L"自動ホバー", // Settings_Option_GalleryTriggerAuto
-    L"ホットスポットホバー", // Settings_Option_GalleryTriggerDelay
-    L"ホットスポットクリック", // Settings_Option_GalleryTriggerClick
-    L"無効", // Settings_Option_GalleryTriggerDisable
-    L"この機能はウィンドウサイズが 600x450 未満の場合、自動的に無効になります。", // Settings_Tooltip_GalleryTrigger
-    L"トリガーエリアの高さ", // Settings_Label_GalleryTriggerAreaHeight
-    L"ホバー滞在時間", // Settings_Label_GalleryDwellTime
-    L"退出ディレイ", // Settings_Label_GalleryExitDelay
-    L"ギャラリー最小サイズ", // Settings_Label_GalleryMinSize
-
-    L"スライドショーを開始", // OSD_SlideshowStarted
-    L"スライドショーを停止", // OSD_SlideshowStopped
-    L"スライドショーを再開", // OSD_SlideshowResumed
-    L"スライドショーを一時停止", // OSD_SlideshowPaused
-    L"イマーシブ : スポットライト", // OSD_ImmersiveSpotlight
-    L"イマーシブ : 通常", // OSD_ImmersiveNormal
-    L"印刷ジョブが送信されました。閲覧を続けることができます。", // OSD_PrintJobStarted
-    L"印刷ジョブが正常に送信されました。", // OSD_PrintJobFinished
-    L"スライドショーモード", // Context_SlideshowMode
-    L"間隔 (秒)", // Settings_Label_SlideshowInterval
-    L"イマーシブモード", // Settings_Label_SlideshowImmersive
-    L"カスタム簡易情報パネル", // Settings_Label_CustomLiteInfoPanel
-    L"カスタム完全情報パネル", // Settings_Label_CustomFullInfoPanel
-    L"情報パネルのズーム", // Settings_Label_InfoPanelScale
-    L"通常モード時の表示項目", // Settings_Label_ItemsInNormalMode
-    L"比較モード時の表示項目", // Settings_Label_ItemsInCompareMode
-    L"区切り文字プリセット", // Settings_Label_SeparatorPreset
-    L"通常", // Settings_Option_SlideshowNormal
-    L"スポットライト", // Settings_Option_SlideshowSpotlight
-    L"ルーペの形状", // Settings_Label_LoupeShape
-    L"四角形", // Settings_Option_LoupeShapeSquare
-    L"円形", // Settings_Option_LoupeShapeCircle
-    L"ショートカットキーを押しながらマウスホイールをスクロールすると、ルーペのサイズを調整できます。", // Settings_Tooltip_LoupeHotkey
-    L"Ctrl キーを押しながら左クリックでドラッグすると、すばやく範囲選択してトリミングできます。", // Settings_Tooltip_CropModeHotkey
-};
-
-// ----------------------------------------------------------------
-// RU Table
-// ----------------------------------------------------------------
-static const LanguageTable Table_RU = {
-    L"Изображение не загружено", // OSD_NoImage
-    L"В этой папке нет изображений", // OSD_FolderEmpty
-    L"Анимированный SVG показан как статичный кадр", // OSD_SvgStaticFallback
-    L"Без потерь", // OSD_Lossless
-    L"Перекодировано (без потерь)", // OSD_ReencodedLossless
-    L"Оптимизация краёв", // OSD_EdgeAdapted
-    L"Перекодировано", // OSD_Reencoded
-    L"Доступ запрещён - файл используется или только для чтения", // OSD_ReadOnly
-    L"Преобразование неидеально (оптимизация краёв)", // OSD_NotPerfect
-    L"Видеостена: ВКЛ", // OSD_SpanOn
-    L"Видеостена: ВЫКЛ", // OSD_SpanOff
-    L"До (Оригинал)", // OSD_CompareBefore
-    L"После (Проба)", // OSD_CompareAfter
-    L"Удаление отменено", // OSD_UndoDeleteSuccess
-    L"Ошибка отмены удаления", // OSD_UndoDeleteFailed
-    L"Переименование отменено", // OSD_UndoRenameSuccess
-    L"Ошибка отмены переименования", // OSD_UndoRenameFailed
-    L"Поворот/отражение отменено", // OSD_UndoTransformSuccess
-    L"Ошибка отмены поворота/отражения", // OSD_UndoTransformFailed
-    L"Обнаружены цвета вне цветового охвата", // OSD_GamutDetected
-    L"Охват: Несовместимый профиль или ошибка разбора", // OSD_GamutIncompatible
-    L"Охват: Ошибка анализа", // OSD_GamutFailed
-    L"Повернуть на 90\x00B0 по часовой", // Action_RotateCW
-    L"Повернуть на 90\x00B0 против часовой", // Action_RotateCCW
-    L"Повернуть на 180\x00B0", // Action_Rotate180
-    L"Отразить по горизонтали", // Action_FlipH
-    L"Отразить по вертикали", // Action_FlipV
-    L"Сохранить изменения?", // Dialog_SaveTitle
-    L"Изображение было изменено. Сохранить изменения?", // Dialog_SaveContent
-    L"Сохранить", // Dialog_ButtonSave
-    L"Сохранить как...", // Dialog_ButtonSaveAs
-    L"Отменить", // Dialog_ButtonDiscard
-    L"Продолжить", // Dialog_ButtonContinue
-    L"Изменения кадрирования не сохранены. Сохранить?", // Dialog_CropUnsavedTitle
-    L"Сохранить изображение", // Dialog_SaveAsTitle
-    L"Сохранение и экспорт", // Dialog_ExportTitle
-    L"Перезаписать", // Dialog_ButtonOverwrite
-    L"Профиль ICC", // Dialog_EmbedICC
-    L"Оценка размера...", // Dialog_SizeEstimating
-    L"Ошибка экспорта", // Dialog_ExportError
-    L"Скопировать выделение (Ctrl+C)", // Toolbar_Tooltip_CropCopy
-    L"Сохранить (Ctrl+S)", // Toolbar_Tooltip_CropSave
-    L"Применить (Enter)", // Toolbar_Tooltip_CropApply
-    L"Выход (Esc)", // Toolbar_Tooltip_CropCancel
-    L"Режим кадрирования", // OSD_EnterCropMode
-    L"Область кадрирования скопирована", // OSD_CropCopied
-    L"Кадрировать", // Context_Crop
-    L"Всегда сохранять без потерь", // Checkbox_AlwaysSaveLossless
-    L"Всегда сохранять с оптимизацией краёв", // Checkbox_AlwaysSaveEdgeAdapted
-    L"Всегда сохранять перекодированное", // Checkbox_AlwaysSaveLossy
-    L"Отправлять в Корзину без подтверждения", // Checkbox_NeverConfirmDelete
-    L"Невозможно декодировать HEIC, установите расширение HEVC", // OSD_HEICCodecMissing
-    L"Невозможно декодировать HEIC", // Dialog_HEICTitle
-    L"В системе отсутствует расширение HEVC.\\nQuickView использует " L"аппаратное ускорение для лучшей производительности.", // Dialog_HEICContent
-    L"Получить расширение (бесплатно)", // Dialog_HEICGetExtension
-    L"Отмена", // Dialog_Cancel
-    L"Общие", // Settings_Tab_General
-    L"О программе", // Settings_Tab_About
-    L"Основные", // Settings_Group_Foundation
-    L"Запуск", // Settings_Group_Startup
-    L"Предпочтения", // Settings_Group_Habits
-    L"Язык", // Settings_Label_Language
-    L"Только один экземпляр программы", // Settings_Label_SingleInstance
-    L"Проверка обновлений", // Settings_Label_CheckUpdates
-    L"Канал обновлений", // Settings_Label_UpdateChannel
-    L"Стабильный", // Settings_Option_UpdateStable
-    L"Предварительный", // Settings_Option_UpdatePreRelease
-    L"Стабильный: Выпускается, когда предварительная версия доказала свою стабильность.\nПредварительный: Моментальная публикация последних изменений для сбора отзывов (эти изменения не прошли строгую проверку).", // Settings_Tooltip_PreRelease
-    L"Циклическая навигация", // Settings_Label_NavLoopMode
-    L"Порядок сортировки", // Settings_Label_SortOrder
-    L"По убыванию", // Settings_Label_SortDescending
-    L"Всегда сортировать архивы по имени", // Settings_Label_SortArchivesByNameAscending
-    L"Подтверждать перед удалением", // Settings_Label_ConfirmDel
-    L"Портативный режим / Очистка", // Settings_Label_Portable
-    L"Портативный режим и очистка реестра:\nПри включении QuickView работает в " L"портативном режиме. Будут автоматически очищены имеющиеся ассоциации в " L"реестре, отключено автоизменение реестра, а файлы конфигурации " L"будут храниться не в AppData, а в папке приложения.", // Settings_Tooltip_Portable
-    L"Распределять по мониторам (видеостена)", // Settings_Label_SpanDisplays
-    L"Масштаб интерфейса", // Settings_Label_UIScale
-    L"Требуется перезапуск", // Settings_Status_RestartRequired
-    L"Нет прав на запись!", // Settings_Status_NoWritePerm
-    L"Включено", // Settings_Status_Enabled
-    L"Работает на", // Settings_Header_PoweredBy
-    L"Открыть...\tCtrl+O", // Context_Open
-    L"Открыть с помощью...", // Context_OpenWith
-    L"Изменить\tE", // Context_Edit
-    L"Показать в Проводнике", // Context_ShowInExplorer
-    L"Открыть папку", // Context_OpenFolder
-    L"Скопировать пиксели\tCtrl+C", // Context_CopyPixels
-    L"Скопировать файл\tCtrl+Shift+C", // Context_CopyFile
-    L"Скопировать пиксели\tCtrl+C", // Context_CopyImage
-    L"Скопировать путь\tCtrl+Alt+C", // Context_CopyPath
-    L"Печать\tCtrl+P", // Context_Print
-    L"Повернуть на 90\x00B0 вправо\tR", // Context_RotateCW
-    L"Повернуть на 90\x00B0 влево\tShift+R", // Context_RotateCCW
-    L"Отразить по горизонтали\tH", // Context_FlipH
-    L"Отразить по вертикали\tV", // Context_FlipV
-    L"Преобразовать", // Context_Transform
-    L"Настоящий размер (100%)\t1 / Z", // Context_ActualSize
-    L"По размеру экрана\t0 / F", // Context_FitToScreen
-    L"По размеру окна", // Context_FitWindow
-    L"Заполнить окно", // Context_FillWindow
-    L"Увеличить\t+ / Ctrl +", // Context_ZoomIn
-    L"Уменьшить\t- / Ctrl -", // Context_ZoomOut
-    L"Заблокировать окно", // Context_LockWindow
-    L"Поверх всех окон\tCtrl+T", // Context_AlwaysOnTop
-    L"Миниатюры\tT", // Context_HUDGallery
-    L"Краткая панель информации\tTab", // Context_LiteInfoPanel
-    L"Полная панель информации\tI", // Context_FullInfoPanel
-    L"Рендеринг RAW", // Context_RenderRAW
-    L"Режим пиксель-арта", // Context_PixelArtMode
-    L"Цвет. пространство", // Context_ColorSpace
-    L"Полный экран\tF11", // Context_Fullscreen
-    L"Вид", // Context_View
-    L"Заполнить", // Context_WallpaperFill
-    L"По размеру", // Context_WallpaperFit
-    L"Замостить", // Context_WallpaperTile
-    L"Сделать обоями", // Context_SetAsWallpaper
-    L"Переименовать\tF2", // Context_Rename
-    L"Исправить расширение", // Context_FixExtension
-    L"Удалить\tDel", // Context_Delete
-    L"Отменить удаление\tCtrl+Z", // Context_UndoDelete
-    L"Отменить переименование\tCtrl+Z", // Context_UndoRename
-    L"Отменить поворот/отражение\tCtrl+Z", // Context_UndoTransform
-    L"Отменить\tCtrl+Z", // Context_Undo
-    L"Сортировка", // Context_SortBy
-    L"Навигация", // Context_NavOrder
-    L"По возрастанию", // Context_SortAscending
-    L"По убыванию", // Context_SortDescending
-    L"Настройки...", // Context_Settings
-    L"Режим сравнения\tC", // Context_CompareMode
-    L"Режим наложения\tCtrl+Shift+O", // Context_OverlayMode
-    L"Открыть в режиме сравнения", // Context_GalleryOpenCompare
-    L"Открыть в новом окне", // Context_GalleryOpenNewWindow
-    L"Выход\tMButton/Esc", // Context_Exit
-    L"Выйти из режима сквозного щелчка", // Menu_ExitPassthrough
-    L"Режим сквозного щелчка", // Dialog_PassthroughTitle
-    L"События мыши будут 'проходить' сквозь окно.\nВыйти можно только через глобальную горячую клавишу (Shift+Esc) или в меню панели задач.\n\nПродолжить?", // Dialog_PassthroughContent
-    L"Сквозной щелчок: ВКЛ (Shift+Esc - выход)", // OSD_PassthroughOn
-    L"Сквозной щелчок: ВЫКЛ", // OSD_PassthroughOff
-    L"Режим наложения: ВКЛ", // OSD_OverlayModeOn
-    L"Режим наложения: ВЫКЛ", // OSD_OverlayModeOff
-    L"Непрозрачность", // OSD_Opacity
-    L"Увеличить (наложение)", // Toolbar_Tooltip_OverlayZoomIn
-    L"Уменьшить (наложение)", // Toolbar_Tooltip_OverlayZoomOut
-    L"Увеличить непрозрачность", // Toolbar_Tooltip_OverlayAlphaUp
-    L"Уменьшить непрозрачность", // Toolbar_Tooltip_OverlayAlphaDown
-    L"Включить сквозной щелчок", // Toolbar_Tooltip_OverlayPassthroughOn
-    L"Выключить сквозной щелчок", // Toolbar_Tooltip_OverlayPassthroughOff
-    L"Выйти из режима наложения", // Toolbar_Tooltip_OverlayExit
-    L"Ошибка", // Message_SaveErrorTitle
-    L"Не удалось сохранить файл. Файл заблокирован?", // Message_SaveErrorContent
-    L"Предыдущее (Влево)", // Toolbar_Tooltip_Prev
-    L"Следующее (Вправо)", // Toolbar_Tooltip_Next
-    L"Повернуть влево (Shift+R)", // Toolbar_Tooltip_RotateL
-    L"Повернуть вправо (R)", // Toolbar_Tooltip_RotateR
-    L"Отразить по горизонтали (H)", // Toolbar_Tooltip_FlipH
-    L"Заблокировать окно (временно)", // Toolbar_Tooltip_Lock
-    L"Разблокировать окно", // Toolbar_Tooltip_Unlock
-    L"Галерея (T)", // Toolbar_Tooltip_Gallery
-    L"Информационная панель", // Toolbar_Tooltip_Info
-    L"RAW: Предпросмотр (нажмите для полного)", // Toolbar_Tooltip_RawPreview
-    L"RAW: Полное декодирование (нажмите для предпросмотра)", // Toolbar_Tooltip_RawFull
-    L"RAW: Показать парный RAW (полное декодирование)", // Toolbar_Tooltip_RawPairView
-    L"RAW: Вернуться к парному изображению", // Toolbar_Tooltip_RawPairBack
-    L"Несоответствие расширения (исправить)", // Toolbar_Tooltip_FixExtension
-    L"Закрепить панель", // Toolbar_Tooltip_Pin
-    L"Открепить панель", // Toolbar_Tooltip_Unpin
-    L"Показать области вне охвата", // Toolbar_Tooltip_GamutWarning
-    L"Обычный режим", // Toolbar_Tooltip_NormalMode
-    L"Режим сравнения", // Toolbar_Tooltip_CompareMode
-    L"Одностраничный режим", // Toolbar_Tooltip_SinglePage
-    L"Двухстраничный режим", // Toolbar_Tooltip_DualPage
-    L"Открыть новое изображение в выделении", // Toolbar_Tooltip_CompareOpen
-    L"Поменять местами", // Toolbar_Tooltip_CompareSwap
-    L"Переключить макет", // Toolbar_Tooltip_CompareLayout
-    L"Информация о сравнении", // Toolbar_Tooltip_CompareInfo
-    L"Удалить выбранное изображение", // Toolbar_Tooltip_CompareDelete
-    L"Увеличить (точно)", // Toolbar_Tooltip_CompareZoomIn
-    L"Уменьшить (точно)", // Toolbar_Tooltip_CompareZoomOut
-    L"Синхронное масштабирование: ДА", // Toolbar_Tooltip_CompareSyncZoomOn
-    L"Синхронное масштабирование: НЕТ", // Toolbar_Tooltip_CompareSyncZoomOff
-    L"Синхронное панорамирование: ДА", // Toolbar_Tooltip_CompareSyncPanOn
-    L"Синхронное панорамирование: НЕТ", // Toolbar_Tooltip_CompareSyncPanOff
-    L"Вкл./выкл. эффект прожектора", // Toolbar_Tooltip_SlideshowImmersiveToggle
-    L"Выйти из режима слайд-шоу", // Toolbar_Tooltip_SlideshowExit
-    L"Выйти из сравнения", // Toolbar_Tooltip_CompareExit
-    L"Воспроизвести анимацию", // Toolbar_Tooltip_AnimPlay
-    L"Приостановить анимацию", // Toolbar_Tooltip_AnimPause
-    L"Предыдущий кадр", // Toolbar_Tooltip_AnimPrev
-    L"Следующий кадр", // Toolbar_Tooltip_AnimNext
-    L"Отладка вид. обл.: ДА", // Toolbar_Tooltip_AnimDirtyOn
-    L"Отладка вид. обл.: НЕТ", // Toolbar_Tooltip_AnimDirtyOff
-    L"Скорость анимации", // Toolbar_Tooltip_AnimSpeed
-    L"Производительность", // Settings_Header_Performance
-    L"Профессиональные инструменты", // Settings_Header_Professional
-    L"Стратегия восстановления памяти:", // Settings_Label_MemoryReclaim
-    L"Умная (авто)", // Settings_Option_MemSmart
-    L"Агрессивная (макс. производительность)", // Settings_Option_MemAggressive
-    L"По запросу (мин. ОЗУ)", // Settings_Option_MemOnDemand
-    L"Умная: Баланс производительности и ОЗУ.\nАгрессивная: Максимальная производительность и высокий уровень использования памяти.\nПо требованию: Сразу высвобождать память при простоях.", // Settings_Tooltip_MemoryReclaim
-    L"Кнопка обновляемых областей в анимации", // Settings_Label_ShowDirtyRect
-    L"Показывать кнопку отладки отображаемой области на панели инструментов анимации для отображения обновляемых участков.", // Settings_Tooltip_ShowDirtyRect
-    L"Скопировано.", // OSD_Copied
-    L"Пиксели скопированы в буфер обмена.", // OSD_PixelsCopied
-    L"Извлечение пикселей...", // OSD_PixelsExtracting
-    L"Файл скопирован в буфер обмена.", // OSD_FileCopied
-    L"Координаты скопированы.", // OSD_CoordinatesCopied
-    L"Путь к файлу скопирован.", // OSD_FilePathCopied
-    L"Масштаб: 100%", // OSD_Zoom100
-    L"Масштаб: По размеру экрана", // OSD_ZoomFit
-    L"Масштаб: По размеру окна", // OSD_ZoomFitWindow
-    L"Масштаб: Заполнить окно", // OSD_ZoomFill
-    L"Печать: Нажмите Ctrl+P в открытом приложении", // OSD_PrintInstruction
-    L"Перемещено в Корзину", // OSD_MovedToRecycleBin
-    L"Окно заблокировано", // OSD_WindowLocked
-    L"Окно разблокировано", // OSD_WindowUnlocked
-    L"Всегда сверху: ДА", // OSD_AlwaysOnTopOn
-    L"Всегда сверху: НЕТ", // OSD_AlwaysOnTopOff
-    L"Обои установлены", // OSD_WallpaperSet
-    L"Не удалось установить обои", // OSD_WallpaperFailed
-    L"Переименовано", // OSD_Renamed
-    L"Ошибка переименования", // OSD_RenameFailed
-    L"Расширение исправлено", // OSD_ExtensionFixed
-    L"Восстановлено", // OSD_Restored
-    L"Первое изображение", // OSD_FirstImage
-    L"Последнее изображение", // OSD_LastImage
-    L"HD", // OSD_HD
-    L"Масштаб: ", // OSD_ZoomPrefix
-    L"Воспроизведение", // OSD_AnimPlaying
-    L"Пауза (Alt+Влево/Вправо - покадровый просмотр)", // OSD_AnimPaused
-    L"Видимая область: ДА", // OSD_AnimDirtyOn
-    L"Видимая область: НЕТ", // OSD_AnimDirtyOff
-    L"Распределять по мониторам (видеостена)\tCtrl+F11", // Context_SpanDisplays
-    L"Интерфейс", // Settings_Tab_Visuals
-    L"Управление", // Settings_Tab_Controls
-    L"Картинка", // Settings_Tab_Image
-    L"Ещё", // Settings_Tab_Advanced
-    L"Фон", // Settings_Header_Backdrop
-    L"Окно", // Settings_Header_Window
-    L"Блокировка окна", // Settings_Header_WindowLock
-    L"Панель", // Settings_Header_Panel
-    L"Мышь", // Settings_Header_Mouse
-    L"Край", // Settings_Header_Edge
-    L"Рендеринг", // Settings_Header_Render
-    L"HDR", // Settings_Header_Hdr
-    L"Запросы", // Settings_Header_Prompts
-    L"Система", // Settings_Header_System
-    L"Функции", // Settings_Header_Features
-    L"Прозрачность", // Settings_Header_Transparency
-    L"Стеклянный движок (ГП)", // Settings_Header_GeekGlass
-    L"Эффекты стекла", // Settings_Label_EnableGeekGlass
-    L"Анимации", // Settings_Label_GlassUIAnimations
-    L"Материал", // Settings_Header_CoreMaterial
-    L"Радиус размытия", // Settings_Label_BlurSigma
-    L"Стекло отключено (система)", // Settings_Status_GlassDisabled
-    L"Плотность", // Settings_Label_TintDensity
-    L"Общая интенсивность цвета эффекта стекла.", // Settings_Tooltip_TintDensity
-    L"Блики", // Settings_Label_SpecularOpacity
-    L"Яркость диагональных световых бликов.", // Settings_Tooltip_SpecularOpacity
-    L"Тени", // Settings_Label_ShadowIntensity
-    L"Интенсивность теней окружающего затенения.", // Settings_Tooltip_ShadowIntensity
-    L"Векторный рендеринг", // Settings_Header_VectorAssets
-    L"Обводка значков", // Settings_Label_VectorStrokeWeight
-    L"Обычная (1.5 пкс)", // Settings_Option_StrokeStandard
-    L"Тонкая (1.0 пкс)", // Settings_Option_StrokeFine
-    L"Профиль оттенка", // Settings_Header_GlassTint
-    L"Цветовая логика", // Settings_Label_TintProfile
-    L"Авто (адаптивно)", // Settings_Option_TintAuto
-    L"Свой цвет", // Settings_Option_TintCustom
-    L"Оттенок вручную", // Settings_Label_GlassCustomColor
-    L"Прозрачность элементов (%)", // Settings_Header_DensityMatrix
-    L"OSD и миниатюры", // Settings_Label_OsdDensity
-    L"Прозрачность небольших плавающих наложений.", // Settings_Tooltip_OsdDensity
-    L"Панель инструментов и боковые панели", // Settings_Label_PanelsDensity
-    L"Прозрачность нижней и информационной панелей, галереи миниатюр и элементов управления в правом верхнем углу окна.", // Settings_Tooltip_PanelsDensity
-    L"Окна и настройки", // Settings_Label_ModalsDensity
-    L"Прозрачность центрированных всплывающих окон.", // Settings_Tooltip_ModalsDensity
-    L"Меню", // Settings_Label_MenusDensity
-    L"Прозрачность контекстного меню (только для Acrylic).", // Settings_Tooltip_MenusDensity
-    L"Тема", // Settings_Tab_Theme
-    L"Тема", // Settings_Label_ThemeMode
-    L"Авто", // Settings_Option_ThemeAuto
-    L"Тёмная", // Settings_Option_ThemeDark
-    L"Светлая", // Settings_Option_ThemeLight
-    L"Дизайн", // Settings_Option_ThemeCustom
-    L"Затемнение (диммер)", // Settings_Label_AmbientDimmer
-    L"Затемнять фон, когда открыто модальное окно или окно настроек.", // Settings_Tooltip_AmbientDimmer
-    L"Акцентный цвет", // Settings_Label_AccentColor
-    L"Цвет текста", // Settings_Label_TextColor
-    L"Темы", // Settings_Header_ThemeManagement
-    L"Экспорт", // Settings_Action_ExportTheme
-    L"Импорт", // Settings_Action_ImportTheme
-    L"Цвет холста", // Settings_Label_CanvasColor
-    L"Наложение", // Settings_Label_Overlay
-    L"Показывать сетку", // Settings_Label_ShowGrid
-    L"Поверх всех окон", // Settings_Label_AlwaysOnTop
-    L"Заблокировать окно", // Settings_Label_LockWindow
-    L"Определяет, будут ли блокироваться границы окна по умолчанию при запуске, а не после масштабирования изображения.", // Settings_Tooltip_LockWindow
-    L"Автоскрытие заголовка", // Settings_Label_AutoHideTitle
-    L"Скруглённые углы", // Settings_Label_RoundedCorners
-    L"Граница интерфейса", // Settings_Label_UIBorders
-    L"Определяет, будут ли окно и контекстное меню со скруглёнными углами. Требуется Windows 11.", // Settings_Tooltip_RoundedCorners
-    L"Закрепить нижнюю панель", // Settings_Label_LockToolbar
-    L"Минимальная ширина окна", // Settings_Label_WindowMinSize
-    L"Максимальный начальный размер", // Settings_Label_WindowMaxSizePercent
-    L"Индикаторы выхода за границы", // Settings_Label_ShowBorderIndicator
-    L"Показывать индикаторную линию в направлении, где изображение выходит за границы окна.", // Settings_Tooltip_ShowBorderIndicator
-    L"Миникарта", // Settings_Label_ShowNavigator
-    L"Когда мышь находится над миникартой, колёсико/боковое колёсико (Shift + колёсико) перемещает изображение.", // Settings_Tooltip_ShowNavigator
-    L"Авто", // Settings_Option_NavigatorAuto
-    L"Вкл", // Settings_Option_NavigatorOn
-    L"Выкл", // Settings_Option_NavigatorOff
-    L"Не менять размер окна при навигации", // Settings_Label_KeepWindowSizeOnNav
-    L"Запоминать последние размер и положение окна", // Settings_Label_RememberLastWindowSizeAndPosition
-    L"Адаптировать мелкие изображения", // Settings_Label_UpscaleSmallImagesWhenLocked
-    L"Плавное масштабирование окна (ГП)", // Settings_Label_EnableSmoothScaling
-    L"Режим панели EXIF", // Settings_Label_ExifMode
-    L"Информация в панели по умолчанию", // Settings_Label_ToolbarInfoDefault
-    L"Полноэкранный режим при открытии", // Settings_Label_OpenFullScreenMode
-    L"Масштаб в полноэкранном режиме", // Settings_Label_FullScreenZoomMode
-    L"Вписывать", // Settings_Option_FitScreen
-    L"Авто", // Settings_Option_AutoFit
-    L"Инвертировать действие колёсика", // Settings_Label_InvertWheel
-    L"Задержка привязки масштаба (100%)", // Settings_Label_ZoomSnapDamping
-    L"Масштабировать окно от позиции мыши", // Settings_Label_MouseAnchorZoom
-    L"Масштаб правой кнопкой мыши", // Settings_Label_RightButtonDragZoom
-    L"Скорость масштабирования колёсиком", // Settings_Label_WheelZoomSpeed
-    L"Боковое колёсико", // Settings_Label_ThumbWheel
-    L"Вместо этого можно использовать Shift + колёсико", // Settings_Tooltip_ThumbWheel
-    L"Alt + колёсико временно регулирует скорость масштабирования", // Settings_Tooltip_WheelZoomSpeed
-    L"Вместо этого можно использовать Ctrl + ЛКМ", // Settings_Tooltip_MiddleDrag
-    L"Двойной щелчок", // Settings_Label_DoubleClick
-    L"Умный", // Settings_Option_DoubleClick_Smart
-    L"Режим колёсика 1", // Settings_Option_DoubleClick_WheelMode1
-    L"Режим колёсика 2", // Settings_Option_DoubleClick_WheelMode2
-    L"Умный: Стандартное переключение масштабирования/полноэкранного режима;\nРежим колёсика 1: Двойной щелчок меняет местами функции основного и бокового колёсика;\nРежим колёсика 2: Двойной щелчок переключает режим панорамирования изображения;\nСовет: вместо бокового колёсика можно использовать Shift + колёсико.", // Settings_Tooltip_DoubleClick
-    L"Управляет скоростью панорамирования клавишами и колёсиком", // Settings_Tooltip_PanStepNormal
-    L"Главное колёсико: Следующее/предыдущее; Боковое/Shift+колёсико: Масштаб", // OSD_WheelMode1_NextPrevZoom
-    L"Главное колёсико: Масштаб; Боковое/Shift+колёсико: Следующее/предыдущее", // OSD_WheelMode1_ZoomNextPrev
-    L"Колёсико: панорамирование", // OSD_WheelMode2_Pan
-    L"Колёсико: стандартный режим", // OSD_WheelMode2_Default
-    L"Скорость масштабирования ПКМ", // Settings_Label_RightDragZoomSpeed
-    L"Скорость масштабирования (временно): ", // OSD_WheelZoomSpeed
-    L"Временно настроить скорость масштабирования", // Help_Action_AdjustZoomSpeed
-    L"Временно заблокировать масштаб окна", // Help_Action_LockWindowZoom
-    L"Инвертировать действие боковых кнопок", // Settings_Label_InvertButtons
-    L"Фиксированные уровни масштабирования", // Settings_Label_UseFixedZoom
-    L"Если включено, Alt + колёсико выполняет масштабирование, а не изменение скорости масштабирования.", // Settings_Tooltip_UseFixedZoom
-    L"  └  Свои уровни", // Settings_Label_FixedZoomLevels
-    L"Значения масштаба", // Dialog_FixedZoomTitle
-    L"Введите значения масштаба через запятую (например, 0.5, 1, 2):", // Dialog_FixedZoomMsg
-    L"Увеличение", // Settings_Label_ZoomModeIn
-    L"Уменьшение", // Settings_Label_ZoomModeOut
-    L"Перетаскивание левой кнопкой", // Settings_Label_LeftDrag
-    L"Перетаскивание средней кнопкой", // Settings_Label_MiddleDrag
-    L"Щелчок средней кнопкой", // Settings_Label_MiddleClick
-    L"Навигация при щелчке по краям", // Settings_Label_EdgeNavClick
-    L"Показывать OSD", // Settings_Label_ShowOSD
-    L"Отключить в режиме сравнения", // Settings_Label_DisableEdgeNavInCompare
-    L"Индикатор навигации", // Settings_Label_NavIndicator
-    L"Автоповорот (по EXIF)", // Settings_Label_AutoRotate
-    L"Управление цветом (CMS)", // Settings_Label_CMS
-    L"Расширенный цвет (HDR)", // Settings_Label_AdvancedColor
-    L"Тональная компрессия HDR", // Settings_Label_HdrToneMapping
-    L"Точка перегиба сплайна", // Settings_Label_HdrSplineKnee
-    L"Стратегия тональной компрессии HDR:\nОпределяет, как отображаются " L"HDR-изображения, превышающие возможности монитора.\nСплайн: " L"Высокоточное сжатие светов с использованием сплайнов (рекомендуется).\n" L"Колориметрическая: Строгое отображение яркости; светлые участки, " L"превышающие предел монитора, обрезаются.\nBT.2390 (EETF): Кривая ITU-R BT.2390 EETF для высокоточного отображения тонов.", // Settings_Tooltip_HdrToneMapping
-    L"0 = Авто (рассчитывается на основе яркости изображения).\nЗначение представляет собой соотношение пиковой яркости монитора. Яркость ниже этой точки перегиба отображается в соотношении 1:1, а яркость выше плавно сжимается с помощью сплайновой кривой.\n(Рекомендуется: 0.4 - 0.75)", // Settings_Tooltip_HdrSplineKnee
-    L"Пиковая яркость HDR (ниты)", // Settings_Label_HdrPeakNitsOverride
-    L"Установите 0 для системной яркости.", // Settings_Tooltip_HdrPeakNitsOverride
-    L"Пиковый процентиль HDR", // Settings_Label_HdrPeakPercentile
-    L"Удаление слишком ярких пикселей для повышения общей яркости (mpv по умолчанию: 99.995%).", // Settings_Tooltip_HdrPeakPercentile
-    L"100% (абсолютный пик)", // Settings_Option_HdrPeakPercentile_100
-    L"99.995% (стабильный)", // Settings_Option_HdrPeakPercentile_99995
-    L"99.9% (агрессивный)", // Settings_Option_HdrPeakPercentile_999
-    L"Диапазон обесцвечивания светов HDR", // Settings_Label_HdrDesatThreshold
-    L"Порог начала обесцвечивания светлых участков. 0.0 - обесцвечивать все света, 1.0 - не обесцвечивать. Рекомендуемое значение: 0.18.", // Settings_Tooltip_HdrDesatThreshold
-    L"Степень обесцвечивания светов HDR", // Settings_Label_HdrMaxDesat
-    L"Максимальная интенсивность обесцвечивания светлых участков. 0.0 - не обесцвечивать, 1.0 - полностью до белого. Рекомендуемое значение: 0.75.", // Settings_Tooltip_HdrMaxDesat
-    L"Колориметрическая", // Settings_Option_HdrColorimetric
-    L"Сплайн", // Settings_Option_HdrSpline
-    L"BT.2390 (EETF)", // Settings_Option_HdrLegacyReinhard
-    L"Запасной профиль без тегов", // Settings_Label_CmsFallback
-    L"Профиль цветопробы (.icc)", // Settings_Label_CustomProof
-    L"Предпросмотр цветопробы", // Context_SoftProofing
-    L"Профиль цветопробы", // Context_SoftProofProfile
-    L"Свой...", // Context_SoftProofCustom
-    L"Скоро", // Settings_Value_ComingSoon
-    L"Принудительное декодирование RAW", // Settings_Label_ForceRaw
-    L"Объединение RAW+JPEG", // Settings_Label_PairRawJpeg
-    L"Показывать RAW и одноимённый файл JPEG/HEIF как одно фото.\nВ списке остаётся только готовое изображение с пометкой формата RAW (например, +CR3); время съёмки проверяется в фоне, несовпадающие пары разделяются.\nКнопка RAW на панели или её горячая клавиша переключает между JPEG/HEIF и декодированным RAW; горячая клавиша парного сравнения показывает обе версии рядом.", // Settings_Tooltip_PairRawJpeg
-    L"Экспозиция (яркость)", // Settings_Label_Exposure
-    L"Регулировка яркости изображения (компенсация экспозиции). Диапазон: 0.18x - 10.0x.", // Settings_Tooltip_Exposure
-    L"Добавить в 'Открыть с помощью'", // Settings_Label_AddToOpenWith
-    L"Пользовательский редактор", // Settings_Label_CustomEditor
-    L"Выбрать редактор", // Context_SelectEditor
-    L"Не удалось запустить редактор. Настройте его снова.", // OSD_EditorLaunchFailed
-    L"Добавить", // Settings_Action_Add
-    L"Добавлено", // Settings_Action_Added
-    L"Отключено в портативном режиме", // Settings_Status_DisabledInPortable
-    L"Включить отладочный HUD (F12)", // Settings_Label_DebugHUD
-    L"Система предзагрузки", // Settings_Label_Prefetch
-    L"Панель информации", // Settings_Label_InfoPanelAlpha
-    L"Панель инструментов", // Settings_Label_ToolbarAlpha
-    L"Настройки", // Settings_Label_SettingsAlpha
-    L"Сбросить все настройки", // Settings_Label_Reset
-    L"Восстановить", // Settings_Action_Restore
-    L"Готово", // Settings_Action_Done
-    L"Импорт/экспорт (.ini)", // Settings_Header_ConfigManagement
-    L"Неуправляемый (быстро)", // Settings_Option_CmsUnmanaged
-    L"sRGB (стандарт)", // Settings_Option_CmssRGB
-    L"Display P3 (широкий охват)", // Settings_Option_CmsP3
-    L"Adobe RGB (1998)", // Settings_Option_CmsAdobeRGB
-    L"Оттенки серого (контроль тона)", // Settings_Option_CmsGray
-    L"ProPhoto RGB", // Settings_Option_CmsProPhoto
-    L"Цель рендеринга", // Settings_Label_CmsIntent
-    L"Определение выхода за охват", // Settings_Label_GamutWarning
-    L"Анализ и выделение областей вне цветового охвата. Режимы: выключено / только в режиме цветопробы (по умолчанию) / для цветопробы и монитора одновременно.", // Settings_Tooltip_GamutWarning
-    L"Автоуведомление об ошибке охвата", // Settings_Label_GamutAutoPrompt
-    L"Показать OSD-уведомление при обнаружении ошибок охвата. Выделение можно включить вручную на панели инструментов.", // Settings_Tooltip_GamutAutoPrompt
-    L"Цвет выделения вне охвата", // Settings_Label_GamutColor
-    L"Относительный колориметрический (точность)", // Settings_Option_CmsIntentRelative
-    L"Перцептивный (восприятие)", // Settings_Option_CmsIntentPerceptual
-    L"Использовать систему управления цветом (CMS).\nЕсли включено, применяется высокоточное преобразование цветового пространства через ГП для восстановления истинных цветов.\nЕсли отключено, снижается нагрузка на ГП, но возможно перенасыщение цветов на дисплеях с широким цветовым охватом.", // Settings_Tooltip_CMS
-    L"Метод преобразования цветового пространства (цель рендеринга).\nПерцептивный: сжимает цвета вне охвата для сохранения деталей и градиентов (идеально для фото).\nОтносительный колориметрический: сохраняет цвета в пределах охвата и обрезает выходящие за его пределы (идеально для интерфейса и значков).\n* Визуальные различия проявляются только при использовании улучшенных профилей ICC, содержащих LUT (таблицы поиска). Стандартные матричные профили автоматически возвращаются к относительной колориметрии.", // Settings_Tooltip_CmsIntent
-    L"Использовать 16-разрядный конвейер рендеринга с плавающей запятой (scRGB).\nЕсли включено, идеально отображаются яркие участки фотографий на HDR-дисплеях, без ограничения SDR.\nЕсли отключено, изображение принудительно отображается как SDR.\n* При включении увеличивается потребление видеопамяти.", // Settings_Tooltip_AdvancedColor
-    L"Авто: масштаб 100%, если изображение меньше экрана, и вписывание в экран, если больше.", // Settings_Tooltip_ZoomAuto
-    L"Проверить наличие новой версии", // Settings_Action_CheckUpdates
-    L"Посмотреть обновление", // Settings_Action_ViewUpdate
-    L"Проверка...", // Settings_Status_Checking
-    L"Актуальная версия", // Settings_Status_UpToDate
-    L"Репозиторий GitHub", // Settings_Link_GitHub
-    L"Сообщить о проблеме", // Settings_Link_ReportIssue
-    L"Горячие клавиши (F1)", // Settings_Link_Hotkeys
-    L"Версия", // Settings_Label_Version
-    L"Сборка", // Settings_Label_Build
-    L"Чёрный", // Settings_Option_Black
-    L"Эффекты", // Settings_Option_Effects
-    L"Контекстное меню", // Settings_Label_ContextMenuBackdrop
-    L"Стиль эффекта", // Settings_Label_CanvasEffectStyle
-    L"Эффекты Mica и Mica Alt поддерживаются только в Windows 11. Эффект Acrylic использует больше системных ресурсов.", // Settings_Tooltip_BackdropEffectsTip
-    L"Белый", // Settings_Option_White
-    L"Сетка", // Settings_Option_Grid
-    L"Свой", // Settings_Option_Custom
-    L"Выкл", // Settings_Option_Off
-    L"Вкл", // Settings_Option_On
-    L"Кратко", // Settings_Option_Lite
-    L"Полностью", // Settings_Option_Full
-    L"Только большие", // Settings_Option_LargeOnly
-    L"Все", // Settings_Option_All
-    L"Цветопроба", // Settings_Option_SoftProofing
-    L"Окно", // Settings_Option_Window
-    L"Панорамирование", // Settings_Option_Pan
-    L"Нет", // Settings_Option_None
-    L"Выход", // Settings_Option_Exit
-    L"Стрелка", // Settings_Option_Arrow
-    L"Курсор", // Settings_Option_Cursor
-    L"Вручную", // Settings_Option_Manual
-    L"Авто (Проводник)", // Settings_Option_SortAuto
-    L"Имя", // Settings_Option_SortName
-    L"Дата изменения", // Settings_Option_SortModified
-    L"Дата съёмки (EXIF)", // Settings_Option_SortDateTaken
-    L"Размер", // Settings_Option_SortSize
-    L"Тип", // Settings_Option_SortType
-    L"Циклично в папке", // Settings_Option_NavLoop
-    L"Заходить во вложенные папки", // Settings_Option_NavThrough
-    L"Линейный (простое сглаживание)", // Settings_Option_Linear
-    L"По соседним (макс. резкость)", // Settings_Option_Nearest
-    L"HQ кубический (макс. сглаживание)", // Settings_Option_HighQualityCubic
-    L"Авто", // Settings_Option_ZoomAuto
-    L"Авто", // Settings_Option_Auto
-    L"Эко", // Settings_Option_Eco
-    L"Баланс", // Settings_Option_Balanced
-    L"Ультра", // Settings_Option_Ultra
-    L"Горячие клавиши", // Help_Header_Shortcuts
-    L"Мышь", // Help_Header_Mouse
-    L"След./пред. изображение", // Help_Item_NextPrev
-    L"Масштабирование", // Help_Item_Zoom
-    L"Панорамирование", // Help_Item_Pan
-    L"Поворот", // Help_Item_Rotate
-    L"По размеру экрана", // Help_Item_Fit
-    L"Удалить изображение", // Help_Item_Delete
-    L"Полный экран", // Help_Item_Fullscreen
-    L"Закрыть", // Help_Item_Close
-    L"Левая кнопка", // Help_Mouse_Left
-    L"Средняя кнопка", // Help_Mouse_Middle
-    L"Колёсико", // Help_Mouse_Wheel
-    L"Правая кнопка", // Help_Mouse_Right
-    L"Вертикальное перетаскивание правой кнопкой", // Help_Mouse_RightVerticalDrag
-    L"Перемещение окна / Выход из полноэкранного режима / Выход из максимизированного", // Help_Action_MoveWindow
-    L"Панорамирование", // Help_Action_PanImage
-    L"Контекстное меню", // Help_Action_ContextMenu
-    L"След./Пред.", // Help_Action_NextPrev
-    L"Масштаб", // Help_Action_Zoom
-    L"Умный масштаб (100% / По размеру / Восстановить)", // Help_Action_SmartZoom
-    L"Скопировать изображение", // Help_Desc_Copy
-    L"Изменить", // Help_Desc_Edit
-    L"Советы и термины", // Help_Header_Tips
-    L"* Горячие клавиши и контекстное меню действуют только на текущий процесс. Настройки не изменяются.", // Help_Tip_ContextScope
-    L"Поворот: При оптимизации краёв они слегка обрезаются, чтобы вписать в границы блока " L"(без потерь). В режиме с потерями выполняется полное перекодирование изображения.", // Help_Tip_Rotation
-    L"Видеостена (Ctrl+F11): Распределение изображения по всем мониторам. Если кнопка закрытия скрыта, " L"для выхода дважды щёлкните мышью.", // Help_Tip_VideoWall
-    L"Режим кальки/плёнки: Если включено, изображение становится полупрозрачным, открывая нижележащие элементы. Размер и прозрачность настраиваются. Включите на панели инструментов режим сквозных щелчков мышью, в котором всё, кроме Shift+Esc, игнорируется - QuickView становится прозрачным наложением.", // Help_Tip_DesignerMode
-    L"Предупреждение о цветовом охвате: Обнаружение цветов вне охвата для монитора или профиля цветопробы. Режимы: Выключено/Только цветопроба (по умолчанию)/Все. Переключение - через панель инструментов.", // Help_Tip_GamutDetection
-    L"RAW: По умолчанию QuickView показывает встроенную в RAW картинку предпросмотра. Нажмите кнопку RAW " L"для полного декодирования (из-за параметров рендеринга изображение может выглядеть по-другому).", // Help_Tip_Raw
-    L"Качество JPEG: Ориентировочное значение качества. Может слегка " L"отличаться от настройки сохранения из-за различий в алгоритме " L"(например, Photoshop 100% \u2248 98%).", // Help_Tip_JpegQ
-    L"Сравнение цветопробы: Вход в режим сравнения при включённой цветопробе автоматически сравнит оригинал и пробу.", // Help_Tip_SoftProofCompare
-    L"Доступна новая версия!", // Dialog_UpdateTitle
-    L"Доступна версия %s.", // Dialog_UpdateContent
-    L"История изменений", // Dialog_UpdateLogHeader
-    L"Обновить", // Dialog_ButtonUpdate
-    L"Позже", // Dialog_ButtonLater
-    L"Звезда на GitHub", // Dialog_ButtonStar
-    L"QuickView создан с любовью", // Dialog_Update_LoveTitle
-    L"Я разрабатываю QuickView в свободное время и считаю, что " L"в Windows должен быть более быстрый и эффективный просмотрщик. Если вам " L"нравится эта программа, пожалуйста, поставьте звезду на " L"GitHub или расскажите о QuickView другу.", // Dialog_Update_LoveMessage
-    L"Режим сравнения", // Help_Item_Compare
-    L"Первое/последнее изображение", // Help_Item_FirstLast
-    L"ФИЗИЧЕСКИЕ АТРИБУТЫ", // HUD_Group_Physical
-    L"НАУЧНОЕ КАЧЕСТВО", // HUD_Group_Scientific
-    L"ОПТИКА И КОДИРОВАНИЕ", // HUD_Group_Encoding
-    L"Определение границ (Лапласова дисперсия)", // HUD_Tip_Sharp_Desc
-    L"Чёткие края, высокая детализация", // HUD_Tip_Sharp_High
-    L"Мягкий фокус или размытие в движении", // HUD_Tip_Sharp_Low
-    L"> 500 - очень резко", // HUD_Tip_Sharp_Ref
-    L"Плотность информации (энтропия Шеннона)", // HUD_Tip_Ent_Desc
-    L"Сложные текстуры или высокий уровень шума", // HUD_Tip_Ent_High
-    L"Плоские участки или низкая детализация", // HUD_Tip_Ent_Low
-    L"7.0-8.0 - высокая детализация", // HUD_Tip_Ent_Ref
-    L"Бит на пиксел (эффективность сжатия)", // HUD_Tip_BPP_Desc
-    L"Низкая эффективность (сохраняется больше данных)", // HUD_Tip_BPP_High
-    L"Высокая эффективность (более плотное сжатие)", // HUD_Tip_BPP_Low
-    L"24.0 (Raw RGB), ~2.0-3.0 (High JPEG), ~0.5-1.5 (WebP/AVIF)", // HUD_Tip_BPP_Ref
-    L"Высокая: ", // HUD_Label_High
-    L"Низкая: ", // HUD_Label_Low
-    L"Эталон: ", // HUD_Label_Ref
-    L"Фотоплёнка (при наведении вверху)", // Settings_Header_GalleryTrigger
-    L"Режим триггера", // Settings_Label_GalleryTriggerMode
-    L"Не скрывать после щелчка", // Settings_Label_KeepGalleryVisibleOnThumbnailClick
-    L"Эта функция автоматически включит блокировку окна и сохранение размера окна при навигации.", // Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick
-    L"Автонаведение", // Settings_Option_GalleryTriggerAuto
-    L"Наведение на точку", // Settings_Option_GalleryTriggerDelay
-    L"Щелчок по точке", // Settings_Option_GalleryTriggerClick
-    L"Отключено", // Settings_Option_GalleryTriggerDisable
-    L"Эта функция автоматически отключается, если размер окна меньше 600x450 пкс.", // Settings_Tooltip_GalleryTrigger
-    L"Высота зоны триггера", // Settings_Label_GalleryTriggerAreaHeight
-    L"Время задержки", // Settings_Label_GalleryDwellTime
-    L"Задержка выхода", // Settings_Label_GalleryExitDelay
-    L"Мин. размер галереи", // Settings_Label_GalleryMinSize
-
-    L"Слайд-шоу начато", // OSD_SlideshowStarted
-    L"Слайд-шоу остановлено", // OSD_SlideshowStopped
-    L"Слайд-шоу возобновлено", // OSD_SlideshowResumed
-    L"Слайд-шоу на паузе", // OSD_SlideshowPaused
-    L"Эффект: Прожектор", // OSD_ImmersiveSpotlight
-    L"Эффект: Обычный", // OSD_ImmersiveNormal
-    L"Задание на печать отправлено. Можно продолжать просмотр.", // OSD_PrintJobStarted
-    L"Задание на печать успешно отправлено.", // OSD_PrintJobFinished
-    L"Режим слайд-шоу", // Context_SlideshowMode
-    L"Интервал (сек)", // Settings_Label_SlideshowInterval
-    L"Режим погружения", // Settings_Label_SlideshowImmersive
-    L"Настройка краткой инфопанели", // Settings_Label_CustomLiteInfoPanel
-    L"Настройка полной инфопанели", // Settings_Label_CustomFullInfoPanel
-    L"Масштаб инфопанели", // Settings_Label_InfoPanelScale
-    L"Элементы в обычном режиме", // Settings_Label_ItemsInNormalMode
-    L"Элементы в режиме сравнения", // Settings_Label_ItemsInCompareMode
-    L"Шаблон разделителя", // Settings_Label_SeparatorPreset
-    L"Обычный", // Settings_Option_SlideshowNormal
-    L"Прожектор", // Settings_Option_SlideshowSpotlight
-    L"Форма экранной лупы", // Settings_Label_LoupeShape
-    L"Квадратная", // Settings_Option_LoupeShapeSquare
-    L"Круглая", // Settings_Option_LoupeShapeCircle
-    L"Чтобы настроить размер лупы, удерживайте сочетание клавиш и вращайте колёсико мыши.", // Settings_Tooltip_LoupeHotkey
-    L"Удерживайте Ctrl и перемещайте мышь с нажатой левой кнопкой для быстрого кадрирования.", // Settings_Tooltip_CropModeHotkey
-};
-
-// ----------------------------------------------------------------
-// DE Table
-// ----------------------------------------------------------------
-static const LanguageTable Table_DE = {
-    L"Kein Bild geladen", // OSD_NoImage
-    L"Keine Bilder in diesem Ordner", // OSD_FolderEmpty
-    L"Animiertes SVG als Standbild angezeigt", // OSD_SvgStaticFallback
-    L"Verlustfrei", // OSD_Lossless
-    L"Neu kodiert (verlustfrei)", // OSD_ReencodedLossless
-    L"Kantenoptimiert", // OSD_EdgeAdapted
-    L"Neu kodiert", // OSD_Reencoded
-    L"Zugriff verweigert - Datei wird verwendet oder ist schreibgeschützt", // OSD_ReadOnly
-    L"Transformation nicht perfekt (Kantenoptimiert)", // OSD_NotPerfect
-    L"Video Wall: ON", // OSD_SpanOn
-    L"Video Wall: OFF", // OSD_SpanOff
-    L"Vorher (Original)", // OSD_CompareBefore
-    L"Nachher (Proof)", // OSD_CompareAfter
-    L"Löschen rückgängig gemacht", // OSD_UndoDeleteSuccess
-    L"Rückgängig machen fehlgeschlagen", // OSD_UndoDeleteFailed
-    L"Umbenennen rückgängig gemacht", // OSD_UndoRenameSuccess
-    L"Rückgängig machen fehlgeschlagen", // OSD_UndoRenameFailed
-    L"Drehung/Spiegelung rückgängig gemacht", // OSD_UndoTransformSuccess
-    L"Rückgängig machen fehlgeschlagen", // OSD_UndoTransformFailed
-    L"Farbraum-Überschreitung erkannt", // OSD_GamutDetected
-    L"Farbraum: Inkompatibles Profil", // OSD_GamutIncompatible
-    L"Farbraum: Analyse fehlgeschlagen", // OSD_GamutFailed
-    L"90\x00B0 im Uhrzeigersinn drehen", // Action_RotateCW
-    L"90\x00B0 gegen Uhrzeigersinn drehen", // Action_RotateCCW
-    L"180\x00B0 drehen", // Action_Rotate180
-    L"Horizontal spiegeln", // Action_FlipH
-    L"Vertikal spiegeln", // Action_FlipV
-    L"Änderungen speichern?", // Dialog_SaveTitle
-    L"Das Bild wurde geändert. Möchten Sie die Änderungen speichern?", // Dialog_SaveContent
-    L"Speichern", // Dialog_ButtonSave
-    L"Speichern unter...", // Dialog_ButtonSaveAs
-    L"Verwerfen", // Dialog_ButtonDiscard
-    L"Fortfahren", // Dialog_ButtonContinue
-    L"Zuschneide-Änderungen nicht gespeichert. Speichern?", // Dialog_CropUnsavedTitle
-    L"Bild speichern", // Dialog_SaveAsTitle
-    L"Speichern & Exportieren", // Dialog_ExportTitle
-    L"Überschreiben", // Dialog_ButtonOverwrite
-    L"ICC-Profil", // Dialog_EmbedICC
-    L"Größe: Schätzung...", // Dialog_SizeEstimating
-    L"Exportfehler", // Dialog_ExportError
-    L"Auswahl kopieren (Strg+C)", // Toolbar_Tooltip_CropCopy
-    L"Speichern (Strg+S)", // Toolbar_Tooltip_CropSave
-    L"Anwenden (Enter)", // Toolbar_Tooltip_CropApply
-    L"Beenden (Esc)", // Toolbar_Tooltip_CropCancel
-    L"Zuschneiden-Modus aktiv", // OSD_EnterCropMode
-    L"Zuschneide-Auswahl kopiert", // OSD_CropCopied
-    L"Zuschneiden", // Context_Crop
-    L"Immer verlustfrei speichern", // Checkbox_AlwaysSaveLossless
-    L"Immer kantenoptimiert speichern", // Checkbox_AlwaysSaveEdgeAdapted
-    L"Immer neu kodiert speichern", // Checkbox_AlwaysSaveLossy
-    L"Ohne Bestätigung in den Papierkorb verschieben", // Checkbox_NeverConfirmDelete
-    L"HEIC kann nicht dekodiert werden - HEVC-Erweiterung installieren", // OSD_HEICCodecMissing
-    L"HEIC kann nicht dekodiert werden", // Dialog_HEICTitle
-    L"Ihr System hat keine HEVC-Erweiterung.\\nQuickView nutzt " L"Hardware-Beschleunigung für beste Leistung.", // Dialog_HEICContent
-    L"Erweiterung holen (kostenlos)", // Dialog_HEICGetExtension
-    L"Abbrechen", // Dialog_Cancel
-    L"Allgemein", // Settings_Tab_General
-    L"Über", // Settings_Tab_About
-    L"Grundlagen", // Settings_Group_Foundation
-    L"Start", // Settings_Group_Startup
-    L"Gewohnheiten", // Settings_Group_Habits
-    L"Sprache", // Settings_Label_Language
-    L"Einzelinstanz", // Settings_Label_SingleInstance
-    L"Updates prüfen", // Settings_Label_CheckUpdates
-    L"Update-Kanal", // Settings_Label_UpdateChannel
-    L"Stabil", // Settings_Option_UpdateStable
-    L"Vorabversion (Pre-release)", // Settings_Option_UpdatePreRelease
-    L"Stabil: Wird veröffentlicht, nachdem sich eine Vorabversion als stabil erwiesen hat.\nVorabversion (Pre-release): Liefert sofort die neuesten Code-Änderungen, um Ihr Feedback zu sammeln. Hinweis: Diese Änderungen sind nicht streng getestet.", // Settings_Tooltip_PreRelease
-    L"Endlosnavigation", // Settings_Label_NavLoopMode
-    L"Sortierreihenfolge", // Settings_Label_SortOrder
-    L"Absteigend", // Settings_Label_SortDescending
-    L"Archive immer nach Namen sortieren", // Settings_Label_SortArchivesByNameAscending
-    L"Vor dem Löschen bestätigen", // Settings_Label_ConfirmDel
-    L"Portabler Modus / Bereinigung", // Settings_Label_Portable
-    L"Portabler Modus und Registry-Bereinigung:\nWenn aktiviert, wird QuickView im " L"portablen Modus ausgeführt. Es bereinigt automatisch vorhandene " L"Registry-Verknüpfungen, deaktiviert automatische Registry-Änderungen und " L"speichert Konfigurationsdateien im Anwendungsverzeichnis anstatt in AppData.", // Settings_Tooltip_Portable
-    L"Span Displays (Video Wall)", // Settings_Label_SpanDisplays
-    L"UI-Skalierung", // Settings_Label_UIScale
-    L"Neustart erforderlich", // Settings_Status_RestartRequired
-    L"Keine Schreibrechte!", // Settings_Status_NoWritePerm
-    L"Aktiviert", // Settings_Status_Enabled
-    L"Powered by", // Settings_Header_PoweredBy
-    L"Öffnen...\tStrg+O", // Context_Open
-    L"Öffnen mit...", // Context_OpenWith
-    L"Bearbeiten\tE", // Context_Edit
-    L"Im Explorer anzeigen", // Context_ShowInExplorer
-    L"Ordner öffnen", // Context_OpenFolder
-    L"Pixel kopieren\tStrg+C", // Context_CopyPixels
-    L"Datei kopieren\tStrg+Umschalt+C", // Context_CopyFile
-    L"Pixel kopieren\tStrg+C", // Context_CopyImage
-    L"Pfad kopieren\tStrg+Alt+C", // Context_CopyPath
-    L"Drucken\tStrg+P", // Context_Print
-    L"90\x00B0 im Uhrzeigersinn\tR", // Context_RotateCW
-    L"90\x00B0 gegen Uhrzeigersinn\tShift+R", // Context_RotateCCW
-    L"Horizontal spiegeln\tH", // Context_FlipH
-    L"Vertikal spiegeln\tV", // Context_FlipV
-    L"Transformieren", // Context_Transform
-    L"Originalgröße (100%)\t1 / Z", // Context_ActualSize
-    L"An Bildschirm anpassen\t0 / F", // Context_FitToScreen
-    L"An Fenster anpassen", // Context_FitWindow
-    L"Fenster ausfüllen", // Context_FillWindow
-    L"Vergrößern\t+ / Strg +", // Context_ZoomIn
-    L"Verkleinern\t- / Strg -", // Context_ZoomOut
-    L"Fenstergröße sperren", // Context_LockWindow
-    L"Immer im Vordergrund\tStrg+T", // Context_AlwaysOnTop
-    L"HUD-Galerie\tT", // Context_HUDGallery
-    L"Kompaktes Info-Panel\tTab", // Context_LiteInfoPanel
-    L"Vollständiges Info-Panel\tI", // Context_FullInfoPanel
-    L"RAW rendern", // Context_RenderRAW
-    L"Pixel-Art-Modus", // Context_PixelArtMode
-    L"Farbraum", // Context_ColorSpace
-    L"Vollbild\tF11", // Context_Fullscreen
-    L"Ansicht", // Context_View
-    L"Ausfüllen", // Context_WallpaperFill
-    L"Anpassen", // Context_WallpaperFit
-    L"Kacheln", // Context_WallpaperTile
-    L"Als Hintergrundbild setzen", // Context_SetAsWallpaper
-    L"Umbenennen\tF2", // Context_Rename
-    L"Erweiterung reparieren", // Context_FixExtension
-    L"Löschen\tEntf", // Context_Delete
-    L"Löschen rückgängig machen\tCtrl+Z", // Context_UndoDelete
-    L"Umbenennen rückgängig machen\tCtrl+Z", // Context_UndoRename
-    L"Drehung/Spiegelung rückgängig machen\tCtrl+Z", // Context_UndoTransform
-    L"Rückgängig machen\tCtrl+Z", // Context_Undo
-    L"Sortieren nach", // Context_SortBy
-    L"Navigationsreihenfolge", // Context_NavOrder
-    L"Aufsteigend", // Context_SortAscending
-    L"Absteigend", // Context_SortDescending
-    L"Einstellungen...", // Context_Settings
-    L"Vergleichsmodus\tC", // Context_CompareMode
-    L"Pausmodus\tCtrl+Shift+O", // Context_OverlayMode
-    L"Im Vergleichsmodus öffnen", // Context_GalleryOpenCompare
-    L"In neuem Fenster öffnen", // Context_GalleryOpenNewWindow
-    L"Beenden\tMButton/Esc", // Context_Exit
-    L"Maus-Passthrough beenden", // Menu_ExitPassthrough
-    L"Maus-Passthrough-Modus", // Dialog_PassthroughTitle
-    L"Mausereignisse werden an das darunterliegende Fenster weitergegeben.\nBeenden nur über globalen Hotkey (Shift+Esc) oder Taskleisten-Menü möglich.\n\nFortfahren?", // Dialog_PassthroughContent
-    L"Durchklicken: AN (Shift+Esc zum Beenden)", // OSD_PassthroughOn
-    L"Durchklicken: AUS", // OSD_PassthroughOff
-    L"Pausmodus: AN", // OSD_OverlayModeOn
-    L"Pausmodus: AUS", // OSD_OverlayModeOff
-    L"Deckkraft", // OSD_Opacity
-    L"Vergrößern (Pause)", // Toolbar_Tooltip_OverlayZoomIn
-    L"Verkleinern (Pause)", // Toolbar_Tooltip_OverlayZoomOut
-    L"Deckkraft erhöhen", // Toolbar_Tooltip_OverlayAlphaUp
-    L"Deckkraft verringern", // Toolbar_Tooltip_OverlayAlphaDown
-    L"Maus-Passthrough aktivieren", // Toolbar_Tooltip_OverlayPassthroughOn
-    L"Maus-Passthrough deaktivieren", // Toolbar_Tooltip_OverlayPassthroughOff
-    L"Pausmodus beenden", // Toolbar_Tooltip_OverlayExit
-    L"Fehler", // Message_SaveErrorTitle
-    L"Datei konnte nicht gespeichert werden. Datei gesperrt?", // Message_SaveErrorContent
-    L"Vorheriges (Links)", // Toolbar_Tooltip_Prev
-    L"Nächstes (Rechts)", // Toolbar_Tooltip_Next
-    L"Links drehen (Shift+R)", // Toolbar_Tooltip_RotateL
-    L"Rechts drehen (R)", // Toolbar_Tooltip_RotateR
-    L"Horizontal spiegeln (H)", // Toolbar_Tooltip_FlipH
-    L"Fenster sperren (temp)", // Toolbar_Tooltip_Lock
-    L"Fenster entsperren", // Toolbar_Tooltip_Unlock
-    L"Galerie (T)", // Toolbar_Tooltip_Gallery
-    L"Info-Panel", // Toolbar_Tooltip_Info
-    L"RAW: Vorschau (Klick für Voll)", // Toolbar_Tooltip_RawPreview
-    L"RAW: Volle Dekodierung (Klick für Vorschau)", // Toolbar_Tooltip_RawFull
-    L"RAW: Gepaartes RAW anzeigen (volle Dekodierung)", // Toolbar_Tooltip_RawPairView
-    L"RAW: Zurück zum gepaarten Bild", // Toolbar_Tooltip_RawPairBack
-    L"Erweiterung stimmt nicht (Reparieren)", // Toolbar_Tooltip_FixExtension
-    L"Symbolleiste anheften", // Toolbar_Tooltip_Pin
-    L"Symbolleiste lösen", // Toolbar_Tooltip_Unpin
-    L"Farbraumwarnung anzeigen", // Toolbar_Tooltip_GamutWarning
-    L"Normaler Modus", // Toolbar_Tooltip_NormalMode
-    L"Vergleichsmodus", // Toolbar_Tooltip_CompareMode
-    L"Einzelseiten-Modus", // Toolbar_Tooltip_SinglePage
-    L"Doppelseiten-Modus", // Toolbar_Tooltip_DualPage
-    L"Neues Bild in Auswahl öffnen", // Toolbar_Tooltip_CompareOpen
-    L"Links/Rechts tauschen", // Toolbar_Tooltip_CompareSwap
-    L"Layout umschalten", // Toolbar_Tooltip_CompareLayout
-    L"Vergleichsinformationen", // Toolbar_Tooltip_CompareInfo
-    L"Ausgewähltes Bild löschen", // Toolbar_Tooltip_CompareDelete
-    L"Vergrößern (Feineinstellung)", // Toolbar_Tooltip_CompareZoomIn
-    L"Verkleinern (Feineinstellung)", // Toolbar_Tooltip_CompareZoomOut
-    L"Zoom-Sync: AN", // Toolbar_Tooltip_CompareSyncZoomOn
-    L"Zoom-Sync: AUS", // Toolbar_Tooltip_CompareSyncZoomOff
-    L"Pan-Sync: AN", // Toolbar_Tooltip_CompareSyncPanOn
-    L"Pan-Sync: AUS", // Toolbar_Tooltip_CompareSyncPanOff
-    L"Spotlight-Effekt umschalten", // Toolbar_Tooltip_SlideshowImmersiveToggle
-    L"Diashow beenden", // Toolbar_Tooltip_SlideshowExit
-    L"Vergleich beenden", // Toolbar_Tooltip_CompareExit
-    L"Animation abspielen", // Toolbar_Tooltip_AnimPlay
-    L"Animation pausieren", // Toolbar_Tooltip_AnimPause
-    L"Vorheriger Frame", // Toolbar_Tooltip_AnimPrev
-    L"Nächster Frame", // Toolbar_Tooltip_AnimNext
-    L"Dirty Rect Debug: AN", // Toolbar_Tooltip_AnimDirtyOn
-    L"Dirty Rect Debug: AUS", // Toolbar_Tooltip_AnimDirtyOff
-    L"Animationsgeschwindigkeit", // Toolbar_Tooltip_AnimSpeed
-    L"Leistung", // Settings_Header_Performance
-    L"Profi-Werkzeuge", // Settings_Header_Professional
-    L"Memory Reclaim Strategy:", // Settings_Label_MemoryReclaim
-    L"Smart (Auto)", // Settings_Option_MemSmart
-    L"Aggressive (Max Perf)", // Settings_Option_MemAggressive
-    L"On-Demand (Min RAM)", // Settings_Option_MemOnDemand
-    L"Smart: Balance performance and RAM.\nAggressive: Maximize performance, high memory usage.\nOn-Demand: Release memory immediately when idle.", // Settings_Tooltip_MemoryReclaim
-    L"Dirty-Rect-Taste in Animation anzeigen", // Settings_Label_ShowDirtyRect
-    L"Debug-Schaltfläche für Dirty Rects in der Animations-Symbolleiste anzeigen.", // Settings_Tooltip_ShowDirtyRect
-    L"Kopiert!", // OSD_Copied
-    L"Pixel in die Zwischenablage kopiert!", // OSD_PixelsCopied
-    L"Rohpixel werden extrahiert...", // OSD_PixelsExtracting
-    L"Datei in die Zwischenablage kopiert!", // OSD_FileCopied
-    L"Koordinaten kopiert!", // OSD_CoordinatesCopied
-    L"Dateipfad kopiert!", // OSD_FilePathCopied
-    L"Zoom: 100%", // OSD_Zoom100
-    L"Zoom: An Bildschirm anpassen", // OSD_ZoomFit
-    L"Zoom: An Fenster anpassen", // OSD_ZoomFitWindow
-    L"Zoom: Fenster ausfüllen", // OSD_ZoomFill
-    L"Drucken: Benutzen Sie Strg+P in der geöffneten App", // OSD_PrintInstruction
-    L"In Papierkorb verschoben", // OSD_MovedToRecycleBin
-    L"Fenster gesperrt", // OSD_WindowLocked
-    L"Fenster entsperrt", // OSD_WindowUnlocked
-    L"Immer im Vordergrund: AN", // OSD_AlwaysOnTopOn
-    L"Immer im Vordergrund: AUS", // OSD_AlwaysOnTopOff
-    L"Hintergrundbild gesetzt", // OSD_WallpaperSet
-    L"Hintergrundbild setzen fehlgeschlagen", // OSD_WallpaperFailed
-    L"Umbenannt", // OSD_Renamed
-    L"Umbenennung fehlgeschlagen", // OSD_RenameFailed
-    L"Erweiterung repariert", // OSD_ExtensionFixed
-    L"Wiederhergestellt", // OSD_Restored
-    L"Erstes Bild", // OSD_FirstImage
-    L"Letztes Bild", // OSD_LastImage
-    L"HD", // OSD_HD
-    L"Zoom: ", // OSD_ZoomPrefix
-    L"Spielt ab", // OSD_AnimPlaying
-    L"Pausiert (Alt+Links/Rechts zum Suchen)", // OSD_AnimPaused
-    L"Dirty Rect: AN", // OSD_AnimDirtyOn
-    L"Dirty Rect: AUS", // OSD_AnimDirtyOff
-    L"Span Displays (Video Wall)\tCtrl+F11", // Context_SpanDisplays
-    L"Interface", // Settings_Tab_Visuals
-    L"Steuerung", // Settings_Tab_Controls
-    L"Bild", // Settings_Tab_Image
-    L"Erweitert", // Settings_Tab_Advanced
-    L"Hintergrund", // Settings_Header_Backdrop
-    L"Fenster", // Settings_Header_Window
-    L"Fenstersperre", // Settings_Header_WindowLock
-    L"Panel", // Settings_Header_Panel
-    L"Maus", // Settings_Header_Mouse
-    L"Rand", // Settings_Header_Edge
-    L"Rendering", // Settings_Header_Render
-    L"HDR", // Settings_Header_Hdr
-    L"Eingabeaufforderungen", // Settings_Header_Prompts
-    L"System", // Settings_Header_System
-    L"Funktionen", // Settings_Header_Features
-    L"Transparenz", // Settings_Header_Transparency
-    L"Glas-Engine (GPU)", // Settings_Header_GeekGlass
-    L"Glas-Effekte", // Settings_Label_EnableGeekGlass
-    L"UI Animations", // Settings_Label_GlassUIAnimations
-    L"Material", // Settings_Header_CoreMaterial
-    L"Unschärfe", // Settings_Label_BlurSigma
-    L"Glass Disabled (System)", // Settings_Status_GlassDisabled
-    L"Dichte", // Settings_Label_TintDensity
-    L"Overall color intensity of the glass frost effect.", // Settings_Tooltip_TintDensity
-    L"Reflex (Specular)", // Settings_Label_SpecularOpacity
-    L"Brightness of the diagonal lighting reflections.", // Settings_Tooltip_SpecularOpacity
-    L"Shadow Depth", // Settings_Label_ShadowIntensity
-    L"Strength of the ambient occlusion shadows.", // Settings_Tooltip_ShadowIntensity
-    L"Vector Rendering", // Settings_Header_VectorAssets
-    L"Icon Stroke weight", // Settings_Label_VectorStrokeWeight
-    L"Standard (1.5px)", // Settings_Option_StrokeStandard
-    L"Fine (1.0px)", // Settings_Option_StrokeFine
-    L"Tint Profile", // Settings_Header_GlassTint
-    L"Color Logic", // Settings_Label_TintProfile
-    L"Auto (Adaptive)", // Settings_Option_TintAuto
-    L"Custom Color", // Settings_Option_TintCustom
-    L"Manual Tint", // Settings_Label_GlassCustomColor
-    L"Control Surface Density (%)", // Settings_Header_DensityMatrix
-    L"OSD & HUD", // Settings_Label_OsdDensity
-    L"Transparency for small floating overlays.", // Settings_Tooltip_OsdDensity
-    L"Toolbar & Sidebars", // Settings_Label_PanelsDensity
-    L"Transparency for persistent control panels.", // Settings_Tooltip_PanelsDensity
-    L"Dialogs & Settings", // Settings_Label_ModalsDensity
-    L"Transparency for centered popups.", // Settings_Tooltip_ModalsDensity
-    L"Menus", // Settings_Label_MenusDensity
-    L"Materialdichte für Kontextmenüs (Nur bei Acrylic-Material anpassbar).", // Settings_Tooltip_MenusDensity
-    L"Theme", // Settings_Tab_Theme
-    L"Preset", // Settings_Label_ThemeMode
-    L"System", // Settings_Option_ThemeAuto
-    L"Dunkel", // Settings_Option_ThemeDark
-    L"Hell", // Settings_Option_ThemeLight
-    L"Design", // Settings_Option_ThemeCustom
-    L"Hintergrund abdunkeln", // Settings_Label_AmbientDimmer
-    L"Dim the background when a modal or settings window is open.", // Settings_Tooltip_AmbientDimmer
-    L"Accent Color", // Settings_Label_AccentColor
-    L"Text Color", // Settings_Label_TextColor
-    L"Theme Engine", // Settings_Header_ThemeManagement
-    L"Export", // Settings_Action_ExportTheme
-    L"Import", // Settings_Action_ImportTheme
-    L"Leinwandfarbe", // Settings_Label_CanvasColor
-    L"Überlagerung", // Settings_Label_Overlay
-    L"Raster anzeigen", // Settings_Label_ShowGrid
-    L"Immer im Vordergrund", // Settings_Label_AlwaysOnTop
-    L"Fenstergröße sperren", // Settings_Label_LockWindow
-    L"Legt fest, ob das Programm beim Start standardmäßig den Fensterrahmen sperrt, anstatt der Bildskalierung zu folgen.", // Settings_Tooltip_LockWindow
-    L"Titelleiste automatisch ausblenden", // Settings_Label_AutoHideTitle
-    L"Abgerundete Ecken", // Settings_Label_RoundedCorners
-    L"UI-Rahmen anzeigen", // Settings_Label_UIBorders
-    L"Controls window and context menu rounded corners. Requires Windows 11.", // Settings_Tooltip_RoundedCorners
-    L"Untere Symbolleiste sperren", // Settings_Label_LockToolbar
-    L"Minimale Fensterbreite", // Settings_Label_WindowMinSize
-    L"Maximale Startgröße (%)", // Settings_Label_WindowMaxSizePercent
-    L"Rand-Überlauf-Indikatoren anzeigen", // Settings_Label_ShowBorderIndicator
-    L"Zeigt eine Indikatorlinie in der Richtung an, in der das Bild die Fenstergrenzen überschreitet.", // Settings_Tooltip_ShowBorderIndicator
-    L"Minimap anzeigen", // Settings_Label_ShowNavigator
-    L"When mouse is over minimap, Wheel / Thumb Wheel (Shift + Wheel) pans image", // Settings_Tooltip_ShowNavigator
-    L"Auto", // Settings_Option_NavigatorAuto
-    L"An", // Settings_Option_NavigatorOn
-    L"Aus", // Settings_Option_NavigatorOff
-    L"Fenstergröße bei Navigation beibehalten", // Settings_Label_KeepWindowSizeOnNav
-    L"Letzte Fensterposition und -größe merken", // Settings_Label_RememberLastWindowSizeAndPosition
-    L"Kleine Bilder anpassen", // Settings_Label_UpscaleSmallImagesWhenLocked
-    L"Flüssige Fensterskalierung (GPU)", // Settings_Label_EnableSmoothScaling
-    L"EXIF-Panel-Modus", // Settings_Label_ExifMode
-    L"Symbolleisten-Info Standard", // Settings_Label_ToolbarInfoDefault
-    L"Im Vollbildmodus öffnen", // Settings_Label_OpenFullScreenMode
-    L"Vollbild-Zoom-Modus", // Settings_Label_FullScreenZoomMode
-    L"An Bildschirm anpassen", // Settings_Option_FitScreen
-    L"Auto", // Settings_Option_AutoFit
-    L"Mausrad invertieren", // Settings_Label_InvertWheel
-    L"Zoom 100% Einrast-Dämpfung", // Settings_Label_ZoomSnapDamping
-    L"Fensterzoom am Mauszeiger ausrichten", // Settings_Label_MouseAnchorZoom
-    L"Zoom mit Rechtsziehen", // Settings_Label_RightButtonDragZoom
-    L"Mausrad-Zoomgeschwindigkeit", // Settings_Label_WheelZoomSpeed
-    L"Daumenrad", // Settings_Label_ThumbWheel
-    L"Can be replaced with Shift + Wheel", // Settings_Tooltip_ThumbWheel
-    L"Alt + Wheel temporarily adjusts zoom speed", // Settings_Tooltip_WheelZoomSpeed
-    L"Can be replaced with Ctrl + Left Click", // Settings_Tooltip_MiddleDrag
-    L"Doppelklick", // Settings_Label_DoubleClick
-    L"Smart", // Settings_Option_DoubleClick_Smart
-    L"Mausrad-Modus 1", // Settings_Option_DoubleClick_WheelMode1
-    L"Mausrad-Modus 2", // Settings_Option_DoubleClick_WheelMode2
-    L"Smart: Default zoom/fullscreen toggle;\nWheel Mode 1: Double-click swaps main & thumb wheel functions;\nWheel Mode 2: Double-click toggles image pan mode;\nTip: Shift + Wheel acts as Thumb Wheel.", // Settings_Tooltip_DoubleClick
-    L"Controls key pan and wheel pan speed", // Settings_Tooltip_PanStepNormal
-    L"Main Wheel: Next/Prev; Thumb/Shift+Wheel: Zoom", // OSD_WheelMode1_NextPrevZoom
-    L"Main Wheel: Zoom; Thumb/Shift+Wheel: Next/Prev", // OSD_WheelMode1_ZoomNextPrev
-    L"Wheel: Pan Mode", // OSD_WheelMode2_Pan
-    L"Wheel: Default Mode", // OSD_WheelMode2_Default
-    L"Rechtszieh-Zoomgeschwindigkeit", // Settings_Label_RightDragZoomSpeed
-    L"Zoomgeschwindigkeit (temp): ", // OSD_WheelZoomSpeed
-    L"Zoomgeschwindigkeit temporär anpassen", // Help_Action_AdjustZoomSpeed
-    L"Fensterzoom vorübergehend sperren", // Help_Action_LockWindowZoom
-    L"Seitentasten invertieren", // Settings_Label_InvertButtons
-    L"Feste Zoomstufen verwenden", // Settings_Label_UseFixedZoom
-    L"Wenn aktiviert, führt Alt + Rad einen normalen Zoom aus, anstatt die Zoomgeschwindigkeit zu ändern.", // Settings_Tooltip_UseFixedZoom
-    L"  └  Benutzerdefinierte Zoomstufen", // Settings_Label_FixedZoomLevels
-    L"Zoomstufen bearbeiten", // Dialog_FixedZoomTitle
-    L"Geben Sie kommagetrennte Zoomstufen ein (z. B. 0.5, 1, 2):", // Dialog_FixedZoomMsg
-    L"Vergrößerungsmodus", // Settings_Label_ZoomModeIn
-    L"Verkleinerungsmodus", // Settings_Label_ZoomModeOut
-    L"Links ziehen", // Settings_Label_LeftDrag
-    L"Mitte ziehen", // Settings_Label_MiddleDrag
-    L"Mittelklick", // Settings_Label_MiddleClick
-    L"Randnavigation-Klick", // Settings_Label_EdgeNavClick
-    L"OSD-Benachrichtigung anzeigen", // Settings_Label_ShowOSD
-    L"Im Vergleichsmodus deaktivieren", // Settings_Label_DisableEdgeNavInCompare
-    L"Navigationsanzeige", // Settings_Label_NavIndicator
-    L"Automatisch drehen (EXIF)", // Settings_Label_AutoRotate
-    L"Farbmanagement (CMS)", // Settings_Label_CMS
-    L"Erweiterte Farbe (HDR)", // Settings_Label_AdvancedColor
-    L"HDR-Tonzuordnung", // Settings_Label_HdrToneMapping
-    L"Spline Knee Point", // Settings_Label_HdrSplineKnee
-    L"HDR Tonzuordnungsstrategie:\nLegt fest, wie HDR-Bilder angezeigt werden, " L"wenn sie die Fähigkeiten des Monitors überschreiten.\nSpline: " L"Hochpräzises Highlight-Roll-off mittels stückweiser Splines " L"(Empfohlen).\nFarbmetrisch: Strikte Luminanzzuordnung; Highlights, die " L"das Monitorlimit überschreiten, werden abgeschnitten.\nBT.2390 (EETF): ITU-R BT.2390 EETF-Kurve für hochpräzise Tonzuordnung.", // Settings_Tooltip_HdrToneMapping
-    L"0 = Auto (Calculated based on image luminance).\nThe value represents the ratio of the monitor's peak luminance. Brightness below this knee point maps 1:1, while brightness above is smoothly compressed using a spline curve.\n(Recommended: 0.4 - 0.75)", // Settings_Tooltip_HdrSplineKnee
-    L"HDR Spitzenhelligkeit (Nits)", // Settings_Label_HdrPeakNitsOverride
-    L"Auf 0 setzen, um erkannte Helligkeit zu verwenden.", // Settings_Tooltip_HdrPeakNitsOverride
-    L"HDR Peak Percentile", // Settings_Label_HdrPeakPercentile
-    L"Discard extremely bright pixels to raise overall brightness (mpv default: 99.995%).", // Settings_Tooltip_HdrPeakPercentile
-    L"100% (Absolute Peak)", // Settings_Option_HdrPeakPercentile_100
-    L"99.995% (Stable)", // Settings_Option_HdrPeakPercentile_99995
-    L"99.9% (Aggressive)", // Settings_Option_HdrPeakPercentile_999
-    L"HDR-Highlights Entsättigungsbereich", // Settings_Label_HdrDesatThreshold
-    L"Startschwellenwert für die Entsättigung von Highlights. 0,0 bedeutet Entsättigung aller Helligkeitsstufen, 1,0 bedeutet keine Entsättigung. Empfohlener Standardwert ist 0,18.", // Settings_Tooltip_HdrDesatThreshold
-    L"HDR-Highlights Entsättigungsstärke", // Settings_Label_HdrMaxDesat
-    L"Maximale Intensität der Entsättigung bei extremen Highlights. 0,0 bedeutet keine Entsättigung, 1,0 bedeutet vollständige Entsättigung zu Weiß. Empfohlener Standardwert ist 0,75.", // Settings_Tooltip_HdrMaxDesat
-    L"Farbmetrisch", // Settings_Option_HdrColorimetric
-    L"Spline", // Settings_Option_HdrSpline
-    L"BT.2390 (EETF)", // Settings_Option_HdrLegacyReinhard
-    L"Fallback für Bilder ohne Tags", // Settings_Label_CmsFallback
-    L"Softproof-Profil (.icc)", // Settings_Label_CustomProof
-    L"Softproof-Vorschau", // Context_SoftProofing
-    L"Proof-Profil", // Context_SoftProofProfile
-    L"Benutzerdefiniert...", // Context_SoftProofCustom
-    L"Demnächst", // Settings_Value_ComingSoon
-    L"RAW erzwingen", // Settings_Label_ForceRaw
-    L"RAW+JPEG-Paarung", // Settings_Label_PairRawJpeg
-    L"Eine RAW-Datei und das gleichnamige Kamerabild (JPEG/HEIF) als ein Foto anzeigen.\nIn der Liste bleibt nur das gerenderte Bild, markiert mit dem RAW-Format (z. B. +CR3); Aufnahmezeiten werden im Hintergrund geprüft, abweichende Paare werden getrennt.\nMit dem RAW-Button oder seinem Hotkey zwischen Kamerabild und RAW-Dekodierung wechseln, mit dem Paarvergleich-Hotkey beide nebeneinander ansehen.", // Settings_Tooltip_PairRawJpeg
-    L"Belichtung (Helligkeit)", // Settings_Label_Exposure
-    L"Passt die Bildhelligkeit an (Belichtungskorrektur). Bereich: 0.18x bis 10.0x.", // Settings_Tooltip_Exposure
-    L"Zu Öffnen mit hinzufügen", // Settings_Label_AddToOpenWith
-    L"Benutzerdefinierter Editor", // Settings_Label_CustomEditor
-    L"Editor auswählen", // Context_SelectEditor
-    L"Editor konnte nicht gestartet werden. Bitte neu konfigurieren.", // OSD_EditorLaunchFailed
-    L"Hinzufügen", // Settings_Action_Add
-    L"Hinzugefügt", // Settings_Action_Added
-    L"Im portablen Modus deaktiviert", // Settings_Status_DisabledInPortable
-    L"Debug-HUD aktivieren (F12)", // Settings_Label_DebugHUD
-    L"Vorlade-System", // Settings_Label_Prefetch
-    L"Info-Panel", // Settings_Label_InfoPanelAlpha
-    L"Symbolleiste", // Settings_Label_ToolbarAlpha
-    L"Einstellungen", // Settings_Label_SettingsAlpha
-    L"Alle Einstellungen zurücksetzen", // Settings_Label_Reset
-    L"Wiederherstellen", // Settings_Action_Restore
-    L"Fertig", // Settings_Action_Done
-    L"Import / Export (.ini)", // Settings_Header_ConfigManagement
-    L"Unverwaltet (schnell)", // Settings_Option_CmsUnmanaged
-    L"sRGB (Standard)", // Settings_Option_CmssRGB
-    L"Display P3 (Breites Farbspektrum)", // Settings_Option_CmsP3
-    L"Adobe RGB (1998)", // Settings_Option_CmsAdobeRGB
-    L"Graustufen (Tonwertkontrolle)", // Settings_Option_CmsGray
-    L"ProPhoto RGB", // Settings_Option_CmsProPhoto
-    L"Rendering-Intent", // Settings_Label_CmsIntent
-    L"Farbraumwarnung-Erkennung", // Settings_Label_GamutWarning
-    L"Analysiert und markiert Farbbereiche außerhalb des Farbraums bei Softproofing oder wenn das Bild den Bildschirmfarbraum überschreitet.", // Settings_Tooltip_GamutWarning
-    L"Automatische Benachrichtigung bei Farbraumfehlern", // Settings_Label_GamutAutoPrompt
-    L"OSD-Benachrichtigung bei Farbraumfehlern anzeigen. Markierungen können manuell über die Symbolleiste umgeschaltet werden.", // Settings_Tooltip_GamutAutoPrompt
-    L"Farbraumwarnung-Highlight-Farbe", // Settings_Label_GamutColor
-    L"Relativ farbmetrisch", // Settings_Option_CmsIntentRelative
-    L"Perzeptiv", // Settings_Option_CmsIntentPerceptual
-    L"Farbmanagementsystem (CMS) aktivieren.\nWenn aktiviert, wird eine hochpräzise Farbraumkonvertierung über die GPU angewendet, um echte Farben wiederherzustellen.\nDeaktivieren verringert die GPU-Auslastung, kann aber auf Displays mit großem Farbraum zu übersättigten Farben führen.", // Settings_Tooltip_CMS
-    L"Rendering-Intent für die Farbraumkonvertierung.\nPerzeptiv: Komprimiert Farben außerhalb des Farbraums, um Details und Farbverläufe zu erhalten (ideal für Fotos).\nRelativ farbmetrisch: Behält Farben im Farbraum bei und schneidet die anderen ab (ideal für UI und Symbole).\nHinweis: Visuelle Unterschiede treten nur bei Verwendung fortgeschrittener ICC-Profile mit LUTs (Lookup Tables) auf. Standard-Matrix-Profile fallen automatisch auf 'Relativ farbmetrisch' zurück.", // Settings_Tooltip_CmsIntent
-    L"16-Bit-Gleitkomma-Rendering-Pipeline (scRGB) aktivieren.\nWenn aktiviert, werden die Lichter von Fotos auf HDR-fähigen Displays perfekt gerendert, indem das SDR-Limit überschritten wird.\nDeaktivieren erzwingt die Zuordnung zur SDR-Ausgabe.\nHinweis: Aktivieren erhöht die VRAM-Nutzung.", // Settings_Tooltip_AdvancedColor
-    L"Auto: 100 % Skalierung, wenn das Bild kleiner als der Bildschirm ist, und an den Bildschirm anpassen, wenn es größer ist.", // Settings_Tooltip_ZoomAuto
-    L"Nach Updates suchen", // Settings_Action_CheckUpdates
-    L"Update anzeigen", // Settings_Action_ViewUpdate
-    L"Prüfe...", // Settings_Status_Checking
-    L"Aktuell", // Settings_Status_UpToDate
-    L"GitHub-Repository", // Settings_Link_GitHub
-    L"Problem melden", // Settings_Link_ReportIssue
-    L"Tastenkürzel", // Settings_Link_Hotkeys
-    L"Version", // Settings_Label_Version
-    L"Build", // Settings_Label_Build
-    L"Schwarz", // Settings_Option_Black
-    L"Effekte", // Settings_Option_Effects
-    L"Kontextmenü", // Settings_Label_ContextMenuBackdrop
-    L"Effekt-Stil", // Settings_Label_CanvasEffectStyle
-    L"Mica und Mica Alt werden nur unter Windows 11 unterstützt. Acrylic verbraucht mehr Systemressourcen als Mica/Mica Alt.", // Settings_Tooltip_BackdropEffectsTip
-    L"Weiß", // Settings_Option_White
-    L"Raster", // Settings_Option_Grid
-    L"Benutzerdefiniert", // Settings_Option_Custom
-    L"Aus", // Settings_Option_Off
-    L"Ein", // Settings_Option_On
-    L"Kompakt", // Settings_Option_Lite
-    L"Vollständig", // Settings_Option_Full
-    L"Nur Große", // Settings_Option_LargeOnly
-    L"Alle", // Settings_Option_All
-    L"Softproof", // Settings_Option_SoftProofing
-    L"Fenster", // Settings_Option_Window
-    L"Schwenken", // Settings_Option_Pan
-    L"Keine", // Settings_Option_None
-    L"Beenden", // Settings_Option_Exit
-    L"Pfeil", // Settings_Option_Arrow
-    L"Cursor", // Settings_Option_Cursor
-    L"Manuell", // Settings_Option_Manual
-    L"Auto (Explorer)", // Settings_Option_SortAuto
-    L"Name", // Settings_Option_SortName
-    L"Änderungsdatum", // Settings_Option_SortModified
-    L"Aufnahmedatum (EXIF)", // Settings_Option_SortDateTaken
-    L"Größe", // Settings_Option_SortSize
-    L"Typ", // Settings_Option_SortType
-    L"Schleife im Ordner", // Settings_Option_NavLoop
-    L"Durch Unterordner", // Settings_Option_NavThrough
-    L"Linear: Grundglättung", // Settings_Option_Linear
-    L"Nächster: Extreme Schärfe", // Settings_Option_Nearest
-    L"HQ Kubisch: Extreme Glättung", // Settings_Option_HighQualityCubic
-    L"Auto", // Settings_Option_ZoomAuto
-    L"Auto", // Settings_Option_Auto
-    L"Öko", // Settings_Option_Eco
-    L"Ausgewogen", // Settings_Option_Balanced
-    L"Ultra", // Settings_Option_Ultra
-    L"Tastenkürzel", // Help_Header_Shortcuts
-    L"Mausaktionen", // Help_Header_Mouse
-    L"Nächstes/Vorheriges Bild", // Help_Item_NextPrev
-    L"Zoomen", // Help_Item_Zoom
-    L"Bild schwenken", // Help_Item_Pan
-    L"Drehen", // Help_Item_Rotate
-    L"An Bildschirm anpassen", // Help_Item_Fit
-    L"Bild löschen", // Help_Item_Delete
-    L"Vollbild", // Help_Item_Fullscreen
-    L"Schließen", // Help_Item_Close
-    L"Linke Taste", // Help_Mouse_Left
-    L"Mittlere Taste", // Help_Mouse_Middle
-    L"Mausrad", // Help_Mouse_Wheel
-    L"Rechte Taste", // Help_Mouse_Right
-    L"Rechte Taste vertikal ziehen", // Help_Mouse_RightVerticalDrag
-    L"Fenster bewegen / Vollbild beenden / Maximierung aufheben", // Help_Action_MoveWindow
-    L"Bild schwenken", // Help_Action_PanImage
-    L"Kontextmenü", // Help_Action_ContextMenu
-    L"Weiter/Zurück", // Help_Action_NextPrev
-    L"Zoom", // Help_Action_Zoom
-    L"Smart-Zoom (100% / Anpassen / Wiederherstellen)", // Help_Action_SmartZoom
-    L"Copy Image", // Help_Desc_Copy
-    L"Edit", // Help_Desc_Edit
-    L"Tips & Glossary", // Help_Header_Tips
-    L"Note: Shortcuts and context menu actions affect the current process " L"only. Settings are permanent.", // Help_Tip_ContextScope
-    L"Rotation: 'Edge Adapted' means minor cropping to fit block boundaries " L"(lossless data). 'Lossy' means full re-encoding.", // Help_Tip_Rotation
-    L"Video Wall (Ctrl+F11): Spans all monitors. If close button is hidden, " L"double-click to exit.", // Help_Tip_VideoWall
-    L"Pausmodus / Folienmodus: Sobald aktiviert, wird das Bild halbtransparent und gibt den Blick auf darunter liegende Elemente frei. Sie können die Größe oder Transparenz anpassen. Klicken Sie auf den Maus-Durchlass-Umschalter in der Symbolleiste, um in den Durchlassmodus zu gelangen, in dem alle Eingaben außer Umschalt+Esc ignoriert werden, wodurch QuickView zu einer transparenten Überlagerung wird.", // Help_Tip_DesignerMode
-    L"Farbraumwarnung: Erkennt Farben außerhalb des Farbumfangs für den Zielmonitor oder das Softproof-Profil. Modi: Aus, nur Softproof oder Alle (Standard: Softproof). Umschaltbar über die Symbolleiste.", // Help_Tip_GamutDetection
-    L"RAW Button: QuickView shows embedded preview by default. Click to " L"fully decode (may look different due to rendering parameters).", // Help_Tip_Raw
-    L"JPEG Quality: Estimated Q value (reverse engineered). May differ " L"slightly from save setting due to algorithm variations.", // Help_Tip_JpegQ
-    L"Softproof-Vergleich: Wenn der Vergleichsmodus bei aktiviertem Softproof aufgerufen wird, werden Original und Proof-Bild automatisch verglichen.", // Help_Tip_SoftProofCompare
-    L"Neue Version verfügbar!", // Dialog_UpdateTitle
-    L"v%s is ready.", // Dialog_UpdateContent
-    L"Was ist neu:", // Dialog_UpdateLogHeader
-    L"Jetzt aktualisieren", // Dialog_ButtonUpdate
-    L"Später", // Dialog_ButtonLater
-    L"Stern auf GitHub", // Dialog_ButtonStar
-    L"QuickView wird mit Liebe entwickelt", // Dialog_Update_LoveTitle
-    L"Ich pflege QuickView in meiner Freizeit, weil ich glaube, dass Windows " L"einen schnelleren und saubereren Viewer verdient. Wenn Ihnen dieses " L"Update gefällt, ist der größte Beitrag, uns auf GitHub einen Stern zu " L"geben.", // Dialog_Update_LoveMessage
-    L"Compare Mode", // Help_Item_Compare
-    L"Erstes / Letztes Bild", // Help_Item_FirstLast
-    L"PHYSICAL ATTRIBUTES", // HUD_Group_Physical
-    L"SCIENTIFIC QUALITY", // HUD_Group_Scientific
-    L"OPTICS & ENCODING", // HUD_Group_Encoding
-    L"Edge definition (Laplacian Variance)", // HUD_Tip_Sharp_Desc
-    L"Crisp edges, high detail", // HUD_Tip_Sharp_High
-    L"Soft focus or motion blur", // HUD_Tip_Sharp_Low
-    L"> 500 is very sharp", // HUD_Tip_Sharp_Ref
-    L"Information density (Shannon Entropy)", // HUD_Tip_Ent_Desc
-    L"Complex textures or high noise", // HUD_Tip_Ent_High
-    L"Flat areas or low detail", // HUD_Tip_Ent_Low
-    L"7.0-8.0 is high detail", // HUD_Tip_Ent_Ref
-    L"Bits Per Pixel (Compression Efficiency)", // HUD_Tip_BPP_Desc
-    L"Lower efficiency (more data preserved)", // HUD_Tip_BPP_High
-    L"Higher efficiency (higher compression)", // HUD_Tip_BPP_Low
-    L"24.0 (Raw RGB), ~2.0-3.0 (High JPEG), ~0.5-1.5 (WebP/AVIF)", // HUD_Tip_BPP_Ref
-    L"High: ", // HUD_Label_High
-    L"Low: ", // HUD_Label_Low
-    L"Ref: ", // HUD_Label_Ref
-    L"Galerie-Filmstreifen (Hover oben)", // Settings_Header_GalleryTrigger
-    L"Trigger-Modus", // Settings_Label_GalleryTriggerMode
-    L"Nach Klick sichtbar bleiben", // Settings_Label_KeepGalleryVisibleOnThumbnailClick
-    L"Diese Funktion aktiviert automatisch die Fenstersperre und die Beibehaltung der Fenstergröße bei der Navigation.", // Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick
-    L"Automatischer Hover", // Settings_Option_GalleryTriggerAuto
-    L"Hotspot-Hover", // Settings_Option_GalleryTriggerDelay
-    L"Hotspot-Klick", // Settings_Option_GalleryTriggerClick
-    L"Deaktiviert", // Settings_Option_GalleryTriggerDisable
-    L"Diese Funktion wird automatisch deaktiviert, wenn das Fenster kleiner als 600x450 ist.", // Settings_Tooltip_GalleryTrigger
-    L"Höhe des Auslösebereichs", // Settings_Label_GalleryTriggerAreaHeight
-    L"Verweilzeit", // Settings_Label_GalleryDwellTime
-    L"Verzögerung beim Beenden", // Settings_Label_GalleryExitDelay
-    L"Galerie-Mindestgröße", // Settings_Label_GalleryMinSize
-
-    L"Diashow gestartet", // OSD_SlideshowStarted
-    L"Diashow gestoppt", // OSD_SlideshowStopped
-    L"Diashow fortgesetzt", // OSD_SlideshowResumed
-    L"Diashow pausiert", // OSD_SlideshowPaused
-    L"Immersiv: Spotlight", // OSD_ImmersiveSpotlight
-    L"Immersiv: Normal", // OSD_ImmersiveNormal
-    L"Druckauftrag übermittelt. Sie können weiterblättern.", // OSD_PrintJobStarted
-    L"Druckauftrag erfolgreich gesendet.", // OSD_PrintJobFinished
-    L"Diashow-Modus", // Context_SlideshowMode
-    L"Intervall (Sekunden)", // Settings_Label_SlideshowInterval
-    L"Immersiver Modus", // Settings_Label_SlideshowImmersive
-    L"Kompakte Infoleiste anpassen", // Settings_Label_CustomLiteInfoPanel
-    L"Vollständige Infoleiste anpassen", // Settings_Label_CustomFullInfoPanel
-    L"Info Panel Zoom", // Settings_Label_InfoPanelScale
-    L"Elemente im Normalmodus", // Settings_Label_ItemsInNormalMode
-    L"Elemente im Vergleichsmodus", // Settings_Label_ItemsInCompareMode
-    L"Trennzeichen-Vorlage", // Settings_Label_SeparatorPreset
-    L"Normal", // Settings_Option_SlideshowNormal
-    L"Spotlight", // Settings_Option_SlideshowSpotlight
-    L"Lupenform", // Settings_Label_LoupeShape
-    L"Quadrat", // Settings_Option_LoupeShapeSquare
-    L"Kreis", // Settings_Option_LoupeShapeCircle
-    L"Halten Sie die Tastenkombination gedrückt und scrollen Sie mit dem Mausrad, um die Lupengröße anzupassen.", // Settings_Tooltip_LoupeHotkey
-    L"Halten Sie Strg gedrückt und ziehen Sie mit der linken Maustaste, um schnell zuzuschneiden.", // Settings_Tooltip_CropModeHotkey
-};
-
-// ----------------------------------------------------------------
-// ES Table
-// ----------------------------------------------------------------
-static const LanguageTable Table_ES = {
-    L"No hay imagen cargada", // OSD_NoImage
-    L"No hay imágenes en esta carpeta", // OSD_FolderEmpty
-    L"SVG animado mostrado como imagen fija", // OSD_SvgStaticFallback
-    L"Sin pérdida", // OSD_Lossless
-    L"Recodificado (sin pérdida)", // OSD_ReencodedLossless
-    L"Bordes optimizados", // OSD_EdgeAdapted
-    L"Recodificado", // OSD_Reencoded
-    L"Acceso denegado - el archivo está en uso o es de solo lectura", // OSD_ReadOnly
-    L"Transformación no perfecta (bordes optimizados)", // OSD_NotPerfect
-    L"Video Wall: ON", // OSD_SpanOn
-    L"Video Wall: OFF", // OSD_SpanOff
-    L"Antes (Original)", // OSD_CompareBefore
-    L"Después (Prueba)", // OSD_CompareAfter
-    L"Eliminación deshecha", // OSD_UndoDeleteSuccess
-    L"Error al deshacer eliminación", // OSD_UndoDeleteFailed
-    L"Nombre cambiado deshecho", // OSD_UndoRenameSuccess
-    L"Error al deshacer cambio de nombre", // OSD_UndoRenameFailed
-    L"Giro/volteo deshecho", // OSD_UndoTransformSuccess
-    L"Error al deshacer giro/volteo", // OSD_UndoTransformFailed
-    L"Colores fuera de gama detectados", // OSD_GamutDetected
-    L"Gama: Perfil incompatible", // OSD_GamutIncompatible
-    L"Gama: Error en el análisis", // OSD_GamutFailed
-    L"Girar 90\x00B0 en sentido horario", // Action_RotateCW
-    L"Girar 90\x00B0 en sentido antihorario", // Action_RotateCCW
-    L"Girar 180\x00B0", // Action_Rotate180
-    L"Voltear horizontal", // Action_FlipH
-    L"Voltear vertical", // Action_FlipV
-    L"¿Guardar cambios?", // Dialog_SaveTitle
-    L"La imagen ha sido modificada. ¿Desea guardar los cambios?", // Dialog_SaveContent
-    L"Guardar", // Dialog_ButtonSave
-    L"Guardar como...", // Dialog_ButtonSaveAs
-    L"Descartar", // Dialog_ButtonDiscard
-    L"Continuar", // Dialog_ButtonContinue
-    L"Cambios de recorte no guardados. ¿Guardar cambios?", // Dialog_CropUnsavedTitle
-    L"Guardar imagen", // Dialog_SaveAsTitle
-    L"Guardar y exportar", // Dialog_ExportTitle
-    L"Sobrescribir", // Dialog_ButtonOverwrite
-    L"Perfil ICC", // Dialog_EmbedICC
-    L"Tamaño: Calculando...", // Dialog_SizeEstimating
-    L"Error de exportación", // Dialog_ExportError
-    L"Copiar selección (Ctrl+C)", // Toolbar_Tooltip_CropCopy
-    L"Guardar (Ctrl+S)", // Toolbar_Tooltip_CropSave
-    L"Aplicar (Enter)", // Toolbar_Tooltip_CropApply
-    L"Salir (Esc)", // Toolbar_Tooltip_CropCancel
-    L"Modo de recorte activado", // OSD_EnterCropMode
-    L"Selección de recorte copiada", // OSD_CropCopied
-    L"Recortar", // Context_Crop
-    L"Siempre guardar sin pérdida", // Checkbox_AlwaysSaveLossless
-    L"Siempre guardar con bordes optimizados", // Checkbox_AlwaysSaveEdgeAdapted
-    L"Siempre guardar recodificado", // Checkbox_AlwaysSaveLossy
-    L"Enviar directamente a la papelera sin confirmar", // Checkbox_NeverConfirmDelete
-    L"No se puede decodificar HEIC - Instale la extensión HEVC", // OSD_HEICCodecMissing
-    L"No se puede decodificar HEIC", // Dialog_HEICTitle
-    L"Su sistema no tiene la extensión HEVC.\\nQuickView usa aceleración de " L"hardware para mejor rendimiento.", // Dialog_HEICContent
-    L"Obtener extensión (gratis)", // Dialog_HEICGetExtension
-    L"Cancelar", // Dialog_Cancel
-    L"General", // Settings_Tab_General
-    L"Acerca de", // Settings_Tab_About
-    L"Fundamentos", // Settings_Group_Foundation
-    L"Inicio", // Settings_Group_Startup
-    L"Hábitos", // Settings_Group_Habits
-    L"Idioma", // Settings_Label_Language
-    L"Instancia única", // Settings_Label_SingleInstance
-    L"Buscar actualizaciones", // Settings_Label_CheckUpdates
-    L"Canal de actualización", // Settings_Label_UpdateChannel
-    L"Estable", // Settings_Option_UpdateStable
-    L"Versión preliminar (Pre-release)", // Settings_Option_UpdatePreRelease
-    L"Estable: Se publica después de que una versión preliminar demuestre ser estable.\nVersión preliminar (Pre-release): Entrega los últimos cambios de código de inmediato para recopilar sus comentarios. Nota: Estos cambios no han sido probados estrictamente.", // Settings_Tooltip_PreRelease
-    L"Navegación en bucle", // Settings_Label_NavLoopMode
-    L"Orden de clasificación", // Settings_Label_SortOrder
-    L"Descendente", // Settings_Label_SortDescending
-    L"Ordenar archivos siempre por nombre", // Settings_Label_SortArchivesByNameAscending
-    L"Confirmar antes de eliminar", // Settings_Label_ConfirmDel
-    L"Modo portátil / Limpieza", // Settings_Label_Portable
-    L"Modo portátil y limpieza del registro:\nCuando está habilitado, QuickView se " L"ejecuta en modo portátil. Limpiará automáticamente las asociaciones de " L"registro existentes, deshabilitará la modificación automática del registro y " L"almacenará los archivos de configuración en el directorio de la aplicación en " L"lugar de AppData.", // Settings_Tooltip_Portable
-    L"Span Displays (Video Wall)", // Settings_Label_SpanDisplays
-    L"Escala de interfaz", // Settings_Label_UIScale
-    L"Reinicio requerido", // Settings_Status_RestartRequired
-    L"¡Sin permisos de escritura!", // Settings_Status_NoWritePerm
-    L"Habilitado", // Settings_Status_Enabled
-    L"Desarrollado con", // Settings_Header_PoweredBy
-    L"Abrir...\tCtrl+O", // Context_Open
-    L"Abrir con...", // Context_OpenWith
-    L"Editar\tE", // Context_Edit
-    L"Mostrar en Explorador", // Context_ShowInExplorer
-    L"Abrir carpeta", // Context_OpenFolder
-    L"Copiar píxeles\tCtrl+C", // Context_CopyPixels
-    L"Copiar archivo\tCtrl+Shift+C", // Context_CopyFile
-    L"Copiar píxeles\tCtrl+C", // Context_CopyImage
-    L"Copiar ruta\tCtrl+Alt+C", // Context_CopyPath
-    L"Imprimir\tCtrl+P", // Context_Print
-    L"Girar 90\x00B0 horario\tR", // Context_RotateCW
-    L"Girar 90\x00B0 antihorario\tShift+R", // Context_RotateCCW
-    L"Voltear horizontal\tH", // Context_FlipH
-    L"Voltear vertical\tV", // Context_FlipV
-    L"Transformar", // Context_Transform
-    L"Tamaño real (100%)\t1 / Z", // Context_ActualSize
-    L"Ajustar a pantalla\t0 / F", // Context_FitToScreen
-    L"Ajustar a ventana", // Context_FitWindow
-    L"Rellenar ventana", // Context_FillWindow
-    L"Acercar\t+ / Ctrl +", // Context_ZoomIn
-    L"Alejar\t- / Ctrl -", // Context_ZoomOut
-    L"Bloquear ventana", // Context_LockWindow
-    L"Siempre visible\tCtrl+T", // Context_AlwaysOnTop
-    L"Galería HUD\tT", // Context_HUDGallery
-    L"Panel de info compacto\tTab", // Context_LiteInfoPanel
-    L"Panel de info completo\tI", // Context_FullInfoPanel
-    L"Renderizar RAW", // Context_RenderRAW
-    L"Modo de Pixel Art", // Context_PixelArtMode
-    L"Espacio de color", // Context_ColorSpace
-    L"Pantalla completa\tF11", // Context_Fullscreen
-    L"Ver", // Context_View
-    L"Rellenar", // Context_WallpaperFill
-    L"Ajustar", // Context_WallpaperFit
-    L"Mosaico", // Context_WallpaperTile
-    L"Establecer como fondo", // Context_SetAsWallpaper
-    L"Renombrar\tF2", // Context_Rename
-    L"Corregir extensión", // Context_FixExtension
-    L"Eliminar\tSupr", // Context_Delete
-    L"Deshacer eliminación\tCtrl+Z", // Context_UndoDelete
-    L"Deshacer cambio de nombre\tCtrl+Z", // Context_UndoRename
-    L"Deshacer rotar/voltear\tCtrl+Z", // Context_UndoTransform
-    L"Deshacer\tCtrl+Z", // Context_Undo
-    L"Ordenar por", // Context_SortBy
-    L"Orden de navegación", // Context_NavOrder
-    L"Ascendente", // Context_SortAscending
-    L"Descendente", // Context_SortDescending
-    L"Configuración...", // Context_Settings
-    L"Modo comparación\tC", // Context_CompareMode
-    L"Modo Calco\tCtrl+Shift+O", // Context_OverlayMode
-    L"Abrir en modo de comparación", // Context_GalleryOpenCompare
-    L"Abrir en una ventana nueva", // Context_GalleryOpenNewWindow
-    L"Salir\tMButton/Esc", // Context_Exit
-    L"Salir del modo de paso de ratón", // Menu_ExitPassthrough
-    L"Modo de paso de ratón", // Dialog_PassthroughTitle
-    L"Los eventos del ratón pasarán a la ventana de abajo.\nSolo se puede salir mediante el atajo global (Shift+Esc) o el menú de la barra de tareas.\n\n¿Continuar?", // Dialog_PassthroughContent
-    L"Paso de ratón: ACTIVADO (Shift+Esc para salir)", // OSD_PassthroughOn
-    L"Paso de ratón: DESACTIVADO", // OSD_PassthroughOff
-    L"Modo calco: ACTIVADO", // OSD_OverlayModeOn
-    L"Modo calco: DESACTIVADO", // OSD_OverlayModeOff
-    L"Opacidad", // OSD_Opacity
-    L"Acercar (Calco)", // Toolbar_Tooltip_OverlayZoomIn
-    L"Alejar (Calco)", // Toolbar_Tooltip_OverlayZoomOut
-    L"Aumentar opacidad", // Toolbar_Tooltip_OverlayAlphaUp
-    L"Disminuir opacidad", // Toolbar_Tooltip_OverlayAlphaDown
-    L"Activar paso de ratón", // Toolbar_Tooltip_OverlayPassthroughOn
-    L"Desactivar paso de ratón", // Toolbar_Tooltip_OverlayPassthroughOff
-    L"Salir del modo calco", // Toolbar_Tooltip_OverlayExit
-    L"Error", // Message_SaveErrorTitle
-    L"No se pudo guardar el archivo. ¿Está bloqueado?", // Message_SaveErrorContent
-    L"Anterior (Izquierda)", // Toolbar_Tooltip_Prev
-    L"Siguiente (Derecha)", // Toolbar_Tooltip_Next
-    L"Girar izquierda (Shift+R)", // Toolbar_Tooltip_RotateL
-    L"Girar derecha (R)", // Toolbar_Tooltip_RotateR
-    L"Voltear horizontal (H)", // Toolbar_Tooltip_FlipH
-    L"Bloquear ventana (temporal)", // Toolbar_Tooltip_Lock
-    L"Desbloquear ventana", // Toolbar_Tooltip_Unlock
-    L"Galería (T)", // Toolbar_Tooltip_Gallery
-    L"Panel de información", // Toolbar_Tooltip_Info
-    L"RAW: Vista previa (Clic para completo)", // Toolbar_Tooltip_RawPreview
-    L"RAW: Decodificación completa (Clic para vista previa)", // Toolbar_Tooltip_RawFull
-    L"RAW: Ver RAW emparejado (decodificación completa)", // Toolbar_Tooltip_RawPairView
-    L"RAW: Volver a la imagen emparejada", // Toolbar_Tooltip_RawPairBack
-    L"Extensión no coincide (Reparar)", // Toolbar_Tooltip_FixExtension
-    L"Fijar barra de herramientas", // Toolbar_Tooltip_Pin
-    L"Soltar barra de herramientas", // Toolbar_Tooltip_Unpin
-    L"Mostrar áreas fuera de gama", // Toolbar_Tooltip_GamutWarning
-    L"Modo normal", // Toolbar_Tooltip_NormalMode
-    L"Modo comparación", // Toolbar_Tooltip_CompareMode
-    L"Modo de página única", // Toolbar_Tooltip_SinglePage
-    L"Modo de doble página", // Toolbar_Tooltip_DualPage
-    L"Abrir nueva imagen en la selección", // Toolbar_Tooltip_CompareOpen
-    L"Intercambiar izquierda/derecha", // Toolbar_Tooltip_CompareSwap
-    L"Cambiar diseño", // Toolbar_Tooltip_CompareLayout
-    L"Información de comparación", // Toolbar_Tooltip_CompareInfo
-    L"Eliminar imagen seleccionada", // Toolbar_Tooltip_CompareDelete
-    L"Aumentar (Ajuste fino)", // Toolbar_Tooltip_CompareZoomIn
-    L"Reducir (Ajuste fino)", // Toolbar_Tooltip_CompareZoomOut
-    L"Sincronizar zoom: ACTIVADO", // Toolbar_Tooltip_CompareSyncZoomOn
-    L"Sincronizar zoom: DESACTIVADO", // Toolbar_Tooltip_CompareSyncZoomOff
-    L"Sincronizar panorámica: ACTIVADO", // Toolbar_Tooltip_CompareSyncPanOn
-    L"Sincronizar panorámica: DESACTIVADO", // Toolbar_Tooltip_CompareSyncPanOff
-    L"Alternar efecto foco", // Toolbar_Tooltip_SlideshowImmersiveToggle
-    L"Salir de la presentación de diapositivas", // Toolbar_Tooltip_SlideshowExit
-    L"Salir de comparación", // Toolbar_Tooltip_CompareExit
-    L"Reproducir animación", // Toolbar_Tooltip_AnimPlay
-    L"Pausar animación", // Toolbar_Tooltip_AnimPause
-    L"Marco anterior", // Toolbar_Tooltip_AnimPrev
-    L"Marco siguiente", // Toolbar_Tooltip_AnimNext
-    L"Depuración de Dirty Rect: ACTIVADO", // Toolbar_Tooltip_AnimDirtyOn
-    L"Depuración de Dirty Rect: DESACTIVADO", // Toolbar_Tooltip_AnimDirtyOff
-    L"Velocidad de animación", // Toolbar_Tooltip_AnimSpeed
-    L"Rendimiento", // Settings_Header_Performance
-    L"Herramientas profesionales", // Settings_Header_Professional
-    L"Memory Reclaim Strategy:", // Settings_Label_MemoryReclaim
-    L"Smart (Auto)", // Settings_Option_MemSmart
-    L"Aggressive (Max Perf)", // Settings_Option_MemAggressive
-    L"On-Demand (Min RAM)", // Settings_Option_MemOnDemand
-    L"Smart: Balance performance and RAM.\nAggressive: Maximize performance, high memory usage.\nOn-Demand: Release memory immediately when idle.", // Settings_Tooltip_MemoryReclaim
-    L"Mostrar botón de regiones en animación", // Settings_Label_ShowDirtyRect
-    L"Mostrar botón de depuración de Dirty Rect en la barra de herramientas de animación.", // Settings_Tooltip_ShowDirtyRect
-    L"¡Copiado!", // OSD_Copied
-    L"¡Píxeles copiados al portapapeles!", // OSD_PixelsCopied
-    L"Extrayendo píxeles...", // OSD_PixelsExtracting
-    L"¡Archivo copiado al portapapeles!", // OSD_FileCopied
-    L"¡Coordenadas copiadas!", // OSD_CoordinatesCopied
-    L"¡Ruta del archivo copiada!", // OSD_FilePathCopied
-    L"Zoom: 100%", // OSD_Zoom100
-    L"Zoom: Ajustar a pantalla", // OSD_ZoomFit
-    L"Zoom: Ajustar a ventana", // OSD_ZoomFitWindow
-    L"Zoom: Rellenar ventana", // OSD_ZoomFill
-    L"Imprimir: Use Ctrl+P en la aplicación abierta", // OSD_PrintInstruction
-    L"Movido a la papelera", // OSD_MovedToRecycleBin
-    L"Ventana bloqueada", // OSD_WindowLocked
-    L"Ventana desbloqueada", // OSD_WindowUnlocked
-    L"Siempre visible: ACTIVADO", // OSD_AlwaysOnTopOn
-    L"Siempre visible: DESACTIVADO", // OSD_AlwaysOnTopOff
-    L"Fondo de pantalla establecido", // OSD_WallpaperSet
-    L"Error al establecer fondo de pantalla", // OSD_WallpaperFailed
-    L"Renombrado", // OSD_Renamed
-    L"Error al renombrar", // OSD_RenameFailed
-    L"Extensión corregida", // OSD_ExtensionFixed
-    L"Restaurado", // OSD_Restored
-    L"Primera imagen", // OSD_FirstImage
-    L"Última imagen", // OSD_LastImage
-    L"HD", // OSD_HD
-    L"Zoom: ", // OSD_ZoomPrefix
-    L"Reproduciendo", // OSD_AnimPlaying
-    L"Pausado (Alt+Izquierda/Derecha para buscar)", // OSD_AnimPaused
-    L"Dirty Rect: ACTIVADO", // OSD_AnimDirtyOn
-    L"Dirty Rect: DESACTIVADO", // OSD_AnimDirtyOff
-    L"Span Displays (Video Wall)\tCtrl+F11", // Context_SpanDisplays
-    L"Interfaz", // Settings_Tab_Visuals
-    L"Controles", // Settings_Tab_Controls
-    L"Imagen", // Settings_Tab_Image
-    L"Avanzado", // Settings_Tab_Advanced
-    L"Fondo", // Settings_Header_Backdrop
-    L"Ventana", // Settings_Header_Window
-    L"Bloqueo de ventana", // Settings_Header_WindowLock
-    L"Panel", // Settings_Header_Panel
-    L"Ratón", // Settings_Header_Mouse
-    L"Borde", // Settings_Header_Edge
-    L"Renderizado", // Settings_Header_Render
-    L"HDR", // Settings_Header_Hdr
-    L"Indicaciones", // Settings_Header_Prompts
-    L"Sistema", // Settings_Header_System
-    L"Funciones", // Settings_Header_Features
-    L"Transparencia", // Settings_Header_Transparency
-    L"Motor de cristal (GPU)", // Settings_Header_GeekGlass
-    L"Efecto de cristal", // Settings_Label_EnableGeekGlass
-    L"Animaciones de interfaz", // Settings_Label_GlassUIAnimations
-    L"Material", // Settings_Header_CoreMaterial
-    L"Radio de desenfoque", // Settings_Label_BlurSigma
-    L"Efecto de cristal desactivado (Sistema)", // Settings_Status_GlassDisabled
-    L"Capa de tinte", // Settings_Label_TintDensity
-    L"Intensidad de color general del efecto de cristal.", // Settings_Tooltip_TintDensity
-    L"Brillo (Especular)", // Settings_Label_SpecularOpacity
-    L"Brillo de los reflejos de iluminación diagonal.", // Settings_Tooltip_SpecularOpacity
-    L"Profundidad de sombra", // Settings_Label_ShadowIntensity
-    L"Fuerza de las sombras de oclusión ambiental.", // Settings_Tooltip_ShadowIntensity
-    L"Renderizado vectorial", // Settings_Header_VectorAssets
-    L"Grosor de trazo de iconos", // Settings_Label_VectorStrokeWeight
-    L"Estándar (1.5px)", // Settings_Option_StrokeStandard
-    L"Fino (1.0px)", // Settings_Option_StrokeFine
-    L"Perfil de tinte", // Settings_Header_GlassTint
-    L"Lógica de color", // Settings_Label_TintProfile
-    L"Automático (Adaptativo)", // Settings_Option_TintAuto
-    L"Color personalizado", // Settings_Option_TintCustom
-    L"Tinte manual", // Settings_Label_GlassCustomColor
-    L"Densidad de superficie de control (%)", // Settings_Header_DensityMatrix
-    L"OSD y HUD", // Settings_Label_OsdDensity
-    L"Transparencia para pequeñas superposiciones flotantes.", // Settings_Tooltip_OsdDensity
-    L"Barra de herramientas y paneles laterales", // Settings_Label_PanelsDensity
-    L"Transparencia para paneles de control persistentes.", // Settings_Tooltip_PanelsDensity
-    L"Diálogos y configuración", // Settings_Label_ModalsDensity
-    L"Transparencia para ventanas emergentes centradas.", // Settings_Tooltip_ModalsDensity
-    L"Menús", // Settings_Label_MenusDensity
-    L"Densidad del menú contextual (Solo ajustable con material Acrylic).", // Settings_Tooltip_MenusDensity
-    L"Tema", // Settings_Tab_Theme
-    L"Ajuste", // Settings_Label_ThemeMode
-    L"Sistema", // Settings_Option_ThemeAuto
-    L"Oscuro", // Settings_Option_ThemeDark
-    L"Claro", // Settings_Option_ThemeLight
-    L"Diseño", // Settings_Option_ThemeCustom
-    L"Atenuador modal", // Settings_Label_AmbientDimmer
-    L"Atenuar el fondo cuando hay una ventana modal o de configuración abierta.", // Settings_Tooltip_AmbientDimmer
-    L"Color de acento", // Settings_Label_AccentColor
-    L"Color de texto", // Settings_Label_TextColor
-    L"Gestión de temas", // Settings_Header_ThemeManagement
-    L"Exportar", // Settings_Action_ExportTheme
-    L"Importar", // Settings_Action_ImportTheme
-    L"Color del lienzo", // Settings_Label_CanvasColor
-    L"Superposición", // Settings_Label_Overlay
-    L"Mostrar cuadrícula", // Settings_Label_ShowGrid
-    L"Siempre visible", // Settings_Label_AlwaysOnTop
-    L"Bloquear ventana", // Settings_Label_LockWindow
-    L"Controla si el programa bloquea el borde de la ventana de forma predeterminada al inicio, sin seguir la escala de la imagen.", // Settings_Tooltip_LockWindow
-    L"Ocultar barra de título", // Settings_Label_AutoHideTitle
-    L"Esquinas Redondeadas", // Settings_Label_RoundedCorners
-    L"Mostrar Bordes de UI", // Settings_Label_UIBorders
-    L"Controla las esquinas redondeadas de las ventanas y los menús. Requiere Windows 11.", // Settings_Tooltip_RoundedCorners
-    L"Bloquear barra inferior", // Settings_Label_LockToolbar
-    L"Anchura mínima de ventana", // Settings_Label_WindowMinSize
-    L"Tamaño máximo de inicio (%)", // Settings_Label_WindowMaxSizePercent
-    L"Mostrar indicadores de desbordamiento de borde", // Settings_Label_ShowBorderIndicator
-    L"Muestra una línea indicadora en la dirección donde la imagen excede los límites de la ventana.", // Settings_Tooltip_ShowBorderIndicator
-    L"Mostrar minimapa", // Settings_Label_ShowNavigator
-    L"When mouse is over minimap, Wheel / Thumb Wheel (Shift + Wheel) pans image", // Settings_Tooltip_ShowNavigator
-    L"Auto", // Settings_Option_NavigatorAuto
-    L"Activar", // Settings_Option_NavigatorOn
-    L"Desactivar", // Settings_Option_NavigatorOff
-    L"Mantener el tamaño de la ventana al navegar", // Settings_Label_KeepWindowSizeOnNav
-    L"Recordar el último tamaño y posición de la ventana", // Settings_Label_RememberLastWindowSizeAndPosition
-    L"Adaptar imágenes pequeñas", // Settings_Label_UpscaleSmallImagesWhenLocked
-    L"Escalado suave de ventana (GPU)", // Settings_Label_EnableSmoothScaling
-    L"Modo panel EXIF", // Settings_Label_ExifMode
-    L"Info de barra por defecto", // Settings_Label_ToolbarInfoDefault
-    L"Abrir en pantalla completa", // Settings_Label_OpenFullScreenMode
-    L"Modo de zoom a pantalla completa", // Settings_Label_FullScreenZoomMode
-    L"Ajustar a pantalla", // Settings_Option_FitScreen
-    L"Auto", // Settings_Option_AutoFit
-    L"Invertir rueda", // Settings_Label_InvertWheel
-    L"Amortiguación de ajuste 100%", // Settings_Label_ZoomSnapDamping
-    L"Zoom de ventana anclado al raton", // Settings_Label_MouseAnchorZoom
-    L"Zoom con arrastre derecho", // Settings_Label_RightButtonDragZoom
-    L"Velocidad de zoom con rueda", // Settings_Label_WheelZoomSpeed
-    L"Rueda del pulgar", // Settings_Label_ThumbWheel
-    L"Can be replaced with Shift + Wheel", // Settings_Tooltip_ThumbWheel
-    L"Alt + Wheel temporarily adjusts zoom speed", // Settings_Tooltip_WheelZoomSpeed
-    L"Can be replaced with Ctrl + Left Click", // Settings_Tooltip_MiddleDrag
-    L"Doble clic", // Settings_Label_DoubleClick
-    L"Smart", // Settings_Option_DoubleClick_Smart
-    L"Modo de rueda 1", // Settings_Option_DoubleClick_WheelMode1
-    L"Modo de rueda 2", // Settings_Option_DoubleClick_WheelMode2
-    L"Smart: Default zoom/fullscreen toggle;\nWheel Mode 1: Double-click swaps main & thumb wheel functions;\nWheel Mode 2: Double-click toggles image pan mode;\nTip: Shift + Wheel acts as Thumb Wheel.", // Settings_Tooltip_DoubleClick
-    L"Controls key pan and wheel pan speed", // Settings_Tooltip_PanStepNormal
-    L"Main Wheel: Next/Prev; Thumb/Shift+Wheel: Zoom", // OSD_WheelMode1_NextPrevZoom
-    L"Main Wheel: Zoom; Thumb/Shift+Wheel: Next/Prev", // OSD_WheelMode1_ZoomNextPrev
-    L"Wheel: Pan Mode", // OSD_WheelMode2_Pan
-    L"Wheel: Default Mode", // OSD_WheelMode2_Default
-    L"Velocidad de zoom con arrastre derecho", // Settings_Label_RightDragZoomSpeed
-    L"Velocidad de zoom (temporal): ", // OSD_WheelZoomSpeed
-    L"Ajustar velocidad de zoom temporalmente", // Help_Action_AdjustZoomSpeed
-    L"Bloquear temporalmente el zoom de la ventana", // Help_Action_LockWindowZoom
-    L"Invertir botones laterales", // Settings_Label_InvertButtons
-    L"Usar niveles de zoom fijos", // Settings_Label_UseFixedZoom
-    L"Cuando está activado, Alt + Rueda realiza un zoom normal en lugar de cambiar la velocidad.", // Settings_Tooltip_UseFixedZoom
-    L"  └  Niveles de zoom personalizados", // Settings_Label_FixedZoomLevels
-    L"Editar niveles de zoom", // Dialog_FixedZoomTitle
-    L"Introduzca niveles de zoom separados por comas (p. ej., 0.5, 1, 2):", // Dialog_FixedZoomMsg
-    L"Modo de acercar", // Settings_Label_ZoomModeIn
-    L"Modo de alejar", // Settings_Label_ZoomModeOut
-    L"Arrastrar izquierdo", // Settings_Label_LeftDrag
-    L"Arrastrar central", // Settings_Label_MiddleDrag
-    L"Clic central", // Settings_Label_MiddleClick
-    L"Clic navegación borde", // Settings_Label_EdgeNavClick
-    L"Mostrar notificación OSD", // Settings_Label_ShowOSD
-    L"Desactivar en modo de comparación", // Settings_Label_DisableEdgeNavInCompare
-    L"Indicador navegación", // Settings_Label_NavIndicator
-    L"Rotar automático (EXIF)", // Settings_Label_AutoRotate
-    L"Gestión de color (CMS)", // Settings_Label_CMS
-    L"Color avanzado (HDR)", // Settings_Label_AdvancedColor
-    L"Mapeo de tonos HDR", // Settings_Label_HdrToneMapping
-    L"Spline Knee Point", // Settings_Label_HdrSplineKnee
-    L"Estrategia de mapeo de tonos (Tone Mapping) de HDR:\nDetermina cómo se " L"muestran las imágenes HDR cuando exceden las capacidades del monitor.\n" L"Spline: Roll-off de luces de alta fidelidad mediante splines por tramos " L"(Recomendado).\nColorimétrico: Mapeo de luminancia estricto; las luces " L"que exceden el límite del monitor se recortan.\nBT.2390 (EETF): Curva ITU-R BT.2390 EETF para mapeo de tonos de alta fidelidad.", // Settings_Tooltip_HdrToneMapping
-    L"0 = Auto (Calculated based on image luminance).\nThe value represents the ratio of the monitor's peak luminance. Brightness below this knee point maps 1:1, while brightness above is smoothly compressed using a spline curve.\n(Recommended: 0.4 - 0.75)", // Settings_Tooltip_HdrSplineKnee
-    L"Brillo Máximo HDR (Nits)", // Settings_Label_HdrPeakNitsOverride
-    L"Ajustar en 0 para usar el brillo detectado por el sistema.", // Settings_Tooltip_HdrPeakNitsOverride
-    L"HDR Peak Percentile", // Settings_Label_HdrPeakPercentile
-    L"Discard extremely bright pixels to raise overall brightness (mpv default: 99.995%).", // Settings_Tooltip_HdrPeakPercentile
-    L"100% (Absolute Peak)", // Settings_Option_HdrPeakPercentile_100
-    L"99.995% (Stable)", // Settings_Option_HdrPeakPercentile_99995
-    L"99.9% (Aggressive)", // Settings_Option_HdrPeakPercentile_999
-    L"Rango de desaturación de brillos HDR", // Settings_Label_HdrDesatThreshold
-    L"Umbral de inicio para la desaturación de zonas brillantes. 0.0 significa desaturar todo el brillo, 1.0 significa sin desaturación. El valor predeterminado recomendado es 0.18.", // Settings_Tooltip_HdrDesatThreshold
-    L"Fuerza de desaturación de brillos HDR", // Settings_Label_HdrMaxDesat
-    L"Intensidad máxima de la desaturación en brillos extremos. 0.0 significa sin desaturación, 1.0 significa completamente desaturado a blanco. El valor predeterminado recomendado es 0.75.", // Settings_Tooltip_HdrMaxDesat
-    L"Colorimétrico", // Settings_Option_HdrColorimetric
-    L"Spline", // Settings_Option_HdrSpline
-    L"BT.2390 (EETF)", // Settings_Option_HdrLegacyReinhard
-    L"Perfil alternativo sin etiquetas", // Settings_Label_CmsFallback
-    L"Perfil de prueba en pantalla (.icc)", // Settings_Label_CustomProof
-    L"Vista previa de prueba en pantalla", // Context_SoftProofing
-    L"Perfil de prueba", // Context_SoftProofProfile
-    L"Personalizado...", // Context_SoftProofCustom
-    L"Próximamente", // Settings_Value_ComingSoon
-    L"Forzar decodificación RAW", // Settings_Label_ForceRaw
-    L"Emparejamiento RAW+JPEG", // Settings_Label_PairRawJpeg
-    L"Mostrar un archivo RAW y la imagen de cámara del mismo nombre (JPEG/HEIF) como una sola foto.\nEn la lista solo queda la imagen revelada, marcada con el formato RAW (p. ej. +CR3); las horas de captura se verifican en segundo plano y las parejas discordantes se separan.\nCambie entre la imagen de cámara y la decodificación RAW con el botón RAW o su atajo, o vea ambas con el atajo de comparación de pareja.", // Settings_Tooltip_PairRawJpeg
-    L"Exposición (Brillo)", // Settings_Label_Exposure
-    L"Ajusta el brillo de la imagen (compensación de exposición). Rango: 0.18x - 10.0x.", // Settings_Tooltip_Exposure
-    L"Añadir a Abrir con", // Settings_Label_AddToOpenWith
-    L"Editor de imágenes personalizado", // Settings_Label_CustomEditor
-    L"Seleccionar editor", // Context_SelectEditor
-    L"No se pudo iniciar el editor. Por favor, configúrelo de nuevo.", // OSD_EditorLaunchFailed
-    L"Añadir", // Settings_Action_Add
-    L"Añadido", // Settings_Action_Added
-    L"Deshabilitado en modo portátil", // Settings_Status_DisabledInPortable
-    L"Habilitar HUD de depuración (F12)", // Settings_Label_DebugHUD
-    L"Sistema de precarga", // Settings_Label_Prefetch
-    L"Panel de información", // Settings_Label_InfoPanelAlpha
-    L"Barra de herramientas", // Settings_Label_ToolbarAlpha
-    L"Configuración", // Settings_Label_SettingsAlpha
-    L"Restablecer toda la configuración", // Settings_Label_Reset
-    L"Restaurar", // Settings_Action_Restore
-    L"Hecho", // Settings_Action_Done
-    L"Importar / Exportar (.ini)", // Settings_Header_ConfigManagement
-    L"No gestionado (rápido)", // Settings_Option_CmsUnmanaged
-    L"sRGB (estándar)", // Settings_Option_CmssRGB
-    L"Display P3 (gama amplia)", // Settings_Option_CmsP3
-    L"Adobe RGB (1998)", // Settings_Option_CmsAdobeRGB
-    L"Escala de grises (Control de tono)", // Settings_Option_CmsGray
-    L"ProPhoto RGB", // Settings_Option_CmsProPhoto
-    L"Intención de renderizado", // Settings_Label_CmsIntent
-    L"Detección de fuera de gama", // Settings_Label_GamutWarning
-    L"Analizar y resaltar áreas fuera de gama. Opciones: Desactivado, solo en modo de prueba en pantalla (predeterminado), o tanto para la prueba como para la gama de la pantalla.", // Settings_Tooltip_GamutWarning
-    L"Aviso automático de error de gama", // Settings_Label_GamutAutoPrompt
-    L"Mostrar notificación OSD cuando se detecten errores de gama. Los resaltados se pueden activar manualmente en la barra de herramientas.", // Settings_Tooltip_GamutAutoPrompt
-    L"Color de resaltado de fuera de gama", // Settings_Label_GamutColor
-    L"Relativo colorimétrico", // Settings_Option_CmsIntentRelative
-    L"Perceptual", // Settings_Option_CmsIntentPerceptual
-    L"Habilitar el Sistema de Gestión de Color (CMS).\nCuando se habilita, aplica una conversión de espacio de color de alta precisión a través de la GPU para restaurar los colores reales.\nDeshabilitarlo reduce la carga de la GPU, pero puede provocar colores sobresaturados en pantallas de amplia gama.", // Settings_Tooltip_CMS
-    L"Propósito de representación (Rendering Intent) para la conversión del espacio de color.\nPerceptual: Comprime los colores fuera de gama para preservar los detalles y degradados (ideal para fotos).\nColorimétrico relativo: Preserva los colores dentro de la gama y recorta los que quedan fuera (ideal para UI e íconos).\nNota: Las diferencias visuales solo ocurren cuando se usan perfiles ICC avanzados que contienen LUT (tablas de búsqueda). Los perfiles de matriz estándar volverán automáticamente a Colorimétrico relativo.", // Settings_Tooltip_CmsIntent
-    L"Habilitar el pipeline de renderizado de punto flotante de 16 bits (scRGB).\nCuando se habilita, renderiza perfectamente las luces de las fotos en pantallas compatibles con HDR rompiendo el límite SDR.\nDeshabilitarlo fuerza el mapeo a salida SDR.\nNota: Habilitarlo aumenta el uso de VRAM.", // Settings_Tooltip_AdvancedColor
-    L"Automático: Escala al 100% cuando la imagen es más pequeña que la pantalla, se ajusta a la pantalla cuando es más grande.", // Settings_Tooltip_ZoomAuto
-    L"Buscar actualizaciones", // Settings_Action_CheckUpdates
-    L"Ver actualización", // Settings_Action_ViewUpdate
-    L"Comprobando...", // Settings_Status_Checking
-    L"Actualizado", // Settings_Status_UpToDate
-    L"Repositorio GitHub", // Settings_Link_GitHub
-    L"Reportar problema", // Settings_Link_ReportIssue
-    L"Atajos de teclado", // Settings_Link_Hotkeys
-    L"Versión", // Settings_Label_Version
-    L"Compilación", // Settings_Label_Build
-    L"Negro", // Settings_Option_Black
-    L"Efectos", // Settings_Option_Effects
-    L"Menú contextual", // Settings_Label_ContextMenuBackdrop
-    L"Estilo de efecto", // Settings_Label_CanvasEffectStyle
-    L"Mica y Mica Alt solo se admiten en Windows 11. El efecto Acrylic consume más recursos del sistema que Mica/Mica Alt.", // Settings_Tooltip_BackdropEffectsTip
-    L"Blanco", // Settings_Option_White
-    L"Cuadrícula", // Settings_Option_Grid
-    L"Personalizado", // Settings_Option_Custom
-    L"Desactivado", // Settings_Option_Off
-    L"Activado", // Settings_Option_On
-    L"Compacto", // Settings_Option_Lite
-    L"Completo", // Settings_Option_Full
-    L"Solo grandes", // Settings_Option_LargeOnly
-    L"Todos", // Settings_Option_All
-    L"Pruebas en pantalla", // Settings_Option_SoftProofing
-    L"Ventana", // Settings_Option_Window
-    L"Panorámica", // Settings_Option_Pan
-    L"Ninguno", // Settings_Option_None
-    L"Salir", // Settings_Option_Exit
-    L"Flecha", // Settings_Option_Arrow
-    L"Cursor", // Settings_Option_Cursor
-    L"Manual", // Settings_Option_Manual
-    L"Auto (Explorador)", // Settings_Option_SortAuto
-    L"Nombre", // Settings_Option_SortName
-    L"Fecha de modificación", // Settings_Option_SortModified
-    L"Fecha de captura (EXIF)", // Settings_Option_SortDateTaken
-    L"Tamaño", // Settings_Option_SortSize
-    L"Tipo", // Settings_Option_SortType
-    L"Bucle en carpeta", // Settings_Option_NavLoop
-    L"A través de subcarpetas", // Settings_Option_NavThrough
-    L"Lineal: Suavizado básico", // Settings_Option_Linear
-    L"Cercano: Extrema nitidez", // Settings_Option_Nearest
-    L"Cúbico HQ: Extremo suavizado", // Settings_Option_HighQualityCubic
-    L"Auto", // Settings_Option_ZoomAuto
-    L"Automático", // Settings_Option_Auto
-    L"Eco", // Settings_Option_Eco
-    L"Equilibrado", // Settings_Option_Balanced
-    L"Ultra", // Settings_Option_Ultra
-    L"Atajos de teclado", // Help_Header_Shortcuts
-    L"Acciones del ratón", // Help_Header_Mouse
-    L"Siguiente / Anterior", // Help_Item_NextPrev
-    L"Zoom", // Help_Item_Zoom
-    L"Mover imagen", // Help_Item_Pan
-    L"Girar", // Help_Item_Rotate
-    L"Ajustar a pantalla", // Help_Item_Fit
-    L"Eliminar imagen", // Help_Item_Delete
-    L"Pantalla completa", // Help_Item_Fullscreen
-    L"Cerrar", // Help_Item_Close
-    L"Botón izquierdo", // Help_Mouse_Left
-    L"Botón central", // Help_Mouse_Middle
-    L"Rueda", // Help_Mouse_Wheel
-    L"Botón derecho", // Help_Mouse_Right
-    L"Arrastre vertical con botón derecho", // Help_Mouse_RightVerticalDrag
-    L"Mover ventana / Salir de pantalla completa / Salir de maximizado", // Help_Action_MoveWindow
-    L"Mover imagen", // Help_Action_PanImage
-    L"Menú contextual", // Help_Action_ContextMenu
-    L"Sig./Ant.", // Help_Action_NextPrev
-    L"Zoom", // Help_Action_Zoom
-    L"Zoom inteligente (100% / Ajustar / Restaurar)", // Help_Action_SmartZoom
-    L"Copy Image", // Help_Desc_Copy
-    L"Edit", // Help_Desc_Edit
-    L"Tips & Glossary", // Help_Header_Tips
-    L"Note: Shortcuts and context menu actions affect the current process " L"only. Settings are permanent.", // Help_Tip_ContextScope
-    L"Rotation: 'Edge Adapted' means minor cropping to fit block boundaries " L"(lossless data). 'Lossy' means full re-encoding.", // Help_Tip_Rotation
-    L"Video Wall (Ctrl+F11): Spans all monitors. If close button is hidden, " L"double-click to exit.", // Help_Tip_VideoWall
-    L"Modo Calco / Modo Película: Una vez activado, la imagen se vuelve semitransparente, revelando los elementos subyacentes. Puede ajustar su tamaño o transparencia. Haga clic en el interruptor de Paso de Mouse en la barra de herramientas para entrar en el Modo de Paso, donde se ignoran todas las entradas excepto Mayús+Esc, convirtiendo QuickView en una superposición transparente.", // Help_Tip_DesignerMode
-    L"Aviso de gama: detecta colores fuera de gama para la pantalla de destino o el perfil de prueba. Modos: Desactivado, solo prueba en pantalla o todo (predeterminado: prueba en pantalla). Alternar mediante la barra de herramientas.", // Help_Tip_GamutDetection
-    L"RAW Button: QuickView shows embedded preview by default. Click to " L"fully decode (may look different due to rendering parameters).", // Help_Tip_Raw
-    L"JPEG Quality: Estimated Q value (reverse engineered). May differ " L"slightly from save setting due to algorithm variations.", // Help_Tip_JpegQ
-    L"Comparación de pruebas: entrar en el modo de comparación mientras la prueba de color está activa comparará automáticamente la imagen original frente a la de prueba.", // Help_Tip_SoftProofCompare
-    L"¡Nueva versión disponible!", // Dialog_UpdateTitle
-    L"v%s está listo.", // Dialog_UpdateContent
-    L"Registro de cambios", // Dialog_UpdateLogHeader
-    L"Actualizar ahora", // Dialog_ButtonUpdate
-    L"Más tarde", // Dialog_ButtonLater
-    L"Estrella en GitHub", // Dialog_ButtonStar
-    L"QuickView está hecho con amor", // Dialog_Update_LoveTitle
-    L"Yo mantengo QuickView en mi tiempo libre porque creo que Windows " L"merece un visor más rápido y limpio. Si disfrutas de esta " L"actualización, la mayor contribución es darnos una estrella en GitHub.", // Dialog_Update_LoveMessage
-    L"Compare Mode", // Help_Item_Compare
-    L"Primera / Última imagen", // Help_Item_FirstLast
-    L"PHYSICAL ATTRIBUTES", // HUD_Group_Physical
-    L"SCIENTIFIC QUALITY", // HUD_Group_Scientific
-    L"OPTICS & ENCODING", // HUD_Group_Encoding
-    L"Edge definition (Laplacian Variance)", // HUD_Tip_Sharp_Desc
-    L"Crisp edges, high detail", // HUD_Tip_Sharp_High
-    L"Soft focus or motion blur", // HUD_Tip_Sharp_Low
-    L"> 500 is very sharp", // HUD_Tip_Sharp_Ref
-    L"Information density (Shannon Entropy)", // HUD_Tip_Ent_Desc
-    L"Complex textures or high noise", // HUD_Tip_Ent_High
-    L"Flat areas or low detail", // HUD_Tip_Ent_Low
-    L"7.0-8.0 is high detail", // HUD_Tip_Ent_Ref
-    L"Bits Per Pixel (Compression Efficiency)", // HUD_Tip_BPP_Desc
-    L"Lower efficiency (more data preserved)", // HUD_Tip_BPP_High
-    L"Higher efficiency (higher compression)", // HUD_Tip_BPP_Low
-    L"24.0 (Raw RGB), ~2.0-3.0 (High JPEG), ~0.5-1.5 (WebP/AVIF)", // HUD_Tip_BPP_Ref
-    L"High: ", // HUD_Label_High
-    L"Low: ", // HUD_Label_Low
-    L"Ref: ", // HUD_Label_Ref
-    L"Tira de imágenes de galería (Hover superior)", // Settings_Header_GalleryTrigger
-    L"Modo de activación", // Settings_Label_GalleryTriggerMode
-    L"Mantener visible tras clic", // Settings_Label_KeepGalleryVisibleOnThumbnailClick
-    L"Esta función habilitará automáticamente el bloqueo de ventana y mantener el tamaño de la ventana en la navegación.", // Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick
-    L"Hover automático", // Settings_Option_GalleryTriggerAuto
-    L"Hover en punto caliente", // Settings_Option_GalleryTriggerDelay
-    L"Clic en punto caliente", // Settings_Option_GalleryTriggerClick
-    L"Deshabilitado", // Settings_Option_GalleryTriggerDisable
-    L"Esta función se desactiva automáticamente cuando la ventana es menor de 600x450.", // Settings_Tooltip_GalleryTrigger
-    L"Altura del área de activación", // Settings_Label_GalleryTriggerAreaHeight
-    L"Tiempo de permanencia", // Settings_Label_GalleryDwellTime
-    L"Retardo de salida", // Settings_Label_GalleryExitDelay
-    L"Tamaño mínimo de galería", // Settings_Label_GalleryMinSize
-
-    L"Presentación iniciada", // OSD_SlideshowStarted
-    L"Presentación detenida", // OSD_SlideshowStopped
-    L"Presentación reanudada", // OSD_SlideshowResumed
-    L"Presentación pausada", // OSD_SlideshowPaused
-    L"Inmersivo: Foco", // OSD_ImmersiveSpotlight
-    L"Inmersivo: Normal", // OSD_ImmersiveNormal
-    L"Trabajo de impresión enviado. Puede seguir navegando.", // OSD_PrintJobStarted
-    L"Trabajo de impresión enviado con éxito.", // OSD_PrintJobFinished
-    L"Modo de presentación", // Context_SlideshowMode
-    L"Intervalo (segundos)", // Settings_Label_SlideshowInterval
-    L"Modo inmersivo", // Settings_Label_SlideshowImmersive
-    L"Personalizar panel de información compacto", // Settings_Label_CustomLiteInfoPanel
-    L"Personalizar panel de información completo", // Settings_Label_CustomFullInfoPanel
-    L"Zoom del panel de información", // Settings_Label_InfoPanelScale
-    L"Elementos en modo normal", // Settings_Label_ItemsInNormalMode
-    L"Elementos en modo de comparación", // Settings_Label_ItemsInCompareMode
-    L"Preajuste de separador", // Settings_Label_SeparatorPreset
-    L"Normal", // Settings_Option_SlideshowNormal
-    L"Foco", // Settings_Option_SlideshowSpotlight
-    L"Forma de la lupa", // Settings_Label_LoupeShape
-    L"Cuadrado", // Settings_Option_LoupeShapeSquare
-    L"Círculo", // Settings_Option_LoupeShapeCircle
-    L"Mantenga presionada la tecla de acceso rápido y gire la rueda del mouse para ajustar el tamaño de la lupa.", // Settings_Tooltip_LoupeHotkey
-    L"Mantenga presionado Ctrl y arrastre con el botón izquierdo del mouse para un recorte rápido.", // Settings_Tooltip_CropModeHotkey
-};
-
-// ----------------------------------------------------------------
-// FR Table
-// ----------------------------------------------------------------
-static const LanguageTable Table_FR = {
-    L"No image loaded", // OSD_NoImage
-    L"Aucune image dans ce dossier", // OSD_FolderEmpty
-    L"SVG animé affiché comme image fixe", // OSD_SvgStaticFallback
-    L"Lossless", // OSD_Lossless
-    L"Re-encoded (Lossless)", // OSD_ReencodedLossless
-    L"Cropped", // OSD_EdgeAdapted
-    L"Lossy", // OSD_Reencoded
-    L"Access denied - file may be in use or read-only", // OSD_ReadOnly
-    L"Transform is not perfect (Edge optimized)", // OSD_NotPerfect
-    L"Video Wall: ON", // OSD_SpanOn
-    L"Video Wall: OFF", // OSD_SpanOff
-    L"Avant (Original)", // OSD_CompareBefore
-    L"Après (Preuve)", // OSD_CompareAfter
-    L"Suppression annulée", // OSD_UndoDeleteSuccess
-    L"Échec de l'annulation", // OSD_UndoDeleteFailed
-    L"Renommer annulé", // OSD_UndoRenameSuccess
-    L"Échec de l'annulation du renommage", // OSD_UndoRenameFailed
-    L"Rotation/retournement annulé", // OSD_UndoTransformSuccess
-    L"Échec de l'annulation de la rotation/retournement", // OSD_UndoTransformFailed
-    L"Couleurs hors gamme détectées", // OSD_GamutDetected
-    L"Gamme : Profil incompatible", // OSD_GamutIncompatible
-    L"Gamme : Échec de l'analyse", // OSD_GamutFailed
-    L"Rotate 90\x00B0 CW", // Action_RotateCW
-    L"Rotate 90\x00B0 CCW", // Action_RotateCCW
-    L"Rotate 180\x00B0", // Action_Rotate180
-    L"Flip Horizontal", // Action_FlipH
-    L"Flip Vertical", // Action_FlipV
-    L"Save Changes?", // Dialog_SaveTitle
-    L"The image has been modified. Do you want to save changes?", // Dialog_SaveContent
-    L"Save", // Dialog_ButtonSave
-    L"Save As...", // Dialog_ButtonSaveAs
-    L"Discard", // Dialog_ButtonDiscard
-    L"Continuer", // Dialog_ButtonContinue
-    L"Modifications de recadrage non enregistrées. Enregistrer?", // Dialog_CropUnsavedTitle
-    L"Enregistrer l'image", // Dialog_SaveAsTitle
-    L"Enregistrer et exporter", // Dialog_ExportTitle
-    L"Écraser", // Dialog_ButtonOverwrite
-    L"Profil ICC", // Dialog_EmbedICC
-    L"Taille: Estimation...", // Dialog_SizeEstimating
-    L"Erreur d'exportation", // Dialog_ExportError
-    L"Copier la sélection (Ctrl+C)", // Toolbar_Tooltip_CropCopy
-    L"Enregistrer (Ctrl+S)", // Toolbar_Tooltip_CropSave
-    L"Appliquer (Enter)", // Toolbar_Tooltip_CropApply
-    L"Quitter (Esc)", // Toolbar_Tooltip_CropCancel
-    L"Mode recadrage activé", // OSD_EnterCropMode
-    L"Sélection de recadrage copiée", // OSD_CropCopied
-    L"Recadrer", // Context_Crop
-    L"Always Save Lossless Transforms", // Checkbox_AlwaysSaveLossless
-    L"Always Save Edge-Adapted", // Checkbox_AlwaysSaveEdgeAdapted
-    L"Always Save Re-Encoded", // Checkbox_AlwaysSaveLossy
-    L"Envoyer directement à la corbeille sans confirmer", // Checkbox_NeverConfirmDelete
-    L"Cannot decode HEIC - Install HEVC Video Extension", // OSD_HEICCodecMissing
-    L"Cannot decode HEIC", // Dialog_HEICTitle
-    L"Your system is missing the HEVC Video Extension.\nQuickView uses " L"system hardware acceleration for best performance.", // Dialog_HEICContent
-    L"Get Extension (Free)", // Dialog_HEICGetExtension
-    L"Cancel", // Dialog_Cancel
-    L"General", // Settings_Tab_General
-    L"About", // Settings_Tab_About
-    L"Foundation", // Settings_Group_Foundation
-    L"Startup", // Settings_Group_Startup
-    L"Habits", // Settings_Group_Habits
-    L"Language", // Settings_Label_Language
-    L"Single Instance", // Settings_Label_SingleInstance
-    L"Check Updates", // Settings_Label_CheckUpdates
-    L"Canal de mise à jour", // Settings_Label_UpdateChannel
-    L"Stable", // Settings_Option_UpdateStable
-    L"Pré-version (Pre-release)", // Settings_Option_UpdatePreRelease
-    L"Stable : Publié après qu'une pré-version se soit avérée stable.\nPré-version (Pre-release) : Fournit immédiatement les dernières modifications pour recueillir vos retours. Remarque : Ces modifications ne sont pas strictement testées.", // Settings_Tooltip_PreRelease
-    L"Loop", // Settings_Label_NavLoopMode
-    L"Sort Order", // Settings_Label_SortOrder
-    L"Descending", // Settings_Label_SortDescending
-    L"Toujours trier les archives par nom", // Settings_Label_SortArchivesByNameAscending
-    L"Confirm Before Delete", // Settings_Label_ConfirmDel
-    L"Portable Mode / Cleanup", // Settings_Label_Portable
-    L"Portable Mode / Registry Cleanup:\nWhen enabled, QuickView runs in " L"portable mode. It will automatically clean up existing registry " L"associations, disable automatic registry modification, and store " L"configuration files in the application directory instead of AppData.", // Settings_Tooltip_Portable
-    L"Span Displays", // Settings_Label_SpanDisplays
-    L"UI Scale", // Settings_Label_UIScale
-    L"Restart required", // Settings_Status_RestartRequired
-    L"No Write Permission!", // Settings_Status_NoWritePerm
-    L"Enabled", // Settings_Status_Enabled
-    L"Powered by", // Settings_Header_PoweredBy
-    L"Open...\tCtrl+O", // Context_Open
-    L"Open With...", // Context_OpenWith
-    L"Edit\tE", // Context_Edit
-    L"Show in Explorer", // Context_ShowInExplorer
-    L"Open Folder", // Context_OpenFolder
-    L"Copier les pixels\tCtrl+C", // Context_CopyPixels
-    L"Copier le fichier\tCtrl+Shift+C", // Context_CopyFile
-    L"Copier les pixels\tCtrl+C", // Context_CopyImage
-    L"Copy Path\tCtrl+Alt+C", // Context_CopyPath
-    L"Print\tCtrl+P", // Context_Print
-    L"Rotate 90\x00B0 CW\tR", // Context_RotateCW
-    L"Rotate 90\x00B0 CCW\tShift+R", // Context_RotateCCW
-    L"Flip Horizontal\tH", // Context_FlipH
-    L"Flip Vertical\tV", // Context_FlipV
-    L"Transform", // Context_Transform
-    L"Actual Size (100%)\t1 / Z", // Context_ActualSize
-    L"Fit to Screen\t0 / F", // Context_FitToScreen
-    L"Fit Window", // Context_FitWindow
-    L"Fill Window", // Context_FillWindow
-    L"Zoom In\t+ / Ctrl +", // Context_ZoomIn
-    L"Zoom Out\t- / Ctrl -", // Context_ZoomOut
-    L"Lock Window", // Context_LockWindow
-    L"Always on Top\tCtrl+T", // Context_AlwaysOnTop
-    L"HUD Gallery\tT", // Context_HUDGallery
-    L"Lite Info Panel\tTab", // Context_LiteInfoPanel
-    L"Full Info Panel\tI", // Context_FullInfoPanel
-    L"Render RAW", // Context_RenderRAW
-    L"Pixel Art Mode", // Context_PixelArtMode
-    L"Color Space", // Context_ColorSpace
-    L"Fullscreen\tF11", // Context_Fullscreen
-    L"View", // Context_View
-    L"Fill", // Context_WallpaperFill
-    L"Fit", // Context_WallpaperFit
-    L"Tile", // Context_WallpaperTile
-    L"Set as Wallpaper", // Context_SetAsWallpaper
-    L"Rename\tF2", // Context_Rename
-    L"Fix Extension", // Context_FixExtension
-    L"Delete\tDel", // Context_Delete
-    L"Annuler la suppression\tCtrl+Z", // Context_UndoDelete
-    L"Annuler le renommage\tCtrl+Z", // Context_UndoRename
-    L"Annuler la rotation/retournement\tCtrl+Z", // Context_UndoTransform
-    L"Annuler\tCtrl+Z", // Context_Undo
-    L"Sort By", // Context_SortBy
-    L"Navigation Order", // Context_NavOrder
-    L"Ascending", // Context_SortAscending
-    L"Descending", // Context_SortDescending
-    L"Settings...", // Context_Settings
-    L"Compare Mode\tC", // Context_CompareMode
-    L"Mode Décalque\tCtrl+Shift+O", // Context_OverlayMode
-    L"Open in Compare Mode", // Context_GalleryOpenCompare
-    L"Open in New Window", // Context_GalleryOpenNewWindow
-    L"Exit\tMButton/Esc", // Context_Exit
-    L"Quitter le mode clic à travers", // Menu_ExitPassthrough
-    L"Mode Clic à Travers", // Dialog_PassthroughTitle
-    L"Les événements de souris passeront à travers la fenêtre.\nQuitter via le raccourci global (Shift+Esc) ou le menu de la barre des tâches.\n\nContinuer ?", // Dialog_PassthroughContent
-    L"Clic à travers : ON (Shift+Esc pour quitter)", // OSD_PassthroughOn
-    L"Clic à travers : OFF", // OSD_PassthroughOff
-    L"Mode décalque : ON", // OSD_OverlayModeOn
-    L"Mode décalque : OFF", // OSD_OverlayModeOff
-    L"Opacité", // OSD_Opacity
-    L"Zoom avant (décalque)", // Toolbar_Tooltip_OverlayZoomIn
-    L"Zoom arrière (décalque)", // Toolbar_Tooltip_OverlayZoomOut
-    L"Augmenter l'opacité", // Toolbar_Tooltip_OverlayAlphaUp
-    L"Diminuer l'opacité", // Toolbar_Tooltip_OverlayAlphaDown
-    L"Activer le clic à travers", // Toolbar_Tooltip_OverlayPassthroughOn
-    L"Désactiver le clic à travers", // Toolbar_Tooltip_OverlayPassthroughOff
-    L"Quitter le mode décalque", // Toolbar_Tooltip_OverlayExit
-    L"Error", // Message_SaveErrorTitle
-    L"Failed to save file. File locked?", // Message_SaveErrorContent
-    L"Previous (Left)", // Toolbar_Tooltip_Prev
-    L"Next (Right)", // Toolbar_Tooltip_Next
-    L"Rotate Left (Shift+R)", // Toolbar_Tooltip_RotateL
-    L"Rotate Right (R)", // Toolbar_Tooltip_RotateR
-    L"Flip Horizontal (H)", // Toolbar_Tooltip_FlipH
-    L"Lock Window (Temp)", // Toolbar_Tooltip_Lock
-    L"Unlock Window", // Toolbar_Tooltip_Unlock
-    L"Gallery (T)", // Toolbar_Tooltip_Gallery
-    L"Info Panel", // Toolbar_Tooltip_Info
-    L"RAW: Preview (Click for Full)", // Toolbar_Tooltip_RawPreview
-    L"RAW: Full Decode (Click for Preview)", // Toolbar_Tooltip_RawFull
-    L"RAW : Voir le RAW associé (décodage complet)", // Toolbar_Tooltip_RawPairView
-    L"RAW : Revenir à l'image associée", // Toolbar_Tooltip_RawPairBack
-    L"Extension Mismatch (Fix)", // Toolbar_Tooltip_FixExtension
-    L"Pin Toolbar", // Toolbar_Tooltip_Pin
-    L"Unpin Toolbar", // Toolbar_Tooltip_Unpin
-    L"Afficher les zones hors gamme", // Toolbar_Tooltip_GamutWarning
-    L"Normal Mode", // Toolbar_Tooltip_NormalMode
-    L"Compare Mode", // Toolbar_Tooltip_CompareMode
-    L"Mode page unique", // Toolbar_Tooltip_SinglePage
-    L"Mode double page", // Toolbar_Tooltip_DualPage
-    L"Open New Image in Selection", // Toolbar_Tooltip_CompareOpen
-    L"Swap Left/Right", // Toolbar_Tooltip_CompareSwap
-    L"Toggle Layout", // Toolbar_Tooltip_CompareLayout
-    L"Compare Info", // Toolbar_Tooltip_CompareInfo
-    L"Delete Selected Image", // Toolbar_Tooltip_CompareDelete
-    L"Zoom In (Fine-tune)", // Toolbar_Tooltip_CompareZoomIn
-    L"Zoom Out (Fine-tune)", // Toolbar_Tooltip_CompareZoomOut
-    L"Zoom Sync: ON", // Toolbar_Tooltip_CompareSyncZoomOn
-    L"Zoom Sync: OFF", // Toolbar_Tooltip_CompareSyncZoomOff
-    L"Pan Sync: ON", // Toolbar_Tooltip_CompareSyncPanOn
-    L"Pan Sync: OFF", // Toolbar_Tooltip_CompareSyncPanOff
-    L"Basculer le mode projecteur immersif", // Toolbar_Tooltip_SlideshowImmersiveToggle
-    L"Quitter le mode diaporama", // Toolbar_Tooltip_SlideshowExit
-    L"Exit Compare", // Toolbar_Tooltip_CompareExit
-    L"Play Animation", // Toolbar_Tooltip_AnimPlay
-    L"Pause Animation", // Toolbar_Tooltip_AnimPause
-    L"Previous Frame", // Toolbar_Tooltip_AnimPrev
-    L"Next Frame", // Toolbar_Tooltip_AnimNext
-    L"Dirty Rect Debug: ON", // Toolbar_Tooltip_AnimDirtyOn
-    L"Dirty Rect Debug: OFF", // Toolbar_Tooltip_AnimDirtyOff
-    L"Vitesse d'animation", // Toolbar_Tooltip_AnimSpeed
-    L"Performance", // Settings_Header_Performance
-    L"Professional Tools", // Settings_Header_Professional
-    L"Memory Reclaim Strategy:", // Settings_Label_MemoryReclaim
-    L"Smart (Auto)", // Settings_Option_MemSmart
-    L"Aggressive (Max Perf)", // Settings_Option_MemAggressive
-    L"On-Demand (Min RAM)", // Settings_Option_MemOnDemand
-    L"Smart: Balance performance and RAM.\nAggressive: Maximize performance, high memory usage.\nOn-Demand: Release memory immediately when idle.", // Settings_Tooltip_MemoryReclaim
-    L"Show Update Regions Button in Animation", // Settings_Label_ShowDirtyRect
-    L"Show the update region debug button in animation mode to visualize which parts of the frame are being redrawn.", // Settings_Tooltip_ShowDirtyRect
-    L"Copied!", // OSD_Copied
-    L"Pixels copiés dans le presse-papiers !", // OSD_PixelsCopied
-    L"Extraction des pixels...", // OSD_PixelsExtracting
-    L"Fichier copié dans le presse-papiers !", // OSD_FileCopied
-    L"Coordinates copied!", // OSD_CoordinatesCopied
-    L"File path copied!", // OSD_FilePathCopied
-    L"Zoom: 100%", // OSD_Zoom100
-    L"Zoom: Fit Screen", // OSD_ZoomFit
-    L"Zoom: Fit Window", // OSD_ZoomFitWindow
-    L"Zoom: Fill Window", // OSD_ZoomFill
-    L"Print: Use Ctrl+P in opened app", // OSD_PrintInstruction
-    L"Moved to Recycle Bin", // OSD_MovedToRecycleBin
-    L"Window Locked", // OSD_WindowLocked
-    L"Window Unlocked", // OSD_WindowUnlocked
-    L"Always on Top: ON", // OSD_AlwaysOnTopOn
-    L"Always on Top: OFF", // OSD_AlwaysOnTopOff
-    L"Wallpaper Set", // OSD_WallpaperSet
-    L"Failed to set wallpaper", // OSD_WallpaperFailed
-    L"Renamed", // OSD_Renamed
-    L"Rename Failed", // OSD_RenameFailed
-    L"Extension Fixed", // OSD_ExtensionFixed
-    L"Restored", // OSD_Restored
-    L"First image", // OSD_FirstImage
-    L"Last image", // OSD_LastImage
-    L"HD", // OSD_HD
-    L"Zoom: ", // OSD_ZoomPrefix
-    L"Playing", // OSD_AnimPlaying
-    L"Paused (Inspector Mode: Alt+Left/Right to Seek)", // OSD_AnimPaused
-    L"Dirty Rect: ON", // OSD_AnimDirtyOn
-    L"Dirty Rect: OFF", // OSD_AnimDirtyOff
-    L"Span Displays (Video Wall)\tCtrl+F11", // Context_SpanDisplays
-    L"Interface", // Settings_Tab_Visuals
-    L"Controls", // Settings_Tab_Controls
-    L"Image", // Settings_Tab_Image
-    L"Advanced", // Settings_Tab_Advanced
-    L"Backdrop", // Settings_Header_Backdrop
-    L"Window", // Settings_Header_Window
-    L"Window Lock", // Settings_Header_WindowLock
-    L"Panel", // Settings_Header_Panel
-    L"Mouse", // Settings_Header_Mouse
-    L"Edge", // Settings_Header_Edge
-    L"Render", // Settings_Header_Render
-    L"HDR", // Settings_Header_Hdr
-    L"Prompts", // Settings_Header_Prompts
-    L"System", // Settings_Header_System
-    L"Features", // Settings_Header_Features
-    L"Transparency", // Settings_Header_Transparency
-    L"Glass Engine (GPU)", // Settings_Header_GeekGlass
-    L"Enable Glass", // Settings_Label_EnableGeekGlass
-    L"UI Animations", // Settings_Label_GlassUIAnimations
-    L"Component Material", // Settings_Header_CoreMaterial
-    L"Glass Blur Sigma", // Settings_Label_BlurSigma
-    L"Glass Disabled (System)", // Settings_Status_GlassDisabled
-    L"Tint Layer", // Settings_Label_TintDensity
-    L"Overall color intensity of the glass frost effect.", // Settings_Tooltip_TintDensity
-    L"Reflex (Specular)", // Settings_Label_SpecularOpacity
-    L"Brightness of the diagonal lighting reflections.", // Settings_Tooltip_SpecularOpacity
-    L"Shadow Depth", // Settings_Label_ShadowIntensity
-    L"Strength of the ambient occlusion shadows.", // Settings_Tooltip_ShadowIntensity
-    L"Vector Rendering", // Settings_Header_VectorAssets
-    L"Icon Stroke weight", // Settings_Label_VectorStrokeWeight
-    L"Standard (1.5px)", // Settings_Option_StrokeStandard
-    L"Fine (1.0px)", // Settings_Option_StrokeFine
-    L"Tint Profile", // Settings_Header_GlassTint
-    L"Color Logic", // Settings_Label_TintProfile
-    L"Auto (Adaptive)", // Settings_Option_TintAuto
-    L"Custom Color", // Settings_Option_TintCustom
-    L"Manual Tint", // Settings_Label_GlassCustomColor
-    L"Control Surface Density (%)", // Settings_Header_DensityMatrix
-    L"OSD & HUD", // Settings_Label_OsdDensity
-    L"Transparency for small floating overlays.", // Settings_Tooltip_OsdDensity
-    L"Toolbar & Sidebars", // Settings_Label_PanelsDensity
-    L"Transparency for persistent control panels.", // Settings_Tooltip_PanelsDensity
-    L"Dialogs & Settings", // Settings_Label_ModalsDensity
-    L"Transparency for centered popups.", // Settings_Tooltip_ModalsDensity
-    L"Menus", // Settings_Label_MenusDensity
-    L"Control context menu material density (Only adjustable when using Acrylic backdrop).", // Settings_Tooltip_MenusDensity
-    L"Theme", // Settings_Tab_Theme
-    L"Preset", // Settings_Label_ThemeMode
-    L"System", // Settings_Option_ThemeAuto
-    L"Dark", // Settings_Option_ThemeDark
-    L"Light", // Settings_Option_ThemeLight
-    L"Design", // Settings_Option_ThemeCustom
-    L"Modal Dimmer", // Settings_Label_AmbientDimmer
-    L"Dim the background when a modal or settings window is open.", // Settings_Tooltip_AmbientDimmer
-    L"Accent Color", // Settings_Label_AccentColor
-    L"Text Color", // Settings_Label_TextColor
-    L"Theme Engine", // Settings_Header_ThemeManagement
-    L"Export", // Settings_Action_ExportTheme
-    L"Import", // Settings_Action_ImportTheme
-    L"Canvas Color", // Settings_Label_CanvasColor
-    L"Overlay", // Settings_Label_Overlay
-    L"Show Grid Overlay", // Settings_Label_ShowGrid
-    L"Always on Top", // Settings_Label_AlwaysOnTop
-    L"Lock Window", // Settings_Label_LockWindow
-    L"Controls whether the program locks the window border by default on startup, rather than following image scaling.", // Settings_Tooltip_LockWindow
-    L"Auto-Hide Title Bar", // Settings_Label_AutoHideTitle
-    L"Rounded Corners", // Settings_Label_RoundedCorners
-    L"Show UI Borders", // Settings_Label_UIBorders
-    L"Controls window and context menu rounded corners. Requires Windows 11.", // Settings_Tooltip_RoundedCorners
-    L"Lock Bottom Toolbar", // Settings_Label_LockToolbar
-    L"Minimum Window Width", // Settings_Label_WindowMinSize
-    L"Maximum Start Size (%)", // Settings_Label_WindowMaxSizePercent
-    L"Show Edge Overflow Indicators", // Settings_Label_ShowBorderIndicator
-    L"Shows an indicator line in the direction where the image exceeds the window borders.", // Settings_Tooltip_ShowBorderIndicator
-    L"Show Minimap", // Settings_Label_ShowNavigator
-    L"When mouse is over minimap, Wheel / Thumb Wheel (Shift + Wheel) pans image", // Settings_Tooltip_ShowNavigator
-    L"Auto", // Settings_Option_NavigatorAuto
-    L"On", // Settings_Option_NavigatorOn
-    L"Off", // Settings_Option_NavigatorOff
-    L"Keep Window Size on Navigation", // Settings_Label_KeepWindowSizeOnNav
-    L"Remember Last Window Size and Position", // Settings_Label_RememberLastWindowSizeAndPosition
-    L"Adapt Small Images", // Settings_Label_UpscaleSmallImagesWhenLocked
-    L"Smooth Window Scaling (GPU)", // Settings_Label_EnableSmoothScaling
-    L"EXIF Panel Mode", // Settings_Label_ExifMode
-    L"Toolbar Info Default", // Settings_Label_ToolbarInfoDefault
-    L"Open Fullscreen", // Settings_Label_OpenFullScreenMode
-    L"Fullscreen Zoom Mode", // Settings_Label_FullScreenZoomMode
-    L"Fit to Screen", // Settings_Option_FitScreen
-    L"Auto", // Settings_Option_AutoFit
-    L"Invert Wheel", // Settings_Label_InvertWheel
-    L"Zoom 100% Snap Damping", // Settings_Label_ZoomSnapDamping
-    L"Mouse-Anchored Window Zoom", // Settings_Label_MouseAnchorZoom
-    L"Right Button Drag Zoom", // Settings_Label_RightButtonDragZoom
-    L"Wheel Zoom Speed", // Settings_Label_WheelZoomSpeed
-    L"Thumb Wheel", // Settings_Label_ThumbWheel
-    L"Can be replaced with Shift + Wheel", // Settings_Tooltip_ThumbWheel
-    L"Alt + Wheel temporarily adjusts zoom speed", // Settings_Tooltip_WheelZoomSpeed
-    L"Can be replaced with Ctrl + Left Click", // Settings_Tooltip_MiddleDrag
-    L"Double-Clic", // Settings_Label_DoubleClick
-    L"Smart", // Settings_Option_DoubleClick_Smart
-    L"Mode Molette 1", // Settings_Option_DoubleClick_WheelMode1
-    L"Mode Molette 2", // Settings_Option_DoubleClick_WheelMode2
-    L"Smart: Default zoom/fullscreen toggle;\nWheel Mode 1: Double-click swaps main & thumb wheel functions;\nWheel Mode 2: Double-click toggles image pan mode;\nTip: Shift + Wheel acts as Thumb Wheel.", // Settings_Tooltip_DoubleClick
-    L"Controls key pan and wheel pan speed", // Settings_Tooltip_PanStepNormal
-    L"Main Wheel: Next/Prev; Thumb/Shift+Wheel: Zoom", // OSD_WheelMode1_NextPrevZoom
-    L"Main Wheel: Zoom; Thumb/Shift+Wheel: Next/Prev", // OSD_WheelMode1_ZoomNextPrev
-    L"Wheel: Pan Mode", // OSD_WheelMode2_Pan
-    L"Wheel: Default Mode", // OSD_WheelMode2_Default
-    L"Right Drag Zoom Speed", // Settings_Label_RightDragZoomSpeed
-    L"Zoom Speed (Temp): ", // OSD_WheelZoomSpeed
-    L"Temporarily Adjust Zoom Speed", // Help_Action_AdjustZoomSpeed
-    L"Temporarily Lock Window Zoom", // Help_Action_LockWindowZoom
-    L"Invert Side Buttons", // Settings_Label_InvertButtons
-    L"Use Fixed Zoom Levels", // Settings_Label_UseFixedZoom
-    L"When enabled, Alt + Wheel performs regular zoom instead of changing zoom speed.", // Settings_Tooltip_UseFixedZoom
-    L"  └  Custom Zoom Levels", // Settings_Label_FixedZoomLevels
-    L"Edit Zoom Levels", // Dialog_FixedZoomTitle
-    L"Enter comma-separated zoom ratios (e.g. 0.5, 1, 2):", // Dialog_FixedZoomMsg
-    L"Zoom Mode (In)", // Settings_Label_ZoomModeIn
-    L"Zoom Mode (Out)", // Settings_Label_ZoomModeOut
-    L"Left Drag", // Settings_Label_LeftDrag
-    L"Middle Drag", // Settings_Label_MiddleDrag
-    L"Middle Click", // Settings_Label_MiddleClick
-    L"Clic de navigation sur les bords", // Settings_Label_EdgeNavClick
-    L"Afficher la notification OSD", // Settings_Label_ShowOSD
-    L"Désactiver en mode comparaison", // Settings_Label_DisableEdgeNavInCompare
-    L"Indicateur de navigation", // Settings_Label_NavIndicator
-    L"Rotation automatique (EXIF)", // Settings_Label_AutoRotate
-    L"Gestion des couleurs (CMS)", // Settings_Label_CMS
-    L"Couleurs avancées (HDR)", // Settings_Label_AdvancedColor
-    L"Mappage de tons HDR", // Settings_Label_HdrToneMapping
-    L"Spline Knee Point", // Settings_Label_HdrSplineKnee
-    L"Stratégie de mappage de tons HDR (Tone Mapping) :\nDétermine comment les " L"images HDR sont affichées lorsqu'elles dépassent les capacités du " L"moniteur.\nSpline : Atténuation des hautes lumières haute fidélité " L"utilisant une spline par morceaux (Recommandé).\nColorimétrique : " L"Mappage de luminance strict ; les hautes lumières dépassant la limite " L"du moniteur sont tronquées.\nBT.2390 (EETF) : Courbe ITU-R BT.2390 EETF pour un mappage de tons haute fidélité.", // Settings_Tooltip_HdrToneMapping
-    L"0 = Auto (Calculated based on image luminance).\nThe value represents the ratio of the monitor's peak luminance. Brightness below this knee point maps 1:1, while brightness above is smoothly compressed using a spline curve.\n(Recommended: 0.4 - 0.75)", // Settings_Tooltip_HdrSplineKnee
-    L"Luminosité maximale HDR (Nits)", // Settings_Label_HdrPeakNitsOverride
-    L"Réglez sur 0 pour utiliser la luminosité détectée par le système.", // Settings_Tooltip_HdrPeakNitsOverride
-    L"HDR Peak Percentile", // Settings_Label_HdrPeakPercentile
-    L"Discard extremely bright pixels to raise overall brightness (mpv default: 99.995%).", // Settings_Tooltip_HdrPeakPercentile
-    L"100% (Absolute Peak)", // Settings_Option_HdrPeakPercentile_100
-    L"99.995% (Stable)", // Settings_Option_HdrPeakPercentile_99995
-    L"99.9% (Aggressive)", // Settings_Option_HdrPeakPercentile_999
-    L"Plage de désaturation des hautes lumières HDR", // Settings_Label_HdrDesatThreshold
-    L"Seuil de début de désaturation des hautes lumières. 0.0 signifie désaturer toute la luminosité, 1.0 signifie pas de désaturation. Par défaut recommandé : 0.18.", // Settings_Tooltip_HdrDesatThreshold
-    L"Force de désaturation des hautes lumières HDR", // Settings_Label_HdrMaxDesat
-    L"Intensité maximale de désaturation des hautes lumières extrêmes. 0.0 signifie pas de désaturation, 1.0 signifie désaturé à 100% en blanc. Par défaut recommandé : 0.75.", // Settings_Tooltip_HdrMaxDesat
-    L"Colorimétrique", // Settings_Option_HdrColorimetric
-    L"Spline", // Settings_Option_HdrSpline
-    L"BT.2390 (EETF)", // Settings_Option_HdrLegacyReinhard
-    L"Profil de repli pour images non étiquetées", // Settings_Label_CmsFallback
-    L"Profil d'épreuvage écran (.icc)", // Settings_Label_CustomProof
-    L"Aperçu de l'épreuvage écran", // Context_SoftProofing
-    L"Profil de preuve", // Context_SoftProofProfile
-    L"Personnalisé...", // Context_SoftProofCustom
-    L"Bientôt disponible", // Settings_Value_ComingSoon
-    L"Forcer le décodage RAW", // Settings_Label_ForceRaw
-    L"Appairage RAW+JPEG", // Settings_Label_PairRawJpeg
-    L"Afficher un fichier RAW et l'image boîtier du même nom (JPEG/HEIF) comme une seule photo.\nSeule l'image rendue reste dans la liste, marquée du format RAW (ex. +CR3) ; les heures de prise de vue sont vérifiées en arrière-plan et les paires discordantes sont séparées.\nBasculez entre l'image boîtier et le décodage RAW avec le bouton RAW ou son raccourci, ou affichez les deux avec le raccourci de comparaison de paire.", // Settings_Tooltip_PairRawJpeg
-    L"Exposition (Luminosité)", // Settings_Label_Exposure
-    L"Ajuste la luminosité de l'image (compensation d'exposition). Plage : 0.18x - 10.0x.", // Settings_Tooltip_Exposure
-    L"Ajouter à 'Ouvrir avec'", // Settings_Label_AddToOpenWith
-    L"Éditeur d'images personnalisé", // Settings_Label_CustomEditor
-    L"Sélectionner l'éditeur", // Context_SelectEditor
-    L"Échec du lancement de l'éditeur. Veuillez le reconfigurer.", // OSD_EditorLaunchFailed
-    L"Ajouter", // Settings_Action_Add
-    L"Ajouté", // Settings_Action_Added
-    L"Désactivé en mode portable", // Settings_Status_DisabledInPortable
-    L"Activer le HUD de débogage (F12)", // Settings_Label_DebugHUD
-    L"Système de préchargement", // Settings_Label_Prefetch
-    L"Panneau d'information", // Settings_Label_InfoPanelAlpha
-    L"Barre d'outils", // Settings_Label_ToolbarAlpha
-    L"Paramètres", // Settings_Label_SettingsAlpha
-    L"Réinitialiser tous les paramètres", // Settings_Label_Reset
-    L"Restaurer", // Settings_Action_Restore
-    L"Terminé", // Settings_Action_Done
-    L"Importer / Exporter (.ini)", // Settings_Header_ConfigManagement
-    L"Non géré", // Settings_Option_CmsUnmanaged
-    L"sRGB", // Settings_Option_CmssRGB
-    L"Display P3", // Settings_Option_CmsP3
-    L"Adobe RGB (1998)", // Settings_Option_CmsAdobeRGB
-    L"Niveaux de gris (Vérification tonale)", // Settings_Option_CmsGray
-    L"ProPhoto RGB", // Settings_Option_CmsProPhoto
-    L"Intention de rendu", // Settings_Label_CmsIntent
-    L"Détection de dépassement de gamme", // Settings_Label_GamutWarning
-    L"Analyser et mettre en évidence les zones hors gamme. Options : Désactivé, uniquement en mode épreuvage écran (par défaut), ou pour l'épreuvage et la gamme de l'écran simultanément.", // Settings_Tooltip_GamutWarning
-    L"Notification automatique d'erreur de gamme", // Settings_Label_GamutAutoPrompt
-    L"Afficher une notification OSD en cas d'erreur de gamme. Les points forts peuvent être activés manuellement via la barre d'outils.", // Settings_Tooltip_GamutAutoPrompt
-    L"Couleur de mise en évidence de gamme", // Settings_Label_GamutColor
-    L"Colorimétrie relative", // Settings_Option_CmsIntentRelative
-    L"Perceptuelle", // Settings_Option_CmsIntentPerceptual
-    L"Enable Color Management System.\nWhen enabled, applies high-precision color space conversion via GPU to restore true colors.\nDisabling it reduces GPU load, but may result in oversaturated colors on wide-gamut displays.", // Settings_Tooltip_CMS
-    L"Mode de rendu pour la conversion de l'espace colorimétrique (Rendering Intent).\nPerceptuel : Compresse les couleurs hors gamme pour préserver les détails et les dégradés (idéal pour les photos).\nColorimétrique relatif : Préserve les couleurs dans la gamme et coupe celles qui sont en dehors (idéal pour l'interface et les icônes).\nNote : Des différences visuelles n'apparaissent que lors de l'utilisation de profils ICC avancés contenant des LUT (tables de correspondance). Les profils matriciels standard reviendront automatiquement au colorimétrique relatif.", // Settings_Tooltip_CmsIntent
-    L"Enable 16-bit floating-point rendering pipeline (scRGB).\nWhen enabled, perfectly renders photo highlights on HDR-capable displays by breaking the SDR limit.\nDisabling it forces mapping to SDR output.\nNote: Enabling increases VRAM usage.", // Settings_Tooltip_AdvancedColor
-    L"Auto: 100% scale when image is smaller than screen, fit to screen when larger.", // Settings_Tooltip_ZoomAuto
-    L"Rechercher des mises à jour", // Settings_Action_CheckUpdates
-    L"Voir la mise à jour", // Settings_Action_ViewUpdate
-    L"Vérification...", // Settings_Status_Checking
-    L"À jour", // Settings_Status_UpToDate
-    L"Dépôt GitHub", // Settings_Link_GitHub
-    L"Signaler un problème", // Settings_Link_ReportIssue
-    L"Aide (F1)", // Settings_Link_Hotkeys
-    L"Version", // Settings_Label_Version
-    L"Build", // Settings_Label_Build
-    L"Black", // Settings_Option_Black
-    L"Effects", // Settings_Option_Effects
-    L"Right-Click Menu", // Settings_Label_ContextMenuBackdrop
-    L"Effect Style", // Settings_Label_CanvasEffectStyle
-    L"Mica and Mica Alt are supported only on Windows 11. Acrylic uses more system resources than Mica/Mica Alt.", // Settings_Tooltip_BackdropEffectsTip
-    L"White", // Settings_Option_White
-    L"Grid", // Settings_Option_Grid
-    L"Custom", // Settings_Option_Custom
-    L"Off", // Settings_Option_Off
-    L"On", // Settings_Option_On
-    L"Lite", // Settings_Option_Lite
-    L"Full", // Settings_Option_Full
-    L"Large Only", // Settings_Option_LargeOnly
-    L"All", // Settings_Option_All
-    L"Épreuvage écran", // Settings_Option_SoftProofing
-    L"Window", // Settings_Option_Window
-    L"Pan", // Settings_Option_Pan
-    L"None", // Settings_Option_None
-    L"Exit", // Settings_Option_Exit
-    L"Arrow", // Settings_Option_Arrow
-    L"Cursor", // Settings_Option_Cursor
-    L"Manual", // Settings_Option_Manual
-    L"Auto (Explorer)", // Settings_Option_SortAuto
-    L"Name", // Settings_Option_SortName
-    L"Date Modified", // Settings_Option_SortModified
-    L"Date Taken (EXIF)", // Settings_Option_SortDateTaken
-    L"Size", // Settings_Option_SortSize
-    L"Type", // Settings_Option_SortType
-    L"Loop", // Settings_Option_NavLoop
-    L"Through Subfolders", // Settings_Option_NavThrough
-    L"Linear: Basic smoothing", // Settings_Option_Linear
-    L"Nearest: Extreme sharpness", // Settings_Option_Nearest
-    L"HQ Cubic: Extreme smoothing", // Settings_Option_HighQualityCubic
-    L"Auto", // Settings_Option_ZoomAuto
-    L"Auto", // Settings_Option_Auto
-    L"Eco", // Settings_Option_Eco
-    L"Balanced", // Settings_Option_Balanced
-    L"Ultra", // Settings_Option_Ultra
-    L"Keyboard Shortcuts", // Help_Header_Shortcuts
-    L"Mouse Actions", // Help_Header_Mouse
-    L"Next / Previous Image", // Help_Item_NextPrev
-    L"Zoom In / Out", // Help_Item_Zoom
-    L"Pan Image", // Help_Item_Pan
-    L"Rotate", // Help_Item_Rotate
-    L"Fit to Screen", // Help_Item_Fit
-    L"Delete Image", // Help_Item_Delete
-    L"Fullscreen", // Help_Item_Fullscreen
-    L"Close", // Help_Item_Close
-    L"Left Button", // Help_Mouse_Left
-    L"Middle Button", // Help_Mouse_Middle
-    L"Wheel", // Help_Mouse_Wheel
-    L"Right Button", // Help_Mouse_Right
-    L"Right Button Vertical Drag", // Help_Mouse_RightVerticalDrag
-    L"Move Window / Exit Fullscreen / Exit Maximized", // Help_Action_MoveWindow
-    L"Pan Image", // Help_Action_PanImage
-    L"Context Menu", // Help_Action_ContextMenu
-    L"Next/Prev Image", // Help_Action_NextPrev
-    L"Zoom", // Help_Action_Zoom
-    L"Smart Zoom (100% / Fit / Restore)", // Help_Action_SmartZoom
-    L"Copy Image", // Help_Desc_Copy
-    L"Edit", // Help_Desc_Edit
-    L"Tips & Glossary", // Help_Header_Tips
-    L"Note: Shortcuts apply to the current window only. Settings are global.", // Help_Tip_ContextScope
-    L"Rotation: 'Edge Adapted' means minor cropping to align with codec " L"blocks (lossless). 'Lossy' means re-encoding is required.", // Help_Tip_Rotation
-    L"Video Wall (Ctrl+F11): Spans all screens. If the close button is " L"hidden, double-click anywhere to exit.", // Help_Tip_VideoWall
-    L"Mode Calque / Mode Pellicule : Une fois activé, l'image devient semi-transparente, révélant les éléments sous-jacents. Vous pouvez ajuster sa taille ou sa transparence. Cliquez sur le commutateur de passage de la souris dans la barre d'outils pour passer en mode passage, où toutes les entrées sauf Shift+Esc sont ignorées, transformant QuickView en une superposition transparente.", // Help_Tip_DesignerMode
-    L"Alerte de gamme : détecte les couleurs hors gamme pour l'écran cible ou le profil d'épreuvage. Modes : Désactivé, épreuvage écran uniquement, ou tout (par défaut : épreuvage écran). Basculement via la barre d'outils.", // Help_Tip_GamutDetection
-    L"RAW: Shows embedded preview by default for speed. Click the RAW button " L"to fully decode (colors may vary).", // Help_Tip_Raw
-    L"JPEG Quality: Estimated value (e.g. Photoshop 100% ≈ 98%). May vary " L"slightly from save settings due to encoder variance, which is normal.", // Help_Tip_JpegQ
-    L"Comparaison d'épreuves : entrer en mode comparaison alors que le mode épreuvage est actif comparera automatiquement l'image originale et l'image épreuve.", // Help_Tip_SoftProofCompare
-    L"New Version Available!", // Dialog_UpdateTitle
-    L"v%s is ready.", // Dialog_UpdateContent
-    L"Changelog", // Dialog_UpdateLogHeader
-    L"Update Now", // Dialog_ButtonUpdate
-    L"Later", // Dialog_ButtonLater
-    L"Star on GitHub", // Dialog_ButtonStar
-    L"QuickView is built with love", // Dialog_Update_LoveTitle
-    L"I maintain QuickView in my spare time because I believe Windows " L"deserves a faster, cleaner viewer. I don't have a marketing budget or " L"a team. If you enjoy this update, the biggest contribution you can " L"make is to Star us on GitHub or share it with a friend.", // Dialog_Update_LoveMessage
-    L"Compare Mode", // Help_Item_Compare
-    L"First / Last Image", // Help_Item_FirstLast
-    L"PHYSICAL ATTRIBUTES", // HUD_Group_Physical
-    L"SCIENTIFIC QUALITY", // HUD_Group_Scientific
-    L"OPTICS & ENCODING", // HUD_Group_Encoding
-    L"Edge definition (Laplacian Variance)", // HUD_Tip_Sharp_Desc
-    L"Crisp edges, high detail", // HUD_Tip_Sharp_High
-    L"Soft focus or motion blur", // HUD_Tip_Sharp_Low
-    L"> 500 is very sharp", // HUD_Tip_Sharp_Ref
-    L"Information density (Shannon Entropy)", // HUD_Tip_Ent_Desc
-    L"Complex textures or high noise", // HUD_Tip_Ent_High
-    L"Flat areas or low detail", // HUD_Tip_Ent_Low
-    L"7.0-8.0 is high detail", // HUD_Tip_Ent_Ref
-    L"Bits Per Pixel (Compression Efficiency)", // HUD_Tip_BPP_Desc
-    L"Lower efficiency (more data preserved)", // HUD_Tip_BPP_High
-    L"Higher efficiency (higher compression)", // HUD_Tip_BPP_Low
-    L"24.0 (Raw RGB), ~2.0-3.0 (High JPEG), ~0.5-1.5 (WebP/AVIF)", // HUD_Tip_BPP_Ref
-    L"High: ", // HUD_Label_High
-    L"Low: ", // HUD_Label_Low
-    L"Ref: ", // HUD_Label_Ref
-    L"Film fixe de la galerie (Survol supérieur)", // Settings_Header_GalleryTrigger
-    L"Mode de déclenchement", // Settings_Label_GalleryTriggerMode
-    L"Maintenir visible après clic", // Settings_Label_KeepGalleryVisibleOnThumbnailClick
-    L"Cette fonction activera automatiquement le verrouillage de la fenêtre et le maintien de la taille de la fenêtre lors de la navigation.", // Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick
-    L"Survol automatique", // Settings_Option_GalleryTriggerAuto
-    L"Survol du point chaud", // Settings_Option_GalleryTriggerDelay
-    L"Clic sur le point chaud", // Settings_Option_GalleryTriggerClick
-    L"Désactivé", // Settings_Option_GalleryTriggerDisable
-    L"Cette fonctionnalité est automatiquement désactivée lorsque la fenêtre est plus petite que 600x450.", // Settings_Tooltip_GalleryTrigger
-    L"Hauteur de la zone de déclenchement", // Settings_Label_GalleryTriggerAreaHeight
-    L"Temps de maintien", // Settings_Label_GalleryDwellTime
-    L"Délai de sortie", // Settings_Label_GalleryExitDelay
-    L"Taille minimale de la galerie", // Settings_Label_GalleryMinSize
-
-    L"Diaporama démarré", // OSD_SlideshowStarted
-    L"Diaporama arrêté", // OSD_SlideshowStopped
-    L"Diaporama repris", // OSD_SlideshowResumed
-    L"Diaporama en pause", // OSD_SlideshowPaused
-    L"Immersif : Projecteur", // OSD_ImmersiveSpotlight
-    L"Immersif : Normal", // OSD_ImmersiveNormal
-    L"Tâche d'impression envoyée. Vous pouvez continuer à naviguer.", // OSD_PrintJobStarted
-    L"Tâche d'impression envoyée avec succès.", // OSD_PrintJobFinished
-    L"Mode diaporama", // Context_SlideshowMode
-    L"Intervalle (secondes)", // Settings_Label_SlideshowInterval
-    L"Mode immersif", // Settings_Label_SlideshowImmersive
-    L"Personnaliser le panneau d'infos compact", // Settings_Label_CustomLiteInfoPanel
-    L"Personnaliser le panneau d'infos complet", // Settings_Label_CustomFullInfoPanel
-    L"Zoom du panneau d'informations", // Settings_Label_InfoPanelScale
-    L"Éléments en mode normal", // Settings_Label_ItemsInNormalMode
-    L"Éléments en mode comparaison", // Settings_Label_ItemsInCompareMode
-    L"Séparateur prédéfini", // Settings_Label_SeparatorPreset
-    L"Normal", // Settings_Option_SlideshowNormal
-    L"Projecteur", // Settings_Option_SlideshowSpotlight
-    L"Forme de la loupe", // Settings_Label_LoupeShape
-    L"Carré", // Settings_Option_LoupeShapeSquare
-    L"Cercle", // Settings_Option_LoupeShapeCircle
-    L"Maintenez la touche de raccourci enfoncée et faites défiler la molette de la souris pour ajuster la taille de la loupe.", // Settings_Tooltip_LoupeHotkey
-    L"Maintenez la touche Ctrl enfoncée et faites glisser avec le bouton gauche de la souris pour un recadrage rapide.", // Settings_Tooltip_CropModeHotkey
-};
-
-// ----------------------------------------------------------------
-// Apply Helper
-// ----------------------------------------------------------------
-void Apply(const LanguageTable& t) {
-  OSD_NoImage = t.OSD_NoImage;
-  OSD_FolderEmpty = t.OSD_FolderEmpty;
-  OSD_SvgStaticFallback = t.OSD_SvgStaticFallback;
-  OSD_Lossless = t.OSD_Lossless;
-  OSD_ReencodedLossless = t.OSD_ReencodedLossless;
-  OSD_EdgeAdapted = t.OSD_EdgeAdapted;
-  OSD_Reencoded = t.OSD_Reencoded;
-  OSD_ReadOnly = t.OSD_ReadOnly;
-  OSD_NotPerfect = t.OSD_NotPerfect;
-  OSD_SpanOn = t.OSD_SpanOn;
-  OSD_SpanOff = t.OSD_SpanOff;
-  OSD_CompareBefore = t.OSD_CompareBefore;
-  OSD_CompareAfter = t.OSD_CompareAfter;
-  OSD_UndoDeleteSuccess = t.OSD_UndoDeleteSuccess;
-  OSD_UndoDeleteFailed = t.OSD_UndoDeleteFailed;
-  OSD_UndoRenameSuccess = t.OSD_UndoRenameSuccess;
-  OSD_UndoRenameFailed = t.OSD_UndoRenameFailed;
-  OSD_UndoTransformSuccess = t.OSD_UndoTransformSuccess;
-  OSD_UndoTransformFailed = t.OSD_UndoTransformFailed;
-  OSD_GamutDetected = t.OSD_GamutDetected;
-  OSD_GamutIncompatible = t.OSD_GamutIncompatible;
-  OSD_GamutFailed = t.OSD_GamutFailed;
-  Action_RotateCW = t.Action_RotateCW;
-  Action_RotateCCW = t.Action_RotateCCW;
-  Action_Rotate180 = t.Action_Rotate180;
-  Action_FlipH = t.Action_FlipH;
-  Action_FlipV = t.Action_FlipV;
-  Dialog_SaveTitle = t.Dialog_SaveTitle;
-  Dialog_SaveContent = t.Dialog_SaveContent;
-  Dialog_ButtonSave = t.Dialog_ButtonSave;
-  Dialog_ButtonSaveAs = t.Dialog_ButtonSaveAs;
-  Dialog_ButtonDiscard = t.Dialog_ButtonDiscard;
-  Dialog_ButtonContinue = t.Dialog_ButtonContinue;
-  Dialog_CropUnsavedTitle = t.Dialog_CropUnsavedTitle;
-  Dialog_SaveAsTitle = t.Dialog_SaveAsTitle;
-  Dialog_ExportTitle = t.Dialog_ExportTitle;
-  Dialog_ButtonOverwrite = t.Dialog_ButtonOverwrite;
-  Dialog_EmbedICC = t.Dialog_EmbedICC;
-  Dialog_SizeEstimating = t.Dialog_SizeEstimating;
-  Dialog_ExportError = t.Dialog_ExportError;
-  Toolbar_Tooltip_CropCopy = t.Toolbar_Tooltip_CropCopy;
-  Toolbar_Tooltip_CropSave = t.Toolbar_Tooltip_CropSave;
-  Toolbar_Tooltip_CropApply = t.Toolbar_Tooltip_CropApply;
-  Toolbar_Tooltip_CropCancel = t.Toolbar_Tooltip_CropCancel;
-  OSD_EnterCropMode = t.OSD_EnterCropMode;
-  OSD_CropCopied = t.OSD_CropCopied;
-  Context_Crop = t.Context_Crop;
-  Checkbox_AlwaysSaveLossless = t.Checkbox_AlwaysSaveLossless;
-  Checkbox_AlwaysSaveEdgeAdapted = t.Checkbox_AlwaysSaveEdgeAdapted;
-  Checkbox_AlwaysSaveLossy = t.Checkbox_AlwaysSaveLossy;
-  Checkbox_NeverConfirmDelete = t.Checkbox_NeverConfirmDelete;
-  OSD_HEICCodecMissing = t.OSD_HEICCodecMissing;
-  Dialog_HEICTitle = t.Dialog_HEICTitle;
-  Dialog_HEICContent = t.Dialog_HEICContent;
-  Dialog_HEICGetExtension = t.Dialog_HEICGetExtension;
-  Dialog_Cancel = t.Dialog_Cancel;
-  Settings_Tab_General = t.Settings_Tab_General;
-  Settings_Tab_About = t.Settings_Tab_About;
-  Settings_Group_Foundation = t.Settings_Group_Foundation;
-  Settings_Group_Startup = t.Settings_Group_Startup;
-  Settings_Group_Habits = t.Settings_Group_Habits;
-  Settings_Label_Language = t.Settings_Label_Language;
-  Settings_Label_SingleInstance = t.Settings_Label_SingleInstance;
-  Settings_Label_CheckUpdates = t.Settings_Label_CheckUpdates;
-  Settings_Label_UpdateChannel = t.Settings_Label_UpdateChannel;
-  Settings_Option_UpdateStable = t.Settings_Option_UpdateStable;
-  Settings_Option_UpdatePreRelease = t.Settings_Option_UpdatePreRelease;
-  Settings_Tooltip_PreRelease = t.Settings_Tooltip_PreRelease;
-  Settings_Label_NavLoopMode = t.Settings_Label_NavLoopMode;
-  Settings_Label_SortOrder = t.Settings_Label_SortOrder;
-  Settings_Label_SortDescending = t.Settings_Label_SortDescending;
-  Settings_Label_SortArchivesByNameAscending = t.Settings_Label_SortArchivesByNameAscending;
-  Settings_Label_ConfirmDel = t.Settings_Label_ConfirmDel;
-  Settings_Label_Portable = t.Settings_Label_Portable;
-  Settings_Tooltip_Portable = t.Settings_Tooltip_Portable;
-  Settings_Label_SpanDisplays = t.Settings_Label_SpanDisplays;
-  Settings_Label_UIScale = t.Settings_Label_UIScale;
-  Settings_Status_RestartRequired = t.Settings_Status_RestartRequired;
-  Settings_Status_NoWritePerm = t.Settings_Status_NoWritePerm;
-  Settings_Status_Enabled = t.Settings_Status_Enabled;
-  Settings_Header_PoweredBy = t.Settings_Header_PoweredBy;
-  Context_Open = t.Context_Open;
-  Context_OpenWith = t.Context_OpenWith;
-  Context_Edit = t.Context_Edit;
-  Context_ShowInExplorer = t.Context_ShowInExplorer;
-  Context_OpenFolder = t.Context_OpenFolder;
-  Context_CopyPixels = t.Context_CopyPixels;
-  Context_CopyFile = t.Context_CopyFile;
-  Context_CopyImage = t.Context_CopyImage;
-  Context_CopyPath = t.Context_CopyPath;
-  Context_Print = t.Context_Print;
-  Context_RotateCW = t.Context_RotateCW;
-  Context_RotateCCW = t.Context_RotateCCW;
-  Context_FlipH = t.Context_FlipH;
-  Context_FlipV = t.Context_FlipV;
-  Context_Transform = t.Context_Transform;
-  Context_ActualSize = t.Context_ActualSize;
-  Context_FitToScreen = t.Context_FitToScreen;
-  Context_FitWindow = t.Context_FitWindow;
-  Context_FillWindow = t.Context_FillWindow;
-  Context_ZoomIn = t.Context_ZoomIn;
-  Context_ZoomOut = t.Context_ZoomOut;
-  Context_LockWindow = t.Context_LockWindow;
-  Context_AlwaysOnTop = t.Context_AlwaysOnTop;
-  Context_HUDGallery = t.Context_HUDGallery;
-  Context_LiteInfoPanel = t.Context_LiteInfoPanel;
-  Context_FullInfoPanel = t.Context_FullInfoPanel;
-  Context_RenderRAW = t.Context_RenderRAW;
-  Context_PixelArtMode = t.Context_PixelArtMode;
-  Context_ColorSpace = t.Context_ColorSpace;
-  Context_Fullscreen = t.Context_Fullscreen;
-  Context_View = t.Context_View;
-  Context_WallpaperFill = t.Context_WallpaperFill;
-  Context_WallpaperFit = t.Context_WallpaperFit;
-  Context_WallpaperTile = t.Context_WallpaperTile;
-  Context_SetAsWallpaper = t.Context_SetAsWallpaper;
-  Context_Rename = t.Context_Rename;
-  Context_FixExtension = t.Context_FixExtension;
-  Context_Delete = t.Context_Delete;
-  Context_UndoDelete = t.Context_UndoDelete;
-  Context_UndoRename = t.Context_UndoRename;
-  Context_UndoTransform = t.Context_UndoTransform;
-  Context_Undo = t.Context_Undo;
-  Context_SortBy = t.Context_SortBy;
-  Context_NavOrder = t.Context_NavOrder;
-  Context_SortAscending = t.Context_SortAscending;
-  Context_SortDescending = t.Context_SortDescending;
-  Context_Settings = t.Context_Settings;
-  Context_CompareMode = t.Context_CompareMode;
-  Context_OverlayMode = t.Context_OverlayMode;
-  Context_GalleryOpenCompare = t.Context_GalleryOpenCompare;
-  Context_GalleryOpenNewWindow = t.Context_GalleryOpenNewWindow;
-  Context_Exit = t.Context_Exit;
-  Menu_ExitPassthrough = t.Menu_ExitPassthrough;
-  Dialog_PassthroughTitle = t.Dialog_PassthroughTitle;
-  Dialog_PassthroughContent = t.Dialog_PassthroughContent;
-  OSD_PassthroughOn = t.OSD_PassthroughOn;
-  OSD_PassthroughOff = t.OSD_PassthroughOff;
-  OSD_OverlayModeOn = t.OSD_OverlayModeOn;
-  OSD_OverlayModeOff = t.OSD_OverlayModeOff;
-  OSD_Opacity = t.OSD_Opacity;
-  Toolbar_Tooltip_OverlayZoomIn = t.Toolbar_Tooltip_OverlayZoomIn;
-  Toolbar_Tooltip_OverlayZoomOut = t.Toolbar_Tooltip_OverlayZoomOut;
-  Toolbar_Tooltip_OverlayAlphaUp = t.Toolbar_Tooltip_OverlayAlphaUp;
-  Toolbar_Tooltip_OverlayAlphaDown = t.Toolbar_Tooltip_OverlayAlphaDown;
-  Toolbar_Tooltip_OverlayPassthroughOn = t.Toolbar_Tooltip_OverlayPassthroughOn;
-  Toolbar_Tooltip_OverlayPassthroughOff = t.Toolbar_Tooltip_OverlayPassthroughOff;
-  Toolbar_Tooltip_OverlayExit = t.Toolbar_Tooltip_OverlayExit;
-  Message_SaveErrorTitle = t.Message_SaveErrorTitle;
-  Message_SaveErrorContent = t.Message_SaveErrorContent;
-  Toolbar_Tooltip_Prev = t.Toolbar_Tooltip_Prev;
-  Toolbar_Tooltip_Next = t.Toolbar_Tooltip_Next;
-  Toolbar_Tooltip_RotateL = t.Toolbar_Tooltip_RotateL;
-  Toolbar_Tooltip_RotateR = t.Toolbar_Tooltip_RotateR;
-  Toolbar_Tooltip_FlipH = t.Toolbar_Tooltip_FlipH;
-  Toolbar_Tooltip_Lock = t.Toolbar_Tooltip_Lock;
-  Toolbar_Tooltip_Unlock = t.Toolbar_Tooltip_Unlock;
-  Toolbar_Tooltip_Gallery = t.Toolbar_Tooltip_Gallery;
-  Toolbar_Tooltip_Info = t.Toolbar_Tooltip_Info;
-  Toolbar_Tooltip_RawPreview = t.Toolbar_Tooltip_RawPreview;
-  Toolbar_Tooltip_RawFull = t.Toolbar_Tooltip_RawFull;
-  Toolbar_Tooltip_RawPairView = t.Toolbar_Tooltip_RawPairView;
-  Toolbar_Tooltip_RawPairBack = t.Toolbar_Tooltip_RawPairBack;
-  Toolbar_Tooltip_FixExtension = t.Toolbar_Tooltip_FixExtension;
-  Toolbar_Tooltip_Pin = t.Toolbar_Tooltip_Pin;
-  Toolbar_Tooltip_Unpin = t.Toolbar_Tooltip_Unpin;
-  Toolbar_Tooltip_GamutWarning = t.Toolbar_Tooltip_GamutWarning;
-  Toolbar_Tooltip_NormalMode = t.Toolbar_Tooltip_NormalMode;
-  Toolbar_Tooltip_CompareMode = t.Toolbar_Tooltip_CompareMode;
-  Toolbar_Tooltip_SinglePage = t.Toolbar_Tooltip_SinglePage;
-  Toolbar_Tooltip_DualPage = t.Toolbar_Tooltip_DualPage;
-  Toolbar_Tooltip_CompareOpen = t.Toolbar_Tooltip_CompareOpen;
-  Toolbar_Tooltip_CompareSwap = t.Toolbar_Tooltip_CompareSwap;
-  Toolbar_Tooltip_CompareLayout = t.Toolbar_Tooltip_CompareLayout;
-  Toolbar_Tooltip_CompareInfo = t.Toolbar_Tooltip_CompareInfo;
-  Toolbar_Tooltip_CompareDelete = t.Toolbar_Tooltip_CompareDelete;
-  Toolbar_Tooltip_CompareZoomIn = t.Toolbar_Tooltip_CompareZoomIn;
-  Toolbar_Tooltip_CompareZoomOut = t.Toolbar_Tooltip_CompareZoomOut;
-  Toolbar_Tooltip_CompareSyncZoomOn = t.Toolbar_Tooltip_CompareSyncZoomOn;
-  Toolbar_Tooltip_CompareSyncZoomOff = t.Toolbar_Tooltip_CompareSyncZoomOff;
-  Toolbar_Tooltip_CompareSyncPanOn = t.Toolbar_Tooltip_CompareSyncPanOn;
-  Toolbar_Tooltip_CompareSyncPanOff = t.Toolbar_Tooltip_CompareSyncPanOff;
-  Toolbar_Tooltip_SlideshowImmersiveToggle = t.Toolbar_Tooltip_SlideshowImmersiveToggle;
-  Toolbar_Tooltip_SlideshowExit = t.Toolbar_Tooltip_SlideshowExit;
-  Toolbar_Tooltip_CompareExit = t.Toolbar_Tooltip_CompareExit;
-  Toolbar_Tooltip_AnimPlay = t.Toolbar_Tooltip_AnimPlay;
-  Toolbar_Tooltip_AnimPause = t.Toolbar_Tooltip_AnimPause;
-  Toolbar_Tooltip_AnimPrev = t.Toolbar_Tooltip_AnimPrev;
-  Toolbar_Tooltip_AnimNext = t.Toolbar_Tooltip_AnimNext;
-  Toolbar_Tooltip_AnimDirtyOn = t.Toolbar_Tooltip_AnimDirtyOn;
-  Toolbar_Tooltip_AnimDirtyOff = t.Toolbar_Tooltip_AnimDirtyOff;
-  Toolbar_Tooltip_AnimSpeed = t.Toolbar_Tooltip_AnimSpeed;
-  Settings_Header_Performance = t.Settings_Header_Performance;
-  Settings_Header_Professional = t.Settings_Header_Professional;
-  Settings_Label_MemoryReclaim = t.Settings_Label_MemoryReclaim;
-  Settings_Option_MemSmart = t.Settings_Option_MemSmart;
-  Settings_Option_MemAggressive = t.Settings_Option_MemAggressive;
-  Settings_Option_MemOnDemand = t.Settings_Option_MemOnDemand;
-  Settings_Tooltip_MemoryReclaim = t.Settings_Tooltip_MemoryReclaim;
-  Settings_Label_ShowDirtyRect = t.Settings_Label_ShowDirtyRect;
-  Settings_Tooltip_ShowDirtyRect = t.Settings_Tooltip_ShowDirtyRect;
-  Settings_Label_LoupeShape = t.Settings_Label_LoupeShape;
-  Settings_Option_LoupeShapeSquare = t.Settings_Option_LoupeShapeSquare;
-  Settings_Option_LoupeShapeCircle = t.Settings_Option_LoupeShapeCircle;
-  Settings_Tooltip_LoupeHotkey = t.Settings_Tooltip_LoupeHotkey;
-  Settings_Tooltip_CropModeHotkey = t.Settings_Tooltip_CropModeHotkey;
-  OSD_Copied = t.OSD_Copied;
-  OSD_PixelsCopied = t.OSD_PixelsCopied;
-  OSD_PixelsExtracting = t.OSD_PixelsExtracting;
-  OSD_FileCopied = t.OSD_FileCopied;
-  OSD_CoordinatesCopied = t.OSD_CoordinatesCopied;
-  OSD_FilePathCopied = t.OSD_FilePathCopied;
-  OSD_Zoom100 = t.OSD_Zoom100;
-  OSD_ZoomFit = t.OSD_ZoomFit;
-  OSD_ZoomFitWindow = t.OSD_ZoomFitWindow;
-  OSD_ZoomFill = t.OSD_ZoomFill;
-  OSD_PrintInstruction = t.OSD_PrintInstruction;
-  OSD_MovedToRecycleBin = t.OSD_MovedToRecycleBin;
-  OSD_WindowLocked = t.OSD_WindowLocked;
-  OSD_WindowUnlocked = t.OSD_WindowUnlocked;
-  OSD_AlwaysOnTopOn = t.OSD_AlwaysOnTopOn;
-  OSD_AlwaysOnTopOff = t.OSD_AlwaysOnTopOff;
-  OSD_WallpaperSet = t.OSD_WallpaperSet;
-  OSD_WallpaperFailed = t.OSD_WallpaperFailed;
-  OSD_Renamed = t.OSD_Renamed;
-  OSD_RenameFailed = t.OSD_RenameFailed;
-  OSD_ExtensionFixed = t.OSD_ExtensionFixed;
-  OSD_Restored = t.OSD_Restored;
-  OSD_FirstImage = t.OSD_FirstImage;
-  OSD_LastImage = t.OSD_LastImage;
-  OSD_HD = t.OSD_HD;
-  OSD_ZoomPrefix = t.OSD_ZoomPrefix;
-  OSD_AnimPlaying = t.OSD_AnimPlaying;
-  OSD_AnimPaused = t.OSD_AnimPaused;
-  OSD_AnimDirtyOn = t.OSD_AnimDirtyOn;
-  OSD_AnimDirtyOff = t.OSD_AnimDirtyOff;
-  Context_SpanDisplays = t.Context_SpanDisplays;
-  Settings_Tab_Visuals = t.Settings_Tab_Visuals;
-  Settings_Tab_Controls = t.Settings_Tab_Controls;
-  Settings_Tab_Image = t.Settings_Tab_Image;
-  Settings_Tab_Advanced = t.Settings_Tab_Advanced;
-  Settings_Header_Backdrop = t.Settings_Header_Backdrop;
-  Settings_Header_Window = t.Settings_Header_Window;
-  Settings_Header_WindowLock = t.Settings_Header_WindowLock;
-  Settings_Header_Panel = t.Settings_Header_Panel;
-  Settings_Header_Mouse = t.Settings_Header_Mouse;
-  Settings_Header_Edge = t.Settings_Header_Edge;
-  Settings_Header_Render = t.Settings_Header_Render;
-  Settings_Header_Hdr = t.Settings_Header_Hdr;
-  Settings_Header_Prompts = t.Settings_Header_Prompts;
-  Settings_Header_System = t.Settings_Header_System;
-  Settings_Header_Features = t.Settings_Header_Features;
-  Settings_Header_Transparency = t.Settings_Header_Transparency;
-  Settings_Header_GeekGlass = t.Settings_Header_GeekGlass;
-  Settings_Label_EnableGeekGlass = t.Settings_Label_EnableGeekGlass;
-  Settings_Label_GlassUIAnimations = t.Settings_Label_GlassUIAnimations;
-  Settings_Header_CoreMaterial = t.Settings_Header_CoreMaterial;
-  Settings_Label_BlurSigma = t.Settings_Label_BlurSigma;
-  Settings_Status_GlassDisabled = t.Settings_Status_GlassDisabled;
-  Settings_Label_TintDensity = t.Settings_Label_TintDensity;
-  Settings_Tooltip_TintDensity = t.Settings_Tooltip_TintDensity;
-  Settings_Label_SpecularOpacity = t.Settings_Label_SpecularOpacity;
-  Settings_Tooltip_SpecularOpacity = t.Settings_Tooltip_SpecularOpacity;
-  Settings_Label_ShadowIntensity = t.Settings_Label_ShadowIntensity;
-  Settings_Tooltip_ShadowIntensity = t.Settings_Tooltip_ShadowIntensity;
-  Settings_Header_VectorAssets = t.Settings_Header_VectorAssets;
-  Settings_Label_VectorStrokeWeight = t.Settings_Label_VectorStrokeWeight;
-  Settings_Option_StrokeStandard = t.Settings_Option_StrokeStandard;
-  Settings_Option_StrokeFine = t.Settings_Option_StrokeFine;
-  Settings_Header_GlassTint = t.Settings_Header_GlassTint;
-  Settings_Label_TintProfile = t.Settings_Label_TintProfile;
-  Settings_Option_TintAuto = t.Settings_Option_TintAuto;
-  Settings_Option_TintCustom = t.Settings_Option_TintCustom;
-  Settings_Label_GlassCustomColor = t.Settings_Label_GlassCustomColor;
-  Settings_Header_DensityMatrix = t.Settings_Header_DensityMatrix;
-  Settings_Label_OsdDensity = t.Settings_Label_OsdDensity;
-  Settings_Tooltip_OsdDensity = t.Settings_Tooltip_OsdDensity;
-  Settings_Label_PanelsDensity = t.Settings_Label_PanelsDensity;
-  Settings_Tooltip_PanelsDensity = t.Settings_Tooltip_PanelsDensity;
-  Settings_Label_ModalsDensity = t.Settings_Label_ModalsDensity;
-  Settings_Tooltip_ModalsDensity = t.Settings_Tooltip_ModalsDensity;
-  Settings_Label_MenusDensity = t.Settings_Label_MenusDensity;
-  Settings_Tooltip_MenusDensity = t.Settings_Tooltip_MenusDensity;
-  Settings_Tab_Theme = t.Settings_Tab_Theme;
-  Settings_Label_ThemeMode = t.Settings_Label_ThemeMode;
-  Settings_Option_ThemeAuto = t.Settings_Option_ThemeAuto;
-  Settings_Option_ThemeDark = t.Settings_Option_ThemeDark;
-  Settings_Option_ThemeLight = t.Settings_Option_ThemeLight;
-  Settings_Option_ThemeCustom = t.Settings_Option_ThemeCustom;
-  Settings_Label_AmbientDimmer = t.Settings_Label_AmbientDimmer;
-  Settings_Tooltip_AmbientDimmer = t.Settings_Tooltip_AmbientDimmer;
-  Settings_Label_AccentColor = t.Settings_Label_AccentColor;
-  Settings_Label_TextColor = t.Settings_Label_TextColor;
-  Settings_Header_ThemeManagement = t.Settings_Header_ThemeManagement;
-  Settings_Action_ExportTheme = t.Settings_Action_ExportTheme;
-  Settings_Action_ImportTheme = t.Settings_Action_ImportTheme;
-  Settings_Label_CanvasColor = t.Settings_Label_CanvasColor;
-  Settings_Label_Overlay = t.Settings_Label_Overlay;
-  Settings_Label_ShowGrid = t.Settings_Label_ShowGrid;
-  Settings_Label_AlwaysOnTop = t.Settings_Label_AlwaysOnTop;
-  Settings_Label_LockWindow = t.Settings_Label_LockWindow;
-  Settings_Tooltip_LockWindow = t.Settings_Tooltip_LockWindow;
-  Settings_Label_AutoHideTitle = t.Settings_Label_AutoHideTitle;
-  Settings_Label_RoundedCorners = t.Settings_Label_RoundedCorners;
-  Settings_Label_UIBorders = t.Settings_Label_UIBorders;
-  Settings_Tooltip_RoundedCorners = t.Settings_Tooltip_RoundedCorners;
-  Settings_Label_LockToolbar = t.Settings_Label_LockToolbar;
-  Settings_Label_WindowMinSize = t.Settings_Label_WindowMinSize;
-  Settings_Label_WindowMaxSizePercent = t.Settings_Label_WindowMaxSizePercent;
-  Settings_Label_ShowBorderIndicator = t.Settings_Label_ShowBorderIndicator;
-  Settings_Tooltip_ShowBorderIndicator = t.Settings_Tooltip_ShowBorderIndicator;
-  Settings_Label_ShowNavigator = t.Settings_Label_ShowNavigator;
-  Settings_Tooltip_ShowNavigator = t.Settings_Tooltip_ShowNavigator;
-  Settings_Option_NavigatorAuto = t.Settings_Option_NavigatorAuto;
-  Settings_Option_NavigatorOn = t.Settings_Option_NavigatorOn;
-  Settings_Option_NavigatorOff = t.Settings_Option_NavigatorOff;
-  Settings_Label_KeepWindowSizeOnNav = t.Settings_Label_KeepWindowSizeOnNav;
-  Settings_Label_RememberLastWindowSizeAndPosition = t.Settings_Label_RememberLastWindowSizeAndPosition;
-  Settings_Label_UpscaleSmallImagesWhenLocked = t.Settings_Label_UpscaleSmallImagesWhenLocked;
-  Settings_Label_EnableSmoothScaling = t.Settings_Label_EnableSmoothScaling;
-  Settings_Label_ExifMode = t.Settings_Label_ExifMode;
-  Settings_Label_ToolbarInfoDefault = t.Settings_Label_ToolbarInfoDefault;
-  Settings_Label_OpenFullScreenMode = t.Settings_Label_OpenFullScreenMode;
-  Settings_Label_FullScreenZoomMode = t.Settings_Label_FullScreenZoomMode;
-  Settings_Option_FitScreen = t.Settings_Option_FitScreen;
-  Settings_Option_AutoFit = t.Settings_Option_AutoFit;
-  Settings_Label_InvertWheel = t.Settings_Label_InvertWheel;
-  Settings_Label_ZoomSnapDamping = t.Settings_Label_ZoomSnapDamping;
-  Settings_Label_MouseAnchorZoom = t.Settings_Label_MouseAnchorZoom;
-  Settings_Label_RightButtonDragZoom = t.Settings_Label_RightButtonDragZoom;
-  Settings_Label_WheelZoomSpeed = t.Settings_Label_WheelZoomSpeed;
-  Settings_Tooltip_WheelZoomSpeed = t.Settings_Tooltip_WheelZoomSpeed;
-  Settings_Label_ThumbWheel = t.Settings_Label_ThumbWheel;
-  Settings_Tooltip_ThumbWheel = t.Settings_Tooltip_ThumbWheel;
-  Settings_Tooltip_MiddleDrag = t.Settings_Tooltip_MiddleDrag;
-  Settings_Label_DoubleClick = t.Settings_Label_DoubleClick;
-  Settings_Option_DoubleClick_Smart = t.Settings_Option_DoubleClick_Smart;
-  Settings_Option_DoubleClick_WheelMode1 = t.Settings_Option_DoubleClick_WheelMode1;
-  Settings_Option_DoubleClick_WheelMode2 = t.Settings_Option_DoubleClick_WheelMode2;
-  Settings_Tooltip_DoubleClick = t.Settings_Tooltip_DoubleClick;
-  Settings_Tooltip_PanStepNormal = t.Settings_Tooltip_PanStepNormal;
-  OSD_WheelMode1_NextPrevZoom = t.OSD_WheelMode1_NextPrevZoom;
-  OSD_WheelMode1_ZoomNextPrev = t.OSD_WheelMode1_ZoomNextPrev;
-  OSD_WheelMode2_Pan = t.OSD_WheelMode2_Pan;
-  OSD_WheelMode2_Default = t.OSD_WheelMode2_Default;
-  Settings_Label_RightDragZoomSpeed = t.Settings_Label_RightDragZoomSpeed;
-  OSD_WheelZoomSpeed = t.OSD_WheelZoomSpeed;
-  Help_Action_AdjustZoomSpeed = t.Help_Action_AdjustZoomSpeed;
-  Help_Action_LockWindowZoom = t.Help_Action_LockWindowZoom;
-  Settings_Label_InvertButtons = t.Settings_Label_InvertButtons;
-  Settings_Label_UseFixedZoom = t.Settings_Label_UseFixedZoom;
-  Settings_Tooltip_UseFixedZoom = t.Settings_Tooltip_UseFixedZoom;
-  Settings_Label_FixedZoomLevels = t.Settings_Label_FixedZoomLevels;
-  Dialog_FixedZoomTitle = t.Dialog_FixedZoomTitle;
-  Dialog_FixedZoomMsg = t.Dialog_FixedZoomMsg;
-  Settings_Label_ZoomModeIn = t.Settings_Label_ZoomModeIn;
-  Settings_Label_ZoomModeOut = t.Settings_Label_ZoomModeOut;
-  Settings_Label_LeftDrag = t.Settings_Label_LeftDrag;
-  Settings_Label_MiddleDrag = t.Settings_Label_MiddleDrag;
-  Settings_Label_MiddleClick = t.Settings_Label_MiddleClick;
-  Settings_Label_EdgeNavClick = t.Settings_Label_EdgeNavClick;
-  Settings_Label_ShowOSD = t.Settings_Label_ShowOSD;
-  Settings_Label_DisableEdgeNavInCompare = t.Settings_Label_DisableEdgeNavInCompare;
-  Settings_Label_NavIndicator = t.Settings_Label_NavIndicator;
-  Settings_Label_AutoRotate = t.Settings_Label_AutoRotate;
-  Settings_Label_CMS = t.Settings_Label_CMS;
-  Settings_Label_AdvancedColor = t.Settings_Label_AdvancedColor;
-  Settings_Label_HdrToneMapping = t.Settings_Label_HdrToneMapping;
-  Settings_Label_HdrSplineKnee = t.Settings_Label_HdrSplineKnee;
-  Settings_Tooltip_HdrToneMapping = t.Settings_Tooltip_HdrToneMapping;
-  Settings_Tooltip_HdrSplineKnee = t.Settings_Tooltip_HdrSplineKnee;
-  Settings_Label_HdrPeakNitsOverride = t.Settings_Label_HdrPeakNitsOverride;
-  Settings_Tooltip_HdrPeakNitsOverride = t.Settings_Tooltip_HdrPeakNitsOverride;
-  Settings_Label_HdrPeakPercentile = t.Settings_Label_HdrPeakPercentile;
-  Settings_Tooltip_HdrPeakPercentile = t.Settings_Tooltip_HdrPeakPercentile;
-  Settings_Option_HdrPeakPercentile_100 = t.Settings_Option_HdrPeakPercentile_100;
-  Settings_Option_HdrPeakPercentile_99995 = t.Settings_Option_HdrPeakPercentile_99995;
-  Settings_Option_HdrPeakPercentile_999 = t.Settings_Option_HdrPeakPercentile_999;
-  Settings_Label_HdrDesatThreshold = t.Settings_Label_HdrDesatThreshold;
-  Settings_Tooltip_HdrDesatThreshold = t.Settings_Tooltip_HdrDesatThreshold;
-  Settings_Label_HdrMaxDesat = t.Settings_Label_HdrMaxDesat;
-  Settings_Tooltip_HdrMaxDesat = t.Settings_Tooltip_HdrMaxDesat;
-  Settings_Option_HdrColorimetric = t.Settings_Option_HdrColorimetric;
-  Settings_Option_HdrSpline = t.Settings_Option_HdrSpline;
-  Settings_Option_HdrLegacyReinhard = t.Settings_Option_HdrLegacyReinhard;
-  Settings_Label_CmsFallback = t.Settings_Label_CmsFallback;
-  Settings_Label_CustomProof = t.Settings_Label_CustomProof;
-  Context_SoftProofing = t.Context_SoftProofing;
-  Context_SoftProofProfile = t.Context_SoftProofProfile;
-  Context_SoftProofCustom = t.Context_SoftProofCustom;
-  Settings_Value_ComingSoon = t.Settings_Value_ComingSoon;
-  Settings_Label_ForceRaw = t.Settings_Label_ForceRaw;
-  Settings_Label_PairRawJpeg = t.Settings_Label_PairRawJpeg;
-  Settings_Tooltip_PairRawJpeg = t.Settings_Tooltip_PairRawJpeg;
-  Settings_Label_Exposure = t.Settings_Label_Exposure;
-  Settings_Tooltip_Exposure = t.Settings_Tooltip_Exposure;
-  Settings_Label_AddToOpenWith = t.Settings_Label_AddToOpenWith;
-  Settings_Label_CustomEditor = t.Settings_Label_CustomEditor;
-  Context_SelectEditor = t.Context_SelectEditor;
-  OSD_EditorLaunchFailed = t.OSD_EditorLaunchFailed;
-  Settings_Action_Add = t.Settings_Action_Add;
-  Settings_Action_Added = t.Settings_Action_Added;
-  Settings_Status_DisabledInPortable = t.Settings_Status_DisabledInPortable;
-  Settings_Label_DebugHUD = t.Settings_Label_DebugHUD;
-  Settings_Label_Prefetch = t.Settings_Label_Prefetch;
-  Settings_Label_InfoPanelAlpha = t.Settings_Label_InfoPanelAlpha;
-  Settings_Label_ToolbarAlpha = t.Settings_Label_ToolbarAlpha;
-  Settings_Label_SettingsAlpha = t.Settings_Label_SettingsAlpha;
-  Settings_Label_Reset = t.Settings_Label_Reset;
-  Settings_Action_Restore = t.Settings_Action_Restore;
-  Settings_Action_Done = t.Settings_Action_Done;
-  Settings_Header_ConfigManagement = t.Settings_Header_ConfigManagement;
-  Settings_Option_CmsUnmanaged = t.Settings_Option_CmsUnmanaged;
-  Settings_Option_CmssRGB = t.Settings_Option_CmssRGB;
-  Settings_Option_CmsP3 = t.Settings_Option_CmsP3;
-  Settings_Option_CmsAdobeRGB = t.Settings_Option_CmsAdobeRGB;
-  Settings_Option_CmsGray = t.Settings_Option_CmsGray;
-  Settings_Option_CmsProPhoto = t.Settings_Option_CmsProPhoto;
-  Settings_Label_CmsIntent = t.Settings_Label_CmsIntent;
-  Settings_Label_GamutWarning = t.Settings_Label_GamutWarning;
-  Settings_Tooltip_GamutWarning = t.Settings_Tooltip_GamutWarning;
-  Settings_Label_GamutAutoPrompt = t.Settings_Label_GamutAutoPrompt;
-  Settings_Tooltip_GamutAutoPrompt = t.Settings_Tooltip_GamutAutoPrompt;
-  Settings_Label_GamutColor = t.Settings_Label_GamutColor;
-  Settings_Option_CmsIntentRelative = t.Settings_Option_CmsIntentRelative;
-  Settings_Option_CmsIntentPerceptual = t.Settings_Option_CmsIntentPerceptual;
-  Settings_Tooltip_CMS = t.Settings_Tooltip_CMS;
-  Settings_Tooltip_CmsIntent = t.Settings_Tooltip_CmsIntent;
-  Settings_Tooltip_AdvancedColor = t.Settings_Tooltip_AdvancedColor;
-  Settings_Tooltip_ZoomAuto = t.Settings_Tooltip_ZoomAuto;
-  Settings_Action_CheckUpdates = t.Settings_Action_CheckUpdates;
-  Settings_Action_ViewUpdate = t.Settings_Action_ViewUpdate;
-  Settings_Status_Checking = t.Settings_Status_Checking;
-  Settings_Status_UpToDate = t.Settings_Status_UpToDate;
-  Settings_Link_GitHub = t.Settings_Link_GitHub;
-  Settings_Link_ReportIssue = t.Settings_Link_ReportIssue;
-  Settings_Link_Hotkeys = t.Settings_Link_Hotkeys;
-  Settings_Label_Version = t.Settings_Label_Version;
-  Settings_Label_Build = t.Settings_Label_Build;
-  Settings_Option_Black = t.Settings_Option_Black;
-  Settings_Option_Effects = t.Settings_Option_Effects;
-  Settings_Label_ContextMenuBackdrop = t.Settings_Label_ContextMenuBackdrop;
-  Settings_Label_CanvasEffectStyle = t.Settings_Label_CanvasEffectStyle;
-  Settings_Tooltip_BackdropEffectsTip = t.Settings_Tooltip_BackdropEffectsTip;
-  Settings_Option_White = t.Settings_Option_White;
-  Settings_Option_Grid = t.Settings_Option_Grid;
-  Settings_Option_Custom = t.Settings_Option_Custom;
-  Settings_Option_Off = t.Settings_Option_Off;
-  Settings_Option_On = t.Settings_Option_On;
-  Settings_Option_Lite = t.Settings_Option_Lite;
-  Settings_Option_Full = t.Settings_Option_Full;
-  Settings_Option_LargeOnly = t.Settings_Option_LargeOnly;
-  Settings_Option_All = t.Settings_Option_All;
-  Settings_Option_SoftProofing = t.Settings_Option_SoftProofing;
-  Settings_Option_Window = t.Settings_Option_Window;
-  Settings_Option_Pan = t.Settings_Option_Pan;
-  Settings_Option_None = t.Settings_Option_None;
-  Settings_Option_Exit = t.Settings_Option_Exit;
-  Settings_Option_Arrow = t.Settings_Option_Arrow;
-  Settings_Option_Cursor = t.Settings_Option_Cursor;
-  Settings_Option_Manual = t.Settings_Option_Manual;
-  Settings_Option_SortAuto = t.Settings_Option_SortAuto;
-  Settings_Option_SortName = t.Settings_Option_SortName;
-  Settings_Option_SortModified = t.Settings_Option_SortModified;
-  Settings_Option_SortDateTaken = t.Settings_Option_SortDateTaken;
-  Settings_Option_SortSize = t.Settings_Option_SortSize;
-  Settings_Option_SortType = t.Settings_Option_SortType;
-  Settings_Option_NavLoop = t.Settings_Option_NavLoop;
-  Settings_Option_NavThrough = t.Settings_Option_NavThrough;
-  Settings_Option_Linear = t.Settings_Option_Linear;
-  Settings_Option_Nearest = t.Settings_Option_Nearest;
-  Settings_Option_HighQualityCubic = t.Settings_Option_HighQualityCubic;
-  Settings_Option_ZoomAuto = t.Settings_Option_ZoomAuto;
-  Settings_Option_Auto = t.Settings_Option_Auto;
-  Settings_Option_Eco = t.Settings_Option_Eco;
-  Settings_Option_Balanced = t.Settings_Option_Balanced;
-  Settings_Option_Ultra = t.Settings_Option_Ultra;
-  Help_Header_Shortcuts = t.Help_Header_Shortcuts;
-  Help_Header_Mouse = t.Help_Header_Mouse;
-  Help_Item_NextPrev = t.Help_Item_NextPrev;
-  Help_Item_Zoom = t.Help_Item_Zoom;
-  Help_Item_Pan = t.Help_Item_Pan;
-  Help_Item_Rotate = t.Help_Item_Rotate;
-  Help_Item_Fit = t.Help_Item_Fit;
-  Help_Item_Delete = t.Help_Item_Delete;
-  Help_Item_Fullscreen = t.Help_Item_Fullscreen;
-  Help_Item_Close = t.Help_Item_Close;
-  Help_Mouse_Left = t.Help_Mouse_Left;
-  Help_Mouse_Middle = t.Help_Mouse_Middle;
-  Help_Mouse_Wheel = t.Help_Mouse_Wheel;
-  Help_Mouse_Right = t.Help_Mouse_Right;
-  Help_Mouse_RightVerticalDrag = t.Help_Mouse_RightVerticalDrag;
-  Help_Action_MoveWindow = t.Help_Action_MoveWindow;
-  Help_Action_PanImage = t.Help_Action_PanImage;
-  Help_Action_ContextMenu = t.Help_Action_ContextMenu;
-  Help_Action_NextPrev = t.Help_Action_NextPrev;
-  Help_Action_Zoom = t.Help_Action_Zoom;
-  Help_Action_SmartZoom = t.Help_Action_SmartZoom;
-  Help_Desc_Copy = t.Help_Desc_Copy;
-  Help_Desc_Edit = t.Help_Desc_Edit;
-  Help_Header_Tips = t.Help_Header_Tips;
-  Help_Tip_ContextScope = t.Help_Tip_ContextScope;
-  Help_Tip_Rotation = t.Help_Tip_Rotation;
-  Help_Tip_VideoWall = t.Help_Tip_VideoWall;
-  Help_Tip_DesignerMode = t.Help_Tip_DesignerMode;
-  Help_Tip_GamutDetection = t.Help_Tip_GamutDetection;
-  Help_Tip_Raw = t.Help_Tip_Raw;
-  Help_Tip_JpegQ = t.Help_Tip_JpegQ;
-  Help_Tip_SoftProofCompare = t.Help_Tip_SoftProofCompare;
-  Dialog_UpdateTitle = t.Dialog_UpdateTitle;
-  Dialog_UpdateContent = t.Dialog_UpdateContent;
-  Dialog_UpdateLogHeader = t.Dialog_UpdateLogHeader;
-  Dialog_ButtonUpdate = t.Dialog_ButtonUpdate;
-  Dialog_ButtonLater = t.Dialog_ButtonLater;
-  Dialog_ButtonStar = t.Dialog_ButtonStar;
-  Dialog_Update_LoveTitle = t.Dialog_Update_LoveTitle;
-  Dialog_Update_LoveMessage = t.Dialog_Update_LoveMessage;
-  Help_Item_Compare = t.Help_Item_Compare;
-  Help_Item_FirstLast = t.Help_Item_FirstLast;
-  HUD_Group_Physical = t.HUD_Group_Physical;
-  HUD_Group_Scientific = t.HUD_Group_Scientific;
-  HUD_Group_Encoding = t.HUD_Group_Encoding;
-  HUD_Tip_Sharp_Desc = t.HUD_Tip_Sharp_Desc;
-  HUD_Tip_Sharp_High = t.HUD_Tip_Sharp_High;
-  HUD_Tip_Sharp_Low = t.HUD_Tip_Sharp_Low;
-  HUD_Tip_Sharp_Ref = t.HUD_Tip_Sharp_Ref;
-  HUD_Tip_Ent_Desc = t.HUD_Tip_Ent_Desc;
-  HUD_Tip_Ent_High = t.HUD_Tip_Ent_High;
-  HUD_Tip_Ent_Low = t.HUD_Tip_Ent_Low;
-  HUD_Tip_Ent_Ref = t.HUD_Tip_Ent_Ref;
-  HUD_Tip_BPP_Desc = t.HUD_Tip_BPP_Desc;
-  HUD_Tip_BPP_High = t.HUD_Tip_BPP_High;
-  HUD_Tip_BPP_Low = t.HUD_Tip_BPP_Low;
-  HUD_Tip_BPP_Ref = t.HUD_Tip_BPP_Ref;
-  HUD_Label_High = t.HUD_Label_High;
-  HUD_Label_Low = t.HUD_Label_Low;
-  HUD_Label_Ref = t.HUD_Label_Ref;
-  Settings_Header_GalleryTrigger = t.Settings_Header_GalleryTrigger;
-  Settings_Label_GalleryTriggerMode = t.Settings_Label_GalleryTriggerMode;
-  Settings_Label_KeepGalleryVisibleOnThumbnailClick = t.Settings_Label_KeepGalleryVisibleOnThumbnailClick;
-  Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick = t.Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick;
-  Settings_Option_GalleryTriggerAuto = t.Settings_Option_GalleryTriggerAuto;
-  Settings_Option_GalleryTriggerDelay = t.Settings_Option_GalleryTriggerDelay;
-  Settings_Option_GalleryTriggerClick = t.Settings_Option_GalleryTriggerClick;
-  Settings_Option_GalleryTriggerDisable = t.Settings_Option_GalleryTriggerDisable;
-  Settings_Tooltip_GalleryTrigger = t.Settings_Tooltip_GalleryTrigger;
-  Settings_Label_GalleryTriggerAreaHeight = t.Settings_Label_GalleryTriggerAreaHeight;
-  Settings_Label_GalleryDwellTime = t.Settings_Label_GalleryDwellTime;
-  Settings_Label_GalleryExitDelay = t.Settings_Label_GalleryExitDelay;
-  Settings_Label_GalleryMinSize = t.Settings_Label_GalleryMinSize;
-
-  OSD_SlideshowStarted = t.OSD_SlideshowStarted;
-  OSD_SlideshowStopped = t.OSD_SlideshowStopped;
-  OSD_SlideshowResumed = t.OSD_SlideshowResumed;
-  OSD_SlideshowPaused = t.OSD_SlideshowPaused;
-  OSD_ImmersiveSpotlight = t.OSD_ImmersiveSpotlight;
-  OSD_ImmersiveNormal = t.OSD_ImmersiveNormal;
-  OSD_PrintJobStarted = t.OSD_PrintJobStarted;
-  OSD_PrintJobFinished = t.OSD_PrintJobFinished;
-  Context_SlideshowMode = t.Context_SlideshowMode;
-  Settings_Label_SlideshowInterval = t.Settings_Label_SlideshowInterval;
-  Settings_Label_SlideshowImmersive = t.Settings_Label_SlideshowImmersive;
-  Settings_Label_CustomLiteInfoPanel = t.Settings_Label_CustomLiteInfoPanel;
-  Settings_Label_CustomFullInfoPanel = t.Settings_Label_CustomFullInfoPanel ? t.Settings_Label_CustomFullInfoPanel : L"Custom Full Info Panel";
-  Settings_Label_InfoPanelScale = t.Settings_Label_InfoPanelScale ? t.Settings_Label_InfoPanelScale : L"Info Panel Zoom (Global/100%/125%/150%/175%/200%)";
-  Settings_Label_ItemsInNormalMode = t.Settings_Label_ItemsInNormalMode;
-  Settings_Label_ItemsInCompareMode = t.Settings_Label_ItemsInCompareMode;
-  Settings_Label_SeparatorPreset = t.Settings_Label_SeparatorPreset;
-  Settings_Option_SlideshowNormal = t.Settings_Option_SlideshowNormal;
-  Settings_Option_SlideshowSpotlight = t.Settings_Option_SlideshowSpotlight;
-}
 
 void Init() { SetLanguage(Language::Auto); }
 
 void SetLanguage(Language lang) {
-  Language target = lang;
-  if (target == Language::Auto) {
-    LANGID id = GetUserDefaultUILanguage();
-    switch (PRIMARYLANGID(id)) {
-    case LANG_CHINESE:
-      target = Language::ChineseSimplified;
-      break;
-    case LANG_RUSSIAN:
-      target = Language::Russian;
-      break;
-    case LANG_GERMAN:
-      target = Language::German;
-      break;
-    case LANG_SPANISH:
-      target = Language::Spanish;
-      break;
-    case LANG_JAPANESE:
-      target = Language::Japanese;
-      break;
-    case LANG_FRENCH:
-      target = Language::French;
-      break;
-    default:
-      target = Language::English;
-      break;
+    Language target = lang;
+    if (target == Language::Auto) {
+        LANGID lid = GetUserDefaultUILanguage();
+        WORD primary = PRIMARYLANGID(lid);
+        WORD sub = SUBLANGID(lid);
+
+        if (primary == LANG_CHINESE) {
+            target = (sub == SUBLANG_CHINESE_SIMPLIFIED || sub == SUBLANG_CHINESE_SINGAPORE)
+                ? Language::ChineseSimplified
+                : Language::ChineseTraditional;
+        } else if (primary == LANG_JAPANESE) {
+            target = Language::Japanese;
+        } else if (primary == LANG_RUSSIAN) {
+            target = Language::Russian;
+        } else if (primary == LANG_GERMAN) {
+            target = Language::German;
+        } else if (primary == LANG_SPANISH) {
+            target = Language::Spanish;
+        } else if (primary == LANG_FRENCH) {
+            target = Language::French;
+        } else {
+            target = Language::English;
+        }
     }
-  }
 
-  switch (target) {
-  case Language::ChineseSimplified:
-    CurrentLocale = L"zh-cn";
-    Apply(Table_CN);
-    break;
-  case Language::ChineseTraditional:
-    CurrentLocale = L"zh-tw";
-    Apply(Table_TW);
-    break;
-  case Language::Japanese:
-    CurrentLocale = L"ja-jp";
-    Apply(Table_JA);
-    break;
-  case Language::Russian:
-    CurrentLocale = L"ru-ru";
-    Apply(Table_RU);
-    break;
-  case Language::German:
-    CurrentLocale = L"de-de";
-    Apply(Table_DE);
-    break;
-  case Language::Spanish:
-    CurrentLocale = L"es-es";
-    Apply(Table_ES);
-    break;
-  case Language::French:
-    CurrentLocale = L"fr-fr";
-    Apply(Table_FR);
-    break;
-  case Language::English:
-  default:
-    CurrentLocale = L"en-us";
-    Apply(Table_EN);
-    break;
-  }
+    const int rawIdx = static_cast<int>(target) - 1;
+    const int idx = (rawIdx >= 0 && rawIdx < 8) ? rawIdx : 0;
+    g_activeLangIndex = idx;
 
-  switch (target) {
-  case Language::ChineseSimplified:
-    Settings_Tab_Shortcuts = L"快捷键";
-    Settings_Hotkey_PressKey = L"请按下按键...";
-    Settings_Hotkey_Conflict = L"快捷键冲突";
-    Settings_Hotkey_ConflictPrompt = L"已由“%s”占用，继续将清除其快捷键。";
-    Settings_Hotkey_Restore = L"恢复快捷键默认值";
-    Settings_Hotkey_Restored = L"已恢复";
-    Settings_Hotkey_MouseTip = L"提示：支持鼠标中键、侧键等鼠标多功能按键。更多侧键请在鼠标驱动中映射为键盘按键后绑定。";
-    Settings_Header_KeyboardPan = L"平移步长";
-    Settings_Label_PanStepNormal = L"平移步长 (普通)";
-    Settings_Label_PanStepFast = L"按键平移步长 (加速)";
-    break;
-  case Language::ChineseTraditional:
-    Settings_Tab_Shortcuts = L"快捷鍵";
-    Settings_Hotkey_PressKey = L"請按下按鍵...";
-    Settings_Hotkey_Conflict = L"快捷鍵衝突";
-    Settings_Hotkey_ConflictPrompt = L"已由「%s」佔用，繼續將清除其快捷鍵。";
-    Settings_Hotkey_Restore = L"恢復快捷鍵預設值";
-    Settings_Hotkey_Restored = L"已恢復";
-    Settings_Hotkey_MouseTip = L"提示：支持滑鼠中鍵、側鍵等滑鼠多功能按鍵。更多側鍵請在滑鼠驅動中映射為鍵盤按鍵後綁定。";
-    Settings_Header_KeyboardPan = L"平移步長";
-    Settings_Label_PanStepNormal = L"平移步長 (普通)";
-    Settings_Label_PanStepFast = L"按鍵平移步長 (加速)";
-    break;
-  case Language::Japanese:
-    Settings_Tab_Shortcuts = L"ショートカット";
-    Settings_Hotkey_PressKey = L"キーを押してください...";
-    Settings_Hotkey_Conflict = L"キーの競合";
-    Settings_Hotkey_ConflictPrompt = L"「%s」で使用中。続行すると割り当てを解除します。";
-    Settings_Hotkey_Restore = L"既定のショートカットに戻す";
-    Settings_Hotkey_Restored = L"復元されました";
-    Settings_Hotkey_MouseTip = L"ヒント：中央ボタンやサイドボタンなどのマウス多機能ボタンに対応しています。その他のサイドボタンは、マウスのドライバーでキーボードのキーにマッピングしてからバインドしてください。";
-    Settings_Header_KeyboardPan = L"パン歩幅";
-    Settings_Label_PanStepNormal = L"パン歩幅 (標準)";
-    Settings_Label_PanStepFast = L"キーボードパン歩幅 (高速)";
-    break;
-  case Language::Russian:
-    Settings_Tab_Shortcuts = L"Клавиши";
-    Settings_Hotkey_PressKey = L"Нажмите клавиши...";
-    Settings_Hotkey_Conflict = L"Конфликт клавиш";
-    Settings_Hotkey_ConflictPrompt = L"Занято \"%s\". Продолжение сбросит привязку.";
-    Settings_Hotkey_Restore = L"Сбросить горячие клавиши";
-    Settings_Hotkey_Restored = L"Восстановлено";
-    Settings_Hotkey_MouseTip = L"Подсказка: поддерживаются средняя кнопка, боковые и другие многофункциональные кнопки мыши. Для сопоставления дополнительных кнопок сначала назначьте их на клавиши клавиатуры в драйвере мыши.";
-    Settings_Header_KeyboardPan = L"Шаг сдвига";
-    Settings_Label_PanStepNormal = L"Шаг сдвига (обычный)";
-    Settings_Label_PanStepFast = L"Шаг сдвига клавишами (быстрый)";
-    break;
-  case Language::German:
-    Settings_Tab_Shortcuts = L"Kürzel";
-    Settings_Hotkey_PressKey = L"Tasten drücken...";
-    Settings_Hotkey_Conflict = L"Tastenkonflikt";
-    Settings_Hotkey_ConflictPrompt = L"Bereits von „%s“ belegt. Fortfahren löscht die Zuweisung.";
-    Settings_Hotkey_Restore = L"Standard-Tastenkombinationen wiederherstellen";
-    Settings_Hotkey_Restored = L"Wiederhergestellt";
-    Settings_Hotkey_MouseTip = L"Tipp: Unterstützt die mittlere Maustaste, Seitentasten und andere Multifunktionstasten. Ordnen Sie weitere Seitentasten im Maustreiber Tastaturtasten zu, um sie zu binden.";
-    Settings_Header_KeyboardPan = L"Pan-Schrittweite";
-    Settings_Label_PanStepNormal = L"Pan-Schrittweite (Normal)";
-    Settings_Label_PanStepFast = L"Tastatur-Pan-Schrittweite (Schnell)";
-    break;
-  case Language::Spanish:
-    Settings_Tab_Shortcuts = L"Atajos";
-    Settings_Hotkey_PressKey = L"Presione teclas...";
-    Settings_Hotkey_Conflict = L"Conflicto de teclas";
-    Settings_Hotkey_ConflictPrompt = L"Usado por \"%s\". Continuar borrará su asignación.";
-    Settings_Hotkey_Restore = L"Restablecer atajos predeterminados";
-    Settings_Hotkey_Restored = L"Restablecido";
-    Settings_Hotkey_MouseTip = L"Consejo: Admite el botón central del mouse, los botones laterales y otros botones multifunción. Asigne botones laterales adicionales a teclas del teclado en el controlador del mouse para vincularlos.";
-    Settings_Header_KeyboardPan = L"Paso de pan";
-    Settings_Label_PanStepNormal = L"Paso de pan (Normal)";
-    Settings_Label_PanStepFast = L"Paso de pan con teclado (Rápido)";
-    break;
-  case Language::French:
-    Settings_Tab_Shortcuts = L"Raccourcis";
-    Settings_Hotkey_PressKey = L"Appuyez sur les touches...";
-    Settings_Hotkey_Conflict = L"Conflit de raccourcis";
-    Settings_Hotkey_ConflictPrompt = L"Déjà utilisé par « %s ». Continuer effacera son raccourci.";
-    Settings_Hotkey_Restore = L"Restaurer les raccourcis par défaut";
-    Settings_Hotkey_Restored = L"Restauré";
-    Settings_Hotkey_MouseTip = L"Conseil : Prend en charge le bouton central de la souris, les boutons latéraux et autres boutons multifonctions. Mappez les boutons latéraux supplémentaires sur les touches du clavier dans le pilote de votre souris pour les lier.";
-    Settings_Header_KeyboardPan = L"Pas de pan";
-    Settings_Label_PanStepNormal = L"Pas de pan (Normal)";
-    Settings_Label_PanStepFast = L"Pas de pan clavier (Rapide)";
-    break;
-  case Language::English:
-  default:
-    Settings_Tab_Shortcuts = L"Shortcuts";
-    Settings_Hotkey_PressKey = L"Press keys...";
-    Settings_Hotkey_Conflict = L"Hotkey conflict";
-    Settings_Hotkey_ConflictPrompt = L"Already used by \"%s\". Continuing will clear its hotkey.";
-    Settings_Hotkey_Restore = L"Restore Default Hotkeys";
-    Settings_Hotkey_Restored = L"Restored";
-    Settings_Hotkey_MouseTip = L"Tip: Supports middle mouse button, side buttons, and other multi-function mouse keys. Map additional buttons to keyboard keys in your mouse driver to bind them.";
-    Settings_Header_KeyboardPan = L"Pan Step";
-    Settings_Label_PanStepNormal = L"Pan Step (Normal)";
-    Settings_Label_PanStepFast = L"Keyboard Pan Step (Fast)";
-    break;
-  }
+    static int s_loadedIdx = -1;
+    if (s_loadedIdx != idx) {
+        constexpr int kArenaCapacity = 32768; // Max language (Spanish) uses 26,172 UTF-16 code units
+        static wchar_t s_arena[kArenaCapacity];
+        const auto& blob = kLangBlobs[idx];
+        const int written = MultiByteToWideChar(CP_UTF8, 0, blob.data, blob.bytes, s_arena, kArenaCapacity);
+        if (written > 0) {
+            constexpr size_t kFieldCount = sizeof(Strings) / sizeof(const wchar_t*);
+            static_assert(sizeof(Strings) == kFieldCount * sizeof(const wchar_t*));
+            const wchar_t** dst = reinterpret_cast<const wchar_t**>(&g);
+            const wchar_t* p = s_arena;
+            const wchar_t* const end = s_arena + written;
+            for (size_t i = 0; i < kFieldCount && p < end; ++i) {
+                dst[i] = p;
+                p += wcslen(p) + 1;
+            }
+            s_loadedIdx = idx;
+        }
+    }
+
+    QuickView::PluginHost::Instance().SetLanguage(kPluginLangCodes[idx]);
 }
 
 static std::wstring CleanLabel(const wchar_t* label) {
@@ -6564,15 +6205,8 @@ static std::wstring CleanLabel(const wchar_t* label) {
     return s;
 }
 
-static AppStrings::Language GetActiveLanguage() {
-    if (AppStrings::OSD_NoImage == nullptr) return AppStrings::Language::English;
-    if (wcscmp(AppStrings::OSD_NoImage, L"没有加载图片") == 0) return AppStrings::Language::ChineseSimplified;
-    if (wcscmp(AppStrings::OSD_NoImage, L"沒有載入圖片") == 0) return AppStrings::Language::ChineseTraditional;
-    if (wcscmp(AppStrings::OSD_NoImage, L"画像が読み込まれていません") == 0) return AppStrings::Language::Japanese;
-    if (wcscmp(AppStrings::OSD_NoImage, L"Изображение не загружено") == 0) return AppStrings::Language::Russian;
-    if (wcscmp(AppStrings::OSD_NoImage, L"Kein Bild geladen") == 0) return AppStrings::Language::German;
-    if (wcscmp(AppStrings::OSD_NoImage, L"No hay imagen cargada") == 0) return AppStrings::Language::Spanish;
-    return AppStrings::Language::English;
+static inline const wchar_t* PickLang(const wchar_t* const (&t)[8]) noexcept {
+    return t[g_activeLangIndex < 8 ? g_activeLangIndex : 0];
 }
 
 std::wstring GetHotkeyActionName(HotkeyAction action) {
@@ -6582,407 +6216,256 @@ std::wstring GetHotkeyActionName(HotkeyAction action) {
     switch (action) {
     case HotkeyAction::ToggleSlideshow: {
         needsCleaning = false;
-        switch (GetActiveLanguage()) {
-        case AppStrings::Language::ChineseSimplified:  raw = L"幻灯片模式 (播放/暂停)"; break;
-        case AppStrings::Language::ChineseTraditional: raw = L"幻燈片模式 (播放/暫停)"; break;
-        case AppStrings::Language::Japanese:           raw = L"スライドショー (再生/一時停止)"; break;
-        case AppStrings::Language::Russian:            raw = L"Слайд-шоу (Запуск/Пауза)"; break;
-        case AppStrings::Language::German:             raw = L"Diashow (Wiedergabe/Pause)"; break;
-        case AppStrings::Language::Spanish:            raw = L"Presentación de diapositivas (Reproducir/Pausar)"; break;
-        case AppStrings::Language::French:             raw = L"Diaporama (Lecture/Pause)"; break;
-        default:                                       raw = L"Slideshow (Play/Pause)"; break;
-        }
+        raw = PickLang({ L"Slideshow (Play/Pause)", L"幻灯片模式 (播放/暂停)", L"幻燈片模式 (播放/暫停)", L"スライドショー (再生/一時停止)", L"Слайд-шоу (Запуск/Пауза)", L"Diashow (Wiedergabe/Pause)", L"Presentación de diapositivas (Reproducir/Pausar)", L"Diaporama (Lecture/Pause)" });
         break;
     }
     case HotkeyAction::Loupe: {
         needsCleaning = false;
-        switch (GetActiveLanguage()) {
-        case AppStrings::Language::ChineseSimplified:  raw = L"放大镜 (按住)"; break;
-        case AppStrings::Language::ChineseTraditional: raw = L"放大鏡 (按住)"; break;
-        case AppStrings::Language::Japanese:           raw = L"ルーペ (長押し)"; break;
-        case AppStrings::Language::Russian:            raw = L"Лупа (удерживать)"; break;
-        case AppStrings::Language::German:             raw = L"Lupe (halten)"; break;
-        case AppStrings::Language::Spanish:            raw = L"Lupa (mantener)"; break;
-        case AppStrings::Language::French:             raw = L"Loupe (maintenir)"; break;
-        default:                                       raw = L"Loupe (Hold)"; break;
-        }
+        raw = PickLang({ L"Loupe", L"放大镜", L"放大鏡", L"ルーペ", L"Лупа", L"Lupe", L"Lupa", L"Loupe" });
         break;
     }
     case HotkeyAction::ToggleMinimap: {
         needsCleaning = false;
-        switch (GetActiveLanguage()) {
-        case AppStrings::Language::ChineseSimplified:  raw = L"切换导航缩略图 (Minimap)"; break;
-        case AppStrings::Language::ChineseTraditional: raw = L"切換導航縮略圖 (Minimap)"; break;
-        case AppStrings::Language::Japanese:           raw = L"ミニマップ表示切り替え"; break;
-        case AppStrings::Language::Russian:            raw = L"Переключить миникарту"; break;
-        case AppStrings::Language::German:             raw = L"Minimap umschalten"; break;
-        case AppStrings::Language::Spanish:            raw = L"Alternar minimapa"; break;
-        case AppStrings::Language::French:             raw = L"Basculer la minicarte"; break;
-        default:                                       raw = L"Toggle Minimap"; break;
-        }
+        raw = PickLang({ L"Toggle Minimap", L"切换导航缩略图 (Minimap)", L"切換導航縮略圖 (Minimap)", L"ミニマップ表示切り替え", L"Переключить миникарту", L"Minimap umschalten", L"Alternar minimapa", L"Basculer la minicarte" });
+        break;
+    }
+    case HotkeyAction::SuperResolution: {
+        needsCleaning = false;
+        raw = PickLang({ L"AI Super-Resolution", L"AI 超分辨率", L"AI 超解析度", L"AI 超解像", L"AI Сверхразрешение", L"AI Super-Resolution", L"Superresolución IA", L"Super-résolution IA" });
+        break;
+    }
+    case HotkeyAction::AiAction: {
+        needsCleaning = false;
+        raw = PickLang({ L"AI Actions", L"AI 动作", L"AI 動作", L"AI アクション", L"AI Действия", L"AI-Aktionen", L"Acciones IA", L"Actions IA" });
         break;
     }
     case HotkeyAction::NavNext:
-        raw = AppStrings::Toolbar_Tooltip_Next;
+        raw = AppStrings::g.Toolbar_Tooltip_Next;
         break;
     case HotkeyAction::NavPrev:
-        raw = AppStrings::Toolbar_Tooltip_Prev;
+        raw = AppStrings::g.Toolbar_Tooltip_Prev;
         break;
     case HotkeyAction::NavFirst: {
         needsCleaning = false;
-        switch (GetActiveLanguage()) {
-        case AppStrings::Language::ChineseSimplified:  raw = L"第一张图片"; break;
-        case AppStrings::Language::ChineseTraditional: raw = L"第一張圖片"; break;
-        case AppStrings::Language::Japanese:           raw = L"最初の画像"; break;
-        case AppStrings::Language::Russian:            raw = L"Первое изображение"; break;
-        case AppStrings::Language::German:             raw = L"Erstes Bild"; break;
-        case AppStrings::Language::Spanish:            raw = L"Primera imagen"; break;
-        case AppStrings::Language::French:             raw = L"Première image"; break;
-        default:                                       raw = L"First Image"; break;
-        }
+        raw = PickLang({ L"First Image", L"第一张图片", L"第一張圖片", L"最初の画像", L"Первое изображение", L"Erstes Bild", L"Primera imagen", L"Première image" });
         break;
     }
     case HotkeyAction::NavLast: {
         needsCleaning = false;
-        switch (GetActiveLanguage()) {
-        case AppStrings::Language::ChineseSimplified:  raw = L"最后一张"; break;
-        case AppStrings::Language::ChineseTraditional: raw = L"最後一張"; break;
-        case AppStrings::Language::Japanese:           raw = L"最後の画像"; break;
-        case AppStrings::Language::Russian:            raw = L"Последнее изображение"; break;
-        case AppStrings::Language::German:             raw = L"Letztes Bild"; break;
-        case AppStrings::Language::Spanish:            raw = L"Última imagen"; break;
-        case AppStrings::Language::French:             raw = L"Dernière image"; break;
-        default:                                       raw = L"Last Image"; break;
-        }
+        raw = PickLang({ L"Last Image", L"最后一张", L"最後一張", L"最後の画像", L"Последнее изображение", L"Letztes Bild", L"Última imagen", L"Dernière image" });
         break;
     }
     case HotkeyAction::ZoomIn:
-        raw = AppStrings::Context_ZoomIn;
+        raw = AppStrings::g.Context_ZoomIn;
         break;
     case HotkeyAction::ZoomInFine: {
         needsCleaning = false;
-        switch (GetActiveLanguage()) {
-        case AppStrings::Language::ChineseSimplified:  raw = L"放大微调"; break;
-        case AppStrings::Language::ChineseTraditional: raw = L"放大微調"; break;
-        case AppStrings::Language::Japanese:           raw = L"ズームイン (微調整)"; break;
-        case AppStrings::Language::Russian:            raw = L"Увеличить (точно)"; break;
-        case AppStrings::Language::German:             raw = L"Vergrößern (Fein)"; break;
-        case AppStrings::Language::Spanish:            raw = L"Acercar (Ajuste fino)"; break;
-        case AppStrings::Language::French:             raw = L"Zoom avant (Précis)"; break;
-        default:                                       raw = L"Zoom In (Fine)"; break;
-        }
+        raw = PickLang({ L"Zoom In (Fine)", L"放大微调", L"放大微調", L"ズームイン (微調整)", L"Увеличить (точно)", L"Vergrößern (Fein)", L"Acercar (Ajuste fino)", L"Zoom avant (Précis)" });
         break;
     }
     case HotkeyAction::ZoomOut:
-        raw = AppStrings::Context_ZoomOut;
+        raw = AppStrings::g.Context_ZoomOut;
         break;
     case HotkeyAction::ZoomOutFine: {
         needsCleaning = false;
-        switch (GetActiveLanguage()) {
-        case AppStrings::Language::ChineseSimplified:  raw = L"缩小微调"; break;
-        case AppStrings::Language::ChineseTraditional: raw = L"縮小微調"; break;
-        case AppStrings::Language::Japanese:           raw = L"ズームアウト (微調整)"; break;
-        case AppStrings::Language::Russian:            raw = L"Уменьшить (точно)"; break;
-        case AppStrings::Language::German:             raw = L"Verkleinern (Fein)"; break;
-        case AppStrings::Language::Spanish:            raw = L"Alejar (Ajuste fino)"; break;
-        case AppStrings::Language::French:             raw = L"Zoom arrière (Précis)"; break;
-        default:                                       raw = L"Zoom Out (Fine)"; break;
-        }
+        raw = PickLang({ L"Zoom Out (Fine)", L"缩小微调", L"縮小微調", L"ズームアウト (微調整)", L"Уменьшить (точно)", L"Verkleinern (Fein)", L"Alejar (Ajuste fino)", L"Zoom arrière (Précis)" });
         break;
     }
     case HotkeyAction::Zoom100:
-        raw = AppStrings::Context_ActualSize;
+        raw = AppStrings::g.Context_ActualSize;
         break;
     case HotkeyAction::ZoomFit:
-        raw = AppStrings::Context_FitToScreen;
+        raw = AppStrings::g.Context_FitToScreen;
         break;
     case HotkeyAction::ZoomFitWindow:
-        raw = AppStrings::Context_FitWindow;
+        raw = AppStrings::g.Context_FitWindow;
         break;
     case HotkeyAction::ZoomFill:
-        raw = AppStrings::Context_FillWindow;
+        raw = AppStrings::g.Context_FillWindow;
         break;
     case HotkeyAction::RotateCW:
-        raw = AppStrings::Context_RotateCW;
+        raw = AppStrings::g.Context_RotateCW;
         break;
     case HotkeyAction::RotateCCW:
-        raw = AppStrings::Context_RotateCCW;
+        raw = AppStrings::g.Context_RotateCCW;
         break;
     case HotkeyAction::FlipH:
-        raw = AppStrings::Context_FlipH;
+        raw = AppStrings::g.Context_FlipH;
         break;
     case HotkeyAction::FlipV:
-        raw = AppStrings::Context_FlipV;
+        raw = AppStrings::g.Context_FlipV;
         break;
     case HotkeyAction::RenderRaw:
-        raw = AppStrings::Context_RenderRAW;
+        raw = AppStrings::g.Context_RenderRAW;
         break;
+    case HotkeyAction::Rate0:
+    case HotkeyAction::Rate1:
+    case HotkeyAction::Rate2:
+    case HotkeyAction::Rate3:
+    case HotkeyAction::Rate4:
+    case HotkeyAction::Rate5: {
+        needsCleaning = false;
+        const int stars = (int)action - (int)HotkeyAction::Rate0;
+        // Kept as one string per language rather than a table entry: these
+        // names appear only in the shortcut list.
+        static thread_local std::wstring s_rateName;
+        const wchar_t* pattern;
+        pattern = PickLang({ stars ? L"Rate %d Stars" : L"Clear Rating", stars ? L"评分 %d 星" : L"清除评分", stars ? L"評分 %d 星" : L"清除評分", stars ? L"評価 %d つ星" : L"評価を消去", stars ? L"Оценка: %d" : L"Снять оценку", stars ? L"%d Sterne" : L"Bewertung löschen", stars ? L"%d estrellas" : L"Quitar valoración", stars ? L"%d étoiles" : L"Effacer la note" });
+        wchar_t buf[64];
+        swprintf_s(buf, pattern, stars);
+        s_rateName = buf;
+        raw = s_rateName.c_str();
+        break;
+    }
     case HotkeyAction::ComparePair: {
         needsCleaning = false;
-        switch (GetActiveLanguage()) {
-        case AppStrings::Language::ChineseSimplified:  raw = L"配对对比 (直出 vs RAW)"; break;
-        case AppStrings::Language::ChineseTraditional: raw = L"配對對比 (直出 vs RAW)"; break;
-        case AppStrings::Language::Japanese:           raw = L"ペア比較 (撮って出し vs RAW)"; break;
-        case AppStrings::Language::Russian:            raw = L"Сравнение пары (JPEG/HEIF и RAW)"; break;
-        case AppStrings::Language::German:             raw = L"Paarvergleich (Kamerabild vs. RAW)"; break;
-        case AppStrings::Language::Spanish:            raw = L"Comparar par (imagen de cámara vs RAW)"; break;
-        case AppStrings::Language::French:             raw = L"Comparer la paire (image boîtier vs RAW)"; break;
-        default:                                       raw = L"Compare Pair (Rendered vs RAW)"; break;
-        }
+        raw = PickLang({ L"Compare Pair (Rendered vs RAW)", L"配对对比 (直出 vs RAW)", L"配對對比 (直出 vs RAW)", L"ペア比較 (撮って出し vs RAW)", L"Сравнение пары (JPEG/HEIF и RAW)", L"Paarvergleich (Kamerabild vs. RAW)", L"Comparar par (imagen de cámara vs RAW)", L"Comparer la paire (image boîtier vs RAW)" });
         break;
     }
     case HotkeyAction::ToggleAnimation: {
         // Special case: returns concatenated string
-        std::wstring play = CleanLabel(AppStrings::Toolbar_Tooltip_AnimPlay);
-        std::wstring pause = CleanLabel(AppStrings::Toolbar_Tooltip_AnimPause);
+        std::wstring play = CleanLabel(AppStrings::g.Toolbar_Tooltip_AnimPlay);
+        std::wstring pause = CleanLabel(AppStrings::g.Toolbar_Tooltip_AnimPause);
         return play + L"/" + pause;
     }
     case HotkeyAction::AnimNextFrame:
-        raw = AppStrings::Toolbar_Tooltip_AnimNext;
+        raw = AppStrings::g.Toolbar_Tooltip_AnimNext;
         break;
     case HotkeyAction::AnimPrevFrame:
-        raw = AppStrings::Toolbar_Tooltip_AnimPrev;
+        raw = AppStrings::g.Toolbar_Tooltip_AnimPrev;
         break;
     case HotkeyAction::ToggleGallery:
-        raw = AppStrings::Context_HUDGallery;
+        raw = AppStrings::g.Context_HUDGallery;
         break;
     case HotkeyAction::ToggleFilmstrip:
-        raw = AppStrings::Settings_Header_GalleryTrigger;
+        raw = AppStrings::g.Settings_Header_GalleryTrigger;
         break;
     case HotkeyAction::ToggleInfoPanel:
-        raw = AppStrings::Context_LiteInfoPanel;
+        raw = AppStrings::g.Context_LiteInfoPanel;
         break;
     case HotkeyAction::ToggleExifPanel:
-        raw = AppStrings::Context_FullInfoPanel;
+        raw = AppStrings::g.Context_FullInfoPanel;
         break;
     case HotkeyAction::ToggleFullscreen:
-        raw = AppStrings::Context_Fullscreen;
+        raw = AppStrings::g.Context_Fullscreen;
         break;
     case HotkeyAction::ToggleSpan:
         needsCleaning = false;
-        raw = AppStrings::Settings_Label_SpanDisplays;
+        raw = AppStrings::g.Settings_Label_SpanDisplays;
         break;
     case HotkeyAction::OpenFile:
-        raw = AppStrings::Context_Open;
+        raw = AppStrings::g.Context_Open;
         break;
     case HotkeyAction::EditFile:
-        raw = AppStrings::Context_Edit;
+        raw = AppStrings::g.Context_Edit;
         break;
     case HotkeyAction::RenameFile:
-        raw = AppStrings::Context_Rename;
+        raw = AppStrings::g.Context_Rename;
         break;
     case HotkeyAction::DeleteFile:
-        raw = AppStrings::Context_Delete;
+        raw = AppStrings::g.Context_Delete;
         break;
     case HotkeyAction::CopyPixels:
-        raw = AppStrings::Context_CopyPixels;
+        raw = AppStrings::g.Context_CopyPixels;
         break;
     case HotkeyAction::CopyFileItem:
-        raw = AppStrings::Context_CopyFile;
+        raw = AppStrings::g.Context_CopyFile;
         break;
     case HotkeyAction::CopyPath:
-        raw = AppStrings::Context_CopyPath;
+        raw = AppStrings::g.Context_CopyPath;
         break;
     case HotkeyAction::ShowInExplorer:
-        raw = AppStrings::Context_ShowInExplorer;
+        raw = AppStrings::g.Context_ShowInExplorer;
         break;
     case HotkeyAction::ToggleCompare:
-        raw = AppStrings::Context_CompareMode;
+        raw = AppStrings::g.Context_CompareMode;
         break;
     case HotkeyAction::AlwaysOnTop:
-        raw = AppStrings::Context_AlwaysOnTop;
+        raw = AppStrings::g.Context_AlwaysOnTop;
         break;
     case HotkeyAction::ToggleDebugHud:
-        raw = AppStrings::Settings_Label_DebugHUD;
+        raw = AppStrings::g.Settings_Label_DebugHUD;
         break;
     case HotkeyAction::Print:
-        raw = AppStrings::Context_Print;
+        raw = AppStrings::g.Context_Print;
         break;
     case HotkeyAction::EnterCropMode: {
         needsCleaning = false;
-        switch (GetActiveLanguage()) {
-        case AppStrings::Language::ChineseSimplified:  raw = L"裁剪模式"; break;
-        case AppStrings::Language::ChineseTraditional: raw = L"裁剪模式"; break;
-        case AppStrings::Language::Japanese:           raw = L"クロップモード"; break;
-        case AppStrings::Language::Russian:            raw = L"Режим кадрирования"; break;
-        case AppStrings::Language::German:             raw = L"Zuschneiden-Modus"; break;
-        case AppStrings::Language::Spanish:            raw = L"Modo de recorte"; break;
-        case AppStrings::Language::French:             raw = L"Mode recadrage"; break;
-        default:                                       raw = L"Crop Mode"; break;
-        }
+        raw = PickLang({ L"Crop Mode", L"裁剪模式", L"裁剪模式", L"クロップモード", L"Режим кадрирования", L"Zuschneiden-Modus", L"Modo de recorte", L"Mode recadrage" });
         break;
     }
     case HotkeyAction::SaveAs: {
         needsCleaning = false;
-        switch (GetActiveLanguage()) {
-        case AppStrings::Language::ChineseSimplified:  raw = L"另存图片"; break;
-        case AppStrings::Language::ChineseTraditional: raw = L"另存圖片"; break;
-        case AppStrings::Language::Japanese:           raw = L"画像を保存"; break;
-        case AppStrings::Language::Russian:            raw = L"Сохранить изображение"; break;
-        case AppStrings::Language::German:             raw = L"Bild speichern"; break;
-        case AppStrings::Language::Spanish:            raw = L"Guardar imagen"; break;
-        case AppStrings::Language::French:             raw = L"Enregistrer l'image"; break;
-        default:                                       raw = L"Save Image"; break;
-        }
+        raw = PickLang({ L"Save Image", L"另存图片", L"另存圖片", L"画像を保存", L"Сохранить изображение", L"Bild speichern", L"Guardar imagen", L"Enregistrer l'image" });
         break;
     }
     case HotkeyAction::ToggleOverlay:
-        raw = AppStrings::Context_OverlayMode;
+        raw = AppStrings::g.Context_OverlayMode;
         break;
     case HotkeyAction::OverlayAlphaUp: {
         needsCleaning = false;
-        switch (GetActiveLanguage()) {
-        case AppStrings::Language::ChineseSimplified:  raw = L"增加透明度"; break;
-        case AppStrings::Language::ChineseTraditional: raw = L"增加透明度"; break;
-        case AppStrings::Language::Japanese:           raw = L"不透明度を上げる"; break;
-        case AppStrings::Language::Russian:            raw = L"Увеличить непрозрачность"; break;
-        case AppStrings::Language::German:             raw = L"Deckkraft erhöhen"; break;
-        case AppStrings::Language::Spanish:            raw = L"Aumentar opacidad"; break;
-        case AppStrings::Language::French:             raw = L"Augmenter l'opacité"; break;
-        default:                                       raw = L"Increase Opacity"; break;
-        }
+        raw = PickLang({ L"Increase Opacity", L"增加透明度", L"增加透明度", L"不透明度を上げる", L"Увеличить непрозрачность", L"Deckkraft erhöhen", L"Aumentar opacidad", L"Augmenter l'opacité" });
         break;
     }
     case HotkeyAction::OverlayAlphaDown: {
         needsCleaning = false;
-        switch (GetActiveLanguage()) {
-        case AppStrings::Language::ChineseSimplified:  raw = L"减少透明度"; break;
-        case AppStrings::Language::ChineseTraditional: raw = L"減少透明度"; break;
-        case AppStrings::Language::Japanese:           raw = L"不透明度を下げる"; break;
-        case AppStrings::Language::Russian:            raw = L"Уменьшить непрозрачность"; break;
-        case AppStrings::Language::German:             raw = L"Deckkraft verringern"; break;
-        case AppStrings::Language::Spanish:            raw = L"Disminuir opacidad"; break;
-        case AppStrings::Language::French:             raw = L"Diminuer l'opacité"; break;
-        default:                                       raw = L"Decrease Opacity"; break;
-        }
+        raw = PickLang({ L"Decrease Opacity", L"减少透明度", L"減少透明度", L"不透明度を下げる", L"Уменьшить непрозрачность", L"Deckkraft verringern", L"Disminuir opacidad", L"Diminuer l'opacité" });
         break;
     }
     case HotkeyAction::OverlayTogglePassthrough:
-        raw = AppStrings::Menu_ExitPassthrough;
+        raw = AppStrings::g.Menu_ExitPassthrough;
         break;
     case HotkeyAction::Help:
-        raw = AppStrings::Settings_Link_Hotkeys;
+        raw = AppStrings::g.Settings_Link_Hotkeys;
         break;
     case HotkeyAction::ToggleSettings:
-        raw = AppStrings::Context_Settings;
+        raw = AppStrings::g.Context_Settings;
         break;
     case HotkeyAction::Exit:
-        raw = AppStrings::Context_Exit;
+        raw = AppStrings::g.Context_Exit;
         break;
     case HotkeyAction::PanUp: {
         needsCleaning = false;
-        switch (GetActiveLanguage()) {
-        case AppStrings::Language::ChineseSimplified:  raw = L"向上平移"; break;
-        case AppStrings::Language::ChineseTraditional: raw = L"向上平移"; break;
-        case AppStrings::Language::Japanese:           raw = L"上にパン"; break;
-        case AppStrings::Language::Russian:            raw = L"Сдвиг вверх"; break;
-        case AppStrings::Language::German:             raw = L"Nach oben verschieben"; break;
-        case AppStrings::Language::Spanish:            raw = L"Pan hacia arriba"; break;
-        case AppStrings::Language::French:             raw = L"Déplacer vers le haut"; break;
-        default:                                       raw = L"Pan Up"; break;
-        }
+        raw = PickLang({ L"Pan Up", L"向上平移", L"向上平移", L"上にパン", L"Сдвиг вверх", L"Nach oben verschieben", L"Pan hacia arriba", L"Déplacer vers le haut" });
         break;
     }
     case HotkeyAction::PanDown: {
         needsCleaning = false;
-        switch (GetActiveLanguage()) {
-        case AppStrings::Language::ChineseSimplified:  raw = L"向下平移"; break;
-        case AppStrings::Language::ChineseTraditional: raw = L"向下平移"; break;
-        case AppStrings::Language::Japanese:           raw = L"下にパン"; break;
-        case AppStrings::Language::Russian:            raw = L"Сдвиг вниз"; break;
-        case AppStrings::Language::German:             raw = L"Nach unten verschieben"; break;
-        case AppStrings::Language::Spanish:            raw = L"Pan hacia abajo"; break;
-        case AppStrings::Language::French:             raw = L"Déplacer vers le bas"; break;
-        default:                                       raw = L"Pan Down"; break;
-        }
+        raw = PickLang({ L"Pan Down", L"向下平移", L"向下平移", L"下にパン", L"Сдвиг вниз", L"Nach unten verschieben", L"Pan hacia abajo", L"Déplacer vers le bas" });
         break;
     }
     case HotkeyAction::PanLeft: {
         needsCleaning = false;
-        switch (GetActiveLanguage()) {
-        case AppStrings::Language::ChineseSimplified:  raw = L"向左平移"; break;
-        case AppStrings::Language::ChineseTraditional: raw = L"向左平移"; break;
-        case AppStrings::Language::Japanese:           raw = L"左にパン"; break;
-        case AppStrings::Language::Russian:            raw = L"Сдвиг влево"; break;
-        case AppStrings::Language::German:             raw = L"Nach links verschieben"; break;
-        case AppStrings::Language::Spanish:            raw = L"Pan hacia la izquierda"; break;
-        case AppStrings::Language::French:             raw = L"Déplacer vers la gauche"; break;
-        default:                                       raw = L"Pan Left"; break;
-        }
+        raw = PickLang({ L"Pan Left", L"向左平移", L"向左平移", L"左にパン", L"Сдвиг влево", L"Nach links verschieben", L"Pan hacia la izquierda", L"Déplacer vers la gauche" });
         break;
     }
     case HotkeyAction::PanRight: {
         needsCleaning = false;
-        switch (GetActiveLanguage()) {
-        case AppStrings::Language::ChineseSimplified:  raw = L"向右平移"; break;
-        case AppStrings::Language::ChineseTraditional: raw = L"向右平移"; break;
-        case AppStrings::Language::Japanese:           raw = L"右にパン"; break;
-        case AppStrings::Language::Russian:            raw = L"Сдвиг вправо"; break;
-        case AppStrings::Language::German:             raw = L"Nach rechts verschieben"; break;
-        case AppStrings::Language::Spanish:            raw = L"Pan hacia la derecha"; break;
-        case AppStrings::Language::French:             raw = L"Déplacer vers la droite"; break;
-        default:                                       raw = L"Pan Right"; break;
-        }
+        raw = PickLang({ L"Pan Right", L"向右平移", L"向右平移", L"右にパン", L"Сдвиг вправо", L"Nach rechts verschieben", L"Pan hacia la derecha", L"Déplacer vers la droite" });
         break;
     }
     case HotkeyAction::PanUpFast: {
         needsCleaning = false;
-        switch (GetActiveLanguage()) {
-        case AppStrings::Language::ChineseSimplified:  raw = L"向上平移 (加速)"; break;
-        case AppStrings::Language::ChineseTraditional: raw = L"向上平移 (加速)"; break;
-        case AppStrings::Language::Japanese:           raw = L"上にパン (高速)"; break;
-        case AppStrings::Language::Russian:            raw = L"Быстрый сдвиг вверх"; break;
-        case AppStrings::Language::German:             raw = L"Nach oben verschieben (schnell)"; break;
-        case AppStrings::Language::Spanish:            raw = L"Pan hacia arriba (rápido)"; break;
-        case AppStrings::Language::French:             raw = L"Déplacer vers le haut (rapide)"; break;
-        default:                                       raw = L"Pan Up (Fast)"; break;
-        }
+        raw = PickLang({ L"Pan Up (Fast)", L"向上平移 (加速)", L"向上平移 (加速)", L"上にパン (高速)", L"Быстрый сдвиг вверх", L"Nach oben verschieben (schnell)", L"Pan hacia arriba (rápido)", L"Déplacer vers le haut (rapide)" });
         break;
     }
     case HotkeyAction::PanDownFast: {
         needsCleaning = false;
-        switch (GetActiveLanguage()) {
-        case AppStrings::Language::ChineseSimplified:  raw = L"向下平移 (加速)"; break;
-        case AppStrings::Language::ChineseTraditional: raw = L"向下平移 (加速)"; break;
-        case AppStrings::Language::Japanese:           raw = L"下にパン (高速)"; break;
-        case AppStrings::Language::Russian:            raw = L"Быстрый сдвиг вниз"; break;
-        case AppStrings::Language::German:             raw = L"Nach unten verschieben (schnell)"; break;
-        case AppStrings::Language::Spanish:            raw = L"Pan hacia abajo (rápido)"; break;
-        case AppStrings::Language::French:             raw = L"Déplacer vers le bas (rapide)"; break;
-        default:                                       raw = L"Pan Down (Fast)"; break;
-        }
+        raw = PickLang({ L"Pan Down (Fast)", L"向下平移 (加速)", L"向下平移 (加速)", L"下にパン (高速)", L"Быстрый сдвиг вниз", L"Nach unten verschieben (schnell)", L"Pan hacia abajo (rápido)", L"Déplacer vers le bas (rapide)" });
         break;
     }
     case HotkeyAction::PanLeftFast: {
         needsCleaning = false;
-        switch (GetActiveLanguage()) {
-        case AppStrings::Language::ChineseSimplified:  raw = L"向左平移 (加速)"; break;
-        case AppStrings::Language::ChineseTraditional: raw = L"向左平移 (加速)"; break;
-        case AppStrings::Language::Japanese:           raw = L"左にパン (高速)"; break;
-        case AppStrings::Language::Russian:            raw = L"Быстрый сдвиг влево"; break;
-        case AppStrings::Language::German:             raw = L"Nach links verschieben (schnell)"; break;
-        case AppStrings::Language::Spanish:            raw = L"Pan hacia la izquierda (rápido)"; break;
-        case AppStrings::Language::French:             raw = L"Déplacer vers la gauche (rapide)"; break;
-        default:                                       raw = L"Pan Left (Fast)"; break;
-        }
+        raw = PickLang({ L"Pan Left (Fast)", L"向左平移 (加速)", L"向左平移 (加速)", L"左にパン (高速)", L"Быстрый сдвиг влево", L"Nach links verschieben (schnell)", L"Pan hacia la izquierda (rápido)", L"Déplacer vers la gauche (rapide)" });
         break;
     }
     case HotkeyAction::PanRightFast: {
         needsCleaning = false;
-        switch (GetActiveLanguage()) {
-        case AppStrings::Language::ChineseSimplified:  raw = L"向右平移 (加速)"; break;
-        case AppStrings::Language::ChineseTraditional: raw = L"向右平移 (加速)"; break;
-        case AppStrings::Language::Japanese:           raw = L"右にパン (高速)"; break;
-        case AppStrings::Language::Russian:            raw = L"Быстрый сдвиг вправо"; break;
-        case AppStrings::Language::German:             raw = L"Nach rechts verschieben (schnell)"; break;
-        case AppStrings::Language::Spanish:            raw = L"Pan hacia la derecha (rápido)"; break;
-        case AppStrings::Language::French:             raw = L"Déplacer vers la droite (rapide)"; break;
-        default:                                       raw = L"Pan Right (Fast)"; break;
-        }
+        raw = PickLang({ L"Pan Right (Fast)", L"向右平移 (加速)", L"向右平移 (加速)", L"右にパン (高速)", L"Быстрый сдвиг вправо", L"Nach rechts verschieben (schnell)", L"Pan hacia la derecha (rápido)", L"Déplacer vers la droite (rapide)" });
         break;
     }
     case HotkeyAction::Undo:
-        raw = AppStrings::Context_Undo;
+        raw = AppStrings::g.Context_Undo;
         break;
     default:
         needsCleaning = false;
@@ -6993,4 +6476,123 @@ std::wstring GetHotkeyActionName(HotkeyAction action) {
     if (!raw) return L"";
     return needsCleaning ? CleanLabel(raw) : std::wstring(raw);
 }
+
+
+std::wstring GetMouseModifierName(uint8_t mod) {
+    switch (mod) {
+    case 1: return L"Ctrl";
+    case 2: return L"Shift";
+    case 3: return L"Alt";
+    default: {
+        return PickLang({ L"None", L"无", L"無", L"なし", L"Нет", L"Keine", L"Ninguno", L"Aucun" });
+    }
+    }
 }
+
+std::wstring GetMouseTriggerName(::MouseTrigger trigger) {
+    switch (trigger) {
+    case MouseTrigger::LeftDrag: {
+        return PickLang({ L"Left Drag", L"左键拖拽", L"左鍵拖曳", L"左ドラッグ", L"Перетаскивание ЛКМ", L"Linke Maustaste ziehen", L"Arrastrar con botón izq.", L"Glisser bouton gauche" });
+    }
+    case MouseTrigger::MiddleDrag: {
+        return PickLang({ L"Middle Drag", L"中键拖拽", L"中鍵拖曳", L"中ドラッグ", L"Перетаскивание СКМ", L"Mittlere Maustaste ziehen", L"Arrastrar con botón central", L"Glisser bouton milieu" });
+    }
+    case MouseTrigger::RightDrag: {
+        return PickLang({ L"Right Drag", L"右键拖拽", L"右鍵拖曳", L"右ドラッグ", L"Перетаскивание ПКМ", L"Rechte Maustaste ziehen", L"Arrastrar con botón der.", L"Glisser bouton droit" });
+    }
+    case MouseTrigger::LeftDblClick: {
+        return PickLang({ L"Left Double Click", L"左键双击", L"左鍵按兩下", L"左ダブルクリック", L"Двойной клик ЛКМ", L"Doppelklick links", L"Doble clic izq.", L"Double-clic gauche" });
+    }
+    case MouseTrigger::MiddleClick: {
+        return PickLang({ L"Middle Click", L"中键单击", L"中鍵按一下", L"中クリック", L"Клик СКМ", L"Mittelklick", L"Clic central", L"Clic milieu" });
+    }
+    case MouseTrigger::RightClick: {
+        return PickLang({ L"Right Click", L"右键单击", L"右鍵按一下", L"右クリック", L"Клик ПКМ", L"Rechtsklick", L"Clic derecho", L"Clic droit" });
+    }
+    case MouseTrigger::XButton1Click: {
+        return PickLang({ L"Mouse 4 (Back)", L"后退键 (侧键1)", L"後退鍵 (側鍵1)", L"戻る (サイドボタン1)", L"Назад (Боковая 1)", L"Zurück (Seitentaste 1)", L"Atrás (Botón 4)", L"Précédent (Bouton 4)" });
+    }
+    case MouseTrigger::XButton2Click: {
+        return PickLang({ L"Mouse 5 (Forward)", L"前进键 (侧键2)", L"前進鍵 (側鍵2)", L"進む (サイドボタン2)", L"Вперед (Боковая 2)", L"Vor (Seitentaste 2)", L"Adelante (Botón 5)", L"Suivant (Bouton 5)" });
+    }
+    case MouseTrigger::VerticalWheel: {
+        return PickLang({ L"Vertical Wheel", L"垂直滚轮", L"垂直滾輪", L"ホイール回転", L"Колесико мыши", L"Mausrad vertikal", L"Rueda vertical", L"Molette verticale" });
+    }
+    case MouseTrigger::HorizontalWheel: {
+        return PickLang({ L"Thumb / Tilt Wheel", L"水平/拇指滚轮", L"水平/拇指滾輪", L"水平/チルトホイール", L"Горизонт. колесико", L"Daumenrad / Kippen", L"Rueda horizontal / pulgar", L"Molette horizontale" });
+    }
+    case MouseTrigger::RightHoldWheel: {
+        return PickLang({ L"Right-Hold + Wheel", L"按住右键 + 滚轮", L"按住右鍵 + 滾輪", L"右ボタンドラッグ + ホイール", L"Удерживая ПКМ + колесико", L"Rechts halten + Rad", L"Mantener der. + rueda", L"Maintenir droit + molette" });
+    }
+    default: return L"Unknown Trigger";
+    }
+}
+
+std::wstring GetMouseActionTargetName(::MouseActionTarget action) {
+    switch (action) {
+    case MouseActionTarget::None: {
+        return PickLang({ L"None", L"无动作", L"無動作", L"何もしない", L"Без действия", L"Keine Aktion", L"Ninguna acción", L"Aucune action" });
+    }
+    case MouseActionTarget::WindowDrag: {
+        return PickLang({ L"Drag Window", L"拖拽移动窗口", L"拖曳移動視窗", L"ウィンドウを移動", L"Перемещение окна", L"Fenster verschieben", L"Mover ventana", L"Déplacer la fenêtre" });
+    }
+    case MouseActionTarget::PanImage: {
+        return PickLang({ L"Pan Image", L"平移图片", L"平移圖片", L"画像をパン", L"Панорамирование", L"Bild verschieben", L"Desplazar imagen", L"Déplacer l'image" });
+    }
+    case MouseActionTarget::Zoom: {
+        return PickLang({ L"Zoom", L"缩放", L"縮放", L"ズーム", L"Масштаб", L"Zoom", L"Zoom", L"Zoom" });
+    }
+    case MouseActionTarget::ContextMenu: {
+        return PickLang({ L"Context Menu", L"弹出右键菜单", L"快顯功能表", L"コンテキストメニュー", L"Контекстное меню", L"Kontextmenü anzeigen", L"Menú contextual", L"Menu contextuel" });
+    }
+    case MouseActionTarget::ExitApp: {
+        return PickLang({ L"Exit QuickView", L"退出软件", L"結束程式", L"終了", L"Выход", L"Beenden", L"Salir", L"Quitter" });
+    }
+    case MouseActionTarget::SmartZoom: {
+        return PickLang({ L"Smart Zoom (Fit / 100%)", L"智能缩放 (自适应 / 100%)", L"智能縮放 (符合視窗 / 100%)", L"スマートズーム (100% / フィット)", L"Умный зум (По размеру / 100%)", L"Intelligenter Zoom (Einpassen / 100%)", L"Zoom inteligente (Ajustar / 100%)", L"Zoom intelligent (Ajuster / 100%)" });
+    }
+    case MouseActionTarget::Navigate: {
+        return PickLang({ L"Navigate (Next/Prev)", L"翻页 (上一张/下一张)", L"翻頁 (上一張/下一張)", L"移動 (前/次)", L"Переход (След./Пред.)", L"Navigieren (Vor/Zurück)", L"Navegar (Siguiente/Anterior)", L"Naviguer (Suivant/Précédent)" });
+    }
+    case MouseActionTarget::LockWindowZoomWheel: {
+        return PickLang({ L"Zoom (Lock Window Size)", L"锁定窗口大小缩放", L"鎖定視窗大小縮放", L"ウィンドウ固定ズーム", L"Масштаб с фиксацией окна", L"Zoom bei fester Fenstergröße", L"Zoom manteniendo ventana", L"Zoomer sans redimensionner" });
+    }
+    case MouseActionTarget::AdjustZoomSpeedWheel: {
+        return PickLang({ L"Adjust Zoom Speed", L"滚轮调节缩放速度", L"滾輪調節縮放速度", L"ズーム速度を調整", L"Регулировка скорости зума", L"Zoom-Geschwindigkeit anpassen", L"Ajustar velocidad de zoom", L"Régler la vitesse du zoom" });
+    }
+    case MouseActionTarget::CropRegionDrag: {
+        return PickLang({ L"Draw Crop Box", L"框选裁切", L"框選裁切", L"範囲選択クロップ", L"Выделение области кадрирования", L"Zuschneidebereich aufziehen", L"Dibujar área de recorte", L"Tracer zone de recadrage" });
+    }
+    case MouseActionTarget::NavNext:          return GetHotkeyActionName(HotkeyAction::NavNext);
+    case MouseActionTarget::NavPrev:          return GetHotkeyActionName(HotkeyAction::NavPrev);
+    case MouseActionTarget::NavFirst:         return GetHotkeyActionName(HotkeyAction::NavFirst);
+    case MouseActionTarget::NavLast:          return GetHotkeyActionName(HotkeyAction::NavLast);
+    case MouseActionTarget::ZoomIn:           return GetHotkeyActionName(HotkeyAction::ZoomIn);
+    case MouseActionTarget::ZoomOut:          return GetHotkeyActionName(HotkeyAction::ZoomOut);
+    case MouseActionTarget::Zoom100:          return GetHotkeyActionName(HotkeyAction::Zoom100);
+    case MouseActionTarget::ZoomFit:          return GetHotkeyActionName(HotkeyAction::ZoomFit);
+    case MouseActionTarget::ZoomFitWindow:    return GetHotkeyActionName(HotkeyAction::ZoomFitWindow);
+    case MouseActionTarget::ZoomFill:         return GetHotkeyActionName(HotkeyAction::ZoomFill);
+    case MouseActionTarget::RotateCW:         return GetHotkeyActionName(HotkeyAction::RotateCW);
+    case MouseActionTarget::RotateCCW:        return GetHotkeyActionName(HotkeyAction::RotateCCW);
+    case MouseActionTarget::FlipH:            return GetHotkeyActionName(HotkeyAction::FlipH);
+    case MouseActionTarget::FlipV:            return GetHotkeyActionName(HotkeyAction::FlipV);
+    case MouseActionTarget::ToggleFullscreen: return GetHotkeyActionName(HotkeyAction::ToggleFullscreen);
+    case MouseActionTarget::ToggleGallery:    return GetHotkeyActionName(HotkeyAction::ToggleGallery);
+    case MouseActionTarget::ToggleFilmstrip:  return GetHotkeyActionName(HotkeyAction::ToggleFilmstrip);
+    case MouseActionTarget::ToggleInfoPanel:  return GetHotkeyActionName(HotkeyAction::ToggleInfoPanel);
+    case MouseActionTarget::ToggleExifPanel:  return GetHotkeyActionName(HotkeyAction::ToggleExifPanel);
+    case MouseActionTarget::ToggleCompare:    return GetHotkeyActionName(HotkeyAction::ToggleCompare);
+    case MouseActionTarget::OpenFile:         return GetHotkeyActionName(HotkeyAction::OpenFile);
+    case MouseActionTarget::EditFile:         return GetHotkeyActionName(HotkeyAction::EditFile);
+    case MouseActionTarget::CopyPixels:       return GetHotkeyActionName(HotkeyAction::CopyPixels);
+    case MouseActionTarget::CopyFilePath:     return GetHotkeyActionName(HotkeyAction::CopyPath);
+    case MouseActionTarget::ShowInExplorer:   return GetHotkeyActionName(HotkeyAction::ShowInExplorer);
+    case MouseActionTarget::EnterCropMode:    return GetHotkeyActionName(HotkeyAction::EnterCropMode);
+    case MouseActionTarget::Loupe:            return GetHotkeyActionName(HotkeyAction::Loupe);
+    default: return L"Action";
+    }
+}
+
+}
+

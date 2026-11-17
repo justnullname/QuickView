@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "GeekWidgets.h"
+#include "ThemePalette.h"
 #include "GeekIconRenderer.h"
 #include "SettingsSliderMath.h"
 #include <algorithm>
@@ -128,7 +129,7 @@ void DrawPillButton(
         } else {
             bgClr = palette.accent;
         }
-        textClr = palette.white;
+        textClr = (palette.onAccentText.a > 0.01f) ? palette.onAccentText : palette.white;
     } else if (style == ButtonStyle::Destructive) {
         if (state == ButtonState::Hovered) {
             bgClr = palette.error;
@@ -142,7 +143,7 @@ void DrawPillButton(
     } else { // Secondary / Subtle / Ghost
         if (state == ButtonState::Hovered) {
             bgClr = palette.accent;
-            textClr = palette.white;
+            textClr = (palette.onAccentText.a > 0.01f) ? palette.onAccentText : palette.white;
         } else {
             bgClr = (style == ButtonStyle::Ghost) ? D2D1::ColorF(0, 0, 0, 0.0f) : palette.controlBg;
             borderClr = (style == ButtonStyle::Ghost) ? D2D1::ColorF(0, 0, 0, 0.0f) : palette.border;
@@ -217,6 +218,7 @@ void DrawSegmentGroup(
     dc->FillRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), brush.Get());
 
     // 2. Selected Highlight (Flush Segment)
+    D2D1_COLOR_F selectedTextClr = (palette.onAccentText.a > 0.01f) ? palette.onAccentText : palette.white;
     if (selectedIdx >= 0 && selectedIdx < static_cast<int>(count)) {
         float selX = rect.left;
         for (int i = 0; i < selectedIdx; ++i) {
@@ -225,7 +227,9 @@ void DrawSegmentGroup(
         D2D1_RECT_F selRect = D2D1::RectF(selX, rect.top, selX + itemWidths[selectedIdx], rect.bottom);
 
         if (!isDisabled && customColorRGB != nullptr) {
-            brush->SetColor(D2D1::ColorF(customColorRGB[0], customColorRGB[1], customColorRGB[2], 1.0f));
+            const D2D1_COLOR_F customFill = D2D1::ColorF(customColorRGB[0], customColorRGB[1], customColorRGB[2], 1.0f);
+            brush->SetColor(customFill);
+            selectedTextClr = QuickView::UI::Theme::ComputeOnAccentText(customFill);
         } else {
             brush->SetColor(isDisabled ? palette.controlBg : palette.accent);
         }
@@ -255,15 +259,20 @@ void DrawSegmentGroup(
     if (textFormat) {
         textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        const DWRITE_WORD_WRAPPING origWrap = textFormat->GetWordWrapping();
+        textFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
 
         float curX = rect.left;
         for (size_t i = 0; i < count; i++) {
             D2D1_RECT_F tRect = D2D1::RectF(curX, rect.top, curX + itemWidths[i], rect.bottom);
             bool isSel = (static_cast<int>(i) == selectedIdx);
-            brush->SetColor(isDisabled ? palette.textDim : (isSel ? palette.white : palette.text));
+            brush->SetColor(isDisabled ? palette.textDim : (isSel ? selectedTextClr : palette.text));
+            dc->PushAxisAlignedClip(tRect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
             dc->DrawText(options[i].data(), static_cast<UINT32>(options[i].length()), textFormat, tRect, brush.Get());
+            dc->PopAxisAlignedClip();
             curX += itemWidths[i];
         }
+        textFormat->SetWordWrapping(origWrap);
         textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
     }
 }
@@ -313,14 +322,15 @@ void DrawDualActionButton(
 
     // 5. Button Texts
     if (textFormat) {
+        const D2D1_COLOR_F hoverTextClr = (palette.onAccentText.a > 0.01f) ? palette.onAccentText : palette.white;
         textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
-        brush->SetColor(isDisabled ? palette.textDim : (hover1 ? palette.white : palette.text));
+        brush->SetColor(isDisabled ? palette.textDim : (hover1 ? hoverTextClr : palette.text));
         dc->DrawText(text1.data(), static_cast<UINT32>(text1.length()), textFormat, r1, brush.Get());
 
         if (!text2.empty()) {
-            brush->SetColor(isDisabled ? palette.textDim : (hover2 ? palette.white : palette.text));
+            brush->SetColor(isDisabled ? palette.textDim : (hover2 ? hoverTextClr : palette.text));
             dc->DrawText(text2.data(), static_cast<UINT32>(text2.length()), textFormat, r2, brush.Get());
         }
         textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
@@ -419,16 +429,93 @@ void DrawPillSlider(
     }
 }
 
+static thread_local bool t_marqueeOverflowActive = false;
+
+void BeginMarqueePass() {
+    t_marqueeOverflowActive = false;
+}
+
+bool EndMarqueePass() {
+    return t_marqueeOverflowActive;
+}
+
+void DrawMarqueeText(
+    ID2D1DeviceContext* dc,
+    const D2D1_RECT_F& visibleRect,
+    std::wstring_view text,
+    bool isHovered,
+    bool isDisabled,
+    IDWriteTextFormat* textFormat,
+    ID2D1Brush* brush,
+    float uiScale,
+    IDWriteFactory* dwriteFactory) {
+    if (!dc || !textFormat || !brush || text.empty()) return;
+    const float s = uiScale > 0.0f ? uiScale : 1.0f;
+    const float visibleW = visibleRect.right - visibleRect.left;
+    const float visibleH = visibleRect.bottom - visibleRect.top;
+    if (visibleW <= 0.0f || visibleH <= 0.0f) return;
+
+    textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    const DWRITE_WORD_WRAPPING origWrap = textFormat->GetWordWrapping();
+    textFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+
+    // Zero-allocation fast path when not hovered or when disabled
+    if (!isHovered || isDisabled) {
+        dc->PushAxisAlignedClip(visibleRect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        dc->DrawText(text.data(), static_cast<UINT32>(text.length()), textFormat, visibleRect, brush);
+        dc->PopAxisAlignedClip();
+        textFormat->SetWordWrapping(origWrap);
+        return;
+    }
+
+    float scrollOffset = 0.0f;
+    ComPtr<IDWriteTextLayout> layout;
+    if (dwriteFactory) {
+        if (SUCCEEDED(dwriteFactory->CreateTextLayout(
+            text.data(), static_cast<UINT32>(text.length()), textFormat, 4000.0f, visibleH, &layout))) {
+            DWRITE_TEXT_METRICS m = {};
+            if (SUCCEEDED(layout->GetMetrics(&m)) && m.width > visibleW) {
+                t_marqueeOverflowActive = true;
+                const float overflow = m.width - visibleW;
+                const float rawPhase = static_cast<float>(GetTickCount64() % 2400ULL) * 0.001f;
+                float t = 0.0f;
+                if (rawPhase < 0.4f) {
+                    t = 0.0f;
+                } else if (rawPhase < 1.2f) {
+                    const float prog = (rawPhase - 0.4f) / 0.8f;
+                    t = 0.5f - 0.5f * cosf(prog * 3.14159265f);
+                } else if (rawPhase < 1.6f) {
+                    t = 1.0f;
+                } else {
+                    const float prog = (rawPhase - 1.6f) / 0.8f;
+                    t = 0.5f + 0.5f * cosf(prog * 3.14159265f);
+                }
+                scrollOffset = t * (overflow + 14.0f * s);
+            }
+        }
+    }
+
+    dc->PushAxisAlignedClip(visibleRect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    if (layout) {
+        dc->DrawTextLayout(D2D1::Point2F(visibleRect.left - scrollOffset, visibleRect.top), layout.Get(), brush);
+    } else {
+        dc->DrawText(text.data(), static_cast<UINT32>(text.length()), textFormat, visibleRect, brush);
+    }
+    dc->PopAxisAlignedClip();
+    textFormat->SetWordWrapping(origWrap);
+}
+
 void DrawPillComboBox(
     ID2D1DeviceContext* dc,
     const D2D1_RECT_F& rect,
     std::wstring_view text,
     bool isOpen,
-    [[maybe_unused]] bool isHovered,
+    bool isHovered,
     bool isDisabled,
     IDWriteTextFormat* textFormat,
     float uiScale,
-    const WidgetPalette& palette) {
+    const WidgetPalette& palette,
+    IDWriteFactory* dwriteFactory) {
     if (!dc) return;
     const float s = uiScale > 0.0f ? uiScale : 1.0f;
     const float h = rect.bottom - rect.top;
@@ -439,14 +526,13 @@ void DrawPillComboBox(
 
     dc->FillRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), brush.Get());
 
-    brush->SetColor(isOpen ? palette.accent : palette.border);
+    brush->SetColor(isOpen ? palette.accent : (isHovered ? palette.accent : palette.border));
     dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), brush.Get(), (isOpen ? 1.5f : 1.0f) * s);
 
     if (textFormat) {
         D2D1_RECT_F textRect = D2D1::RectF(rect.left + 14.0f * s, rect.top, rect.right - 30.0f * s, rect.bottom);
-        textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         brush->SetColor(isDisabled ? palette.textDim : palette.text);
-        dc->DrawText(text.data(), static_cast<UINT32>(text.length()), textFormat, textRect, brush.Get());
+        DrawMarqueeText(dc, textRect, text, isHovered, isDisabled, textFormat, brush.Get(), s, dwriteFactory);
     }
 
     D2D1_RECT_F arrowRect = D2D1::RectF(rect.right - 28.0f * s, rect.top, rect.right - 4.0f * s, rect.bottom);
@@ -485,7 +571,7 @@ void DrawResetButton(
         textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         D2D1_RECT_F emojiRect = rect;
         emojiRect.top += 1.0f * s;
-        brush->SetColor(isHovered ? palette.white : palette.textDim);
+        brush->SetColor(isHovered ? palette.text : palette.textDim);
         dc->DrawText(L"↺", 1, textFormat, emojiRect, brush.Get());
         textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
     }

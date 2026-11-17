@@ -2,7 +2,6 @@
 #include <vector>
 #include <string>
 #include <cstdint>
-#include <map>
 
 // PreviewExtractor: Static helper to extract embedded thumbnails
 class PreviewExtractor {

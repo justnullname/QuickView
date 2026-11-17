@@ -1,8 +1,10 @@
 #pragma once
 #include <cstdint>
 #include <algorithm>
+#include <atomic>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 
 #ifdef _WIN32
@@ -24,6 +26,28 @@ struct SystemInfo {
 
     static bool IsSolidStateDrive(const std::wstring& path) {
 #ifdef _WIN32
+        // Lock-free O(1) drive-letter cache (0 = unknown, 1 = HDD, 2 = SSD)
+        static std::atomic<uint8_t> s_driveLetterCache[26]{};
+        int driveIdx = -1;
+        wchar_t driveChar = 0;
+        if (path.size() >= 2 && path[1] == L':') {
+            driveChar = path[0];
+        } else if (path.size() >= 6 && path[0] == L'\\' && path[1] == L'\\' &&
+                   (path[2] == L'?' || path[2] == L'.') && path[3] == L'\\' && path[5] == L':') {
+            driveChar = path[4];
+        }
+        if (driveChar >= L'A' && driveChar <= L'Z') {
+            driveIdx = driveChar - L'A';
+        } else if (driveChar >= L'a' && driveChar <= L'z') {
+            driveIdx = driveChar - L'a';
+        }
+        if (driveIdx >= 0) {
+            const uint8_t cached = s_driveLetterCache[driveIdx].load(std::memory_order_relaxed);
+            if (cached != 0) {
+                return cached == 2;
+            }
+        }
+
         // Get Volume Path (e.g. "C:\\") from file path
         wchar_t volumePath[MAX_PATH];
         if (!GetVolumePathNameW(path.c_str(), volumePath, MAX_PATH)) {
@@ -36,7 +60,12 @@ struct SystemInfo {
         {
             std::scoped_lock guard(s_cacheMutex);
             const auto it = s_cache.find(cacheKey);
-            if (it != s_cache.end()) return it->second;
+            if (it != s_cache.end()) {
+                if (driveIdx >= 0) {
+                    s_driveLetterCache[driveIdx].store(it->second ? 2 : 1, std::memory_order_relaxed);
+                }
+                return it->second;
+            }
         }
 
         // Create handle to the volume
@@ -51,7 +80,7 @@ struct SystemInfo {
         // Let's try opening the volume.
         
         std::wstring volStr = volumePath;
-        if (volStr.back() == L'\\') volStr.pop_back(); // "C:"
+        if (!volStr.empty() && volStr.back() == L'\\') volStr.pop_back(); // "C:"
         
         // Format: "\\.\C:" to open volume
         std::wstring devicePath = L"\\\\.\\" + volStr;
@@ -65,6 +94,9 @@ struct SystemInfo {
                                      NULL);
 
         if (hDevice == INVALID_HANDLE_VALUE) {
+            if (driveIdx >= 0) {
+                s_driveLetterCache[driveIdx].store(1, std::memory_order_relaxed);
+            }
             return false;
         }
 
@@ -89,6 +121,9 @@ struct SystemInfo {
         {
             std::scoped_lock guard(s_cacheMutex);
             s_cache.emplace(cacheKey, isSSD);
+        }
+        if (driveIdx >= 0) {
+            s_driveLetterCache[driveIdx].store(isSSD ? 2 : 1, std::memory_order_relaxed);
         }
         return isSSD;
 #else
@@ -146,6 +181,124 @@ struct SystemInfo {
         return isWin11;
 #else
         return false;
+#endif
+    }
+
+    // Returns true when running inside an MSIX / Microsoft Store package container.
+    // Cached once at first query (zero runtime cost on repeated calls).
+    static bool IsPackagedApp() {
+#ifdef _WIN32
+        static const bool s_packaged = []() -> bool {
+            HMODULE hKernel32 = GetModuleHandleW(L"kernel32.dll");
+            if (!hKernel32) return false;
+            using FnGetCurrentPackageFullName = LONG(WINAPI*)(UINT32*, PWSTR);
+            auto fx = reinterpret_cast<FnGetCurrentPackageFullName>(
+                GetProcAddress(hKernel32, "GetCurrentPackageFullName"));
+            if (!fx) return false;
+            UINT32 len = 0;
+            const LONG rc = fx(&len, nullptr);
+            return rc == ERROR_INSUFFICIENT_BUFFER;
+        }();
+        return s_packaged;
+#else
+        return false;
+#endif
+    }
+
+    // Returns the current MSIX Application User Model ID (e.g. "VivorLoong.QuickView-FastFileViewer_jbgfn8pzmmykp!App"),
+    // or an empty string for unpackaged Win32/portable executions.
+    static const std::wstring& GetPackagedAumid() {
+#ifdef _WIN32
+        static const std::wstring s_aumid = []() -> std::wstring {
+            if (!IsPackagedApp()) return {};
+            HMODULE hKernel32 = GetModuleHandleW(L"kernel32.dll");
+            if (!hKernel32) return {};
+            using FnGetCurrentAumid = LONG(WINAPI*)(UINT32*, PWSTR);
+            auto fx = reinterpret_cast<FnGetCurrentAumid>(
+                GetProcAddress(hKernel32, "GetCurrentApplicationUserModelId"));
+            if (!fx) return {};
+            UINT32 len = 0;
+            if (fx(&len, nullptr) != ERROR_INSUFFICIENT_BUFFER || len == 0) return {};
+            std::wstring aumid(len, L'\0');
+            if (fx(&len, aumid.data()) != ERROR_SUCCESS) return {};
+            while (!aumid.empty() && aumid.back() == L'\0') aumid.pop_back();
+            return aumid;
+        }();
+        return s_aumid;
+#else
+        static const std::wstring s_empty;
+        return s_empty;
+#endif
+    }
+
+    // Recursively creates a directory tree (handles missing parent directories cleanly).
+    static bool EnsureDirectoryRecursive(std::wstring_view dirPath) {
+#ifdef _WIN32
+        if (dirPath.empty()) return false;
+        std::wstring path(dirPath);
+        for (wchar_t& ch : path) {
+            if (ch == L'/') ch = L'\\';
+        }
+        while (path.size() > 3 && path.back() == L'\\') {
+            path.pop_back();
+        }
+        if (path.empty()) return false;
+
+        DWORD attrs = GetFileAttributesW(path.c_str());
+        if (attrs != INVALID_FILE_ATTRIBUTES) {
+            return (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        }
+
+        // Determine starting offset to skip drive root ("C:\") or UNC share ("\\server\share\")
+        size_t pos = 0;
+        if (path.size() >= 2 && path[1] == L':') {
+            pos = 3;
+        } else if (path.size() >= 2 && path[0] == L'\\' && path[1] == L'\\') {
+            size_t srvEnd = path.find(L'\\', 2);
+            if (srvEnd != std::wstring::npos) {
+                size_t shareEnd = path.find(L'\\', srvEnd + 1);
+                pos = (shareEnd != std::wstring::npos) ? (shareEnd + 1) : path.size();
+            }
+        }
+
+        while (pos <= path.size()) {
+            size_t nextSlash = path.find(L'\\', pos);
+            if (nextSlash == std::wstring::npos) {
+                nextSlash = path.size();
+            }
+            if (nextSlash > 0) {
+                std::wstring sub = path.substr(0, nextSlash);
+                if (!CreateDirectoryW(sub.c_str(), nullptr)) {
+                    DWORD err = GetLastError();
+                    if (err != ERROR_ALREADY_EXISTS) {
+                        DWORD subAttr = GetFileAttributesW(sub.c_str());
+                        if (subAttr == INVALID_FILE_ATTRIBUTES || !(subAttr & FILE_ATTRIBUTE_DIRECTORY)) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            if (nextSlash == path.size()) break;
+            pos = nextSlash + 1;
+        }
+        return true;
+#else
+        (void)dirPath;
+        return true;
+#endif
+    }
+
+    // Returns %LOCALAPPDATA% (redirected automatically to package LocalCache inside MSIX).
+    static std::wstring GetLocalAppDataDir() {
+#ifdef _WIN32
+        wchar_t buf[MAX_PATH * 2]{};
+        DWORD len = GetEnvironmentVariableW(L"LOCALAPPDATA", buf, static_cast<DWORD>(std::size(buf)));
+        if (len > 0 && len < std::size(buf)) {
+            return std::wstring(buf, len);
+        }
+        return {};
+#else
+        return {};
 #endif
     }
 

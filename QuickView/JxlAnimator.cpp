@@ -21,7 +21,9 @@ public:
     }
 
     bool Initialize(std::shared_ptr<QuickView::MappedFile> file, QuickView::PixelFormat /*preferredFormat*/) override {
+        if (!file || !file->IsValid()) return false;
         m_mappedFile = file;
+        m_totalFrames = 0;
         return ResetAndParseBasicInfo();
     }
 
@@ -103,8 +105,14 @@ public:
             ImageLoaderSimd::PremultiplyAlpha(frame->pixels, frame->width, frame->height, frame->stride);
         }
 
-        // SIMD Optimized RGBA -> BGRA swizzle
-        ImageLoaderSimd::SwizzleRGBAToBGRA(frame->pixels, (size_t)frame->width * frame->height);
+        // SIMD Optimized RGBA -> BGRA swizzle (row-by-row when stride has alignment padding)
+        if (frame->stride == frame->width * 4) {
+            ImageLoaderSimd::SwizzleRGBAToBGRA(frame->pixels, (size_t)frame->width * frame->height);
+        } else {
+            for (int y = 0; y < frame->height; ++y) {
+                ImageLoaderSimd::SwizzleRGBAToBGRA(frame->pixels + (size_t)y * frame->stride, (size_t)frame->width);
+            }
+        }
         
         auto& meta = frame->frameMeta;
         meta.index = m_currentIndex++;
@@ -121,15 +129,11 @@ public:
     }
 
     std::shared_ptr<RawImageFrame> SeekToFrame(uint32_t targetIndex) override {
-        if (targetIndex == m_currentIndex) {
-            // Already at the right index before GetNextFrame, actually we need to decode targetIndex
-            // Wait, GetNextFrame() returns m_currentIndex and increments.
-            // If targetIndex == m_currentIndex, we just call GetNextFrame.
-            // But if targetIndex < m_currentIndex, we must restart.
-        }
-        
-        if (targetIndex < m_currentIndex) {
-            ResetAndParseBasicInfo(); // Restart
+        if (m_totalFrames == 0) return nullptr;
+        if (targetIndex >= m_totalFrames) targetIndex = m_totalFrames - 1;
+
+        if (targetIndex < m_currentIndex || m_isFinished) {
+            if (!ResetAndParseBasicInfo()) return nullptr;
         }
         
         std::shared_ptr<RawImageFrame> frame;
@@ -144,7 +148,7 @@ public:
         return m_totalFrames;
     }
     
-    bool IsAnimated() const override { return m_basicInfo.have_animation == JXL_TRUE; }
+    bool IsAnimated() const override { return m_basicInfo.have_animation == JXL_TRUE && m_totalFrames > 1; }
 
 private:
     void DestroyDecoder() {
@@ -199,8 +203,10 @@ private:
 
                 if (m_basicInfo.have_animation) {
                     m_animInfo = m_basicInfo.animation;
-                    // Pre-scan for total frames (very fast since we don't decode pixels)
-                    m_totalFrames = ScanTotalFrames();
+                    // Cache frame count after the initial scan so EOF loop rewinds stay O(1).
+                    if (m_totalFrames == 0) {
+                        m_totalFrames = ScanTotalFrames();
+                    }
                 }
                 foundBasicInfo = true;
                 break; 
