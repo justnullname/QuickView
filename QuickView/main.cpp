@@ -165,6 +165,7 @@ void ScheduleDebouncedSuperResolution(HWND hwnd);
 #define WM_SR_PROGRESS   (WM_APP + 64)  // [QVX-SR] UI-marshaled progress & animation step status
 #define WM_DEFERRED_BOOT_HYDRATE (WM_APP + 25)
 #define WM_BOOT_FRAME_READY      (WM_APP + 26)
+constexpr UINT WM_DEFERRED_EXPLORER_SYNC = WM_APP + 27;
 // WebContentHost::kCommitMessage (WM_APP+55) — document ready, need DComp Commit
 constexpr UINT_PTR TIMER_ID_STARTUP_SHOW = 992;
 constexpr UINT_PTR TIMER_ID_SR_DEBOUNCE = 3001;
@@ -6842,7 +6843,10 @@ void AdjustWindowToImage(HWND hwnd) {
     WINDOWPLACEMENT wp{}; wp.length = sizeof(wp);
     if (GetWindowPlacement(hwnd, &wp)) {
         wp.flags = 0;
-        wp.showCmd = IsWindowVisible(hwnd) ? SW_SHOWNORMAL : SW_HIDE;
+        // Preserve minimized state if the user minimized the window before async image decode finished.
+        wp.showCmd = IsIconic(hwnd)
+            ? SW_SHOWMINNOACTIVE
+            : (IsWindowVisible(hwnd) ? SW_SHOWNORMAL : SW_HIDE);
         
         // [Fix] Convert Screen Coordinates (newLeft/newTop) to Workspace Coordinates
         // rcNormalPosition expects coordinates relative to the primary monitor's work area.
@@ -6862,7 +6866,7 @@ void AdjustWindowToImage(HWND hwnd) {
         wp.rcNormalPosition.bottom = wp.rcNormalPosition.top + windowH;
         
         SetWindowPlacement(hwnd, &wp);
-    } else {
+    } else if (!IsIconic(hwnd)) {
         if (IsWindowVisible(hwnd)) ShowWindow(hwnd, SW_RESTORE);
         SetWindowPos(hwnd, nullptr, newLeft, newTop, windowW, windowH, SWP_NOZORDER | SWP_NOACTIVATE);
     }
@@ -11587,6 +11591,47 @@ static void ShowContextMenuAtClientPt(HWND hwnd, POINT ptClient) {
     ShowContextMenu(hwnd, pt, hasImage, extensionFixNeeded, g_runtime.LockWindowSize, g_runtime.ShowInfoPanel, g_runtime.InfoPanelExpanded, g_config.AlwaysOnTop, renderRaw, isRaw, IsZoomed(hwnd) != 0, g_runtime.CrossMonitorMode, IsCompareModeActive(), isAnimated, isPixelArtMode, menuCmsMode, menuEnableSoftProofing, menuSoftProofPath);
 }
 
+// Guards minimized windows against immediate un-minimize on taskbar click activation bounce,
+// while preserving fallback restore when Shell activates an iconic window without SC_RESTORE.
+struct WindowMinimizeGuard {
+    static constexpr ULONGLONG kMinimizeBounceSuppressionMs = 500;
+    ULONGLONG lastMinimizeTick = 0;
+    bool isMinimized = false;
+    bool restorePostedSinceMinimize = false;
+    bool explorerSyncPosted = false;
+
+    void OnMinimizeStarted() {
+        isMinimized = true;
+        lastMinimizeTick = GetTickCount64();
+        restorePostedSinceMinimize = false;
+    }
+
+    void OnRestored() {
+        isMinimized = false;
+        restorePostedSinceMinimize = false;
+    }
+
+    bool TryConsumeMinimizedActivateRestore(HWND hwnd) {
+        if (!IsIconic(hwnd)) {
+            OnRestored();
+            return false;
+        }
+        if (!isMinimized) {
+            OnMinimizeStarted();
+            return false;
+        }
+        if (restorePostedSinceMinimize) {
+            return false;
+        }
+        if (GetTickCount64() - lastMinimizeTick < kMinimizeBounceSuppressionMs) {
+            return false;
+        }
+        restorePostedSinceMinimize = true;
+        return true;
+    }
+};
+static WindowMinimizeGuard s_windowMinimizeGuard;
+
 LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
     // [Loupe] While the loupe is active, intercept clicks, but honour button release if loupe was mouse-triggered
     if (AppContext::GetInstance().Loupe.active) {
@@ -11674,14 +11719,20 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         SyncWindowDwmFrameAttributes(hwnd, (LOWORD(wParam) != WA_INACTIVE) ? 1 : 0);
         if (LOWORD(wParam) != WA_INACTIVE) {
             g_hasBeenForeground = true;
-            // [Fix] If the window is activated while minimized (e.g. taskbar single-click in custom-frame mode),
-            // restore it immediately so Windows Shell doesn't treat it as an unhandled activation and beep.
-            if (IsIconic(hwnd) || HIWORD(wParam) != 0) {
-                ShowWindow(hwnd, SW_RESTORE);
-                return 0;
-            }
-            if (g_runtime.SortOrder == 0) {
-                GetPaneContext(PaneSlot::Primary).navigator.SyncWithExplorer();
+            if (IsIconic(hwnd)) {
+                // Suppress activation bounces right after minimizing via taskbar; only fall back to
+                // asynchronous SC_RESTORE after the minimized state has settled.
+                if (s_windowMinimizeGuard.TryConsumeMinimizedActivateRestore(hwnd)) {
+                    PostMessageW(hwnd, WM_SYSCOMMAND, SC_RESTORE, 0);
+                }
+            } else {
+                s_windowMinimizeGuard.OnRestored();
+                if (g_runtime.SortOrder == 0 && !s_windowMinimizeGuard.explorerSyncPosted) {
+                    // Defer cross-process Explorer COM sync out of WM_ACTIVATE to avoid STA re-entrancy
+                    // while Shell is completing taskbar activation/restore transitions.
+                    s_windowMinimizeGuard.explorerSyncPosted = true;
+                    PostMessageW(hwnd, WM_DEFERRED_EXPLORER_SYNC, 0, 0);
+                }
             }
         } else if (LOWORD(wParam) == WA_INACTIVE) {
             // User switched away to another window/application -> invalidate clean desktop restore
@@ -11844,7 +11895,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         }
         break;
     }
-    case WM_NCCALCSIZE: if (wParam) return 0; break;
+    case WM_NCCALCSIZE:
+        if (wParam && !IsIconic(hwnd)) return 0;
+        break;
 
     case WM_ERASEBKGND: return 1;  // Prevent system background erase (D2D handles this)
     case WM_APP + 1: {
@@ -12545,6 +12598,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         EnsureBootHydrated(hwnd);
         return 0;
 
+    case WM_DEFERRED_EXPLORER_SYNC:
+        s_windowMinimizeGuard.explorerSyncPosted = false;
+        if (g_runtime.SortOrder == 0 && !IsIconic(hwnd) && GetActiveWindow() == hwnd) {
+            GetPaneContext(PaneSlot::Primary).navigator.SyncWithExplorer();
+        }
+        return 0;
+
     case WM_BOOT_FRAME_READY: {
         if (g_waitingBootFrame) {
             g_waitingBootFrame = false;
@@ -13062,7 +13122,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
         if (wParam == SIZE_MINIMIZED) {
              s_wasMinimized = true;
+             s_windowMinimizeGuard.OnMinimizeStarted();
         } else {
+            s_windowMinimizeGuard.OnRestored();
             OnResize(hwnd, LOWORD(lParam), HIWORD(lParam));
             const bool deferZoomResizeSync = g_deferProgrammaticZoomResizeSync;
             
@@ -16670,7 +16732,9 @@ SKIP_EDGE_NAV:;
     
     case WM_SYSCOMMAND: {
         UINT cmd = wParam & 0xFFF0;
-        if (cmd == SC_MAXIMIZE && g_runtime.CrossMonitorMode) {
+        if (cmd == SC_MINIMIZE) {
+            s_windowMinimizeGuard.OnMinimizeStarted();
+        } else if (cmd == SC_MAXIMIZE && g_runtime.CrossMonitorMode) {
              RECT vRect = GetVirtualScreenRect();
              // Fake Maximize -> Set to Virtual Rect
              ShowWindow(hwnd, SW_SHOWNORMAL); 
