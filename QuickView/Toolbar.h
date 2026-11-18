@@ -86,15 +86,28 @@ public:
     }
     
     bool IsVisible() const { return m_opacity > 0.0f; }
-    void SetVisible(bool visible); // Triggers animation logic external to this class?
-    // actually, we can just set a target state and let UpdateAnimation be called by Timer.
-    void HideImmediately() { m_opacity = 0.0f; m_targetVisible = false; }
+    bool GetTargetVisible() const { return m_targetVisible; }
+    bool IsAnimating() const {
+        const float target = m_targetVisible ? 1.0f : 0.0f;
+        return fabsf(m_opacity - target) > 0.001f;
+    }
+    bool IsInteractable() const {
+        return !m_windowTooNarrow && (m_targetVisible || m_opacity >= 0.15f);
+    }
+    void SetVisible(bool visible, bool immediate = false);
+    void HideImmediately() { m_opacity = 0.0f; m_targetVisible = false; m_lastAnimQpc = 0; }
     bool IsPinned() const { return m_isPinned; }
     void TogglePin() { m_isPinned = !m_isPinned; }
     void SetPinned(bool pinned) { m_isPinned = pinned; }
-    
-    // Animation Step (returns true if still animating)
-    bool UpdateAnimation(); 
+    void SetSafeBottomInset(float insetPixels) {
+        m_safeBottomInset = insetPixels > 0.0f ? insetPixels : 0.0f;
+    }
+    float GetSafeBottomInset() const { return m_safeBottomInset; }
+    bool IsPointInTriggerZone(float x, float y, float winW, float winH, bool expanded) const;
+    D2D1_RECT_F GetBounds() const { return m_bgRect.rect; }
+
+    // Animation Step (returns true if opacity changed and static layer needs repaint)
+    bool UpdateAnimation();
 
     // State Setters
     void SetLockState(bool locked);
@@ -158,6 +171,8 @@ private:
     float m_opacity = 0.0f;
     float m_uiScale = 1.0f;
     float m_uiFontScale = 0.0f;
+    float m_safeBottomInset = 0.0f;
+    int64_t m_lastAnimQpc = 0;
 
     bool m_targetVisible = false;
     bool m_isPinned = false;

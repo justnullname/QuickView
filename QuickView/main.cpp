@@ -336,7 +336,8 @@ bool g_pendingRegistryCheck = false;
 static const UINT_PTR TIMER_ID_SETTINGS_CARET = 991;
 static const UINT_PTR TIMER_ID_REGISTRY_CHECK = 993;
 
-DWORD g_toolbarHideTime = 0; // For auto-hide delay
+static ULONGLONG g_toolbarHideDeadlineMs = 0; // 0 = no pending hide; >0 = target tick to start hide
+static bool g_toolbarTimerActive = false;
 AppConfig g_config;
 CropState g_cropState;
 std::array<HotkeyBinding, static_cast<size_t>(HotkeyAction::Count)> g_hotkeys = {
@@ -1424,6 +1425,8 @@ static void EnsureThumbMgrInitialized(HWND hwnd);
 static void EnsureRatingStoreInitialized(HWND hwnd);
 static void EnsureUpdateInitialized(HWND hwnd);
 static void EnsureInfoPanelDataLoaded(HWND hwnd);
+static void RefreshToolbarSafeLayout(HWND hwnd);
+static void SyncToolbarHoverFromCursor(HWND hwnd);
 
 static void ApplyUIScale(float scale) {
     if (scale < 0.75f) scale = 0.75f;
@@ -1464,6 +1467,9 @@ static void RefreshWindowDpi(HWND hwnd, UINT dpiHint = 0) {
     }
     if (dpi == 0) dpi = USER_DEFAULT_SCREEN_DPI;
     ApplyUIScale(ResolveUIScale(dpi));
+    if (hwnd) {
+        RefreshToolbarSafeLayout(hwnd);
+    }
     if (hwnd && (g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible() || g_gallery.IsVisible() || AppContext::GetInstance().Dialog.IsVisible || g_imagePath.empty())) {
         AdjustWindowForOverlay(hwnd, false);
     }
@@ -4949,6 +4955,10 @@ static void SetFullscreenMode(HWND hwnd, bool enter, bool restoreMaximized = fal
                          SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
         }
         SyncWindowDwmFrameAttributes(hwnd);
+        RefreshToolbarSafeLayout(hwnd);
+        if (IsWindowVisible(hwnd)) {
+            SyncToolbarHoverFromCursor(hwnd);
+        }
         return;
     }
 
@@ -4993,6 +5003,10 @@ static void SetFullscreenMode(HWND hwnd, bool enter, bool restoreMaximized = fal
 
     // Apply AFTER SetWindowPos to guarantee DWM attributes persist.
     SyncWindowDwmFrameAttributes(hwnd);
+    RefreshToolbarSafeLayout(hwnd);
+    if (IsWindowVisible(hwnd)) {
+        SyncToolbarHoverFromCursor(hwnd);
+    }
 }
 
 static bool ShouldAutoFullscreenForDimensions(HWND hwnd, UINT imgW, UINT imgH) {
@@ -7642,6 +7656,196 @@ RECT GetVirtualScreenRect() {
     };
     EnumDisplayMonitors(NULL, NULL, MonitorEnumProc, (LPARAM)&vRect);
     return vRect;
+}
+
+static bool IsCrossMonitorSpanMaximized(HWND hwnd) {
+    if (!hwnd || !g_runtime.CrossMonitorMode) return false;
+    RECT vRect = GetVirtualScreenRect();
+    RECT rcWin{};
+    if (!GetWindowRect(hwnd, &rcWin)) return false;
+    return (abs(rcWin.left - vRect.left) <= 2 &&
+            abs(rcWin.top - vRect.top) <= 2 &&
+            abs(rcWin.right - vRect.right) <= 2 &&
+            abs(rcWin.bottom - vRect.bottom) <= 2);
+}
+
+static float ComputeToolbarSafeBottomInset(HWND hwnd, float winW, float winH) {
+    if (!hwnd || g_isFullScreen || IsZoomed(hwnd) || winW <= 0.0f || winH <= 0.0f) {
+        return 0.0f;
+    }
+    if (!g_runtime.CrossMonitorMode) {
+        return 0.0f;
+    }
+
+    RECT rcWin{};
+    if (!GetWindowRect(hwnd, &rcWin)) return 0.0f;
+
+    struct SpanMonitorProbe {
+        RECT winRect;
+        RECT tbScreenRect;
+        int monitorCount = 0;
+        LONG minIntersectingWorkBottom = 0x7FFFFFFFL;
+        bool hasTbIntersection = false;
+    } probe{};
+    probe.winRect = rcWin;
+
+    POINT clientOrigin = { 0, 0 };
+    ClientToScreen(hwnd, &clientOrigin);
+    const D2D1_RECT_F tbBounds = g_toolbar.GetBounds();
+    const LONG tbLeft = clientOrigin.x + static_cast<LONG>(std::floor(tbBounds.left));
+    const LONG tbRight = clientOrigin.x + static_cast<LONG>(std::ceil(tbBounds.right));
+    probe.tbScreenRect = {
+        tbLeft,
+        clientOrigin.y,
+        (std::max)(tbLeft + 1L, tbRight),
+        clientOrigin.y + static_cast<LONG>(winH)
+    };
+
+    EnumDisplayMonitors(nullptr, nullptr, [](HMONITOR hMon, HDC, LPRECT, LPARAM lParam) -> BOOL {
+        auto* p = reinterpret_cast<SpanMonitorProbe*>(lParam);
+        MONITORINFO mi{};
+        mi.cbSize = sizeof(mi);
+        if (!GetMonitorInfoW(hMon, &mi)) return TRUE;
+
+        RECT winOverlap{};
+        if (IntersectRect(&winOverlap, &p->winRect, &mi.rcMonitor)) {
+            p->monitorCount++;
+            RECT tbOverlap{};
+            if (IntersectRect(&tbOverlap, &p->tbScreenRect, &mi.rcMonitor)) {
+                p->hasTbIntersection = true;
+                if (mi.rcWork.bottom < p->minIntersectingWorkBottom) {
+                    p->minIntersectingWorkBottom = mi.rcWork.bottom;
+                }
+            }
+        }
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&probe));
+
+    if (probe.monitorCount < 2 || !probe.hasTbIntersection || probe.minIntersectingWorkBottom == 0x7FFFFFFFL) {
+        return 0.0f;
+    }
+
+    const LONG clientBottomScreen = clientOrigin.y + static_cast<LONG>(winH);
+    if (clientBottomScreen > probe.minIntersectingWorkBottom) {
+        const float rawInset = static_cast<float>(clientBottomScreen - probe.minIntersectingWorkBottom);
+        return (std::min)(rawInset, winH * 0.45f);
+    }
+    return 0.0f;
+}
+
+static void RefreshToolbarSafeLayout(HWND hwnd) {
+    if (!hwnd) return;
+    RECT rc{};
+    if (!GetClientRect(hwnd, &rc) || rc.right <= rc.left || rc.bottom <= rc.top) return;
+    const float winW = static_cast<float>(rc.right - rc.left);
+    const float winH = static_cast<float>(rc.bottom - rc.top);
+    g_toolbar.SetSafeBottomInset(0.0f);
+    g_toolbar.UpdateLayout(winW, winH);
+    const float inset = ComputeToolbarSafeBottomInset(hwnd, winW, winH);
+    if (inset > 0.0f) {
+        g_toolbar.SetSafeBottomInset(inset);
+        g_toolbar.UpdateLayout(winW, winH);
+    }
+}
+
+static void SyncToolbarTimer(HWND hwnd) {
+    if (!hwnd) return;
+    const bool needTimer =
+        g_toolbar.IsAnimating() ||
+        (g_toolbarHideDeadlineMs != 0 && g_toolbar.GetTargetVisible() && !g_toolbar.IsPinned());
+    if (needTimer && !g_toolbarTimerActive) {
+        SetTimer(hwnd, 997, 16, nullptr);
+        g_toolbarTimerActive = true;
+    } else if (!needTimer && g_toolbarTimerActive) {
+        KillTimer(hwnd, 997);
+        g_toolbarTimerActive = false;
+    }
+}
+
+static void RequestToolbarShow(HWND hwnd) {
+    g_toolbarHideDeadlineMs = 0;
+    if (!g_toolbar.GetTargetVisible() || !g_toolbar.IsVisible()) {
+        g_toolbar.SetVisible(true);
+        RequestRepaint(PaintLayer::Static);
+    }
+    SyncToolbarTimer(hwnd);
+}
+
+static void RequestToolbarHide(HWND hwnd, bool immediate, ULONGLONG graceMs = 150) {
+    if (g_toolbar.IsPinned() || g_cropState.IsActive) {
+        g_toolbarHideDeadlineMs = 0;
+        SyncToolbarTimer(hwnd);
+        return;
+    }
+    if (immediate || graceMs == 0) {
+        g_toolbarHideDeadlineMs = 0;
+        if (g_toolbar.GetTargetVisible() || g_toolbar.IsVisible()) {
+            g_toolbar.SetVisible(false, !g_config.GlassUIAnimations);
+            RequestRepaint(PaintLayer::Static);
+        }
+        SyncToolbarTimer(hwnd);
+        return;
+    }
+    if (g_toolbar.GetTargetVisible()) {
+        if (g_toolbarHideDeadlineMs == 0) {
+            g_toolbarHideDeadlineMs = GetTickCount64() + graceMs;
+        }
+    } else {
+        g_toolbarHideDeadlineMs = 0;
+    }
+    SyncToolbarTimer(hwnd);
+}
+
+static void UpdateToolbarInteractionAtClientPt(HWND hwnd, POINT pt, float winW, float winH) {
+    const bool isFullGridGallery = g_gallery.IsVisible() && g_gallery.GetMode() == GalleryMode::FullGrid;
+    const bool isWelcomeScreen = g_imagePath.empty() && !g_gallery.IsVisible();
+    const bool anyOverlayOpen = g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible() ||
+                                isFullGridGallery || isWelcomeScreen ||
+                                QuickView::ExportPanel::GetInstance().IsVisible() ||
+                                QuickView::PrintPreviewUI::GetInstance().IsVisible() ||
+                                QuickView::UI::AiActionOverlay::Instance().IsVisible();
+
+    if (anyOverlayOpen || g_toolbar.IsWindowTooNarrow()) {
+        RequestToolbarHide(hwnd, true);
+        return;
+    }
+
+    const bool currentlyExpanded = g_toolbar.GetTargetVisible() || g_toolbar.IsVisible();
+    const bool inZone =
+        g_toolbar.IsPointInTriggerZone(static_cast<float>(pt.x), static_cast<float>(pt.y), winW, winH, currentlyExpanded) ||
+        g_toolbar.HitTest(static_cast<float>(pt.x), static_cast<float>(pt.y));
+
+    if (inZone || g_toolbar.IsPinned() || g_isDraggingAnimSeek || g_cropState.IsActive) {
+        RequestToolbarShow(hwnd);
+    } else {
+        RequestToolbarHide(hwnd, false, 150);
+    }
+}
+
+static void SyncToolbarHoverFromCursor(HWND hwnd) {
+    if (!hwnd) return;
+    RECT rc{};
+    if (!GetClientRect(hwnd, &rc) || rc.right <= rc.left || rc.bottom <= rc.top) return;
+    const float winW = static_cast<float>(rc.right - rc.left);
+    const float winH = static_cast<float>(rc.bottom - rc.top);
+
+    POINT scrPt{};
+    if (!GetCursorPos(&scrPt)) return;
+    POINT pt = scrPt;
+    ScreenToClient(hwnd, &pt);
+
+    const bool insideClient = PtInRect(&rc, pt) && (GetActiveWindow() == hwnd || WindowFromPoint(scrPt) == hwnd);
+    if (insideClient) {
+        UpdateToolbarInteractionAtClientPt(hwnd, pt, winW, winH);
+        if (g_toolbar.OnMouseMove(static_cast<float>(pt.x), static_cast<float>(pt.y))) {
+            RequestRepaint(PaintLayer::Static);
+        }
+    } else {
+        RequestToolbarHide(hwnd, true);
+        if (g_toolbar.OnMouseMove(-9999.0f, -9999.0f)) {
+            RequestRepaint(PaintLayer::Static);
+        }
+    }
 }
 
 static RECT GetWindowExpansionBounds(HWND hwnd) {
@@ -11744,6 +11948,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             if (AppContext::GetInstance().Loupe.active) {
                 DeactivateLoupe();
             }
+
+            if (!g_toolbar.IsPinned() && !g_cropState.IsActive) {
+                RequestToolbarHide(hwnd, true);
+            }
         }
         break;
 
@@ -11865,6 +12073,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         // [CMS] System/Monitor profile changed
         QuickView::DisplayColorInfo::InvalidateHardwareCache();
         RefreshDisplayColorPipeline(hwnd, true);
+        RefreshToolbarSafeLayout(hwnd);
+        SyncToolbarHoverFromCursor(hwnd);
+        RequestRepaint(PaintLayer::Static);
         break;
     }
     case WM_DWMCOLORIZATIONCOLORCHANGED: {
@@ -11883,6 +12094,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             QuickView::UI::Theme::RefreshThemePalette(g_config);
             ApplyWindowTheme(hwnd);
             RequestRepaint(PaintLayer::All);
+        }
+        if (wParam == SPI_SETWORKAREA) {
+            RefreshToolbarSafeLayout(hwnd);
+            SyncToolbarHoverFromCursor(hwnd);
+            RequestRepaint(PaintLayer::Static);
         }
         break;
     }
@@ -12915,24 +13131,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         
         // Toolbar Animation Timer (997)
         if (wParam == 997) {
-            // Auto-Hide Delay Logic
-            if (g_toolbarHideTime > 0 && (GetTickCount() - g_toolbarHideTime > 600)) {
-                 if (!g_toolbar.IsPinned()) g_toolbar.SetVisible(false);
+            if (g_toolbarHideDeadlineMs > 0 && GetTickCount64() >= g_toolbarHideDeadlineMs) {
+                g_toolbarHideDeadlineMs = 0;
+                if (!g_toolbar.IsPinned() && !g_cropState.IsActive && !g_isDraggingAnimSeek) {
+                    g_toolbar.SetVisible(false);
+                    MarkStaticLayerDirty();
+                }
             }
-            
-            bool animating = g_toolbar.UpdateAnimation();
-            
-            // Only refresh when actually animating (opacity changing)
-            if (animating) {
-                MarkStaticLayerDirty();  // Toolbar opacity is changing
+
+            if (g_toolbar.UpdateAnimation()) {
+                MarkStaticLayerDirty();
             }
-            
-            // Keep timer alive if animating or pending hide
-            if (animating || (g_toolbar.IsVisible() && !g_toolbar.IsPinned() && g_toolbarHideTime > 0)) {
-                // Timer stays alive but only marks dirty during animation
-            } else {
-                KillTimer(hwnd, 997);
-            }
+
+            SyncToolbarTimer(hwnd);
         }
         
         // Titan Base Decode UI Heartbeat (995)
@@ -12969,8 +13180,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
     case WM_NCHITTEST: {
-        // [Fix] Disable window edge resizing/interaction in Fullscreen
-        if (g_isFullScreen) return HTCLIENT;
+        // Disable window edge resizing/interaction in Fullscreen, Maximized, or Cross-Monitor Span Maximized
+        // so screen-edge / taskbar-adjacent mouse moves reach WM_MOUSEMOVE cleanly.
+        if (g_isFullScreen || IsZoomed(hwnd) || IsCrossMonitorSpanMaximized(hwnd)) return HTCLIENT;
 
         LRESULT hit = DefWindowProcW(hwnd, message, wParam, lParam);
         if (hit != HTCLIENT) return hit;
@@ -13019,6 +13231,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         }
         if (QuickView::UI::AiActionOverlay::Instance().IsVisible()) {
             QuickView::UI::AiActionOverlay::Instance().UpdateHostPosition();
+        }
+        if (g_runtime.CrossMonitorMode && !g_isFullScreen && !IsZoomed(hwnd)) {
+            const float prevInset = g_toolbar.GetSafeBottomInset();
+            RefreshToolbarSafeLayout(hwnd);
+            if (fabsf(g_toolbar.GetSafeBottomInset() - prevInset) > 0.5f) {
+                RequestRepaint(PaintLayer::Static);
+            }
         }
         return 0;
 
@@ -13222,7 +13441,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                      pNewRect->right - pNewRect->left,
                      pNewRect->bottom - pNewRect->top,
                      SWP_NOZORDER | SWP_NOACTIVATE);
-        // WM_SIZE will be triggered by SetWindowPos and refresh layout using the new scale.
+        // Ensure toolbar layout & hover state stay synced even if pixel size didn't change (no WM_SIZE).
+        RefreshToolbarSafeLayout(hwnd);
+        SyncToolbarHoverFromCursor(hwnd);
+        RequestRepaint(PaintLayer::Static);
         return 0;
     }
     
@@ -13356,10 +13578,12 @@ case WM_DESTROY: {
            }
 
           if (QuickView::PrintPreviewUI::GetInstance().IsVisible()) {
+              RequestToolbarHide(hwnd, true);
               if (QuickView::PrintPreviewUI::GetInstance().OnMouseMove(pt.x, pt.y)) return 0;
           }
 
           if (QuickView::ExportPanel::GetInstance().IsVisible()) {
+              RequestToolbarHide(hwnd, true);
               if (QuickView::ExportPanel::GetInstance().OnMouseMove((float)pt.x, (float)pt.y)) return 0;
           }
 
@@ -13479,6 +13703,8 @@ case WM_DESTROY: {
               if (repaintStatic) {
                   RequestRepaint(PaintLayer::Static);
               }
+              RECT rcMini{}; GetClientRect(hwnd, &rcMini);
+              UpdateToolbarInteractionAtClientPt(hwnd, pt, (float)(rcMini.right - rcMini.left), (float)(rcMini.bottom - rcMini.top));
               SetCursor(g_currentCursor);
               return 0;
           } else {
@@ -13737,6 +13963,7 @@ case WM_DESTROY: {
           }
           
           if (QuickView::UI::AiActionOverlay::Instance().IsVisible()) {
+              RequestToolbarHide(hwnd, true);
               if (QuickView::UI::AiActionOverlay::Instance().OnMouseMove((float)pt.x, (float)pt.y)) {
                   if (QuickView::UI::AiActionOverlay::Instance().GetHoverIndex() != -1) {
                       g_currentCursor = LoadCursor(nullptr, IDC_HAND);
@@ -13748,6 +13975,7 @@ case WM_DESTROY: {
               }
           }
           if (g_settingsOverlay.IsVisible()) {
+              RequestToolbarHide(hwnd, true);
               g_currentCursor = LoadCursor(nullptr, IDC_ARROW);
               SettingsAction action = g_settingsOverlay.OnMouseMove((float)pt.x, (float)pt.y);
               if (action == SettingsAction::RepaintAll) RequestRepaint(PaintLayer::All);
@@ -13855,77 +14083,39 @@ SKIP_EDGE_NAV:;
           if (!g_gallery.IsVisible() || g_gallery.GetMode() != GalleryMode::FullGrid) {
           // Toolbar Trigger
           RECT rc; GetClientRect(hwnd, &rc);
-          float winH = (float)(rc.bottom - rc.top);
-          float zoneHeight = g_toolbar.IsVisible() ? 110.0f * g_uiScale : 48.0f * g_uiScale; // Expanded hysteresis safety zone when visible
-          bool inZone = (pt.y > winH - zoneHeight) || g_toolbar.HitTest((float)pt.x, (float)pt.y);
-          
-          static DWORD s_hideRequestTime = 0;
-          bool anyOverlayOpen = g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible();
-          
-          if (anyOverlayOpen) {
-              if (g_toolbar.IsVisible()) {
-                  g_toolbar.SetVisible(false);
-                  RequestRepaint(PaintLayer::Static);
-              }
-              s_hideRequestTime = 0;
-          } else if (inZone || g_toolbar.IsPinned() || g_isDraggingAnimSeek || g_cropState.IsActive) {
-              if (!g_toolbar.IsVisible()) {  // Only repaint if state actually changes
-                  g_toolbar.SetVisible(true);
-                  SetTimer(hwnd, 997, 16, nullptr);  // Start animation timer immediately
-                  RequestRepaint(PaintLayer::Static);  // Toolbar visibility changed
-              }
-              s_hideRequestTime = 0;
-          } else {
-              // Outside zone and not pinned
-              if (g_toolbar.IsVisible() && s_hideRequestTime == 0) {
-                  s_hideRequestTime = GetTickCount(); // Start countdown
-              }
-          }
-           
-          // Pass intent to Timer:
-          // We can't pass 's_hideRequestTime' to Timer easily without global.
-          // Let's use a static variable in main.cpp scope or just a global.
-          // For now, let's just use SetVisible(false) here IF the delay was short, but for 2s delay we need Timer.
-          // Let's store s_hideRequestTime in a global "g_toolbarHideTime" for simplicity.
-          extern DWORD g_toolbarHideTime; // Defined in global scope
-          g_toolbarHideTime = s_hideRequestTime; 
-          
+          float tbWinW = (float)(rc.right - rc.left);
+          float tbWinH = (float)(rc.bottom - rc.top);
+          UpdateToolbarInteractionAtClientPt(hwnd, pt, tbWinW, tbWinH);
+
           if (g_helpOverlay.IsVisible()) {
               g_helpOverlay.OnMouseMove((float)pt.x, (float)pt.y);
               RequestRepaint(PaintLayer::Static);
-              // Allow fallthrough so we can still drag window if needed? 
-              // Usually overlay blocks underlying.
-              // But let's allow fallthrough for now unless we want modal block.
           }
 
           // Toolbar Mouse Move
-        if (g_toolbar.OnMouseMove((float)pt.x, (float)pt.y)) {
-             RequestRepaint(PaintLayer::Static); // Toolbar is on Static layer
-        }
+          if (g_toolbar.OnMouseMove((float)pt.x, (float)pt.y)) {
+              RequestRepaint(PaintLayer::Static); // Toolbar is on Static layer
+          }
 
-        if (g_isDraggingAnimSeek) {
-            float prog = 0;
-            if (g_toolbar.GetAnimSeekTarget(prog)) {
-                static DWORD lastSeekTime = 0;
-                DWORD curTime = GetTickCount();
-                if (curTime - lastSeekTime >= 33) {
-                    PerformAnimSeek(hwnd, prog);
-                    lastSeekTime = curTime;
-                } else {
-                    g_toolbar.SetAnimProgress(prog);
-                }
-                RequestRepaint(PaintLayer::Static);
-            }
-        }
-          
-          // Set hand cursor when hovering toolbar buttons
-          if (g_toolbar.IsVisible() && g_toolbar.HitTest((float)pt.x, (float)pt.y)) {
+          if (g_isDraggingAnimSeek) {
+              float prog = 0;
+              if (g_toolbar.GetAnimSeekTarget(prog)) {
+                  static DWORD lastSeekTime = 0;
+                  DWORD curTime = GetTickCount();
+                  if (curTime - lastSeekTime >= 33) {
+                      PerformAnimSeek(hwnd, prog);
+                      lastSeekTime = curTime;
+                  } else {
+                      g_toolbar.SetAnimProgress(prog);
+                  }
+                  RequestRepaint(PaintLayer::Static);
+              }
+          }
+
+          // Set hand cursor only when toolbar is actively interactable
+          if (g_toolbar.IsInteractable() && g_toolbar.HitTest((float)pt.x, (float)pt.y)) {
               g_currentCursor = LoadCursor(nullptr, IDC_HAND);
           }
-          
-          SetTimer(hwnd, 997, 16, nullptr); // Drive animation logic
-          // Note: Toolbar.OnMouseMove handles hover state changes and 
-          // WM_TIMER 997 will refresh if animation is active
 
           // Custom mouse drag detection for gestures
           if (g_customMouseDrag.isPending && g_customMouseDrag.action != MouseActionTarget::None) {
@@ -14316,6 +14506,9 @@ SKIP_EDGE_NAV:;
               }
           }
          } // End of !g_gallery.IsVisible() guard
+         else {
+             RequestToolbarHide(hwnd, true);
+         }
          
          SetCursor(g_currentCursor);
          return 0;
@@ -14328,12 +14521,11 @@ SKIP_EDGE_NAV:;
             if (g_uiRenderer) g_uiRenderer->SetControlsVisible(false);
         }
         
-        // [Fix] Auto-hide Toolbar and Nav Arrows when mouse leaves window
-        if (!g_toolbar.IsPinned()) {
-            if (g_toolbar.IsVisible()) {
-                g_toolbar.SetVisible(false);
-                MarkStaticLayerDirty(); // Force Static Layer Update (Critical for Toolbar)
-            }
+        if (g_toolbar.OnMouseMove(-9999.0f, -9999.0f)) {
+            MarkStaticLayerDirty();
+        }
+        if (!g_isDraggingAnimSeek) {
+            RequestToolbarHide(hwnd, true);
         }
         if (GetPaneContext(PaneSlot::Primary).view.EdgeHoverState != 0) {
             GetPaneContext(PaneSlot::Primary).view.EdgeHoverState = 0;
@@ -15787,12 +15979,10 @@ SKIP_EDGE_NAV:;
                         g_isDraggingAnimSeek = false;
                         g_toolbar.SetDraggingProgress(false);
                         ReleaseCapture();
-                        
-                        // Interaction Grace Period: Reset auto-hide timer with extra delay
-                        // This allows user to watch the result of the scrub for a while before hide.
-                        // Setting it to GetTickCount() + 2000 makes the 2s delay in Timer 997 effective from 2s in future.
-                        extern DWORD g_toolbarHideTime;
-                        g_toolbarHideTime = GetTickCount() + 2000; 
+
+                        // Post-scrub grace period (800ms) so the user can inspect the seek result.
+                        g_toolbarHideDeadlineMs = GetTickCount64() + 800;
+                        SyncToolbarTimer(hwnd);
                     }
                     float targetProgress = 0.0f;
                     if (GetPaneContext(PaneSlot::Primary).resource.animator && g_toolbar.GetAnimSeekTarget(targetProgress)) {
@@ -16224,7 +16414,13 @@ SKIP_EDGE_NAV:;
         g_isDraggingFilmstrip = false;
         g_customMouseDrag = {};
         g_cropState.IsDragging = false;
-        g_isDraggingAnimSeek = false;
+        if (g_isDraggingAnimSeek) {
+            g_isDraggingAnimSeek = false;
+            g_toolbar.SetDraggingProgress(false);
+        }
+        if ((HWND)lParam != hwnd) {
+            SyncToolbarHoverFromCursor(hwnd);
+        }
         if (AppContext::GetInstance().Loupe.triggerMouseBtn != 0 && (HWND)lParam != hwnd) {
             DeactivateLoupe();
         }
@@ -16816,7 +17012,10 @@ void OnResize(HWND hwnd, UINT width, UINT height) {
         }
     }
     if (g_uiRenderer) g_uiRenderer->OnResize(width, height);
-    g_toolbar.UpdateLayout((float)width, (float)height);
+    RefreshToolbarSafeLayout(hwnd);
+    if (IsWindowVisible(hwnd)) {
+        SyncToolbarHoverFromCursor(hwnd);
+    }
     if (IsCompareModeActive()) {
         MarkCompareDirty();
     }

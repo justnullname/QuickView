@@ -444,7 +444,8 @@ void Toolbar::UpdateLayout(float winW, float winH) {
   m_minRequiredWidth = totalW + (PADDING_X * 2 * m_uiScale);
 
   float startX = (winW - totalW) / 2.0f;
-  float startY = winH - bottomMargin - buttonSize - padY * 2;
+  const float effectiveBottom = winH - (std::max)(0.0f, m_safeBottomInset);
+  float startY = (std::max)(4.0f * m_uiScale, effectiveBottom - bottomMargin - buttonSize - padY * 2);
 
   m_bgRect =
       D2D1::RoundedRect(D2D1::RectF(startX, startY, startX + totalW,
@@ -1090,7 +1091,7 @@ bool Toolbar::OnMouseMove(float x, float y) {
       else if (x >= m_animSpeedDownRect.left && x < m_animSpeedDownRect.right && y >= m_animSpeedDownRect.top && y < m_animSpeedDownRect.bottom) sDownHover = true;
     }
   }
-  if (!m_animMode) { sHover = sUpHover = sDownHover = false; }
+  if (!(m_animMode || m_slideshowMode)) { sHover = sUpHover = sDownHover = false; }
   if (sHover != m_animSpeedHover || sUpHover != m_animSpeedUpHover || sDownHover != m_animSpeedDownHover) {
     changed = true;
     m_animSpeedHover = sHover; m_animSpeedUpHover = sUpHover; m_animSpeedDownHover = sDownHover;
@@ -1188,31 +1189,106 @@ bool Toolbar::HitTest(float x, float y) {
   return false;
 }
 
-void Toolbar::SetVisible(bool visible) {
+bool Toolbar::IsPointInTriggerZone(float x, float y, float winW, float winH, bool expanded) const {
+  if (m_windowTooNarrow || winW <= 0.0f || winH <= 0.0f) return false;
+  if (m_bgRect.rect.right <= m_bgRect.rect.left) return false;
+
+  const float s = m_uiScale;
+  const float padX = (expanded ? 56.0f : 36.0f) * s;
+  const float left = (std::max)(0.0f, m_bgRect.rect.left - padX);
+  const float right = (std::min)(winW, m_bgRect.rect.right + padX);
+
+  float top = expanded ? (m_bgRect.rect.top - 36.0f * s) : (m_bgRect.rect.top - 8.0f * s);
+  if (expanded && m_animMode && m_animProgressRect.bottom > m_animProgressRect.top) {
+    top = (std::min)(top, m_animProgressRect.top - 24.0f * s);
+  }
+  if (!expanded) {
+    top = (std::max)(top, winH * 0.45f);
+  }
+  top = (std::max)(0.0f, top);
+
+  const float effectiveBottom = (std::max)(m_bgRect.rect.bottom, winH - (std::max)(0.0f, m_safeBottomInset));
+  const float bottom = (std::min)(winH, effectiveBottom);
+
+  return x >= left && x <= right && y >= top && y <= bottom;
+}
+
+void Toolbar::SetVisible(bool visible, bool immediate) {
   if (m_cropMode) {
     m_targetVisible = true;
     m_opacity = 1.0f;
+    m_lastAnimQpc = 0;
     return;
   }
   m_targetVisible = visible;
+  if (!g_config.GlassUIAnimations || immediate) {
+    m_opacity = visible ? 1.0f : 0.0f;
+    m_lastAnimQpc = 0;
+    return;
+  }
+  if (visible) {
+    if (m_opacity <= 0.0f) {
+      // Seed initial opacity so the first rendered frame is immediately perceptible.
+      m_opacity = 0.25f;
+    }
+    if (m_lastAnimQpc == 0) {
+      LARGE_INTEGER now{};
+      QueryPerformanceCounter(&now);
+      m_lastAnimQpc = now.QuadPart;
+    }
+  } else {
+    if (m_opacity > 0.0f && m_lastAnimQpc == 0) {
+      LARGE_INTEGER now{};
+      QueryPerformanceCounter(&now);
+      m_lastAnimQpc = now.QuadPart;
+    }
+  }
 }
 
 bool Toolbar::UpdateAnimation() {
+  const float target = m_targetVisible ? 1.0f : 0.0f;
+  const float prevOpacity = m_opacity;
   if (!g_config.GlassUIAnimations) {
-      if (m_targetVisible) {
-          m_opacity = 1.0f;
-      } else {
-          m_opacity = 0.0f;
-      }
-      return false; // Fast cut
+    m_opacity = target;
+    m_lastAnimQpc = 0;
+    return fabsf(m_opacity - prevOpacity) > 0.0001f;
   }
-  float speed = 0.34f;
+  if (fabsf(m_opacity - target) <= 0.001f) {
+    m_opacity = target;
+    m_lastAnimQpc = 0;
+    return fabsf(m_opacity - prevOpacity) > 0.0001f;
+  }
+
+  static int64_t s_qpcFreq = 0;
+  if (s_qpcFreq == 0) {
+    LARGE_INTEGER freq{};
+    QueryPerformanceFrequency(&freq);
+    s_qpcFreq = freq.QuadPart > 0 ? freq.QuadPart : 10000000LL;
+  }
+  LARGE_INTEGER now{};
+  QueryPerformanceCounter(&now);
+  float dt = 0.016f;
+  if (m_lastAnimQpc > 0 && now.QuadPart > m_lastAnimQpc) {
+    dt = static_cast<float>(now.QuadPart - m_lastAnimQpc) / static_cast<float>(s_qpcFreq);
+    dt = (std::max)(0.001f, (std::min)(dt, 0.05f));
+  }
+  m_lastAnimQpc = now.QuadPart;
+
+  constexpr float kFadeInDurationSec = 0.085f;
+  constexpr float kFadeOutDurationSec = 0.110f;
+  const float step = dt / (m_targetVisible ? kFadeInDurationSec : kFadeOutDurationSec);
+
   if (m_targetVisible) {
-    if (m_opacity < 1.0f) { m_opacity += speed; if (m_opacity > 1.0f) m_opacity = 1.0f; return true; }
+    m_opacity = (std::min)(1.0f, m_opacity + step);
   } else {
-    if (m_opacity > 0.0f) { m_opacity -= speed; if (m_opacity < 0.0f) m_opacity = 0.0f; return true; }
+    m_opacity = (std::max)(0.0f, m_opacity - step);
   }
-  return false;
+
+  if (fabsf(m_opacity - target) <= 0.001f) {
+    m_opacity = target;
+    m_lastAnimQpc = 0;
+  }
+  return fabsf(m_opacity - prevOpacity) > 0.0001f;
 }
 
 void Toolbar::SetLockState(bool locked) {
