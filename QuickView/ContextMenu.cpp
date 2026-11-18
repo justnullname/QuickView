@@ -19,7 +19,7 @@ using AB = ActionButton;
 void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
                      bool isWindowLocked, bool showInfoPanel, bool infoPanelExpanded,
                      bool alwaysOnTop, bool renderRaw, bool isRawFile, bool isFullscreen,
-                     bool isCrossMonitor, bool isCompareMode, bool isAnimated, bool isPixelArtMode,
+                     bool isCrossMonitor, bool isCompareMode, [[maybe_unused]] bool isAnimated, bool isPixelArtMode,
                      int cmsMode, bool enableSoftProofing, const std::wstring& softProofProfilePath) {
 
     LinearWideStringPool menuStrings;
@@ -89,7 +89,7 @@ void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
     // --- View Submenu ---
     {
         std::vector<MI> viewItems;
-        viewItems.push_back(MI::Check(IDM_COMPARE_MODE, AppStrings::g.Context_CompareMode, isCompareMode, GeekIcons::Compare, getHK(HotkeyAction::ToggleCompare)).Enabled(isCompareMode || (hasImage && !isAnimated)));
+        viewItems.push_back(MI::Check(IDM_COMPARE_MODE, AppStrings::g.Context_CompareMode, isCompareMode, GeekIcons::Compare, getHK(HotkeyAction::ToggleCompare)).Enabled(isCompareMode || hasImage));
         bool isOverlay = (g_runtime.OverlayModeState != OverlayState::Normal);
         viewItems.push_back(MI::Check(IDM_OVERLAY_MODE, AppStrings::g.Context_OverlayMode, isOverlay, GeekIcons::Eye, getHK(HotkeyAction::ToggleOverlay)));
         viewItems.push_back(MI::Sep());

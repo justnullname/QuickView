@@ -29,6 +29,11 @@ extern void SnapWindowToCompareImages(HWND hwnd);
 extern void RefreshImageDisplay(HWND hwnd);
 extern void SyncDCompState(HWND hwnd, float w, float h, bool animate = false);
 extern bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFirst);
+extern void SyncAnimationPlaybackTimers(HWND hwnd);
+extern void DeactivateWebContentForCompare(HWND hwnd);
+extern void RasterizeComplexSvgForComparePane(HWND hwnd, PaneSlot slot);
+extern std::atomic<bool> g_forceTitanTileReseed;
+extern bool g_animPlaying;
 
 #include "QuickView.h"
 
@@ -329,6 +334,15 @@ void CompareController::CaptureCurrentImageAsLeft() {
     GetPaneContext(PaneSlot::Left).Reset();
     GetPaneContext(PaneSlot::Left).resource = GetPaneContext(PaneSlot::Primary).resource.Clone();
     GetPaneContext(PaneSlot::Left).metadata = GetPaneContext(PaneSlot::Primary).metadata;
+    GetPaneContext(PaneSlot::Left).currentFrame = GetPaneContext(PaneSlot::Primary).currentFrame;
+
+    // For Complex SVG (WebView2), clear single-pane overscan capture / partial D2D SVG
+    // so Compare Mode rasterizes a clean aspect-accurate bitmap via WebViewThumbService.
+    if (GetPaneContext(PaneSlot::Left).resource.isWebView) {
+        GetPaneContext(PaneSlot::Left).resource.bitmap.Reset();
+        GetPaneContext(PaneSlot::Left).resource.svgDoc.Reset();
+        GetPaneContext(PaneSlot::Left).resource.webViewVisual.Reset();
+    }
 
     // Ensure Left pane represents the pristine 1.0x unscaled original frame
     if (GetPaneContext(PaneSlot::Left).resource.baseNormalBitmap) {
@@ -374,7 +388,8 @@ bool CompareController::RenderComposite(HWND hwnd) {
         }
     }
 
-    ID2D1DeviceContext* ctx = g_compEngine->BeginPendingUpdate(winW, winH, false, 0, 0, false, compareSurfaceFormat, GetPaneContext(PaneSlot::Primary).metadata.hasAlpha);
+    const bool compareAlpha = GetPaneContext(PaneSlot::Primary).metadata.hasAlpha || GetPaneContext(PaneSlot::Left).metadata.hasAlpha;
+    ID2D1DeviceContext* ctx = g_compEngine->BeginPendingUpdate(winW, winH, false, 0, 0, false, compareSurfaceFormat, compareAlpha);
     if (!ctx) return false;
 
     // [Fix] Capture initial transform (e.g. DComp Atlas offset) to avoid Double Translation
@@ -498,18 +513,17 @@ bool CompareController::RenderComposite(HWND hwnd) {
 void CompareController::EnterMode(HWND hwnd) {
     m_hwnd = hwnd;
     if (IsActive() || !GetPaneContext(PaneSlot::Primary).resource) return;
-    if (GetPaneContext(PaneSlot::Primary).resource.IsAnimated()) {
-        g_osd.Show(hwnd, AppStrings::g.OSD_CompareAnimNotSupported, true);
-        return;
-    }
     if (g_slideshowState.IsActive) {
         g_slideshowState.Reset();
         KillTimer(hwnd, IDT_SLIDESHOW);
         g_toolbar.SetSlideshowMode(false, false);
     }
-    if (GetPaneContext(PaneSlot::Primary).metadata.Width > 8192 || GetPaneContext(PaneSlot::Primary).metadata.Height > 8192) {
-        g_osd.Show(hwnd, L"Compare mode is not available for Titan images yet.", true);
-        return;
+    DeactivateWebContentForCompare(hwnd);
+    if (!GetPaneContext(PaneSlot::Primary).resource.IsAnimated()) {
+        g_animPlaying = true;
+    }
+    if (g_imageEngine) {
+        g_imageEngine->SetCompareMode(true);
     }
     m_context.Compare.mode = ViewMode::CompareSideBySide;
     m_context.Compare.splitRatio = ClampCompareRatio(m_context.Compare.splitRatio);
@@ -532,7 +546,7 @@ void CompareController::EnterMode(HWND hwnd) {
             rightPath = GetPaneContext(PaneSlot::Primary).navigator.GetFile(rightIndex);
         }
 
-        if (GetPaneContext(PaneSlot::Primary).path == leftPath && GetPaneContext(PaneSlot::Primary).resource.bitmap) {
+        if (GetPaneContext(PaneSlot::Primary).path == leftPath && GetPaneContext(PaneSlot::Primary).resource) {
             // Optimization: Current image is the left page, capture it immediately
             CaptureCurrentImageAsLeft();
             GetPaneContext(PaneSlot::Primary).navigator.SetIndex(rightIndex);
@@ -641,10 +655,12 @@ void CompareController::EnterMode(HWND hwnd) {
 
     // Auto-load next image into right pane if possible.
     // [v6.8] If we are in "Before vs After Soft Proofing" mode, do NOT load next image.
+    bool loadingNextRight = false;
     if (!g_runtime.EnableSoftProofing && GetPaneContext(PaneSlot::Primary).navigator.Count() > 1) {
         m_context.Compare.pendingSnap = true;
         std::wstring nextPath = GetPaneContext(PaneSlot::Primary).navigator.PeekNext();
         if (!nextPath.empty() && nextPath != GetPaneContext(PaneSlot::Primary).path) {
+            loadingNextRight = true;
             GetPaneContext(PaneSlot::Primary).view.Reset();
             LoadImageAsync(hwnd, nextPath, false, QuickView::BrowseDirection::FORWARD);
         }
@@ -656,20 +672,31 @@ void CompareController::EnterMode(HWND hwnd) {
         // Force refresh to re-render left pane without soft-proofing
         RefreshImageDisplay(hwnd);
     }
+
+    if (GetPaneContext(PaneSlot::Left).valid && GetPaneContext(PaneSlot::Left).resource.isWebView && !GetPaneContext(PaneSlot::Left).resource.bitmap) {
+        RasterizeComplexSvgForComparePane(hwnd, PaneSlot::Left);
+    }
+    if (!loadingNextRight && GetPaneContext(PaneSlot::Primary).resource.isWebView) {
+        GetPaneContext(PaneSlot::Primary).resource.bitmap.Reset();
+        GetPaneContext(PaneSlot::Primary).resource.svgDoc.Reset();
+        GetPaneContext(PaneSlot::Primary).resource.webViewVisual.Reset();
+        RasterizeComplexSvgForComparePane(hwnd, PaneSlot::Primary);
+    }
+    SyncAnimationPlaybackTimers(hwnd);
 }
 
 void CompareController::EnterSrCompareMode(HWND hwnd) {
     m_hwnd = hwnd;
     if (!GetPaneContext(PaneSlot::Primary).resource) return;
-    if (GetPaneContext(PaneSlot::Primary).resource.IsAnimated()) {
-        g_osd.Show(hwnd, AppStrings::g.OSD_CompareAnimNotSupported, true);
-        return;
-    }
 
     if (g_slideshowState.IsActive) {
         g_slideshowState.Reset();
         KillTimer(hwnd, IDT_SLIDESHOW);
         g_toolbar.SetSlideshowMode(false, false);
+    }
+    DeactivateWebContentForCompare(hwnd);
+    if (g_imageEngine) {
+        g_imageEngine->SetCompareMode(true);
     }
 
     // 1. Capture current un-upscaled 1.0x image as Left
@@ -707,6 +734,10 @@ void CompareController::EnterSrCompareMode(HWND hwnd) {
 
     // Show OSD banner
     g_osd.ShowCompare(hwnd, AppStrings::g.OSD_CompareBefore, AppStrings::g.OSD_CompareAfter, D2D1::ColorF(D2D1::ColorF::White), 2500);
+    if (GetPaneContext(PaneSlot::Left).valid && GetPaneContext(PaneSlot::Left).resource.isWebView && !GetPaneContext(PaneSlot::Left).resource.bitmap) {
+        RasterizeComplexSvgForComparePane(hwnd, PaneSlot::Left);
+    }
+    SyncAnimationPlaybackTimers(hwnd);
 }
 
 void CompareController::ExitMode(HWND hwnd) {
@@ -719,6 +750,10 @@ void CompareController::ExitMode(HWND hwnd) {
     m_context.Compare.selectedPane = ComparePane::Right;
     m_context.Compare.dirty = false;
 
+    if (g_imageEngine) {
+        g_imageEngine->SetCompareMode(false);
+    }
+    KillTimer(hwnd, IDT_ANIMATION_LEFT);
     GetPaneContext(PaneSlot::Left).Reset();
     g_isLeftPaneDecoding = false;
     g_leftPaneReadyCallback.Reset();
@@ -742,14 +777,28 @@ void CompareController::ExitMode(HWND hwnd) {
     GetClientRect(hwnd, &rc);
     g_toolbar.UpdateLayout((float)rc.right, (float)rc.bottom);
 
-    if (GetPaneContext(PaneSlot::Primary).resource) {
-        RenderImageToDComp(hwnd, GetPaneContext(PaneSlot::Primary).resource, false);
-        AdjustWindowToImage(hwnd);
-        RECT updatedRc{};
-        GetClientRect(hwnd, &updatedRc);
-        SyncDCompState(hwnd, (float)updatedRc.right, (float)updatedRc.bottom);
-        g_compEngine->Commit();
+    auto& primaryPane = GetPaneContext(PaneSlot::Primary);
+    if (primaryPane.resource) {
+        const uint64_t primaryPixels =
+            static_cast<uint64_t>(primaryPane.metadata.Width) *
+            static_cast<uint64_t>(primaryPane.metadata.Height);
+        const bool isTitanPrimary =
+            (primaryPane.metadata.Width > 8192 || primaryPane.metadata.Height > 8192 || primaryPixels > 50000000ull);
+        if ((isTitanPrimary && !primaryPane.path.empty() &&
+             (!g_imageEngine || !g_imageEngine->IsTitanModeEnabled() || g_imageEngine->GetCurrentNavPath() != primaryPane.path)) ||
+            (primaryPane.resource.isWebView && !primaryPane.path.empty())) {
+            ReloadCurrentImage(hwnd);
+        } else {
+            g_forceTitanTileReseed.store(true, std::memory_order_release);
+            RenderImageToDComp(hwnd, primaryPane.resource, false);
+            AdjustWindowToImage(hwnd);
+            RECT updatedRc{};
+            GetClientRect(hwnd, &updatedRc);
+            SyncDCompState(hwnd, (float)updatedRc.right, (float)updatedRc.bottom);
+            g_compEngine->Commit();
+        }
     }
+    SyncAnimationPlaybackTimers(hwnd);
 }
 
 

@@ -2437,6 +2437,60 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
   if (!frame.IsValid())
     return E_INVALIDARG;
 
+  UINT32 maxBitmapDim = m_d2dContext->GetMaximumBitmapSize();
+  if (maxBitmapDim == 0)
+    maxBitmapDim = 8192;
+  if (frame.pixels && frame.width > 0 && frame.height > 0 &&
+      (static_cast<UINT32>(frame.width) > maxBitmapDim ||
+       static_cast<UINT32>(frame.height) > maxBitmapDim)) {
+    const double scale = (std::min)(
+        static_cast<double>(maxBitmapDim) / static_cast<double>(frame.width),
+        static_cast<double>(maxBitmapDim) / static_cast<double>(frame.height));
+    const int dstW = (std::max)(1, static_cast<int>(std::floor(frame.width * scale)));
+    const int dstH = (std::max)(1, static_cast<int>(std::floor(frame.height * scale)));
+    const size_t bpp =
+        (frame.format == QuickView::PixelFormat::R32G32B32A32_FLOAT) ? 16 :
+        ((frame.format == QuickView::PixelFormat::R16G16B16A16_UNORM ||
+          frame.format == QuickView::PixelFormat::R16G16B16A16_FLOAT) ? 8 : 4);
+    const int dstStride = dstW * static_cast<int>(bpp);
+    std::vector<uint8_t> scaledStorage(static_cast<size_t>(dstStride) * dstH);
+    if (bpp == 4) {
+      ImageLoaderSimd::ResizeBilinear(frame.pixels, frame.width, frame.height,
+                                      frame.stride, scaledStorage.data(), dstW,
+                                      dstH, dstStride);
+    } else {
+      for (int y = 0; y < dstH; ++y) {
+        const int sy = (std::min)(frame.height - 1,
+                                  static_cast<int>((static_cast<int64_t>(y) * frame.height) / dstH));
+        const uint8_t* srcRow = frame.pixels + static_cast<size_t>(sy) * frame.stride;
+        uint8_t* dstRow = scaledStorage.data() + static_cast<size_t>(y) * dstStride;
+        for (int x = 0; x < dstW; ++x) {
+          const int sx = (std::min)(frame.width - 1,
+                                    static_cast<int>((static_cast<int64_t>(x) * frame.width) / dstW));
+          memcpy(dstRow + static_cast<size_t>(x) * bpp,
+                 srcRow + static_cast<size_t>(sx) * bpp, bpp);
+        }
+      }
+    }
+
+    QuickView::RawImageFrame scaledFrame;
+    scaledFrame.pixels = scaledStorage.data();
+    scaledFrame.width = dstW;
+    scaledFrame.height = dstH;
+    scaledFrame.stride = dstStride;
+    scaledFrame.format = frame.format;
+    scaledFrame.exifOrientation = frame.exifOrientation;
+    scaledFrame.iccProfile = frame.iccProfile;
+    scaledFrame.colorInfo = frame.colorInfo;
+    scaledFrame.hdrMetadata = frame.hdrMetadata;
+    scaledFrame.blendOp = frame.blendOp;
+    scaledFrame.shaderPayload = frame.shaderPayload;
+    if (frame.auxLayer) {
+      scaledFrame.auxLayer = frame.auxLayer->Clone();
+    }
+    return UploadRawFrameToGPU(scaledFrame, outBitmap, options);
+  }
+
   const QuickView::DisplayColorState displayState = GetDisplayColorState();
 
   // ====================================================================

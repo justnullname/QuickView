@@ -49,12 +49,12 @@ Toolbar::Toolbar() {
       {ToolbarButtonID::CompareSyncZoom, Icons::Link, {}, true, true},
       {ToolbarButtonID::CompareSyncPan, Icons::Pan, {}, true, true},
       {ToolbarButtonID::CompareSave, Icons::Save, {}, true, false},
-      {ToolbarButtonID::CompareExit, Icons::ExitToolbar, {}, true, false},
-      // Animation mode buttons (hidden in normal mode)
+      // Animation mode buttons (hidden in normal mode; AnimPlayPause also used in Compare mode)
       {ToolbarButtonID::AnimPrevFrame, Icons::SkipBack, {}, true, false},
       {ToolbarButtonID::AnimPlayPause, Icons::Play, {}, true, false},
       {ToolbarButtonID::AnimNextFrame, Icons::SkipFwd, {}, true, false},
       {ToolbarButtonID::AnimDirtyRect, Icons::Diagnostic, {}, true, false},
+      {ToolbarButtonID::CompareExit, Icons::ExitToolbar, {}, true, false},
       // Overlay mode buttons (hidden in normal mode)
       {ToolbarButtonID::OverlayAlphaUp,     Icons::ComboUp,    {}, true, false},
       {ToolbarButtonID::OverlayAlphaDown,   Icons::ComboDown,  {}, true, false},
@@ -224,6 +224,7 @@ void Toolbar::UpdateLayout(float winW, float winH) {
       {ToolbarButtonID::CompareSwap},
       {ToolbarButtonID::CompareDelete},
       {ToolbarButtonID::CompareRawToggle},
+      {ToolbarButtonID::AnimPlayPause},
       {ToolbarButtonID::CompareZoomIn, ToolbarButtonID::CompareZoomOut},  // Zoom capsule group
       {ToolbarButtonID::CompareInfo},
       {ToolbarButtonID::CompareSyncPan},
@@ -282,12 +283,12 @@ void Toolbar::UpdateLayout(float winW, float winH) {
   } else if (m_slideshowMode) {
       hideOrder = kSlideshowHideOrder;
       hideOrderCount = (int)std::size(kSlideshowHideOrder);
-  } else if (m_animMode) {
-      hideOrder = kAnimHideOrder;
-      hideOrderCount = (int)std::size(kAnimHideOrder);
   } else if (m_compareMode) {
       hideOrder = kCompareHideOrder;
       hideOrderCount = (int)std::size(kCompareHideOrder);
+  } else if (m_animMode) {
+      hideOrder = kAnimHideOrder;
+      hideOrderCount = (int)std::size(kAnimHideOrder);
   } else if (m_comicMode) {
       hideOrder = kComicHideOrder;
       hideOrderCount = (int)std::size(kComicHideOrder);
@@ -339,23 +340,8 @@ void Toolbar::UpdateLayout(float winW, float winH) {
       if (isAlwaysVisible(btn.id)) return true;
       return false;
     }
-    if (m_animMode || m_slideshowMode) {
-      if (btn.id == ToolbarButtonID::AnimDirtyRect) return m_animMode && g_config.ShowDirtyRectButton;
-      if (btn.id == ToolbarButtonID::Prev || btn.id == ToolbarButtonID::Next || btn.id == ToolbarButtonID::Exif || btn.id == ToolbarButtonID::LockSize) return true;
-      if (isAnimButton(btn.id)) return true;
-      if (isAlwaysVisible(btn.id)) return true;
-      return false;
-    }
-    if (m_comicMode) {
-      // In comic mode, we hide rotate and flip, raw, extension fix, and gamut warning
-      if (btn.id == ToolbarButtonID::RotateL || btn.id == ToolbarButtonID::RotateR || btn.id == ToolbarButtonID::FlipH) return false;
-      if (btn.id == ToolbarButtonID::RawToggle || btn.id == ToolbarButtonID::FixExtension || btn.id == ToolbarButtonID::GamutWarning) return false;
-      if (isCompareButton(btn.id)) return false;
-      if (isAnimButton(btn.id) || isOverlayButton(btn.id)) return false;
-      return true;
-    }
-
     if (m_compareMode) {
+      if (btn.id == ToolbarButtonID::AnimPlayPause) return m_compareHasAnim;
       if (!isCompareButton(btn.id) && !isAlwaysVisible(btn.id)) return false;
       if (btn.id == ToolbarButtonID::CompareRawToggle && !btn.isWarning) return false;
       if (btn.id == ToolbarButtonID::CompareSave) {
@@ -369,6 +355,21 @@ void Toolbar::UpdateLayout(float winW, float winH) {
         bool isDirty = primaryPane.editState.IsDirty || leftPane.editState.IsDirty;
         return hasCrop || hasSr || isDirty;
       }
+      return true;
+    }
+    if (m_animMode || m_slideshowMode) {
+      if (btn.id == ToolbarButtonID::AnimDirtyRect) return m_animMode && g_config.ShowDirtyRectButton;
+      if (btn.id == ToolbarButtonID::Prev || btn.id == ToolbarButtonID::Next || btn.id == ToolbarButtonID::Exif || btn.id == ToolbarButtonID::LockSize) return true;
+      if (isAnimButton(btn.id)) return true;
+      if (isAlwaysVisible(btn.id)) return true;
+      return false;
+    }
+    if (m_comicMode) {
+      // In comic mode, we hide rotate and flip, raw, extension fix, and gamut warning
+      if (btn.id == ToolbarButtonID::RotateL || btn.id == ToolbarButtonID::RotateR || btn.id == ToolbarButtonID::FlipH) return false;
+      if (btn.id == ToolbarButtonID::RawToggle || btn.id == ToolbarButtonID::FixExtension || btn.id == ToolbarButtonID::GamutWarning) return false;
+      if (isCompareButton(btn.id)) return false;
+      if (isAnimButton(btn.id) || isOverlayButton(btn.id)) return false;
       return true;
     }
 
@@ -1326,8 +1327,24 @@ void Toolbar::SetGamutWarningActive(bool active) {
 
 void Toolbar::SetCompareMode(bool enabled) {
   m_compareMode = enabled;
+  if (!enabled) {
+    m_compareHasAnim = false;
+  }
   for (auto &btn : m_buttons) {
     if (btn.id == ToolbarButtonID::CompareToggle) btn.isToggled = enabled;
+  }
+}
+
+void Toolbar::SetCompareAnimState(bool hasAnim, bool playing) {
+  m_compareHasAnim = hasAnim;
+  if (m_compareMode && !m_slideshowMode) {
+    m_animPlaying = playing;
+    for (auto &btn : m_buttons) {
+      if (btn.id == ToolbarButtonID::AnimPlayPause) {
+        btn.iconGlyph = playing ? Icons::Pause : Icons::Play;
+        btn.isToggled = playing;
+      }
+    }
   }
 }
 
@@ -1381,11 +1398,11 @@ void Toolbar::SetSlideshowMode(bool enabled, bool playing) {
 void Toolbar::SetAnimationMode(bool enabled, bool playing, bool dirtyRect, bool supportsDirtyRect) {
   m_animMode = enabled;
   m_animDirtyRect = dirtyRect;
-  if (!m_slideshowMode) {
+  if (!m_slideshowMode && !m_compareMode) {
     m_animPlaying = playing;
   }
   for (auto &btn : m_buttons) {
-    if (btn.id == ToolbarButtonID::AnimPlayPause && !m_slideshowMode) {
+    if (btn.id == ToolbarButtonID::AnimPlayPause && !m_slideshowMode && !m_compareMode) {
       btn.iconGlyph = playing ? Icons::Pause : Icons::Play;
       btn.isToggled = playing;
     }

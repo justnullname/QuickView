@@ -1739,6 +1739,7 @@ extern AnimationPlaybackState g_animationState;
 // Timer IDs
 inline constexpr UINT_PTR IDT_ANIMATION = 105;
 inline constexpr UINT_PTR IDT_SLIDESHOW = 106;
+inline constexpr UINT_PTR IDT_ANIMATION_LEFT = 107;
 
 // Slideshow state
 struct SlideshowState {

@@ -27,6 +27,7 @@ struct WebViewThumbJob {
     float viewBoxW = 512.0f;
     float viewBoxH = 512.0f;
     int targetSize = 300;
+    bool highResFill = false;
     CImageLoader::ThumbData* out = nullptr;
     HRESULT hr = E_FAIL;
 };
@@ -45,7 +46,8 @@ public:
     HRESULT RasterizeSvgToThumb(const std::vector<uint8_t>& utf8Xml,
                                 float viewBoxW, float viewBoxH,
                                 int targetSize,
-                                CImageLoader::ThumbData* out);
+                                CImageLoader::ThumbData* out,
+                                bool highResFill = false);
 
     // UI thread only (from WndProc).
     void HandleRasterMessage(WebViewThumbJob* job);
@@ -60,7 +62,7 @@ private:
     HRESULT RunJobOnUi(WebViewThumbJob& job);
     HRESULT NavigateAndCapture(const std::wstring& html, int outW, int outH,
                                CImageLoader::ThumbData* out);
-    static std::wstring BuildHtml(const std::vector<uint8_t>& utf8Xml);
+    static std::wstring BuildHtml(const std::vector<uint8_t>& utf8Xml, bool highResFill = false);
     static std::wstring UserDataFolder();
     static LRESULT CALLBACK HiddenWndProc(HWND, UINT, WPARAM, LPARAM);
 

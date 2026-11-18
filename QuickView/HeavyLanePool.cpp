@@ -524,7 +524,7 @@ void HeavyLanePool::ShrinkMemory() {
 // Task Submission
 // ============================================================================
 
-void HeavyLanePool::Submit(const std::wstring& path, ImageID imageId, std::shared_ptr<QuickView::MappedFile> mmf, PaneSlot targetSlot, uint64_t generationId) {
+void HeavyLanePool::Submit(const std::wstring& path, ImageID imageId, std::shared_ptr<QuickView::MappedFile> mmf, PaneSlot targetSlot, uint64_t generationId, bool decodeScaledBase, bool allowFakeBase, int srcW, int srcH, QuickView::TitanFormat titanFmt) {
     // [Hardware] Update IO throttling based on target drive
     bool isSSD = SystemInfo::IsSolidStateDrive(path);
     UpdateIOLimit(isSSD ? m_cap : 2);
@@ -533,19 +533,22 @@ void HeavyLanePool::Submit(const std::wstring& path, ImageID imageId, std::share
     m_baselineIsSSD = isSSD;
 
     // [Phase-2] Start background master warmup for giant non-ROI formats.
-    // [Revision 2] Trigger ONLY for the active image. Prefetch jobs (ID mismatch) 
+    // [Revision 2] Trigger ONLY for the active primary image. Prefetch/Left-pane jobs
     // are prohibited from destroying current Titan resources.
-    if (m_isTitanMode.load(std::memory_order_relaxed) && imageId == m_activeTitanImageId.load(std::memory_order_relaxed)) {
+    if (targetSlot == PaneSlot::Primary &&
+        m_isTitanMode.load(std::memory_order_relaxed) &&
+        imageId == m_activeTitanImageId.load(std::memory_order_relaxed)) {
         EnsureMasterWarmup(path, imageId, mmf, targetSlot, generationId);
     }
 
     std::lock_guard lock(m_poolMutex);
     
     // Non-Titan: full decode only (JPEG upgrade path removed). Titan: scaled base layer.
-    bool isFull = !m_isTitanMode;
+    const bool useScaled = (targetSlot == PaneSlot::Primary && m_isTitanMode) || decodeScaledBase;
+    bool isFull = !useScaled;
 
     // [Dedup] Prevent redundant decoding jobs in the pending queue
-    if (!m_isTitanMode) {
+    if (!useScaled) {
         for (const auto& existing : m_pendingJobs) {
         if (existing.type == JobType::Standard && existing.imageId == imageId && existing.targetSlot == targetSlot) {
                 // If the generation is old, we could update it. But simple dedup is fine.
@@ -566,6 +569,11 @@ void HeavyLanePool::Submit(const std::wstring& path, ImageID imageId, std::share
     job.targetHdrHeadroomStops = m_targetHdrHeadroomStops.load(std::memory_order_relaxed);
     job.targetPrimaries = m_targetPrimaries.load(std::memory_order_relaxed);
     job.isFullDecode = isFull;
+    job.decodeScaledBase = decodeScaledBase;
+    job.allowFakeBase = allowFakeBase;
+    job.srcW = srcW;
+    job.srcH = srcH;
+    job.titanFormat = titanFmt;
     job.priority = 200; 
     job.genID = m_generationID.load(); // [Smart Pull] Stamp Generation
     
@@ -757,9 +765,9 @@ void HeavyLanePool::CancelOthers(ImageID currentId, PaneSlot targetSlot) {
         }
         if (removedTiles > 0) m_activeTileJobs.fetch_sub(removedTiles);
         
-        // 2. Stop BUSY workers working on old IDs
+        // 2. Stop BUSY workers working on old IDs in the same slot
         for (auto& w : m_workers) {
-            if (w.state == WorkerState::BUSY && w.currentId != currentId) {
+            if (w.state == WorkerState::BUSY && w.currentSlot == targetSlot && w.currentId != currentId) {
                 w.stopSource.request_stop();
                 // [Phase 4.1] Kill any active subprocess for this worker immediately
                 if (w.activeWorkerProcess) {
@@ -770,9 +778,42 @@ void HeavyLanePool::CancelOthers(ImageID currentId, PaneSlot targetSlot) {
         }
     }
 
-    // 3. Immediately abort any master warmup belonging to the old image
-    if (m_masterWarmupRunning.load(std::memory_order_relaxed) &&
+    // 3. Immediately abort any master warmup belonging to the old primary image
+    if (targetSlot == PaneSlot::Primary &&
+        m_masterWarmupRunning.load(std::memory_order_relaxed) &&
         m_masterWarmupImageId.load(std::memory_order_relaxed) != currentId) {
+        StopMasterWarmup();
+    }
+}
+
+void HeavyLanePool::CancelSlot(PaneSlot targetSlot) {
+    {
+        std::lock_guard lock(m_poolMutex);
+        auto it = m_pendingJobs.begin();
+        int removedTiles = 0;
+        while (it != m_pendingJobs.end()) {
+            if (it->targetSlot == targetSlot) {
+                if (it->type == JobType::Tile) {
+                    removedTiles++;
+                    m_inFlightTiles.erase(MakeTileHash(it->tileCoord.col, it->tileCoord.row, it->tileCoord.lod));
+                }
+                it = m_pendingJobs.erase(it);
+                m_cancelCount++;
+            } else {
+                ++it;
+            }
+        }
+        if (removedTiles > 0) m_activeTileJobs.fetch_sub(removedTiles);
+        for (auto& w : m_workers) {
+            if (w.state == WorkerState::BUSY && w.currentSlot == targetSlot) {
+                w.stopSource.request_stop();
+                if (w.activeWorkerProcess) {
+                    TerminateProcess(w.activeWorkerProcess, static_cast<UINT>(E_ABORT));
+                }
+            }
+        }
+    }
+    if (targetSlot == PaneSlot::Primary) {
         StopMasterWarmup();
     }
 }
@@ -893,6 +934,7 @@ void HeavyLanePool::WorkerLoop(int workerId, std::stop_token st) {
 
             self.currentPath = job.path;
             self.currentId = job.imageId;  // [ImageID]
+            self.currentSlot = job.targetSlot;
             self.stopSource = std::stop_source();  // Fresh stop source for this job
             self.state = WorkerState::BUSY;
             m_busyCount.fetch_add(1);
@@ -1263,25 +1305,29 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
 
          if (job.type == JobType::Standard) {
               // --- Standard Decode (Full/Scaled) ---
+              const bool useScaledBase = !job.isFullDecode && ((job.targetSlot == PaneSlot::Primary && m_isTitanMode) || job.decodeScaledBase);
               int targetW = 0, targetH = 0;
               if (!job.isFullDecode) {
                    int screenW = GetSystemMetrics(SM_CXSCREEN);
                    int screenH = GetSystemMetrics(SM_CYSCREEN);
-                   
-                   float srcRatio = (float)m_titanSrcW / (float)m_titanSrcH;
-                   float screenRatio = (float)screenW / (float)screenH;
-                   
-                   if (srcRatio > screenRatio) {
-                       targetW = screenW;
-                       targetH = (int)(screenW / srcRatio);
-                   } else {
-                       targetH = screenH;
-                       targetW = (int)(screenH * srcRatio);
+                   int effSrcW = (job.srcW > 0) ? job.srcW : m_titanSrcW;
+                   int effSrcH = (job.srcH > 0) ? job.srcH : m_titanSrcH;
+                   if (effSrcW > 0 && effSrcH > 0) {
+                       float srcRatio = (float)effSrcW / (float)effSrcH;
+                       float screenRatio = (float)screenW / (float)screenH;
+                       
+                       if (srcRatio > screenRatio) {
+                           targetW = screenW;
+                           targetH = (int)(screenW / srcRatio);
+                       } else {
+                           targetH = screenH;
+                           targetW = (int)(screenH * srcRatio);
+                       }
+                       
+                       // SIMD Alignment (8-pixel boundary)
+                       targetW = (targetW + 7) & ~7;
+                       targetH = (targetH + 7) & ~7;
                    }
-                   
-                   // SIMD Alignment (8-pixel boundary)
-                   targetW = (targetW + 7) & ~7;
-                   targetH = (targetH + 7) & ~7;
                }
 
               bool animProbed = false;
@@ -1348,11 +1394,11 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
               };
 
               // [Phase 3] Titan Mode: Route Base Layer to killable subprocess unless file is animated
-              if (m_isTitanMode && !job.isFullDecode && targetW > 0 && targetH > 0) {
+              if (useScaledBase && targetW > 0 && targetH > 0) {
                    tryHijackMmfAnimation();
               }
-              if (FAILED(hr) && m_isTitanMode && !job.isFullDecode && targetW > 0 && targetH > 0) {
-                   bool expectsMasterCache = ShouldWarmupMasterBacking();
+              if (FAILED(hr) && useScaledBase && targetW > 0 && targetH > 0) {
+                   bool expectsMasterCache = (job.targetSlot == PaneSlot::Primary && m_isTitanMode) && ShouldWarmupMasterBacking();
                    bool warmupResolved = false;
 
                    if (expectsMasterCache && m_masterWarmupImageId.load(std::memory_order_acquire) == job.imageId) {
@@ -1404,7 +1450,7 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
 
                    if (!warmupResolved) {
                         QV_LOG("Worker_Route", TraceLoggingString("Phase3 TitanBaseLayer DecodeWorker", "Action"));
-                       hr = LaunchDecodeWorker(self, job, targetW, targetH, rawFrame, meta, cancelPred);
+                       hr = LaunchDecodeWorker(self, job, targetW, targetH, rawFrame, meta, cancelPred, false, !job.allowFakeBase);
                        if (SUCCEEDED(hr)) {
                            loaderName = L"DecodeWorker";
                        } else if (hr == E_ABORT) {
@@ -1442,8 +1488,10 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                   }
               }
 
-              const auto fmt = m_titanFormat.load();
+              const auto fmt = (job.titanFormat != QuickView::TitanFormat::Unknown) ? job.titanFormat : m_titanFormat.load();
               bool supportsMmfDecode = QuickView::SupportsTitanMemoryDecode(fmt);
+              const bool inlineAllowFakeBase = job.allowFakeBase;
+              const bool inlineTitanFlag = (job.targetSlot == PaneSlot::Primary) ? m_isTitanMode.load() : job.decodeScaledBase;
                                         
               if (job.mmf && job.mmf->IsValid()) {
                    // [Fix] Animation probe for MMF path: animated files need an Animator
@@ -1458,24 +1506,24 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                            hr = m_loader->LoadToFrameFromMemory(job.mmf->data(), job.mmf->size(), &rawFrame, effectiveArena, targetW, targetH, &loaderName, &meta, -1.0f, job.mmf);
                            if (FAILED(hr)) {
                                // Fallback to file if MMF decode fails
-                               hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, effectiveArena, targetW, targetH, &loaderName, cancelPred, &meta, !job.isFullDecode, m_isTitanMode, job.targetHdrHeadroomStops, job.targetPrimaries, job.mmf);
+                               hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, effectiveArena, targetW, targetH, &loaderName, cancelPred, &meta, inlineAllowFakeBase, inlineTitanFlag, job.targetHdrHeadroomStops, job.targetPrimaries, job.mmf);
                            } else {
                                // MMF Decode Success -> Trigger Touch-Up Prefetch!
                                TriggerPrefetch(job.mmf);
                            }
                        } else {
-                           hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, effectiveArena, targetW, targetH, &loaderName, cancelPred, &meta, !job.isFullDecode, m_isTitanMode, job.targetHdrHeadroomStops, job.targetPrimaries, job.mmf);
+                           hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, effectiveArena, targetW, targetH, &loaderName, cancelPred, &meta, inlineAllowFakeBase, inlineTitanFlag, job.targetHdrHeadroomStops, job.targetPrimaries, job.mmf);
                        }
                    }
               } else {
                    QuantumArena* effectiveArena = nullptr;
-                   hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, effectiveArena, targetW, targetH, &loaderName, cancelPred, &meta, !job.isFullDecode, m_isTitanMode, job.targetHdrHeadroomStops, job.targetPrimaries, job.mmf);
+                   hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, effectiveArena, targetW, targetH, &loaderName, cancelPred, &meta, inlineAllowFakeBase, inlineTitanFlag, job.targetHdrHeadroomStops, job.targetPrimaries, job.mmf);
               }
               } // end FAILED(hr) inline fallback
               // [Baseline Benchmark] Measure performance from Standard (base layer) decode
               // This runs ONCE per Titan image, immediately after the base decode completes.
               // The measured throughput (MP/s) determines optimal tile thread count.
-               if (SUCCEEDED(hr) && m_benchPhase == BenchPhase::PENDING) {
+               if (job.targetSlot == PaneSlot::Primary && SUCCEEDED(hr) && m_benchPhase == BenchPhase::PENDING) {
                    auto benchEnd = std::chrono::high_resolution_clock::now();
                    int benchMs = (int)std::chrono::duration_cast<std::chrono::milliseconds>(benchEnd - decodeStart).count();
                    if (rawFrame.IsValid() && benchMs > 0) {
@@ -1519,7 +1567,7 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                        }
                    }
                }
-               else if (FAILED(hr) && m_benchPhase == BenchPhase::PENDING) {
+               else if (job.targetSlot == PaneSlot::Primary && FAILED(hr) && m_benchPhase == BenchPhase::PENDING) {
                     // [Fix] If Base Layer decode aborted (e.g. Gigapixel JXL too massive for CPU),
                     // MUST unlock concurrency so Native Region Decoding can blast through tiles!
                     // We simulate a fast decode (100MP/s) to unlock ~14 threads.

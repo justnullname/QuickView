@@ -102,9 +102,11 @@ public:
     void SetWindow(HWND hwnd);
     void SetTargetHdrHeadroomStops(float stops);
     void SetTargetColorPrimaries(QuickView::ColorPrimaries primaries);
+    void SetCompareMode(bool active) { m_isCompareMode.store(active, std::memory_order_relaxed); }
     
     // [v3.1] Cancel Heavy Lane when Fast Pass succeeds
     void CancelHeavy();  // Implementation in ImageEngine.cpp
+    void CancelHeavyForSlot(PaneSlot targetSlot);
     
     // Request full resolution decode for current image (used by JXL serial pipeline)
     void RequestFullDecode(const std::wstring& path, ImageID imageId, PaneSlot targetSlot = PaneSlot::Primary, uint64_t generationId = 0);
@@ -124,6 +126,7 @@ public:
     // [Infinity Engine]
     std::shared_ptr<QuickView::TileManager> GetTileManager() { return m_tileManager; }
     bool IsTitanModeEnabled() const;
+    const std::wstring& GetCurrentNavPath() const { return m_currentNavPath; }
     void UpdateTileViewport(QuickView::RegionRect viewport, float scale, int imageW, int imageH, float basePreviewRatio, float velocityX = 0, float velocityY = 0);
     void InvalidateGpuTiles();
 
@@ -387,6 +390,7 @@ private:
     std::atomic<ImageID> m_currentImageId{0};
     std::atomic<ImageID> m_currentImageIdBySlot[2]{};
     std::atomic<bool> m_baseLayerReady{false};
+    std::atomic<bool> m_isCompareMode{false};
     
     // [JXL Sequential] Pending Heavy task - waits for FastLane completion
     std::wstring m_pendingJxlHeavyPath;

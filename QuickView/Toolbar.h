@@ -123,6 +123,7 @@ public:
     void SetCompareSyncStates(bool syncZoom, bool syncPan);
     void SetCompareInfoState(bool active);
     void SetCompareRawState(bool anyRaw, bool selectedIsRaw, bool isFullDecode);
+    void SetCompareAnimState(bool hasAnim, bool playing);
     float GetCompareZoomStepPercent() const { return m_compareZoomStepPercent; }
     float GetOverlayZoomStepPercent() const { return m_compareZoomStepPercent; }
     
@@ -179,6 +180,7 @@ private:
     bool m_windowTooNarrow = false; // True only when even the last-priority buttons can't fit
     uint64_t m_responsiveHiddenSet = 0; // Bitmask of ToolbarButtonID values hidden by responsive layout
     bool m_compareMode = false;
+    bool m_compareHasAnim = false;
     bool m_comicMode = false;
     bool m_animMode = false;
     bool m_slideshowMode = false;

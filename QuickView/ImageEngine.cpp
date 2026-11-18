@@ -147,6 +147,12 @@ void ImageEngine::CancelHeavy() {
     }
 }
 
+void ImageEngine::CancelHeavyForSlot(PaneSlot targetSlot) {
+    if (m_heavyPool) {
+        m_heavyPool->CancelSlot(targetSlot);
+    }
+}
+
 void ImageEngine::SetTargetHdrHeadroomStops(float stops) {
     m_targetHdrHeadroomStops.store(stops, std::memory_order_relaxed);
     if (m_heavyPool) {
@@ -310,14 +316,16 @@ bool ImageEngine::TryServeFromCache(
     }
 
     if (!headerInfo) {
-        if (m_mmf) {
-            HeavyLanePool::TrashBag bag;
-            bag.mmf = std::move(m_mmf);
-            m_heavyPool->EnqueueTrash(std::move(bag));
+        if (targetSlot == PaneSlot::Primary) {
+            if (m_mmf) {
+                HeavyLanePool::TrashBag bag;
+                bag.mmf = std::move(m_mmf);
+                m_heavyPool->EnqueueTrash(std::move(bag));
+            }
+            m_heavyPool->SetTitanMode(false, 0, 0, L"", 0);
+            m_enablePadding = true;
         }
-        m_heavyPool->SetTitanMode(false, 0, 0, L"", 0);
-        m_enablePadding = true;
-    } else if (enableTitan) {
+    } else if (enableTitan && targetSlot == PaneSlot::Primary) {
         // Re-trigger master warmup when revisiting a cached Titan image so zoom tiles find master backing ready.
         m_heavyPool->EnsureMasterWarmup(path, imageId, primaryMMF, targetSlot, generationId);
     }
@@ -434,42 +442,46 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
     bool fallbackFileTrigger = unknownDims && observedFileSize >= (32ull * 1024ull * 1024ull);
 
     bool enableTitan = (sizeTrigger || pixelTrigger || fallbackFileTrigger) && isSupportedFormat;
+    const bool allowFakeBase = (targetSlot == PaneSlot::Primary) && !m_isCompareMode.load(std::memory_order_relaxed);
+    const QuickView::TitanFormat parsedTitanFmt = QuickView::ParseTitanFormat(fmtUpper);
     
 
-    if (enableTitan) {
-         // [Phase 5] Keep MMF alive for Tile Manager usage. If old MMF exists, send to GC.
-         if (m_mmf) {
-             HeavyLanePool::TrashBag bag;
-             bag.mmf = std::move(m_mmf);
-             m_heavyPool->EnqueueTrash(std::move(bag));
-         }
-         m_mmf = primaryMMF;
-         
-         m_tileManager->InvalidateAll(); // Reset generation
-         QV_LOG("Dispatch_Titan",
-             TraceLoggingString("Enabled", "Action"),
-             TraceLoggingInt32(info.width, "Width"),
-             TraceLoggingInt32(info.height, "Height"),
-             TraceLoggingBool(m_mmf && m_mmf->IsValid(), "MMF_OK"));
-         
-         // [Scientific 2.0] Enable Titan Mode - pool handles dynamic concurrency via Scout phase.
-         // SetTitanMode(true) resets scout state, sets initial concurrency to 2, 
-         // and after measuring 2 tiles, adjusts to optimal thread count based on MP/s.
-         m_heavyPool->SetTitanMode(true, info.width, info.height, fmtUpper, imageId);
-         m_heavyPool->SetUseThreadLocalHandle(true);
-         m_enablePadding = true;
+    if (targetSlot == PaneSlot::Primary) {
+        if (enableTitan) {
+             // [Phase 5] Keep MMF alive for Tile Manager usage. If old MMF exists, send to GC.
+             if (m_mmf) {
+                 HeavyLanePool::TrashBag bag;
+                 bag.mmf = std::move(m_mmf);
+                 m_heavyPool->EnqueueTrash(std::move(bag));
+             }
+             m_mmf = primaryMMF;
+             
+             m_tileManager->InvalidateAll(); // Reset generation
+             QV_LOG("Dispatch_Titan",
+                 TraceLoggingString("Enabled", "Action"),
+                 TraceLoggingInt32(info.width, "Width"),
+                 TraceLoggingInt32(info.height, "Height"),
+                 TraceLoggingBool(m_mmf && m_mmf->IsValid(), "MMF_OK"));
+             
+             // [Scientific 2.0] Enable Titan Mode - pool handles dynamic concurrency via Scout phase.
+             // SetTitanMode(true) resets scout state, sets initial concurrency to 2, 
+             // and after measuring 2 tiles, adjusts to optimal thread count based on MP/s.
+             m_heavyPool->SetTitanMode(true, info.width, info.height, fmtUpper, imageId);
+             m_heavyPool->SetUseThreadLocalHandle(true);
+             m_enablePadding = true;
 
-    } else {
-         // [Phase 5] old MMF is destructed via GC thread
-         if (m_mmf) {
-             HeavyLanePool::TrashBag bag;
-             bag.mmf = std::move(m_mmf);
-             m_heavyPool->EnqueueTrash(std::move(bag));
-         }
-         
-         // [Fix] Deactivate Titan Mode (Elastic)
-         m_heavyPool->SetTitanMode(false, 0, 0, L"", 0);
-         m_enablePadding = true; 
+        } else {
+             // [Phase 5] old MMF is destructed via GC thread
+             if (m_mmf) {
+                 HeavyLanePool::TrashBag bag;
+                 bag.mmf = std::move(m_mmf);
+                 m_heavyPool->EnqueueTrash(std::move(bag));
+             }
+             
+             // [Fix] Deactivate Titan Mode (Elastic)
+             m_heavyPool->SetTitanMode(false, 0, 0, L"", 0);
+             m_enablePadding = true; 
+        }
     }
 
     // [Prefetch System] Cache Check after Titan setup (handles large images & post-header checks)
@@ -556,7 +568,7 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
              } else {
                 // [v7.2 Fix] Large WebP -> Force Heavy Direct (non-Titan is full decode).
                  QV_LOG("Dispatch_Route", TraceLoggingString("WebP Large HeavyDirect", "Action"));
-                 m_heavyPool->Submit(path, imageId, primaryMMF, targetSlot, generationId);
+                 m_heavyPool->Submit(path, imageId, primaryMMF, targetSlot, generationId, enableTitan, allowFakeBase, info.width, info.height, parsedTitanFmt);
                  return; 
              }
         }
@@ -571,7 +583,7 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
         
         if (fmtLower == L"webp") {
              QV_LOG("Dispatch_Route", TraceLoggingString("WebP Heavy HeavyDirect", "Action"));
-             m_heavyPool->Submit(path, imageId, primaryMMF, targetSlot, generationId); // Base Layer Scaled
+             m_heavyPool->Submit(path, imageId, primaryMMF, targetSlot, generationId, enableTitan, allowFakeBase, info.width, info.height, parsedTitanFmt); // Base Layer Scaled
              return;
         }
         
@@ -580,10 +592,12 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
     
     // 5. JXL Special Logic (User "Ultimate Strategy")
     if (info.format == L"JXL") {
-        m_pendingJxlHeavyPath.clear();
-        m_pendingJxlHeavyId = 0;
-        m_pendingJxlHeavySlot = targetSlot;
-        m_pendingJxlHeavyGenerationId = generationId;
+        if (targetSlot == PaneSlot::Primary) {
+            m_pendingJxlHeavyPath.clear();
+            m_pendingJxlHeavyId = 0;
+            m_pendingJxlHeavySlot = targetSlot;
+            m_pendingJxlHeavyGenerationId = generationId;
+        }
         
         // Scene A: Small JXL (< 1MB AND < 2MP) -> FastLane Direct Full Decode
         // 1MB = 1048576 bytes
@@ -605,12 +619,14 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
                 QV_LOG("Dispatch_Route", TraceLoggingString("JXL Titan HeavyDirect", "Action"));
                 
                 // [Fix] Stage 2 Trigger explicitly needs these to be set for the pending heavy decode
-                m_pendingJxlHeavyPath = path;
-                m_pendingJxlHeavyId = imageId;
-                m_pendingJxlHeavySlot = targetSlot;
-                m_pendingJxlHeavyGenerationId = generationId;
+                if (targetSlot == PaneSlot::Primary) {
+                    m_pendingJxlHeavyPath = path;
+                    m_pendingJxlHeavyId = imageId;
+                    m_pendingJxlHeavySlot = targetSlot;
+                    m_pendingJxlHeavyGenerationId = generationId;
+                }
                 
-                m_heavyPool->Submit(path, imageId, primaryMMF, targetSlot, generationId);
+                m_heavyPool->Submit(path, imageId, primaryMMF, targetSlot, generationId, enableTitan, allowFakeBase, info.width, info.height, parsedTitanFmt);
             } else {
                 // [v3.2.5 Restore] Ordinary non-Titan large images, run FullDecode directly like the old version
                 // Eliminates 300ms latency, fastest speed, and naturally shows the embedded preview from the decoder!
@@ -667,7 +683,7 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
             m_fastLane.Push(path, imageId, m_targetHdrHeadroomStops.load(std::memory_order_relaxed), targetSlot, generationId, primaryMMF);
         } else {
             QV_LOG("Dispatch_Route", TraceLoggingString("FormatLarge HeavyLane", "Action"));
-            m_heavyPool->Submit(path, imageId, primaryMMF, targetSlot, generationId);
+            m_heavyPool->Submit(path, imageId, primaryMMF, targetSlot, generationId, enableTitan, allowFakeBase, info.width, info.height, parsedTitanFmt);
         }
         return;
     }
@@ -675,7 +691,7 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
     // 7. Standard Routing
     if (useHeavy) {
         QV_LOG("Dispatch_Route", TraceLoggingString("HeavyLane", "Action"));
-        m_heavyPool->Submit(path, imageId, primaryMMF, targetSlot, generationId);
+        m_heavyPool->Submit(path, imageId, primaryMMF, targetSlot, generationId, enableTitan, allowFakeBase, info.width, info.height, parsedTitanFmt);
     }
     if (useFastLane) {
         // Avoid parallel duplicate work if Heavy is already taking it?
@@ -689,23 +705,24 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
 void ImageEngine::NavigateTo(const std::wstring& path, uintmax_t fileSize, uint64_t navToken, PaneSlot targetSlot, uint64_t generationId) {
     if (path.empty()) return;
     
-    // [Phase 3] Store the navigation token
-    m_currentNavToken.store(navToken);
-    
     // [ImageID Architecture] Compute stable hash
     ImageID imageId = ComputePathHash(path);
-    m_currentImageId.store(imageId);
     m_currentImageIdBySlot[static_cast<int>(targetSlot)].store(imageId);
-    // Cancel stale heavy/tile work immediately for the target pane.
+    // Cancel stale heavy/tile work immediately for the target pane only.
     m_heavyPool->CancelOthers(imageId, targetSlot);
-    
-    m_currentNavPath = path;
-    m_lastInputTime = std::chrono::steady_clock::now();
 
-    // [JXL Serial] Reset State
-    m_isViewingScaledImage = false;
-    m_stage2Requested = false;
-    m_baseLayerReady.store(false);
+    if (targetSlot == PaneSlot::Primary) {
+        // [Phase 3] Store the navigation token
+        m_currentNavToken.store(navToken);
+        m_currentImageId.store(imageId);
+        m_currentNavPath = path;
+        m_lastInputTime = std::chrono::steady_clock::now();
+
+        // [JXL Serial] Reset State
+        m_isViewingScaledImage = false;
+        m_stage2Requested = false;
+        m_baseLayerReady.store(false);
+    }
 
     // Use Central Dispatcher
     DispatchImageLoad(path, imageId, fileSize, targetSlot, generationId);
@@ -1382,9 +1399,9 @@ void ImageEngine::FastLane::QueueWorker() {
                 if (isClear) QV_LOG("FastLane_Output", TraceLoggingString("FullReady", "Action"));
                 else QV_LOG("FastLane_Output", TraceLoggingString("PreviewReady", "Action"), TraceLoggingInt32(targetW, "TargetW"), TraceLoggingInt32(rawFrame.width, "RawW"));
                 
-                // [v3.1] If Fast Pass produced clear image, cancel Heavy Lane
-                if (isClear) {
-                    m_parent->CancelHeavy();
+                // [v3.1] If Fast Pass produced clear image for the active image, cancel Heavy Lane for this slot only
+                if (isClear && cmd.id == m_parent->GetCurrentImageId(cmd.targetSlot)) {
+                    m_parent->CancelHeavyForSlot(cmd.targetSlot);
                 }
             } else {
 

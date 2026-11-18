@@ -152,9 +152,17 @@ std::wstring WebViewThumbService::UserDataFolder() {
     return std::wstring(base) + L"\\QuickView\\WebView2Thumb";
 }
 
-std::wstring WebViewThumbService::BuildHtml(const std::vector<uint8_t>& utf8Xml) {
+std::wstring WebViewThumbService::BuildHtml(const std::vector<uint8_t>& utf8Xml, bool highResFill) {
     std::string_view sv(reinterpret_cast<const char*>(utf8Xml.data()), utf8Xml.size());
     std::wstring wXml = Utf8ToWide(sv);
+    if (highResFill) {
+        return L"<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
+               L"<style>"
+               L"html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:transparent;}"
+               L"svg{width:100% !important;height:100% !important;display:block;}"
+               L"</style></head><body>" +
+               wXml + L"</body></html>";
+    }
     return L"<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
            L"<style>"
            L"html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;"
@@ -319,11 +327,35 @@ HRESULT WebViewThumbService::RunJobOnUi(WebViewThumbJob& job) {
     const float safeW = job.viewBoxW > 0.0f ? job.viewBoxW : 512.0f;
     const float safeH = job.viewBoxH > 0.0f ? job.viewBoxH : 512.0f;
     const int maxDim = job.targetSize > 0 ? job.targetSize : 300;
-    const float scale = (std::min)(1.0f, static_cast<float>(maxDim) / (std::max)(safeW, safeH));
-    const int outW = (std::max)(1, static_cast<int>(std::lround(safeW * scale)));
-    const int outH = (std::max)(1, static_cast<int>(std::lround(safeH * scale)));
+    const float scale = job.highResFill
+        ? (static_cast<float>(maxDim) / (std::max)(safeW, safeH))
+        : (std::min)(1.0f, static_cast<float>(maxDim) / (std::max)(safeW, safeH));
+    const int outW = std::clamp(static_cast<int>(std::lround(safeW * scale)), 1, 4096);
+    const int outH = std::clamp(static_cast<int>(std::lround(safeH * scale)), 1, 4096);
 
-    const std::wstring html = BuildHtml(*job.utf8Xml);
+    ComPtr<ICoreWebView2Settings> settings;
+    if (webview_ && SUCCEEDED(webview_->get_Settings(&settings)) && settings) {
+        settings->put_IsScriptEnabled(job.highResFill ? TRUE : FALSE);
+    }
+    if (controller_) {
+        bool hasViewBox = false;
+        if (job.highResFill) {
+            std::string_view xmlSv(reinterpret_cast<const char*>(job.utf8Xml->data()), job.utf8Xml->size());
+            auto it = std::search(
+                xmlSv.begin(), xmlSv.end(),
+                std::string_view("viewBox").begin(), std::string_view("viewBox").end(),
+                [](char a, char b) {
+                    return (a | 32) == (b | 32);
+                });
+            hasViewBox = (it != xmlSv.end());
+        }
+        const double zoom = (job.highResFill && !hasViewBox)
+            ? std::clamp(static_cast<double>(scale), 0.25, 5.0)
+            : 1.0;
+        controller_->put_ZoomFactor(zoom);
+    }
+
+    const std::wstring html = BuildHtml(*job.utf8Xml, job.highResFill);
     job.out->isValid = false;
     job.out->pixels.clear();
     hr = NavigateAndCapture(html, outW, outH, job.out);
@@ -342,7 +374,8 @@ void WebViewThumbService::HandleRasterMessage(WebViewThumbJob* job) {
 HRESULT WebViewThumbService::RasterizeSvgToThumb(const std::vector<uint8_t>& utf8Xml,
                                                  float viewBoxW, float viewBoxH,
                                                  int targetSize,
-                                                 CImageLoader::ThumbData* out) {
+                                                 CImageLoader::ThumbData* out,
+                                                 bool highResFill) {
     if (!out || utf8Xml.empty()) return E_INVALIDARG;
 
     WebViewThumbJob job;
@@ -350,6 +383,7 @@ HRESULT WebViewThumbService::RasterizeSvgToThumb(const std::vector<uint8_t>& utf
     job.viewBoxW = viewBoxW;
     job.viewBoxH = viewBoxH;
     job.targetSize = targetSize;
+    job.highResFill = highResFill;
     job.out = out;
     job.hr = E_FAIL;
 

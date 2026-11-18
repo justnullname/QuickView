@@ -328,7 +328,7 @@ static bool g_isImageDirty = true; // Feature: Conditional Image Repaint (DComp 
 static bool g_isBlurry = false; // For Motion Blur (Ghost)
 
 // [v10.5] Animation Control
-static bool g_animPlaying = true;
+bool g_animPlaying = true;
 static bool g_showAnimDirtyRect = false; // [v10.5] Dirty rect debug overlay
 OSDState g_osd; // Removed static, explicitly Global
 QuickView::PendingClipboardSnapshot g_pendingClipboard;
@@ -766,7 +766,7 @@ static float g_lastHdrDisplayReloadHeadroomStops = -1000.0f;
 // Phase2 may advance imageId before QueueDispatch actually swaps content.
 // For same-size/same-zoom switches, vp/zoom deltas can be zero and suppress
 // first tile scheduling. This flag forces one scheduling pass on next paint.
-static std::atomic<bool> g_forceTitanTileReseed{false};
+std::atomic<bool> g_forceTitanTileReseed{false};
 // Increments when NavigateTo/UpdateView are actually dispatched to ImageEngine.
 // This allows OnPaint Titan scheduler to detect real content switch points even
 // when global imageId was updated earlier by Phase2 staging.
@@ -1838,14 +1838,19 @@ void DrawResourceIntoViewport(ID2D1DeviceContext* ctx,
     const float vpH = viewport.bottom - viewport.top;
     if (vpW <= 1.0f || vpH <= 1.0f) return;
 
-    const D2D1_SIZE_F rawSize = res.GetSize();
+    const bool drawSvgDoc = (!res.isWebView && res.isSvg && res.svgDoc) ||
+                            (res.isWebView && !res.bitmap && res.svgDoc);
+    const D2D1_SIZE_F rawSize = (!drawSvgDoc && res.bitmap) ? res.bitmap->GetSize() : res.GetSize();
     if (rawSize.width <= 0.0f || rawSize.height <= 0.0f) return;
 
     const auto& primaryPane = GetPaneContext(PaneSlot::Primary);
     const auto& editState = primaryPane.editState;
     D2D1_RECT_F srcRect = D2D1::RectF(0.0f, 0.0f, rawSize.width, rawSize.height);
-    D2D1_SIZE_F effectiveSize = GetOrientedSize(res, exifOrientation);
-    float bmpScale = (res.srScale > 0.001f) ? res.srScale : 1.0f;
+    const bool swappedOrient = (exifOrientation >= 5 && exifOrientation <= 8);
+    D2D1_SIZE_F effectiveSize = swappedOrient
+        ? D2D1::SizeF(rawSize.height, rawSize.width)
+        : rawSize;
+    float bmpScale = (!drawSvgDoc && res.srScale > 0.001f) ? res.srScale : 1.0f;
     effectiveSize = D2D1::SizeF(effectiveSize.width / bmpScale, effectiveSize.height / bmpScale);
 
     if (editState.HasCrop) {
@@ -1880,7 +1885,7 @@ void DrawResourceIntoViewport(ID2D1DeviceContext* ctx,
     ctx->GetTransform(&oldTransform);
     ctx->PushAxisAlignedClip(viewport, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
-    if (res.isSvg && res.svgDoc) {
+    if (drawSvgDoc) {
         ComPtr<ID2D1DeviceContext5> ctx5;
         if (SUCCEEDED(ctx->QueryInterface(IID_PPV_ARGS(&ctx5)))) {
             const float drawW = effectiveSize.width * totalScale;
@@ -8740,6 +8745,90 @@ static InitialWindowMetrics CalculateInitialWindowMetrics(int imgWidth, int imgH
     return metrics;
 }
 
+void DeactivateWebContentForCompare(HWND hwnd) {
+    if (g_compEngine && g_compEngine->IsWebViewMode()) {
+        g_compEngine->SetWebViewMode(false);
+        g_compEngine->UnmountWebViewVisual();
+    }
+    if (g_webContentHost) {
+        g_webContentHost->NotifySurfaceInactive(hwnd, CountWebContentFilesInNavigator());
+    }
+}
+
+static bool CreateSvgDocumentFromMemory(ID2D1DeviceContext* ctxBase, const uint8_t* xmlBytes, size_t xmlSize, float svgW, float svgH, ComPtr<ID2D1SvgDocument>& outDoc);
+static HRESULT UploadFrameForSlot(HWND hwnd, PaneSlot slot, const QuickView::RawImageFrame& frame, ID2D1Bitmap** outBitmap, QuickView::DisplayColorState* outUsedState = nullptr);
+
+static FireAndForget RasterizeComplexSvgForCompareAsync(
+    HWND hwnd,
+    PaneSlot slot,
+    std::wstring path,
+    uint64_t generationId,
+    std::vector<uint8_t> xmlData,
+    float svgW,
+    float svgH) {
+    if (!hwnd || xmlData.empty()) co_return;
+    co_await ResumeBackground{};
+    if (!IsWindow(hwnd)) co_return;
+
+    CImageLoader::ThumbData thumb;
+    const HRESULT hr = QuickView::WebViewThumbService::Instance().RasterizeSvgToThumb(
+        xmlData, svgW, svgH, 2048, &thumb, true);
+
+    co_await ResumeMainThread(hwnd);
+    if (!IsWindow(hwnd) || !IsCompareModeActive()) co_return;
+
+    auto& pane = GetPaneContext(slot);
+    if (pane.path != path || pane.generationId != generationId || !pane.resource.isWebView) {
+        co_return;
+    }
+
+    if (SUCCEEDED(hr) && thumb.isValid && !thumb.pixels.empty() && g_renderEngine) {
+        QuickView::RawImageFrame rf;
+        rf.pixels = thumb.pixels.data();
+        rf.width = thumb.width;
+        rf.height = thumb.height;
+        rf.stride = thumb.stride;
+        rf.format = QuickView::PixelFormat::BGRA8888;
+
+        ComPtr<ID2D1Bitmap> bmp;
+        if (SUCCEEDED(UploadFrameForSlot(hwnd, slot, rf, &bmp)) && bmp) {
+            pane.resource.bitmap = bmp;
+            pane.resource.svgDoc.Reset();
+            MarkCompareDirty();
+            RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic | PaintLayer::Static);
+            co_return;
+        }
+    }
+
+    // Fallback to D2D SvgDocument only if WebView2 rasterization failed
+    if (g_renderEngine && !pane.resource.svgDoc) {
+        CreateSvgDocumentFromMemory(
+            g_renderEngine->GetDeviceContext(),
+            xmlData.data(),
+            xmlData.size(),
+            svgW > 0.0f ? svgW : 512.0f,
+            svgH > 0.0f ? svgH : 512.0f,
+            pane.resource.svgDoc);
+        if (pane.resource.svgDoc) {
+            MarkCompareDirty();
+            RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic | PaintLayer::Static);
+        }
+    }
+}
+
+void RasterizeComplexSvgForComparePane(HWND hwnd, PaneSlot slot) {
+    const auto& pane = GetPaneContext(slot);
+    if (!pane.resource.isWebView || !pane.currentFrame || !pane.currentFrame->svg ||
+        pane.currentFrame->svg->xmlData.empty()) {
+        return;
+    }
+    const float svgW = pane.resource.svgW > 0.0f ? pane.resource.svgW : 512.0f;
+    const float svgH = pane.resource.svgH > 0.0f ? pane.resource.svgH : 512.0f;
+    RasterizeComplexSvgForCompareAsync(
+        hwnd, slot, pane.path, pane.generationId,
+        pane.currentFrame->svg->xmlData, svgW, svgH);
+}
+
 static bool CreateSvgDocumentFromMemory(ID2D1DeviceContext* ctxBase, const uint8_t* xmlBytes, size_t xmlSize, float svgW, float svgH, ComPtr<ID2D1SvgDocument>& outDoc) {
     if (!ctxBase || !xmlBytes || xmlSize == 0) return false;
     ComPtr<ID2D1DeviceContext5> ctx5;
@@ -8753,15 +8842,77 @@ static bool CreateSvgDocumentFromMemory(ID2D1DeviceContext* ctxBase, const uint8
     return SUCCEEDED(ctx5->CreateSvgDocument(stream.Get(), vpSize, &outDoc)) && outDoc;
 }
 
-static void SyncAnimationPlaybackTimer(HWND hwnd, const ImageResource& resource) {
-    if (resource.animator) {
-        g_animPlaying = true;
-        uint32_t delayMs = resource.frameMeta.delayMs;
+static HRESULT UploadFrameForSlot(HWND hwnd, PaneSlot slot, const QuickView::RawImageFrame& frame, ID2D1Bitmap** outBitmap, QuickView::DisplayColorState* outUsedState) {
+    if (!g_renderEngine || !outBitmap) return E_POINTER;
+    QuickView::DisplayColorState uploadState = {};
+    const ComparePane cmpPane = (slot == PaneSlot::Left) ? ComparePane::Left : ComparePane::Right;
+    const bool hasPaneDisplayState = IsCompareModeActive() && GetDisplayColorStateForPane(hwnd, cmpPane, &uploadState);
+    const QuickView::DisplayColorState restoreState =
+        g_compEngine ? g_compEngine->GetDisplayColorState() : g_renderEngine->GetDisplayColorState();
+    if (hasPaneDisplayState) {
+        g_renderEngine->SetDisplayColorState(uploadState);
+        if (outUsedState) *outUsedState = uploadState;
+    }
+
+    HRESULT hr = E_FAIL;
+    if (slot == PaneSlot::Left && IsCompareModeActive()) {
+        CRenderEngine::RenderPipelineOptions leftOpts;
+        leftOpts.hasOverrides = true;
+        const auto& leftPane = GetPaneContext(PaneSlot::Left);
+        leftOpts.effectiveCmsMode = (leftPane.CmsModeOverride != -1) ? leftPane.CmsModeOverride : (g_config.ColorManagement ? 1 : 0);
+        leftOpts.enableSoftProofing = leftPane.EnableSoftProofing;
+        leftOpts.softProofProfilePath = leftPane.SoftProofProfilePath;
+        hr = g_renderEngine->UploadRawFrameToGPU(frame, outBitmap, &leftOpts);
+    } else {
+        hr = g_renderEngine->UploadRawFrameToGPU(frame, outBitmap);
+    }
+
+    if (hasPaneDisplayState) {
+        g_renderEngine->SetDisplayColorState(restoreState);
+    }
+    return hr;
+}
+
+void SyncAnimationPlaybackTimers(HWND hwnd) {
+    if (!hwnd || !IsWindow(hwnd)) return;
+    const auto& primaryRes = GetPaneContext(PaneSlot::Primary).resource;
+    const auto& leftPane = GetPaneContext(PaneSlot::Left);
+    const bool compare = IsCompareModeActive();
+
+    if (!g_animPlaying) {
+        KillTimer(hwnd, IDT_ANIMATION);
+        KillTimer(hwnd, IDT_ANIMATION_LEFT);
+        return;
+    }
+
+    if (primaryRes.animator && primaryRes.animator->IsAnimated()) {
+        uint32_t delayMs = primaryRes.frameMeta.delayMs;
         if (delayMs < 10) delayMs = 100;
+        const float speedMult = compare ? 1.0f : g_toolbar.GetAnimSpeedMult();
+        if (speedMult > 0.01f) {
+            delayMs = (std::max)(1u, static_cast<uint32_t>(delayMs / speedMult));
+        }
         SetTimer(hwnd, IDT_ANIMATION, delayMs, NULL);
     } else {
         KillTimer(hwnd, IDT_ANIMATION);
     }
+
+    if (compare && leftPane.valid &&
+        leftPane.resource.animator && leftPane.resource.animator->IsAnimated() &&
+        leftPane.resource.animator.get() != primaryRes.animator.get()) {
+        uint32_t delayMs = leftPane.resource.frameMeta.delayMs;
+        if (delayMs < 10) delayMs = 100;
+        SetTimer(hwnd, IDT_ANIMATION_LEFT, delayMs, NULL);
+    } else {
+        KillTimer(hwnd, IDT_ANIMATION_LEFT);
+    }
+}
+
+static void SyncAnimationPlaybackTimer(HWND hwnd, const ImageResource& resource) {
+    if (resource.animator) {
+        g_animPlaying = true;
+    }
+    SyncAnimationPlaybackTimers(hwnd);
 }
 
 static bool TryPresentBootPreloadedFrame(HWND hwnd, const std::wstring& initialImagePath) {
@@ -12433,7 +12584,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         if (SUCCEEDED(g_renderEngine->CreateBitmapFromWIC(converter.Get(), &newBitmap)) && newBitmap) {
             // Enter Compare Mode: Left snapshots original state (with its original EXIF/crop/transforms),
             // Primary (Right) becomes the baked upright visual AI result.
-            if (AppContext::GetInstance().CompareCtrl && !primaryPane.resource.IsAnimated()) {
+            if (AppContext::GetInstance().CompareCtrl) {
                 AppContext::GetInstance().CompareCtrl->EnterSrCompareMode(hwnd);
             }
             if (primaryPane.resource.isWebView && g_compEngine) {
@@ -12687,7 +12838,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             // [Feature] Snapshot Cover (LOD) Proxy Layer
             // Push the newly acquired thumbnail into the DComp proxy layer (m_imageA)
             // so it's ready to cover the WebView2 visual when it's hidden during RasterizationScale updates.
-            if (res.isWebView) {
+            if (res.isWebView && !IsCompareModeActive()) {
                 extern bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade);
                 RenderImageToDComp(hwnd, res, false);
                 RECT rc = {};
@@ -12961,7 +13112,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         static const UINT_PTR OSD_TIMER_ID = 994;
         
         if (wParam == IDT_ANIMATION) {
-            if (!g_animPlaying || !GetPaneContext(PaneSlot::Primary).resource.animator) {
+            auto& primaryPane = GetPaneContext(PaneSlot::Primary);
+            if (!g_animPlaying || !primaryPane.resource.animator) {
                 KillTimer(hwnd, IDT_ANIMATION);
                 return 0;
             }
@@ -12970,39 +13122,95 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             {
                 extern std::mutex g_animatorMutex;
                 std::lock_guard<std::mutex> lock(g_animatorMutex);
-                nextFrame = GetPaneContext(PaneSlot::Primary).resource.animator->GetNextFrame();
+                nextFrame = primaryPane.resource.animator->GetNextFrame();
                 if (!nextFrame || !nextFrame->pixels) {
                     // EOF: Loop back to frame 0
                     QV_LOG("Anim_Playback", TraceLoggingString("EOF Looping", "Action"));
-                    nextFrame = GetPaneContext(PaneSlot::Primary).resource.animator->SeekToFrame(0);
+                    nextFrame = primaryPane.resource.animator->SeekToFrame(0);
                 }
             }
             
             if (nextFrame && nextFrame->pixels) {
                 ComPtr<ID2D1Bitmap> newBitmap;
-                HRESULT hr = g_renderEngine->UploadRawFrameToGPU(*nextFrame, &newBitmap);
-                if (SUCCEEDED(hr)) {
-                    GetPaneContext(PaneSlot::Primary).resource.bitmap = newBitmap;
-                    GetPaneContext(PaneSlot::Primary).resource.frameMeta = nextFrame->frameMeta;
+                HRESULT hr = UploadFrameForSlot(hwnd, PaneSlot::Primary, *nextFrame, &newBitmap);
+                if (SUCCEEDED(hr) && newBitmap) {
+                    primaryPane.resource.bitmap = newBitmap;
+                    primaryPane.resource.frameMeta = nextFrame->frameMeta;
                     
-                    // Update timer delay with speed multiplier
-                    uint32_t delayMs = GetPaneContext(PaneSlot::Primary).resource.frameMeta.delayMs;
+                    // Update timer delay with speed multiplier (1x in compare mode)
+                    uint32_t delayMs = primaryPane.resource.frameMeta.delayMs;
                     if (delayMs < 10) delayMs = 100;
-                    float speedMult = g_toolbar.GetAnimSpeedMult();
+                    const bool compare = IsCompareModeActive();
+                    float speedMult = compare ? 1.0f : g_toolbar.GetAnimSpeedMult();
                     if (speedMult > 0.01f) delayMs = (uint32_t)(delayMs / speedMult);
                     if (delayMs < 1) delayMs = 1;
                     SetTimer(hwnd, IDT_ANIMATION, delayMs, NULL);
                     
-                    // Update Surface but defer DComp Commit to OnPaint to avoid stuttering
-                    RenderImageToDComp(hwnd, GetPaneContext(PaneSlot::Primary).resource, true);
-                    RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic | PaintLayer::Static); 
+                    if (compare) {
+                        // If Left shares the same animator (e.g. SoftProof Before/After on same GIF), update Left synchronously
+                        auto& leftPane = GetPaneContext(PaneSlot::Left);
+                        if (leftPane.valid && leftPane.resource.animator.get() == primaryPane.resource.animator.get()) {
+                            ComPtr<ID2D1Bitmap> leftBitmap;
+                            if (SUCCEEDED(UploadFrameForSlot(hwnd, PaneSlot::Left, *nextFrame, &leftBitmap)) && leftBitmap) {
+                                leftPane.resource.bitmap = leftBitmap;
+                                leftPane.resource.frameMeta = nextFrame->frameMeta;
+                            }
+                        }
+                        MarkCompareDirty();
+                        RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic | PaintLayer::Static);
+                    } else {
+                        // Update Surface but defer DComp Commit to OnPaint to avoid stuttering
+                        RenderImageToDComp(hwnd, primaryPane.resource, true);
+                        RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic | PaintLayer::Static); 
+                    }
                 } else {
                     QV_LOG("Anim_Playback", TraceLoggingString("UploadFailed", "Action"));
                 }
             } else {
-                // If it fails permanently, pause
+                // If it fails permanently, stop this timer
                 KillTimer(hwnd, IDT_ANIMATION);
-                g_animPlaying = false;
+                if (!IsCompareModeActive() || !GetPaneContext(PaneSlot::Left).valid || !GetPaneContext(PaneSlot::Left).resource.IsAnimated()) {
+                    g_animPlaying = false;
+                }
+            }
+            return 0;
+        }
+
+        if (wParam == IDT_ANIMATION_LEFT) {
+            auto& leftPane = GetPaneContext(PaneSlot::Left);
+            auto& primaryPane = GetPaneContext(PaneSlot::Primary);
+            if (!IsCompareModeActive() || !g_animPlaying || !leftPane.valid ||
+                !leftPane.resource.animator || !leftPane.resource.animator->IsAnimated() ||
+                leftPane.resource.animator.get() == primaryPane.resource.animator.get()) {
+                KillTimer(hwnd, IDT_ANIMATION_LEFT);
+                return 0;
+            }
+
+            std::shared_ptr<QuickView::RawImageFrame> nextFrame;
+            {
+                extern std::mutex g_animatorMutex;
+                std::lock_guard<std::mutex> lock(g_animatorMutex);
+                nextFrame = leftPane.resource.animator->GetNextFrame();
+                if (!nextFrame || !nextFrame->pixels) {
+                    nextFrame = leftPane.resource.animator->SeekToFrame(0);
+                }
+            }
+
+            if (nextFrame && nextFrame->pixels) {
+                ComPtr<ID2D1Bitmap> newBitmap;
+                if (SUCCEEDED(UploadFrameForSlot(hwnd, PaneSlot::Left, *nextFrame, &newBitmap)) && newBitmap) {
+                    leftPane.resource.bitmap = newBitmap;
+                    leftPane.resource.frameMeta = nextFrame->frameMeta;
+
+                    uint32_t delayMs = leftPane.resource.frameMeta.delayMs;
+                    if (delayMs < 10) delayMs = 100;
+                    SetTimer(hwnd, IDT_ANIMATION_LEFT, delayMs, NULL);
+
+                    MarkCompareDirty();
+                    RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic | PaintLayer::Static);
+                }
+            } else {
+                KillTimer(hwnd, IDT_ANIMATION_LEFT);
             }
             return 0;
         }
@@ -15842,16 +16050,19 @@ SKIP_EDGE_NAV:;
                         ImageResource rightRes = std::move(GetPaneContext(PaneSlot::Primary).resource);
                         CImageLoader::ImageMetadata rightMeta = GetPaneContext(PaneSlot::Primary).metadata;
                         std::wstring rightPath = GetPaneContext(PaneSlot::Primary).path;
+                        auto rightFrame = std::move(GetPaneContext(PaneSlot::Primary).currentFrame);
                         CompareView rightView = GetRightCompareView();
 
                         GetPaneContext(PaneSlot::Primary).resource = std::move(GetPaneContext(PaneSlot::Left).resource);
                         GetPaneContext(PaneSlot::Primary).metadata = GetPaneContext(PaneSlot::Left).metadata;
                         GetPaneContext(PaneSlot::Primary).path = GetPaneContext(PaneSlot::Left).path;
+                        GetPaneContext(PaneSlot::Primary).currentFrame = std::move(GetPaneContext(PaneSlot::Left).currentFrame);
                         SetRightCompareView(GetPaneContext(PaneSlot::Left).view);
 
                         GetPaneContext(PaneSlot::Left).resource = std::move(rightRes);
                         GetPaneContext(PaneSlot::Left).metadata = rightMeta;
                         GetPaneContext(PaneSlot::Left).path = rightPath;
+                        GetPaneContext(PaneSlot::Left).currentFrame = std::move(rightFrame);
                         GetPaneContext(PaneSlot::Left).view = rightView;
                         GetPaneContext(PaneSlot::Left).valid = true;
                         if (!GetPaneContext(PaneSlot::Primary).path.empty()) {
@@ -15861,6 +16072,7 @@ SKIP_EDGE_NAV:;
                         RequestRepaint(PaintLayer::Image | PaintLayer::Static);
                         // [Compare RAW] Refresh after swap
                         RefreshCompareRawUI(hwnd);
+                        SyncAnimationPlaybackTimers(hwnd);
                     }
                     break;
                 case ToolbarButtonID::CompareLayout:
@@ -17079,7 +17291,7 @@ void ProcessEngineEvents(HWND hwnd) {
                 break;
             }
             
-            // === LEFT PANE: Lean handler (upload bitmap, store metadata, done) ===
+            // === LEFT PANE: Lean handler (upload bitmap/SVG/anim, store metadata, done) ===
             if (targetSlot == PaneSlot::Left) {
                 auto abortLeftDecode = [&]() {
                     g_isLeftPaneDecoding = false;
@@ -17089,62 +17301,103 @@ void ProcessEngineEvents(HWND hwnd) {
                         cb.Reset();
                     }
                 };
-                if (!evt.rawFrame || !evt.rawFrame->IsValid() || evt.rawFrame->IsSvg()) {
+                if (!evt.rawFrame || !evt.rawFrame->IsValid()) {
                     abortLeftDecode();
                     break;
                 }
-                if (evt.rawFrame->animator && evt.rawFrame->animator->IsAnimated()) {
-                    abortLeftDecode();
-                    if (IsCompareModeActive() && AppContext::GetInstance().CompareCtrl) {
-                        AppContext::GetInstance().CompareCtrl->ExitMode(hwnd);
+
+                if (evt.rawFrame->IsSvg()) {
+                    ComPtr<ID2D1SvgDocument> svgDoc;
+                    float svgW = evt.rawFrame->svg ? evt.rawFrame->svg->viewBoxW : 512.0f;
+                    float svgH = evt.rawFrame->svg ? evt.rawFrame->svg->viewBoxH : 512.0f;
+                    if (svgW <= 0.0f) svgW = 512.0f;
+                    if (svgH <= 0.0f) svgH = 512.0f;
+                    if (evt.rawFrame->svg && !evt.rawFrame->svg->xmlData.empty()) {
+                        CreateSvgDocumentFromMemory(
+                            g_renderEngine ? g_renderEngine->GetDeviceContext() : nullptr,
+                            evt.rawFrame->svg->xmlData.data(),
+                            evt.rawFrame->svg->xmlData.size(),
+                            svgW, svgH, svgDoc);
                     }
-                    g_osd.Show(hwnd, AppStrings::g.OSD_CompareAnimNotSupported, true);
-                    needsRepaint = true;
-                    break;
-                }
-                
-                ComPtr<ID2D1Bitmap> leftBitmap;
-                QuickView::DisplayColorState uploadState = {};
-                const bool hasPaneDisplayState =
-                    IsCompareModeActive() &&
-                    GetDisplayColorStateForPane(hwnd, ComparePane::Left, &uploadState);
-                const QuickView::DisplayColorState restoreState =
-                    g_compEngine ? g_compEngine->GetDisplayColorState() : g_renderEngine->GetDisplayColorState();
-                if (hasPaneDisplayState) {
-                    g_renderEngine->SetDisplayColorState(uploadState);
-                }
-                HRESULT hr = g_renderEngine->UploadRawFrameToGPU(*evt.rawFrame, &leftBitmap);
-                if (hasPaneDisplayState) {
-                    g_renderEngine->SetDisplayColorState(restoreState);
-                }
-                if (FAILED(hr) || !leftBitmap) {
-                    abortLeftDecode();
-                    break;
-                }
-                
-                pane.resource.Reset();
-                pane.resource.bitmap = leftBitmap;
-                pane.path = evt.filePath;
-                pane.valid = true;
-                pane.view = {};
-                
-                // Metadata
-                pane.metadata = evt.metadata;
-                D2D1_SIZE_U pixel = leftBitmap->GetPixelSize();
-                if (pane.metadata.Width == 0 || pane.metadata.Height == 0) {
-                    pane.metadata.Width = pixel.width;
-                    pane.metadata.Height = pixel.height;
-                }
-                int frameExif = evt.rawFrame->exifOrientation;
-                if (frameExif < 1 || frameExif > 8) frameExif = 1;
-                pane.metadata.ExifOrientation = frameExif;
-                pane.view.ExifOrientation = g_config.AutoRotate ? frameExif : 1;
-                
-                // AuxLayer from frame
-                if (evt.rawFrame->auxLayer) {
-                    pane.resource.blendOp = evt.rawFrame->blendOp;
-                    pane.resource.shaderPayload = evt.rawFrame->shaderPayload;
-                    pane.resource.auxLayer = evt.rawFrame->auxLayer->Clone();
+                    if (!svgDoc) {
+                        abortLeftDecode();
+                        break;
+                    }
+                    pane.resource.Reset();
+                    pane.resource.isSvg = true;
+                    pane.resource.svgW = svgW;
+                    pane.resource.svgH = svgH;
+                    pane.resource.svgDoc = svgDoc;
+                    pane.path = evt.filePath;
+                    pane.valid = true;
+                    pane.view = {};
+                    pane.currentFrame = evt.rawFrame;
+                    pane.metadata = evt.metadata;
+                    pane.metadata.Format = L"SVG";
+                    pane.metadata.Width = static_cast<UINT>(svgW);
+                    pane.metadata.Height = static_cast<UINT>(svgH);
+                    pane.metadata.ExifOrientation = 1;
+                    pane.view.ExifOrientation = 1;
+                } else if (evt.rawFrame->IsWebView()) {
+                    float svgW = evt.rawFrame->svg ? evt.rawFrame->svg->viewBoxW : 512.0f;
+                    float svgH = evt.rawFrame->svg ? evt.rawFrame->svg->viewBoxH : 512.0f;
+                    if (svgW <= 0.0f) svgW = 512.0f;
+                    if (svgH <= 0.0f) svgH = 512.0f;
+                    pane.resource.Reset();
+                    pane.resource.isWebView = true;
+                    pane.resource.svgW = svgW;
+                    pane.resource.svgH = svgH;
+                    pane.path = evt.filePath;
+                    pane.valid = true;
+                    pane.view = {};
+                    pane.currentFrame = evt.rawFrame;
+                    pane.metadata = evt.metadata;
+                    pane.metadata.Format = L"SVG (WebView2)";
+                    pane.metadata.Width = static_cast<UINT>(svgW);
+                    pane.metadata.Height = static_cast<UINT>(svgH);
+                    pane.metadata.ExifOrientation = 1;
+                    pane.view.ExifOrientation = 1;
+                    RasterizeComplexSvgForComparePane(hwnd, PaneSlot::Left);
+                } else {
+                    ComPtr<ID2D1Bitmap> leftBitmap;
+                    HRESULT hr = UploadFrameForSlot(hwnd, PaneSlot::Left, *evt.rawFrame, &leftBitmap);
+                    if (FAILED(hr) || !leftBitmap) {
+                        abortLeftDecode();
+                        break;
+                    }
+                    
+                    pane.resource.Reset();
+                    pane.resource.bitmap = leftBitmap;
+                    pane.path = evt.filePath;
+                    pane.valid = true;
+                    pane.view = {};
+                    
+                    // Metadata
+                    pane.metadata = evt.metadata;
+                    D2D1_SIZE_U pixel = leftBitmap->GetPixelSize();
+                    if (pane.metadata.Width == 0 || pane.metadata.Height == 0) {
+                        pane.metadata.Width = pixel.width;
+                        pane.metadata.Height = pixel.height;
+                    }
+                    int frameExif = evt.rawFrame->exifOrientation;
+                    if (frameExif < 1 || frameExif > 8) frameExif = 1;
+                    pane.metadata.ExifOrientation = frameExif;
+                    pane.view.ExifOrientation = g_config.AutoRotate ? frameExif : 1;
+                    
+                    // AuxLayer from frame
+                    if (evt.rawFrame->auxLayer) {
+                        pane.resource.blendOp = evt.rawFrame->blendOp;
+                        pane.resource.shaderPayload = evt.rawFrame->shaderPayload;
+                        pane.resource.auxLayer = evt.rawFrame->auxLayer->Clone();
+                    }
+
+                    // Animation state (plays if enabled; frame 0 already uploaded)
+                    pane.resource.animator = evt.rawFrame->animator;
+                    pane.resource.frameMeta = evt.rawFrame->frameMeta;
+                    pane.currentFrame = evt.rawFrame;
+                    if (pane.resource.IsAnimated() && !GetPaneContext(PaneSlot::Primary).resource.IsAnimated()) {
+                        g_animPlaying = true;
+                    }
                 }
                 
                 pane.CmsModeOverride = g_runtime.CmsModeOverride;
@@ -17164,6 +17417,7 @@ void ProcessEngineEvents(HWND hwnd) {
                     UpdateCompareLeftHistogramAsync(hwnd, pane.path);
                 }
                 RefreshCompareRawUI(hwnd);
+                SyncAnimationPlaybackTimers(hwnd);
                 
                 MarkCompareDirty();
                 needsRepaint = true;
@@ -17224,75 +17478,85 @@ void ProcessEngineEvents(HWND hwnd) {
                      }
                      
                 } else if (evt.rawFrame->IsWebView()) {
-                     // === WebContentHost DComp path (complex SVG) ===
-                     // Commit resource only after Present succeeds (avoid half-state UI).
-                     // No retry/Shutdown loops: warm leave keeps controller alive so Present
-                     // cannot fail from put_IsVisible(FALSE) suspension.
-                     if (!g_webContentHost) {
-                         g_webContentHost = std::make_unique<QuickView::WebContentHost>();
-                     }
-                     // Must mark active BEFORE EnsureReady: init pumps messages and a
-                     // queued retention WM_TIMER would otherwise ReleaseRuntime mid-create.
-                     g_webContentHost->NotifySurfaceActive();
-                     if (g_compEngine &&
-                         SUCCEEDED(g_webContentHost->EnsureReady(hwnd, g_compEngine->GetDevice())) &&
-                         g_webContentHost->IsReady()) {
-
-                         QuickView::WebContentPayload payload;
-                         payload.kind = QuickView::WebContentKind::ComplexSvg;
-                         payload.intrinsicW = evt.rawFrame->svg->viewBoxW > 0.0f
-                             ? evt.rawFrame->svg->viewBoxW : 512.0f;
-                         payload.intrinsicH = evt.rawFrame->svg->viewBoxH > 0.0f
-                             ? evt.rawFrame->svg->viewBoxH : 512.0f;
-                         const auto& xml = evt.rawFrame->svg->xmlData;
-                         if (!xml.empty()) {
-                             payload.utf8Document.assign(
-                                 reinterpret_cast<const char*>(xml.data()), xml.size());
-                         }
-
-                         const UINT texLimit = GetSvgSurfaceSizeLimit();
-                         // Provisional R=1; overscan Bounds/CSS armed on first SyncDCompState
-                         // while the surface is still hidden.
-                         if (SUCCEEDED(g_webContentHost->Present(payload, 1.0f, texLimit)) &&
-                             g_webContentHost->GetVisual()) {
-                             GetPaneContext(PaneSlot::Primary).resource.Reset();
-                             GetPaneContext(PaneSlot::Primary).resource.isWebView = true;
-                             GetPaneContext(PaneSlot::Primary).resource.svgW =
-                                 evt.rawFrame->svg->viewBoxW;
-                             GetPaneContext(PaneSlot::Primary).resource.svgH =
-                                 evt.rawFrame->svg->viewBoxH;
-                             GetPaneContext(PaneSlot::Primary).resource.webViewVisual =
-                                 g_webContentHost->GetVisual();
-
-                             // Best-effort D2D SVG document for minimap/UI overlays.
-                             // foreignObject/filter may be incomplete, but beats an empty navigator.
-                             if (!xml.empty() && g_renderEngine) {
-                                 CreateSvgDocumentFromMemory(
-                                     g_renderEngine->GetDeviceContext(),
-                                     xml.data(), xml.size(),
-                                     GetPaneContext(PaneSlot::Primary).resource.svgW,
-                                     GetPaneContext(PaneSlot::Primary).resource.svgH,
-                                     GetPaneContext(PaneSlot::Primary).resource.svgDoc);
-                             }
-                             resourceReady = true;
-                         }
-                     }
-                     if (!resourceReady && evt.rawFrame->svg && !evt.rawFrame->svg->xmlData.empty()) {
-                         // Present/EnsureReady failed: demote this file to static D2D. Do not latch the host.
+                     if (IsCompareModeActive()) {
                          auto& res = GetPaneContext(PaneSlot::Primary).resource;
                          res.Reset();
-                         res.isSvg = true;
-                         res.isWebView = false;
-                         res.svgW = evt.rawFrame->svg->viewBoxW;
-                         res.svgH = evt.rawFrame->svg->viewBoxH;
-                         if (CreateSvgDocumentFromMemory(g_renderEngine ? g_renderEngine->GetDeviceContext() : nullptr,
-                                                         evt.rawFrame->svg->xmlData.data(),
-                                                         evt.rawFrame->svg->xmlData.size(),
-                                                         res.svgW,
-                                                         res.svgH,
-                                                         res.svgDoc)) {
-                             resourceReady = true;
-                             g_osd.Show(hwnd, AppStrings::g.OSD_SvgStaticFallback, false);
+                         res.isWebView = true;
+                         res.svgW = (evt.rawFrame->svg && evt.rawFrame->svg->viewBoxW > 0.0f)
+                             ? evt.rawFrame->svg->viewBoxW : 512.0f;
+                         res.svgH = (evt.rawFrame->svg && evt.rawFrame->svg->viewBoxH > 0.0f)
+                             ? evt.rawFrame->svg->viewBoxH : 512.0f;
+                         GetPaneContext(PaneSlot::Primary).currentFrame = evt.rawFrame;
+                         resourceReady = true;
+                     } else {
+                         // === WebContentHost DComp path (complex SVG) ===
+                         if (!g_webContentHost) {
+                             g_webContentHost = std::make_unique<QuickView::WebContentHost>();
+                         }
+                         // Must mark active BEFORE EnsureReady: init pumps messages and a
+                         // queued retention WM_TIMER would otherwise ReleaseRuntime mid-create.
+                         g_webContentHost->NotifySurfaceActive();
+                         if (g_compEngine &&
+                             SUCCEEDED(g_webContentHost->EnsureReady(hwnd, g_compEngine->GetDevice())) &&
+                             g_webContentHost->IsReady()) {
+
+                             QuickView::WebContentPayload payload;
+                             payload.kind = QuickView::WebContentKind::ComplexSvg;
+                             payload.intrinsicW = evt.rawFrame->svg->viewBoxW > 0.0f
+                                 ? evt.rawFrame->svg->viewBoxW : 512.0f;
+                             payload.intrinsicH = evt.rawFrame->svg->viewBoxH > 0.0f
+                                 ? evt.rawFrame->svg->viewBoxH : 512.0f;
+                             const auto& xml = evt.rawFrame->svg->xmlData;
+                             if (!xml.empty()) {
+                                 payload.utf8Document.assign(
+                                     reinterpret_cast<const char*>(xml.data()), xml.size());
+                             }
+
+                             const UINT texLimit = GetSvgSurfaceSizeLimit();
+                             // Provisional R=1; overscan Bounds/CSS armed on first SyncDCompState
+                             // while the surface is still hidden.
+                             if (SUCCEEDED(g_webContentHost->Present(payload, 1.0f, texLimit)) &&
+                                 g_webContentHost->GetVisual()) {
+                                 GetPaneContext(PaneSlot::Primary).resource.Reset();
+                                 GetPaneContext(PaneSlot::Primary).resource.isWebView = true;
+                                 GetPaneContext(PaneSlot::Primary).resource.svgW =
+                                     evt.rawFrame->svg->viewBoxW;
+                                 GetPaneContext(PaneSlot::Primary).resource.svgH =
+                                     evt.rawFrame->svg->viewBoxH;
+                                 GetPaneContext(PaneSlot::Primary).resource.webViewVisual =
+                                     g_webContentHost->GetVisual();
+                                 GetPaneContext(PaneSlot::Primary).currentFrame = evt.rawFrame;
+
+                                 // Best-effort D2D SVG document for minimap/UI overlays.
+                                 // foreignObject/filter may be incomplete, but beats an empty navigator.
+                                 if (!xml.empty() && g_renderEngine) {
+                                     CreateSvgDocumentFromMemory(
+                                         g_renderEngine->GetDeviceContext(),
+                                         xml.data(), xml.size(),
+                                         GetPaneContext(PaneSlot::Primary).resource.svgW,
+                                         GetPaneContext(PaneSlot::Primary).resource.svgH,
+                                         GetPaneContext(PaneSlot::Primary).resource.svgDoc);
+                                 }
+                                 resourceReady = true;
+                             }
+                         }
+                         if (!resourceReady && evt.rawFrame->svg && !evt.rawFrame->svg->xmlData.empty()) {
+                             // Present/EnsureReady failed: demote this file to static D2D. Do not latch the host.
+                             auto& res = GetPaneContext(PaneSlot::Primary).resource;
+                             res.Reset();
+                             res.isSvg = true;
+                             res.isWebView = false;
+                             res.svgW = evt.rawFrame->svg->viewBoxW;
+                             res.svgH = evt.rawFrame->svg->viewBoxH;
+                             if (CreateSvgDocumentFromMemory(g_renderEngine ? g_renderEngine->GetDeviceContext() : nullptr,
+                                                             evt.rawFrame->svg->xmlData.data(),
+                                                             evt.rawFrame->svg->xmlData.size(),
+                                                             res.svgW,
+                                                             res.svgH,
+                                                             res.svgDoc)) {
+                                 resourceReady = true;
+                                 g_osd.Show(hwnd, AppStrings::g.OSD_SvgStaticFallback, false);
+                             }
                          }
                      }
                 } else {
@@ -17605,15 +17869,6 @@ void ProcessEngineEvents(HWND hwnd) {
                      g_isImageScaled = evt.isScaled;
                 }
                 SetWindowTextW(hwnd, titleBuf);
-                
-                if (IsCompareModeActive() && GetPaneContext(PaneSlot::Primary).resource.IsAnimated()) {
-                    AppContext::GetInstance().CompareCtrl->ExitMode(hwnd);
-                    g_osd.Show(hwnd, AppStrings::g.OSD_CompareAnimNotSupported, true);
-                } else if (IsCompareModeActive() && (GetPaneContext(PaneSlot::Primary).metadata.Width > 8192 || GetPaneContext(PaneSlot::Primary).metadata.Height > 8192)) {
-                    AppContext::GetInstance().CompareCtrl->ExitMode(hwnd);
-                    g_osd.Show(hwnd, L"Compare mode exited: Titan image is not supported yet.", true);
-                }
-
 
                 if (IsCompareModeActive()) {
                     if (AppContext::GetInstance().Compare.syncZoom) {
@@ -17627,6 +17882,10 @@ void ProcessEngineEvents(HWND hwnd) {
                     if (AppContext::GetInstance().Compare.pendingSnap && !isPreview) {
                         SnapWindowToCompareImages(hwnd);
                         AppContext::GetInstance().Compare.pendingSnap = false;
+                    }
+                    if (GetPaneContext(PaneSlot::Primary).resource.isWebView &&
+                        !GetPaneContext(PaneSlot::Primary).resource.bitmap) {
+                        RasterizeComplexSvgForComparePane(hwnd, PaneSlot::Primary);
                     }
                 } else {
                     // [Strategy] Visual Continuity for Soft-Refresh (e.g. Color Space/RAW Switch)
@@ -18526,8 +18785,8 @@ void StartNavigation(HWND hwnd, std::wstring path, [[maybe_unused]] bool showOSD
     ClearGamutWarningState(hwnd);
 
     // Phase 1: zero-latency placeholder chain
-    // Cancel stale heavy work BEFORE Phase 1 to free CPU for placeholder rendering.
-    g_imageEngine->CancelHeavy();
+    // Cancel stale heavy work for Primary pane BEFORE Phase 1 to free CPU for placeholder rendering.
+    g_imageEngine->CancelHeavyForSlot(PaneSlot::Primary);
     
     // [Fix] Invalidate TileManager immediately so stale tiles aren't drawn into new Titan surfaces!
     // If we only wait for Phase 2 DispatchImageLoad, 75ms of frames will draw old tiles on the new placeholder.
@@ -19354,8 +19613,13 @@ void OnPaint(HWND hwnd) {
         }
         
         // Pass animation state
+        const bool compareActive = IsCompareModeActive();
+        const bool primaryHasAnim = GetPaneContext(PaneSlot::Primary).resource.IsAnimated();
+        const bool leftHasAnim = compareActive && GetPaneContext(PaneSlot::Left).valid && GetPaneContext(PaneSlot::Left).resource.IsAnimated();
+        const bool anyCompareAnim = compareActive && (primaryHasAnim || leftHasAnim);
+
         AnimationPlaybackState animState;
-        if (GetPaneContext(PaneSlot::Primary).resource.animator) {
+        if (!compareActive && GetPaneContext(PaneSlot::Primary).resource.animator) {
             animState.IsAnimated = true;
             animState.IsPlaying = g_animPlaying;
             animState.InspectorMode = !g_animPlaying;
@@ -19388,9 +19652,10 @@ void OnPaint(HWND hwnd) {
         g_uiRenderer->UpdateAnimationState(animState);
         
         // [v10.5] Sync Toolbar animation mode
-        bool hasAnim = (GetPaneContext(PaneSlot::Primary).resource.animator != nullptr);
+        bool hasAnim = (!compareActive && GetPaneContext(PaneSlot::Primary).resource.animator != nullptr);
         bool supportsDirtyRect = hasAnim ? GetPaneContext(PaneSlot::Primary).resource.animator->SupportsDirtyRect() : false;
         g_toolbar.SetAnimationMode(hasAnim, hasAnim && g_animPlaying, g_showAnimDirtyRect, supportsDirtyRect);
+        g_toolbar.SetCompareAnimState(anyCompareAnim, anyCompareAnim && g_animPlaying);
         if (hasAnim && animState.TotalFrames > 1) {
             extern float g_pendingAsyncSeekTarget;
             if (g_pendingAsyncSeekTarget < 0.0f) {
@@ -20330,7 +20595,7 @@ static void ComparePairSideBySide(HWND hwnd, const std::wstring& renderedPath, c
 
     // EnterMode captures the CURRENT image into the left pane
     AppContext::GetInstance().CompareCtrl->EnterMode(hwnd);
-    if (!IsCompareModeActive()) return; // refused (no resource / Titan image)
+    if (!IsCompareModeActive()) return; // refused (no resource)
     g_pairCompareSession = true;
 
     // Armed immediately before each RAW load (by value: outlives the helper
@@ -20587,25 +20852,25 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
         }
         return true;
 
-    case HotkeyAction::ToggleAnimation:
+    case HotkeyAction::ToggleAnimation: {
+        const bool hasPrimaryAnim = GetPaneContext(PaneSlot::Primary).resource.IsAnimated();
+        const bool hasLeftAnim = IsCompareModeActive() && GetPaneContext(PaneSlot::Left).valid && GetPaneContext(PaneSlot::Left).resource.IsAnimated();
         if (g_slideshowState.IsActive) {
             ToggleSlideshowPlayback(hwnd);
-        } else if (GetPaneContext(PaneSlot::Primary).resource.animator) {
+        } else if (hasPrimaryAnim || hasLeftAnim) {
             g_animPlaying = !g_animPlaying;
+            SyncAnimationPlaybackTimers(hwnd);
             if (g_animPlaying) {
-                uint32_t delayMs = GetPaneContext(PaneSlot::Primary).resource.frameMeta.delayMs;
-                if (delayMs < 10) delayMs = 100;
-                SetTimer(hwnd, IDT_ANIMATION, delayMs, NULL);
                 g_osd.Show(hwnd, L"[Animation] Playing", true);
             } else {
-                KillTimer(hwnd, IDT_ANIMATION);
                 g_osd.Show(hwnd, AppStrings::g.OSD_AnimPaused, true);
             }
-            RequestRepaint(PaintLayer::Dynamic);
+            RequestRepaint(PaintLayer::Dynamic | PaintLayer::Static);
         } else if (CheckUnsavedChanges(hwnd, QuickView::PendingAction::NavigateNext)) {
             Navigate(hwnd, 1);
         }
         return true;
+    }
 
     case HotkeyAction::AnimNextFrame:
         if (GetPaneContext(PaneSlot::Primary).resource.animator) {

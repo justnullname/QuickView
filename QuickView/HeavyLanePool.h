@@ -70,7 +70,7 @@ public:
     // === Task Submission ===
     // Thread-safe. Will auto-expand if needed.
     // [ImageID] Uses stable path hash instead of incrementing token
-    void Submit(const std::wstring& path, ImageID imageId, std::shared_ptr<QuickView::MappedFile> mmf = nullptr, PaneSlot targetSlot = PaneSlot::Primary, uint64_t generationId = 0);
+    void Submit(const std::wstring& path, ImageID imageId, std::shared_ptr<QuickView::MappedFile> mmf = nullptr, PaneSlot targetSlot = PaneSlot::Primary, uint64_t generationId = 0, bool decodeScaledBase = false, bool allowFakeBase = true, int srcW = 0, int srcH = 0, QuickView::TitanFormat titanFmt = QuickView::TitanFormat::Unknown);
     
     // Full resolution decode (no scaling)
     void SubmitFullDecode(const std::wstring& path, ImageID imageId, std::shared_ptr<QuickView::MappedFile> mmf = nullptr, PaneSlot targetSlot = PaneSlot::Primary, uint64_t generationId = 0);
@@ -93,6 +93,7 @@ public:
     // === Cancellation ===
     // [ImageID] Cancel tasks that don't match the current imageId
     void CancelOthers(ImageID currentId, PaneSlot targetSlot = PaneSlot::Primary);
+    void CancelSlot(PaneSlot targetSlot);
     void CancelAll();
     
     // === Result Retrieval ===
@@ -139,6 +140,7 @@ private:
         WorkerState state = WorkerState::SLEEPING;  // Protected by m_poolMutex
         std::wstring currentPath;
         ImageID currentId = 0;  // [ImageID] Path hash of current task
+        PaneSlot currentSlot = PaneSlot::Primary;
         std::stop_source stopSource; // Job cancellation
         std::stop_source threadStopSource; // [Fast Exit] Thread lifecycle control
         std::chrono::steady_clock::time_point lastActiveTime;
@@ -289,6 +291,11 @@ private:
         
         // Standard
         bool isFullDecode = false;  // true = full resolution, false = scaled
+        bool decodeScaledBase = false; // true = force scaled base decode even if global m_isTitanMode is off
+        bool allowFakeBase = true;     // false in compare mode / left pane to avoid 1x1 transparent placeholder
+        int srcW = 0;
+        int srcH = 0;
+        QuickView::TitanFormat titanFormat = QuickView::TitanFormat::Unknown;
         
         // Tile
         QuickView::RegionRequest region; // [Titan] Rect + Scale
