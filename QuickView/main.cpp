@@ -10829,7 +10829,7 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
              break;
         }
         
-        case IDM_HUD_GALLERY: SendMessage(hwnd, WM_KEYDOWN, 'T', 0); break;
+        case IDM_HUD_GALLERY: HandleHotkeyAction(hwnd, HotkeyAction::ToggleGallery); break;
 
         case IDM_LITE_INFO:
              g_runtime.ShowInfoPanel = true;
@@ -13925,7 +13925,7 @@ case WM_DESTROY: {
               }
               
               if (g_gallery.IsHoverSuppressed()) {
-                  if (!inGalleryTriggerZone && pt.y > g_config.GalleryFilmstripHeight * g_uiScale) {
+                  if (!inGalleryTriggerZone && !g_gallery.HitTestArea(pt.x, pt.y, (float)w, (float)h)) {
                       g_gallery.ClearHoverSuppression();
                   }
               }
@@ -15762,14 +15762,8 @@ SKIP_EDGE_NAV:;
                     InvalidateRect(hwnd, nullptr, FALSE); // Force Paint
                     break;
                 }
-                case ToolbarButtonID::Gallery: 
-                    if (g_gallery.IsVisible()) {
-                        g_gallery.Close();
-                        FinishGallery(hwnd, GalleryFinishKind::Dismiss);
-                        RequestRepaint(PaintLayer::All);
-                    } else {
-                        ShowGallery(hwnd);
-                    }
+                case ToolbarButtonID::Gallery:
+                    HandleHotkeyAction(hwnd, HotkeyAction::ToggleGallery);
                     break;
                 case ToolbarButtonID::CompareToggle:
                     if (IsCompareModeActive()) {
@@ -16683,18 +16677,22 @@ SKIP_EDGE_NAV:;
         }
 
         // Gallery handling
-        if (g_gallery.IsVisible()) {
+        if (g_gallery.GetMode() != GalleryMode::Hidden) {
             if (g_gallery.OnKeyDown(wParam)) {
                 const int idx = g_gallery.GetSelectedIndex();
                 if (wParam == VK_RETURN && idx >= 0) {
                     FinishGallery(hwnd, GalleryFinishKind::Commit, idx);
                     if (g_gallery.GetMode() == GalleryMode::Hidden) {
                         SetCursor(LoadCursor(nullptr, IDC_ARROW));
+                        g_lastOverlayCloseTime = GetTickCount();
+                        g_gallery.SuppressHoverUntilMouseLeave();
                     }
                     RequestRepaint(PaintLayer::All);
                 } else if (g_gallery.GetMode() == GalleryMode::Hidden) {
                     SetCursor(LoadCursor(nullptr, IDC_ARROW));
                     FinishGallery(hwnd, GalleryFinishKind::Dismiss);
+                    g_lastOverlayCloseTime = GetTickCount();
+                    g_gallery.SuppressHoverUntilMouseLeave();
                     RequestRepaint(PaintLayer::All);
                 } else {
                     RequestRepaint(PaintLayer::All);
@@ -20622,7 +20620,7 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
         return true;
 
     case HotkeyAction::ToggleGallery:
-        if (g_gallery.IsVisible()) {
+        if (g_gallery.GetMode() != GalleryMode::Hidden) {
             g_gallery.Close();
             FinishGallery(hwnd, GalleryFinishKind::Dismiss);
             g_lastOverlayCloseTime = GetTickCount();
@@ -20635,7 +20633,7 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
         return true;
 
     case HotkeyAction::ToggleFilmstrip:
-        if (g_gallery.IsVisible()) {
+        if (g_gallery.GetMode() != GalleryMode::Hidden) {
             g_gallery.Close(true);
             FinishGallery(hwnd, GalleryFinishKind::Dismiss);
             g_lastOverlayCloseTime = GetTickCount();

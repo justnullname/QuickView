@@ -373,6 +373,7 @@ void GalleryOverlay::Update(float deltaTime, HWND hwnd) {
                                             clientPt.y >= -(int)tolerance && clientPt.y <= (int)(targetH + tolerance));
             if (mouseInside) {
                 m_mouseInGallery = true;
+                m_freezeDismissalUntilEnter = false;
                 m_dismissalTimer = 0.0f;
             } else {
                 m_mouseInGallery = false;
@@ -1369,11 +1370,15 @@ void GalleryOverlay::Render(ID2D1DeviceContext *pDC, const D2D1_SIZE_F &size,
 }
 
 bool GalleryOverlay::OnKeyDown(UINT key) {
-    if (!IsVisible()) return false;
+    if (m_mode == GalleryMode::Hidden) return false;
     
     switch (key) {
         case VK_ESCAPE:
-        case 'T':
+            if ((GetKeyState(VK_CONTROL) & 0x8000) != 0 ||
+                (GetKeyState(VK_SHIFT) & 0x8000) != 0 ||
+                (GetKeyState(VK_MENU) & 0x8000) != 0) {
+                return false;
+            }
             Close();
             return true;
             
@@ -1396,13 +1401,18 @@ bool GalleryOverlay::OnKeyDown(UINT key) {
         case VK_UP:
             if (m_mode == GalleryMode::FullGrid) {
                 m_selectedIndex = std::max(0, m_selectedIndex - m_cols);
+                break;
             }
-            break;
+            return false;
         case VK_DOWN:
             if (m_mode == GalleryMode::FullGrid) {
                 m_selectedIndex = std::min((int)m_pNav->Count() - 1, m_selectedIndex + m_cols);
+                break;
             }
-            break;
+            return false;
+
+        default:
+            return false;
     }
     
     RequestRepaint(QuickView::PaintLayer::Gallery);
