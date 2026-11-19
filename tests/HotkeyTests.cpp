@@ -457,6 +457,78 @@ TEST(MouseGestureTest, TriggerActionCompatibilityMatrix) {
     }
 }
 
+TEST(HotkeyDispatchTest, ExitShortcutsBypassEscapeLayeredDismissal) {
+    AppConfig config;
+    const KeyCombo pureEsc{ VK_ESCAPE, 0 };
+    const KeyCombo ctrlW{ 'W', 1 };
+    const KeyCombo altF4{ VK_F4, 4 };
+    const KeyCombo shiftEsc{ VK_ESCAPE, 2 };
+
+    // Default exit combos bypass layered dismissal regardless of inline focus or WM_SYSKEYDOWN
+    EXPECT_EQ(ResolveKeyDispatchRoute(config.HotkeyRules, ctrlW, KeyDispatchContext{ false, false }),
+              KeyDispatchRoute::DirectExitWindow);
+    EXPECT_EQ(ResolveKeyDispatchRoute(config.HotkeyRules, ctrlW, KeyDispatchContext{ false, true }),
+              KeyDispatchRoute::DirectExitWindow);
+    EXPECT_EQ(ResolveKeyDispatchRoute(config.HotkeyRules, altF4, KeyDispatchContext{ true, false }),
+              KeyDispatchRoute::DirectExitWindow);
+    EXPECT_EQ(ResolveKeyDispatchRoute(config.HotkeyRules, altF4, KeyDispatchContext{ false, true }),
+              KeyDispatchRoute::DirectExitWindow);
+
+    // Pure ESC always goes to layered dismissal first; Shift+Esc uses normal hotkey dispatch
+    EXPECT_EQ(ResolveKeyDispatchRoute(config.HotkeyRules, pureEsc, KeyDispatchContext{ false, false }),
+              KeyDispatchRoute::PureEscapeDismiss);
+    EXPECT_EQ(ResolveKeyDispatchRoute(config.HotkeyRules, pureEsc, KeyDispatchContext{ false, true }),
+              KeyDispatchRoute::PureEscapeDismiss);
+    EXPECT_EQ(ResolveKeyDispatchRoute(config.HotkeyRules, shiftEsc, KeyDispatchContext{ false, false }),
+              KeyDispatchRoute::NormalDispatch);
+
+    // Unbinding pure ESC from Exit keeps layered dismissal active while leaving fallback action None
+    config.RemoveHotkeyRule(HotkeyAction::Exit, pureEsc);
+    EXPECT_EQ(ResolveKeyDispatchRoute(config.HotkeyRules, pureEsc, KeyDispatchContext{ false, false }),
+              KeyDispatchRoute::PureEscapeDismiss);
+    EXPECT_EQ(FindMatchingHotkeyAction(config.HotkeyRules, pureEsc), HotkeyAction::None);
+
+    // Single-key Exit binding ('Q') directly closes unless an inline text/numeric input is focused
+    const KeyCombo keyQ{ 'Q', 0 };
+    config.AddHotkeyRule(HotkeyAction::Exit, keyQ);
+    EXPECT_EQ(ResolveKeyDispatchRoute(config.HotkeyRules, keyQ, KeyDispatchContext{ false, false }),
+              KeyDispatchRoute::DirectExitWindow);
+    EXPECT_EQ(ResolveKeyDispatchRoute(config.HotkeyRules, keyQ, KeyDispatchContext{ false, true }),
+              KeyDispatchRoute::NormalDispatch);
+
+    // Removing Alt+F4 rule preserves system Alt+F4 SC_CLOSE passthrough unless rebound to another action
+    config.RemoveHotkeyRule(HotkeyAction::Exit, altF4);
+    EXPECT_EQ(ResolveKeyDispatchRoute(config.HotkeyRules, altF4, KeyDispatchContext{ true, false }),
+              KeyDispatchRoute::SystemAltF4Passthrough);
+
+    config.AddHotkeyRule(HotkeyAction::ToggleFullscreen, altF4);
+    EXPECT_EQ(ResolveKeyDispatchRoute(config.HotkeyRules, altF4, KeyDispatchContext{ true, false }),
+              KeyDispatchRoute::NormalDispatch);
+}
+
+TEST(HotkeyCaptureTest, PureEscapeCanBeReboundToExitWhenMissing) {
+    AppConfig config;
+    const KeyCombo pureEsc{ VK_ESCAPE, 0 };
+    const KeyCombo ctrlW{ 'W', 1 };
+    const KeyCombo altF4{ VK_F4, 4 };
+    const KeyCombo shiftEsc{ VK_ESCAPE, 2 };
+
+    // When Exit already has ESC, pure ESC cancels capture for any action
+    EXPECT_TRUE(ShouldCancelHotkeyCaptureOnCombo(config.HotkeyRules, HotkeyAction::Exit, pureEsc));
+    EXPECT_TRUE(ShouldCancelHotkeyCaptureOnCombo(config.HotkeyRules, HotkeyAction::NavNext, pureEsc));
+
+    // When Exit has lost its ESC rule, capturing ESC for Exit rebinds it instead of cancelling
+    config.RemoveHotkeyRule(HotkeyAction::Exit, pureEsc);
+    EXPECT_FALSE(ShouldCancelHotkeyCaptureOnCombo(config.HotkeyRules, HotkeyAction::Exit, pureEsc));
+    EXPECT_TRUE(ShouldCancelHotkeyCaptureOnCombo(config.HotkeyRules, HotkeyAction::NavNext, pureEsc));
+
+    // Modifier combos and other exit shortcuts never cancel capture
+    EXPECT_FALSE(ShouldCancelHotkeyCaptureOnCombo(config.HotkeyRules, HotkeyAction::Exit, ctrlW));
+    EXPECT_FALSE(ShouldCancelHotkeyCaptureOnCombo(config.HotkeyRules, HotkeyAction::Exit, altF4));
+    EXPECT_FALSE(ShouldCancelHotkeyCaptureOnCombo(config.HotkeyRules, HotkeyAction::Exit, shiftEsc));
+}
+
+
 
 
 

@@ -22,6 +22,7 @@ public:
     void Show(HWND hwnd, const std::wstring& imagePath, float imageWidth, float imageHeight);
     void Hide();
     bool IsVisible() const { return m_isVisible; }
+    bool IsInputFocused() const { return m_isVisible && m_focusedCapsuleId != -1; }
 
     void Render(ID2D1DeviceContext* ctx, float winW, float winH);
 

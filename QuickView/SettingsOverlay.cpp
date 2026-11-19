@@ -10016,18 +10016,9 @@ void SettingsOverlay::OnHotkeyCaptured(const KeyCombo& combo) {
     m_capturingAction = HotkeyAction::None;
 
     // Pure ESC cancels hotkey capture unless binding Exit when it doesn't already have ESC
-    if (combo.virtualKey == VK_ESCAPE && combo.modifiers == 0) {
-        bool exitAlreadyHasEsc = false;
-        for (const auto& rule : g_config.HotkeyRules) {
-            if (rule.action == HotkeyAction::Exit && rule.combo.virtualKey == VK_ESCAPE && rule.combo.modifiers == 0) {
-                exitAlreadyHasEsc = true;
-                break;
-            }
-        }
-        if (action != HotkeyAction::Exit || exitAlreadyHasEsc) {
-            if (m_hwnd) InvalidateRect(m_hwnd, NULL, FALSE);
-            return;
-        }
+    if (ShouldCancelHotkeyCaptureOnCombo(g_config.HotkeyRules, action, combo)) {
+        if (m_hwnd) InvalidateRect(m_hwnd, NULL, FALSE);
+        return;
     }
 
     // Check conflict against HotkeyRules

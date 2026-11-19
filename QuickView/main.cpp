@@ -1465,6 +1465,10 @@ static void EnsureUpdateInitialized(HWND hwnd);
 static void EnsureInfoPanelDataLoaded(HWND hwnd);
 static void RefreshToolbarSafeLayout(HWND hwnd);
 static void SyncToolbarHoverFromCursor(HWND hwnd);
+static void RequestCloseWindow(HWND hwnd);
+static void StopSlideshow(HWND hwnd);
+static bool IsAnyInlineInputFocused();
+static bool TryHandleEscapeDismiss(HWND hwnd);
 
 static void ApplyUIScale(float scale) {
     if (scale < 0.75f) scale = 0.75f;
@@ -11361,7 +11365,7 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
         }
 
         case IDM_EXIT: {
-            PostMessage(hwnd, WM_CLOSE, 0, 0);
+            RequestCloseWindow(hwnd);
             break;
         }
         // TODO: Implement other menu commands
@@ -11571,7 +11575,7 @@ static bool ExecuteMouseActionTarget(HWND hwnd, MouseActionTarget action, POINT 
         RequestRepaint(PaintLayer::Dynamic | PaintLayer::Static);
         return true;
     case MouseActionTarget::ExitApp:
-        PostMessage(hwnd, WM_CLOSE, 0, 0);
+        RequestCloseWindow(hwnd);
         return true;
     case MouseActionTarget::ContextMenu: {
         ShowContextMenuAtClientPt(hwnd, pt);
@@ -11982,6 +11986,134 @@ static void ShowContextMenuAtClientPt(HWND hwnd, POINT ptClient) {
 
     bool isAnimated = GetPaneContext(PaneSlot::Primary).resource.IsAnimated();
     ShowContextMenu(hwnd, pt, hasImage, extensionFixNeeded, g_runtime.LockWindowSize, g_runtime.ShowInfoPanel, g_runtime.InfoPanelExpanded, g_config.AlwaysOnTop, renderRaw, isRaw, IsZoomed(hwnd) != 0, g_runtime.CrossMonitorMode, IsCompareModeActive(), isAnimated, isPixelArtMode, menuCmsMode, menuEnableSoftProofing, menuSoftProofPath);
+}
+
+static void RequestCloseWindow(HWND hwnd) {
+    PostMessage(hwnd, WM_CLOSE, 0, 0);
+}
+
+static void StopSlideshow(HWND hwnd) {
+    const bool wasPinned = g_slideshowState.WasGalleryPinned;
+    g_slideshowState.Reset();
+    KillTimer(hwnd, IDT_SLIDESHOW);
+    if (g_config.SlideshowImmersiveMode == 1) {
+        g_gallery.SetPinned(wasPinned);
+        if (!wasPinned) {
+            g_gallery.Close();
+            NotifyGallerySessionEnded();
+        }
+    }
+    g_osd.Show(hwnd, AppStrings::g.OSD_SlideshowStopped, true);
+    g_toolbar.SetSlideshowMode(false, false);
+    ApplyWindowTheme(hwnd); // Restore normal window theme
+    RequestRepaint(PaintLayer::All);
+}
+
+static bool IsAnyInlineInputFocused() {
+    return (g_settingsOverlay.IsVisible() && g_settingsOverlay.IsInputFocused()) ||
+           (QuickView::ExportPanel::GetInstance().IsVisible() && QuickView::ExportPanel::GetInstance().IsInputFocused()) ||
+           QuickView::PrintPreviewUI::GetInstance().IsInputFocused() ||
+           (g_cropState.IsActive && g_cropState.FocusedField != CropState::InputField::None);
+}
+
+// Pure-ESC layered dismissal pipeline (independent from direct window-close commands).
+// Returns true if an active task, transient overlay, special mode, or fullscreen was dismissed.
+static bool TryHandleEscapeDismiss(HWND hwnd) {
+    if (QuickView::UI::AiActionOverlay::Instance().IsVisible()) {
+        if (QuickView::UI::AiActionOverlay::Instance().OnKeyDown(VK_ESCAPE)) {
+            return true;
+        }
+    }
+    if (QuickView::AI::AiActionManager::Instance().IsRunning()) {
+        QuickView::AI::AiActionManager::Instance().CancelCurrentTask();
+        const wchar_t* cancelMsg = AppStrings::g.OSD_AiTaskCancelled
+            ? AppStrings::g.OSD_AiTaskCancelled
+            : L"AI task cancelled";
+        g_osd.EndPersistentTask(hwnd, cancelMsg, false, D2D1::ColorF(D2D1::ColorF::LightSalmon), 1500);
+        return true;
+    }
+    if (QuickView::PrintPreviewUI::GetInstance().IsVisible()) {
+        QuickView::PrintPreviewUI::GetInstance().OnKeyDown(VK_ESCAPE);
+        if (!QuickView::PrintPreviewUI::GetInstance().IsVisible()) {
+            RestoreOverlayWindowState(hwnd);
+        }
+        return true;
+    }
+    if (QuickView::ExportPanel::GetInstance().IsVisible()) {
+        if (QuickView::ExportPanel::GetInstance().OnKeyDown(VK_ESCAPE)) {
+            return true;
+        }
+    }
+    if (g_settingsOverlay.IsVisible()) {
+        if ((g_settingsOverlay.IsInputFocused() || g_settingsOverlay.HasActiveDropdown()) &&
+            g_settingsOverlay.OnKeyDown(VK_ESCAPE)) {
+            RequestRepaint(PaintLayer::Static);
+            return true;
+        }
+        g_settingsOverlay.Toggle(); // Close (which handles window restore)
+        RequestRepaint(PaintLayer::All);
+        return true;
+    }
+    if (g_helpOverlay.IsVisible()) {
+        g_helpOverlay.SetVisible(false); // Handles window restore
+        RequestRepaint(PaintLayer::Static);
+        return true;
+    }
+    // Check slideshow before gallery so immersive spotlight filmstrip does not swallow ESC alone
+    if (g_slideshowState.IsActive) {
+        StopSlideshow(hwnd);
+        return true;
+    }
+    if (g_gallery.GetMode() != GalleryMode::Hidden) {
+        if (g_gallery.OnKeyDown(VK_ESCAPE)) {
+            if (g_gallery.GetMode() == GalleryMode::Hidden) {
+                SetCursor(LoadCursor(nullptr, IDC_ARROW));
+                FinishGallery(hwnd, GalleryFinishKind::Dismiss);
+                g_lastOverlayCloseTime = GetTickCount();
+                g_gallery.SuppressHoverUntilMouseLeave();
+            }
+            RequestRepaint(PaintLayer::All);
+            return true;
+        }
+    }
+    if (AppContext::GetInstance().Loupe.active) {
+        DeactivateLoupe();
+        RequestRepaint(PaintLayer::All);
+        return true;
+    }
+    if (g_cropState.IsActive) {
+        if (g_cropState.Mode == RegionInteractionMode::AiInpaint) {
+            g_cropState.Reset();
+            RequestRepaint(PaintLayer::All);
+            return true;
+        }
+        if (g_cropState.FocusedField != CropState::InputField::None) {
+            g_cropState.FocusedField = CropState::InputField::None;
+            g_cropState.IsInputInvalid = false;
+            RequestRepaint(PaintLayer::All);
+            return true;
+        }
+        TryExitCropMode(hwnd, true);
+        return true;
+    }
+    if (IsOverlayModeActive()) {
+        ExitOverlayMode(hwnd);
+        RequestRepaint(PaintLayer::All);
+        return true;
+    }
+    if (IsCompareModeActive()) {
+        if (CheckUnsavedChanges(hwnd)) {
+            AppContext::GetInstance().CompareCtrl->ExitMode(hwnd);
+            ReturnToPairFaceAfterCompareExit(hwnd);
+            RequestRepaint(PaintLayer::All);
+        }
+        return true;
+    }
+    if (g_isFullScreen) {
+        SendMessage(hwnd, WM_COMMAND, IDM_FULLSCREEN, 0);
+        return true;
+    }
+    return false;
 }
 
 // Guards minimized windows against immediate un-minimize on taskbar click activation bounce,
@@ -13754,9 +13886,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     writeNormalPlacementBounds(wp, hMon);
                 }
             } else {
-                RECT rc;
-                if (GetWindowRect(hwnd, &rc)) {
+                if (g_savedState.isValid) {
+                    const RECT& rc = g_savedState.windowRect;
                     writeWindowBounds(rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top);
+                } else {
+                    RECT rc;
+                    if (GetWindowRect(hwnd, &rc)) {
+                        writeWindowBounds(rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top);
+                    }
                 }
             }
             ReleaseSRWLockExclusive(&s_iniPersistenceLock);
@@ -16764,24 +16901,66 @@ SKIP_EDGE_NAV:;
     case WM_SYSKEYDOWN:
     case WM_KEYDOWN: {
         EnsureBootHydrated(hwnd);
+
+        // 1. If settings is visible and capturing a hotkey, intercept first so pure ESC or exit combos can be rebound
+        if (g_settingsOverlay.IsVisible() && g_settingsOverlay.IsCapturingHotkey()) {
+            if (wParam == VK_CONTROL || wParam == VK_SHIFT || wParam == VK_MENU ||
+                wParam == VK_LCONTROL || wParam == VK_RCONTROL || wParam == VK_LSHIFT || wParam == VK_RSHIFT ||
+                wParam == VK_LMENU || wParam == VK_RMENU) {
+                return 0; // Ignore pure modifier key press
+            }
+            KeyCombo captured;
+            captured.virtualKey = static_cast<uint16_t>(wParam);
+            captured.modifiers = 0;
+            if (GetKeyState(VK_CONTROL) & 0x8000) captured.modifiers |= 1;
+            if (GetKeyState(VK_SHIFT) & 0x8000)   captured.modifiers |= 2;
+            if (GetKeyState(VK_MENU) & 0x8000)    captured.modifiers |= 4;
+
+            g_settingsOverlay.OnHotkeyCaptured(captured);
+            RequestRepaint(PaintLayer::Static);
+            return 0;
+        }
+
+        const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+        const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+        const bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
+
+        KeyCombo pressed;
+        pressed.virtualKey = static_cast<uint16_t>(wParam);
+        pressed.modifiers = 0;
+        if (ctrl) pressed.modifiers |= 1;
+        if (shift) pressed.modifiers |= 2;
+        if (alt) pressed.modifiers |= 4;
+
+        const KeyDispatchContext dispatchCtx{
+            message == WM_SYSKEYDOWN,
+            IsAnyInlineInputFocused()
+        };
+        const KeyDispatchRoute route = ResolveKeyDispatchRoute(g_config.HotkeyRules, pressed, dispatchCtx);
+        if (route == KeyDispatchRoute::DirectExitWindow) {
+            RequestCloseWindow(hwnd);
+            return 0;
+        }
+        if (route == KeyDispatchRoute::SystemAltF4Passthrough) {
+            break; // Let DefWindowProc handle system SC_CLOSE
+        }
+        if (route == KeyDispatchRoute::PureEscapeDismiss) {
+            if (TryHandleEscapeDismiss(hwnd)) {
+                return 0;
+            }
+            const HotkeyAction escAction = FindMatchingHotkeyAction(g_config.HotkeyRules, pressed);
+            if (escAction != HotkeyAction::None) {
+                HandleHotkeyAction(hwnd, escAction);
+            }
+            return 0;
+        }
+
         if (QuickView::UI::AiActionOverlay::Instance().IsVisible()) {
             if (QuickView::UI::AiActionOverlay::Instance().OnKeyDown(wParam)) {
                 return 0;
             }
         }
-        if (wParam == VK_ESCAPE) {
-            if (QuickView::AI::AiActionManager::Instance().IsRunning()) {
-                QuickView::AI::AiActionManager::Instance().CancelCurrentTask();
-                g_osd.EndPersistentTask(hwnd, L"AI 任务已取消", false, D2D1::ColorF(D2D1::ColorF::LightSalmon), 1500);
-                return 0;
-            }
-        }
         if (g_cropState.IsActive && g_cropState.Mode == RegionInteractionMode::AiInpaint) {
-            if (wParam == VK_ESCAPE) {
-                g_cropState.Reset();
-                RequestRepaint(PaintLayer::All);
-                return 0;
-            }
             if (wParam == VK_RETURN) {
                 TriggerInpaintCurrentSelection(hwnd);
                 return 0;
@@ -16839,7 +17018,7 @@ SKIP_EDGE_NAV:;
                 g_cropState.InputLen = (int)wcslen(g_cropState.InputBuffer);
                 RequestRepaint(PaintLayer::All);
                 return 0;
-            } else if (wParam == VK_RETURN || wParam == VK_ESCAPE) {
+            } else if (wParam == VK_RETURN) {
                 g_cropState.FocusedField = CropState::InputField::None;
                 g_cropState.IsInputInvalid = false;
                 RequestRepaint(PaintLayer::All);
@@ -16872,25 +17051,6 @@ SKIP_EDGE_NAV:;
             if (QuickView::ExportPanel::GetInstance().IsInputFocused()) return 0; // Natively block all hotkeys when ExportPanel text input is focused!
         }
 
-        // 1. If settings is visible and capturing a hotkey, intercept it
-        if (g_settingsOverlay.IsVisible() && g_settingsOverlay.IsCapturingHotkey()) {
-            if (wParam == VK_CONTROL || wParam == VK_SHIFT || wParam == VK_MENU ||
-                wParam == VK_LCONTROL || wParam == VK_RCONTROL || wParam == VK_LSHIFT || wParam == VK_RSHIFT ||
-                wParam == VK_LMENU || wParam == VK_RMENU) {
-                return 0; // Ignore pure modifier key press
-            }
-            KeyCombo captured;
-            captured.virtualKey = static_cast<uint16_t>(wParam);
-            captured.modifiers = 0;
-            if (GetKeyState(VK_CONTROL) & 0x8000) captured.modifiers |= 1;
-            if (GetKeyState(VK_SHIFT) & 0x8000)   captured.modifiers |= 2;
-            if (GetKeyState(VK_MENU) & 0x8000)    captured.modifiers |= 4;
-            
-            g_settingsOverlay.OnHotkeyCaptured(captured);
-            RequestRepaint(PaintLayer::Static);
-            return 0;
-        }
-
         // Settings handling
         if (g_settingsOverlay.IsVisible()) {
             if (g_settingsOverlay.IsInputFocused() || g_settingsOverlay.HasActiveDropdown()) {
@@ -16899,25 +17059,11 @@ SKIP_EDGE_NAV:;
                     return 0;
                 }
             }
-            if (wParam == VK_ESCAPE) {
-                g_settingsOverlay.Toggle(); // Close (which handles window restore)
-                RequestRepaint(PaintLayer::All);
-                return 0;
-            }
             if (g_settingsOverlay.OnKeyDown(wParam)) {
                 RequestRepaint(PaintLayer::Static);
                 return 0;
             }
             return 0; // Block all unhandled hotkeys from leaking to background image view
-        }
-        
-        // Help handling
-        if (g_helpOverlay.IsVisible()) {
-            if (wParam == VK_ESCAPE) {
-                g_helpOverlay.SetVisible(false); // Handles window restore
-                RequestRepaint(PaintLayer::Static);
-                return 0;
-            }
         }
 
         // Gallery handling
@@ -16943,16 +17089,9 @@ SKIP_EDGE_NAV:;
                 }
                 return 0;
             }
-            // If ESC handled by gallery, fine.
-        } else {
-            // Not Visible - Handled in switch below
         }
 
         if (g_cropState.IsActive && !QuickView::ExportPanel::GetInstance().IsVisible()) {
-            if (wParam == VK_ESCAPE) {
-                TryExitCropMode(hwnd, true);
-                return 0;
-            }
             if (wParam == VK_LEFT || wParam == VK_RIGHT || wParam == VK_UP || wParam == VK_DOWN) {
                 const D2D1_SIZE_F orientedSize = GetVisualImageSize();
                 if (orientedSize.width > 0.0f && orientedSize.height > 0.0f) {
@@ -16983,34 +17122,6 @@ SKIP_EDGE_NAV:;
             }
         }
 
-        bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
-        bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
-        bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
-
-        // Hardcoded layered dismissal for ESC key:
-        // Even if the user unbinds or deletes ESC from global hotkeys, pressing pure ESC MUST
-        // safely dismiss/exit active transient overlays or special view modes without killing the app.
-        if (wParam == VK_ESCAPE && !ctrl && !shift && !alt) {
-            if (AppContext::GetInstance().Loupe.active) {
-                DeactivateLoupe();
-                RequestRepaint(PaintLayer::All);
-                return 0;
-            }
-            if (IsOverlayModeActive()) {
-                ExitOverlayMode(hwnd);
-                RequestRepaint(PaintLayer::All);
-                return 0;
-            }
-            if (IsCompareModeActive()) {
-                if (CheckUnsavedChanges(hwnd)) {
-                    AppContext::GetInstance().CompareCtrl->ExitMode(hwnd);
-                    ReturnToPairFaceAfterCompareExit(hwnd);
-                    RequestRepaint(PaintLayer::All);
-                }
-                return 0;
-            }
-        }
-
         // Ignore standalone modifier key presses (and prevent Alt menu loop)
         if (wParam == VK_MENU || wParam == VK_CONTROL || wParam == VK_SHIFT ||
             wParam == VK_LCONTROL || wParam == VK_RCONTROL || wParam == VK_LSHIFT || wParam == VK_RSHIFT ||
@@ -17018,24 +17129,8 @@ SKIP_EDGE_NAV:;
             return 0;
         }
 
-        // Construct KeyCombo for dynamic lookup
-        KeyCombo pressed;
-        pressed.virtualKey = static_cast<uint16_t>(wParam);
-        pressed.modifiers = 0;
-        if (ctrl) pressed.modifiers |= 1;
-        if (shift) pressed.modifiers |= 2;
-        if (alt) pressed.modifiers |= 4;
-
-        // Perform linear scan to match Hotkey
-        HotkeyAction action = HotkeyAction::None;
-        for (const auto& rule : g_config.HotkeyRules) {
-            if (!rule.combo.IsEmpty() && rule.combo == pressed) {
-                action = rule.action;
-                break;
-            }
-        }
-
-        // If matched, handle it!
+        // Match user hotkey rules
+        const HotkeyAction action = FindMatchingHotkeyAction(g_config.HotkeyRules, pressed);
         if (action != HotkeyAction::None) {
             if (HandleHotkeyAction(hwnd, action)) {
                 return 0; // Handled
@@ -20685,13 +20780,11 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
     [[maybe_unused]] bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
     [[maybe_unused]] bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
 
-    if (g_slideshowState.IsActive && action != HotkeyAction::ToggleSlideshow && action != HotkeyAction::ToggleAnimation) {
-        g_slideshowState.Reset();
-        KillTimer(hwnd, IDT_SLIDESHOW);
-        g_osd.Show(hwnd, AppStrings::g.OSD_SlideshowStopped, true);
-        g_toolbar.SetSlideshowMode(false, false);
-        ApplyWindowTheme(hwnd); // Restore normal window theme
-        RequestRepaint(PaintLayer::Static);
+    if (g_slideshowState.IsActive &&
+        action != HotkeyAction::ToggleSlideshow &&
+        action != HotkeyAction::ToggleAnimation &&
+        action != HotkeyAction::Exit) {
+        StopSlideshow(hwnd);
         // Continue processing the action...
     }
 
@@ -21351,52 +21444,15 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
             }
             g_toolbar.SetSlideshowMode(true, true);
         } else {
-            bool wasPinned = g_slideshowState.WasGalleryPinned;
-            g_slideshowState.Reset();
-            KillTimer(hwnd, IDT_SLIDESHOW);
-            if (g_config.SlideshowImmersiveMode == 1) {
-                g_gallery.SetPinned(wasPinned);
-                if (!wasPinned) {
-                    g_gallery.Close();
-                    NotifyGallerySessionEnded();
-                }
-            }
-            g_osd.Show(hwnd, AppStrings::g.OSD_SlideshowStopped, true);
-            g_toolbar.SetSlideshowMode(false, false);
+            StopSlideshow(hwnd);
+            return true;
         }
         ApplyWindowTheme(hwnd); // Update DWM borders
         RequestRepaint(PaintLayer::All);
         return true;
 
     case HotkeyAction::Exit:
-        if (QuickView::ExportPanel::GetInstance().IsVisible()) {
-            QuickView::ExportPanel::GetInstance().Hide();
-            RequestRepaint(PaintLayer::All);
-            return true;
-        }
-        if (g_cropState.IsActive) {
-            TryExitCropMode(hwnd, true);
-            RequestRepaint(PaintLayer::All);
-            return true;
-        }
-        if (IsOverlayModeActive()) {
-            ExitOverlayMode(hwnd);
-            RequestRepaint(PaintLayer::All);
-            return true;
-        }
-        if (IsCompareModeActive()) {
-            if (!CheckUnsavedChanges(hwnd)) {
-                return true;
-            }
-            AppContext::GetInstance().CompareCtrl->ExitMode(hwnd);
-            RequestRepaint(PaintLayer::All);
-            return true;
-        }
-        if (IsZoomed(hwnd)) {
-            ShowWindow(hwnd, SW_RESTORE);
-        } else {
-            PostMessage(hwnd, WM_CLOSE, 0, 0);
-        }
+        RequestCloseWindow(hwnd);
         return true;
 
     case HotkeyAction::Loupe:

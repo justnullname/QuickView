@@ -1048,7 +1048,7 @@ bool PrintPreviewUI::OnKeyDown(WPARAM key) {
         if (it != m_capsules.end()) {
             const auto& cap = *it;
             
-            if (key == VK_RETURN) {
+            if (key == VK_RETURN || key == VK_ESCAPE) {
                 m_focusedCapsuleId = -1;
                 m_capsuleInputStarted = false;
                 if (m_hwnd) InvalidateRect(m_hwnd, NULL, FALSE);
@@ -1121,6 +1121,12 @@ bool PrintPreviewUI::OnKeyDown(WPARAM key) {
     }
 
     if (key == VK_ESCAPE) {
+        if (m_isComboOpen) {
+            m_isComboOpen = false;
+            m_comboHoverIdx = -1;
+            if (m_hwnd) InvalidateRect(m_hwnd, NULL, FALSE);
+            return true;
+        }
         Hide();
         return true;
     }

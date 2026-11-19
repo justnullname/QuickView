@@ -610,7 +610,7 @@ enum class HotkeyAction : uint8_t {
     Help,              // Toggle Help Overlay
     SuperResolution,   // AI Super-Resolution (Default: Shift+S)
     AiAction,          // AI Actions Palette & Execution (Default: A)
-    Exit,              // Exit App / Restore Screen
+    Exit,              // Close Window / Exit App
     Undo,              // Undo last operation (Ctrl+Z)
     PanUp,
     PanDown,
@@ -983,6 +983,77 @@ struct HotkeyRule {
         return action == other.action && combo == other.combo;
     }
 };
+
+enum class KeyDispatchRoute : uint8_t {
+    DirectExitWindow,
+    SystemAltF4Passthrough,
+    PureEscapeDismiss,
+    NormalDispatch
+};
+
+struct KeyDispatchContext {
+    bool isSysKeyDown = false;
+    bool hasInlineInputFocus = false;
+};
+
+[[nodiscard]] inline bool IsPureEscapeCombo(const KeyCombo& combo) noexcept {
+    return combo.virtualKey == VK_ESCAPE && combo.modifiers == 0;
+}
+
+[[nodiscard]] inline HotkeyAction FindMatchingHotkeyAction(
+    const std::vector<HotkeyRule>& rules,
+    const KeyCombo& pressed) noexcept {
+    if (pressed.IsEmpty()) return HotkeyAction::None;
+    for (const auto& rule : rules) {
+        if (!rule.combo.IsEmpty() && rule.combo == pressed) {
+            return rule.action;
+        }
+    }
+    return HotkeyAction::None;
+}
+
+// Pure ESC cancels hotkey capture unless binding Exit when it does not yet have an ESC rule
+[[nodiscard]] inline bool ShouldCancelHotkeyCaptureOnCombo(
+    const std::vector<HotkeyRule>& rules,
+    HotkeyAction capturingAction,
+    const KeyCombo& combo) noexcept {
+    if (!IsPureEscapeCombo(combo)) return false;
+
+    bool exitAlreadyHasEsc = false;
+    for (const auto& rule : rules) {
+        if (rule.action == HotkeyAction::Exit && IsPureEscapeCombo(rule.combo)) {
+            exitAlreadyHasEsc = true;
+            break;
+        }
+    }
+    return capturingAction != HotkeyAction::Exit || exitAlreadyHasEsc;
+}
+
+// Separate pure-ESC layered dismissal from direct window-close shortcuts (Ctrl+W, Alt+F4, etc.)
+[[nodiscard]] inline KeyDispatchRoute ResolveKeyDispatchRoute(
+    const std::vector<HotkeyRule>& rules,
+    const KeyCombo& pressed,
+    const KeyDispatchContext& ctx) noexcept {
+    if (IsPureEscapeCombo(pressed)) {
+        return KeyDispatchRoute::PureEscapeDismiss;
+    }
+
+    const HotkeyAction matched = FindMatchingHotkeyAction(rules, pressed);
+    if (matched == HotkeyAction::Exit) {
+        // Protect active inline text/numeric inputs against unmodified or Shift-only close hotkeys (e.g. 'Q')
+        if (ctx.hasInlineInputFocus && (pressed.modifiers & (1 | 4)) == 0) {
+            return KeyDispatchRoute::NormalDispatch;
+        }
+        return KeyDispatchRoute::DirectExitWindow;
+    }
+
+    if (ctx.isSysKeyDown && pressed.virtualKey == VK_F4 && pressed.modifiers == 4 &&
+        matched == HotkeyAction::None) {
+        return KeyDispatchRoute::SystemAltF4Passthrough;
+    }
+
+    return KeyDispatchRoute::NormalDispatch;
+}
 
 inline std::vector<HotkeyRule> GetDefaultHotkeyRules() {
     return {
