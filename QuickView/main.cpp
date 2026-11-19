@@ -225,6 +225,44 @@ static RECT GetEffectiveClientRect(HWND hwnd) {
     return rc;
 }
 
+static void ClampMaximizedClientRect(const RECT& proposedRect, RECT& outClientRect) {
+    HMONITOR hMon = MonitorFromRect(&proposedRect, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi{};
+    mi.cbSize = sizeof(mi);
+    if (!GetMonitorInfoW(hMon, &mi)) {
+        return;
+    }
+
+    RECT target = mi.rcWork;
+    // Query each flush monitor edge directly so both Windows auto-hide taskbars
+    // and third-party auto-hide AppBar docks remain reachable on mouse edge hover.
+    auto hasAutoHideBar = [&](UINT edge) -> bool {
+        APPBARDATA barData{};
+        barData.cbSize = sizeof(barData);
+        barData.uEdge = edge;
+        barData.rc = mi.rcMonitor;
+        return SHAppBarMessage(ABM_GETAUTOHIDEBAREX, &barData) != 0;
+    };
+    constexpr LONG kAutoHideInset = 2;
+    if (target.left == mi.rcMonitor.left && hasAutoHideBar(ABE_LEFT)) {
+        target.left += kAutoHideInset;
+    }
+    if (target.top == mi.rcMonitor.top && hasAutoHideBar(ABE_TOP)) {
+        target.top += kAutoHideInset;
+    }
+    if (target.right == mi.rcMonitor.right && hasAutoHideBar(ABE_RIGHT)) {
+        target.right -= kAutoHideInset;
+    }
+    if (target.bottom == mi.rcMonitor.bottom && hasAutoHideBar(ABE_BOTTOM)) {
+        target.bottom -= kAutoHideInset;
+    }
+
+    outClientRect.left = (std::max)(outClientRect.left, target.left);
+    outClientRect.top = (std::max)(outClientRect.top, target.top);
+    outClientRect.right = (std::min)(outClientRect.right, target.right);
+    outClientRect.bottom = (std::min)(outClientRect.bottom, target.bottom);
+}
+
 #include <mutex>
 #include <condition_variable>
 #include <thread>
@@ -12263,7 +12301,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         break;
     }
     case WM_NCCALCSIZE:
-        if (wParam && !IsIconic(hwnd)) return 0;
+        if (wParam && !IsIconic(hwnd)) {
+            if (IsZoomed(hwnd)) {
+                auto* params = reinterpret_cast<NCCALCSIZE_PARAMS*>(lParam);
+                // Clamp maximized client bounds to the monitor work area so the
+                // off-screen thick-frame overhang does not spill onto the taskbar.
+                ClampMaximizedClientRect(params->rgrc[0], params->rgrc[0]);
+            }
+            return 0;
+        }
         break;
 
     case WM_ERASEBKGND: return 1;  // Prevent system background erase (D2D handles this)
@@ -13365,27 +13411,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
     case WM_GETMINMAXINFO: {
-        MINMAXINFO* pMMI = (MINMAXINFO*)lParam;
-        
-        // [Phase 3] Default minimum window size
+        // Let DefWindowProcW compute native multi-monitor/DPI maximize bounds,
+        // then enforce only our minimum tracking dimensions.
+        LRESULT res = DefWindowProcW(hwnd, message, wParam, lParam);
+        MINMAXINFO* pMMI = reinterpret_cast<MINMAXINFO*>(lParam);
         pMMI->ptMinTrackSize.x = (int)std::lround(GetMinWindowWidth());
         pMMI->ptMinTrackSize.y = (int)std::lround(GetMinWindowHeight());
-        
-        // [Fix] For borderless/custom title bar windows, correctly position maximized window.
-        // Without this, maximized window extends beyond screen edges (to hide resize borders),
-        // causing the top portion of client area to be clipped.
-        HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-        MONITORINFO mi{}; mi.cbSize = sizeof(mi);
-        if (GetMonitorInfoW(hMon, &mi)) {
-            // Use work area (excludes taskbar)
-            pMMI->ptMaxPosition.x = mi.rcWork.left - mi.rcMonitor.left;
-            pMMI->ptMaxPosition.y = mi.rcWork.top - mi.rcMonitor.top;
-            pMMI->ptMaxSize.x = mi.rcWork.right - mi.rcWork.left;
-            pMMI->ptMaxSize.y = mi.rcWork.bottom - mi.rcWork.top;
-        }
-
-        // [Phase 2] Cross-Monitor: Logic moved to WM_SYSCOMMAND (Fake Maximize) to avoid DWM clipping.
-        return 0;
+        return res;
     }
     case WM_NCHITTEST: {
         // Disable window edge resizing/interaction in Fullscreen, Maximized, or Cross-Monitor Span Maximized
@@ -19850,6 +19882,9 @@ void PerformSmartZoom(HWND hwnd, float newTotalScale, const POINT* centerPt, boo
          // [Atomic UI Presentation] Synchronously render OSD and UI in the exact same frame,
          // eliminating OSD stretching or lag during mouse wheel scrolling.
          ShowZoomOsd(hwnd, newTotalScale);
+         if (maxPanX > 0.5f || maxPanY > 0.5f || (g_uiRenderer && g_uiRenderer->IsBorderGlowActive())) {
+             NotifyBorderGlowInteraction(hwnd);
+         }
          OnPaint(hwnd);
 
          if (g_compEngine) g_compEngine->Commit();

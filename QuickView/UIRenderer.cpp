@@ -71,46 +71,18 @@ static void GetMaximizedWindowPaddings(HWND hwnd, bool isFullscreen, float& outP
     outPadY = 0.0f;
     if (!hwnd || isFullscreen || !IsZoomed(hwnd)) return;
 
-    // Method 1: Physical Geometry from Monitor WorkArea vs WindowRect (100% accurate for multi-monitor mixed DPI)
+    // Measure actual client-area overflow past the monitor work area.
+    // When WM_NCCALCSIZE clamps maximized bounds to rcWork, this resolves to 0.
     HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-    if (hMon) {
-        MONITORINFO mi{};
-        mi.cbSize = sizeof(mi);
-        RECT rcWin = {};
-        if (GetMonitorInfoW(hMon, &mi) && GetWindowRect(hwnd, &rcWin)) {
-            int padX = mi.rcWork.left - rcWin.left;
-            int padY = mi.rcWork.top - rcWin.top;
-            if (padX > 0 && padY > 0) {
-                outPadX = (float)padX;
-                outPadY = (float)padY;
-                return;
-            }
-        }
-    }
+    if (!hMon) return;
 
-    // Method 2: Per-Monitor DPI SystemMetrics Fallback
-    UINT dpi = 96;
-    typedef UINT (WINAPI *PFN_GetDpiForWindow)(HWND);
-    static PFN_GetDpiForWindow pfnGetDpiForWindow = (PFN_GetDpiForWindow)GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetDpiForWindow");
-    if (pfnGetDpiForWindow) {
-        dpi = pfnGetDpiForWindow(hwnd);
+    MONITORINFO mi{};
+    mi.cbSize = sizeof(mi);
+    POINT ptClientOrigin{ 0, 0 };
+    if (GetMonitorInfoW(hMon, &mi) && ClientToScreen(hwnd, &ptClientOrigin)) {
+        outPadX = static_cast<float>((std::max)(0L, mi.rcWork.left - ptClientOrigin.x));
+        outPadY = static_cast<float>((std::max)(0L, mi.rcWork.top - ptClientOrigin.y));
     }
-
-    typedef int (WINAPI *PFN_GetSystemMetricsForDpi)(int, UINT);
-    static PFN_GetSystemMetricsForDpi pfnGetSystemMetricsForDpi = (PFN_GetSystemMetricsForDpi)GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetSystemMetricsForDpi");
-    
-    int frameX = 0, frameY = 0, paddedBorder = 0;
-    if (pfnGetSystemMetricsForDpi && dpi > 0) {
-        frameX = pfnGetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi);
-        frameY = pfnGetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi);
-        paddedBorder = pfnGetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
-    } else {
-        frameX = GetSystemMetrics(SM_CXSIZEFRAME);
-        frameY = GetSystemMetrics(SM_CYSIZEFRAME);
-        paddedBorder = GetSystemMetrics(SM_CXPADDEDBORDER);
-    }
-    outPadX = (float)(frameX + paddedBorder);
-    outPadY = (float)(frameY + paddedBorder);
 }
 
 static bool PointInRect(float x, float y, const D2D1_RECT_F& rect) {
@@ -1730,12 +1702,10 @@ void UIRenderer::DrawDecodingStatus(ID2D1DeviceContext* dc, HWND hwnd) {
     D2D1_SIZE_F rtSize = dc->GetSize();
     float drawW = (m_width > 0) ? (float)m_width : rtSize.width;
     float drawH = (m_height > 0) ? (float)m_height : rtSize.height;
+    float padX = 0.0f;
     float topInset = 0.0f;
-    if (IsZoomed(hwnd) && !m_isFullscreen) {
-        int frameY = GetSystemMetrics(SM_CYSIZEFRAME);
-        int paddedBorder = GetSystemMetrics(SM_CXPADDEDBORDER);
-        topInset = (float)(frameY + paddedBorder);
-    }
+    GetMaximizedWindowPaddings(hwnd, m_isFullscreen, padX, topInset);
+    (void)padX;
 
     // Adaptive thickness for high-DPI / high-resolution displays.
     // Keep enough visual presence while preserving "edge focus" subtlety.
