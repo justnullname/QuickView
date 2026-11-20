@@ -272,3 +272,292 @@ TEST(MiniTiffTest, RegionConsistencyCheck) {
     if (fullResult.pixels) _aligned_free(fullResult.pixels);
     if (regionResult.pixels) _aligned_free(regionResult.pixels);
 }
+
+namespace {
+
+struct TiffIfdEntrySpec {
+    uint16_t tag;
+    uint16_t type;
+    uint32_t count;
+    uint32_t valueOrOffset;
+};
+
+static void AppendU16LE(std::vector<uint8_t>& buf, uint16_t v) {
+    buf.push_back(static_cast<uint8_t>(v & 0xFF));
+    buf.push_back(static_cast<uint8_t>((v >> 8) & 0xFF));
+}
+
+static void AppendU32LE(std::vector<uint8_t>& buf, uint32_t v) {
+    buf.push_back(static_cast<uint8_t>(v & 0xFF));
+    buf.push_back(static_cast<uint8_t>((v >> 8) & 0xFF));
+    buf.push_back(static_cast<uint8_t>((v >> 16) & 0xFF));
+    buf.push_back(static_cast<uint8_t>((v >> 24) & 0xFF));
+}
+
+static std::vector<uint8_t> BuildMinimalTiffLE(const std::vector<TiffIfdEntrySpec>& entries,
+                                               const std::vector<uint8_t>& extraData) {
+    std::vector<uint8_t> out;
+    // TIFF Header (Little-Endian, magic 42, IFD at offset 8)
+    out.push_back('I');
+    out.push_back('I');
+    AppendU16LE(out, 42);
+    AppendU32LE(out, 8);
+
+    // IFD
+    AppendU16LE(out, static_cast<uint16_t>(entries.size()));
+    for (const auto& e : entries) {
+        AppendU16LE(out, e.tag);
+        AppendU16LE(out, e.type);
+        AppendU32LE(out, e.count);
+        AppendU32LE(out, e.valueOrOffset);
+    }
+    AppendU32LE(out, 0); // Next IFD offset
+
+    // Extra data starts immediately after IFD
+    out.insert(out.end(), extraData.begin(), extraData.end());
+    return out;
+}
+
+static QuickView::Codec::DecodeContext MakeTestDecodeContext() {
+    QuickView::Codec::DecodeContext ctx;
+    ctx.allocator.ctx = nullptr;
+    ctx.allocator.pfn = [](void*, size_t s) -> uint8_t* {
+        return static_cast<uint8_t*>(_aligned_malloc(s, 64));
+    };
+    return ctx;
+}
+
+} // namespace
+
+TEST(MiniTiffSecurityTest, Tiled16BitGrayscaleWithPredictorNoOob) {
+    // Regression test for GHSA-r5qf-q487-gwcq (Bug 1):
+    // 32x32 16-bit grayscale tiled TIFF with 16x16 tiles (4 tiles) and Predictor=2.
+    // Previously tileBytes was computed as tileW * tileH * samples (256) instead of
+    // tileW * tileH * samples * bytesPerSample (512), causing heap OOB read/write.
+    constexpr uint32_t kWidth = 32;
+    constexpr uint32_t kHeight = 32;
+    constexpr uint32_t kTileW = 16;
+    constexpr uint32_t kTileH = 16;
+    constexpr uint32_t kTileCount = 4;
+    constexpr uint32_t kTileBytes = kTileW * kTileH * 2; // 512 bytes per tile
+
+    // IFD has 11 entries: header(8) + count(2) + 11*12(132) + next(4) = 146 bytes
+    constexpr uint32_t kExtraBase = 8 + 2 + 11 * 12 + 4;
+    const uint32_t offsetsArrayPos = kExtraBase;
+    const uint32_t countsArrayPos = offsetsArrayPos + kTileCount * 4;
+    const uint32_t tileDataPos = countsArrayPos + kTileCount * 4;
+
+    std::vector<uint8_t> extra;
+    for (uint32_t i = 0; i < kTileCount; ++i) {
+        AppendU32LE(extra, tileDataPos + i * kTileBytes);
+    }
+    for (uint32_t i = 0; i < kTileCount; ++i) {
+        AppendU32LE(extra, kTileBytes);
+    }
+
+    // Fill 4 tiles with horizontal-differenced 16-bit grayscale samples.
+    // First pixel of each row has high byte 0x80 (low 0x00), subsequent deltas are 0.
+    for (uint32_t t = 0; t < kTileCount; ++t) {
+        for (uint32_t y = 0; y < kTileH; ++y) {
+            extra.push_back(0x00);
+            extra.push_back(0x80);
+            for (uint32_t x = 1; x < kTileW; ++x) {
+                extra.push_back(0x00);
+                extra.push_back(0x00);
+            }
+        }
+    }
+
+    std::vector<TiffIfdEntrySpec> entries = {
+        {256, 4, 1, kWidth},          // ImageWidth
+        {257, 4, 1, kHeight},         // ImageHeight
+        {258, 3, 1, 16},              // BitsPerSample = 16
+        {259, 3, 1, 1},               // Compression = Uncompressed
+        {262, 3, 1, 1},               // Photometric = BlackIsZero
+        {277, 3, 1, 1},               // SamplesPerPixel = 1
+        {284, 3, 1, 1},               // PlanarConfiguration = Contiguous
+        {317, 3, 1, 2},               // Predictor = Horizontal
+        {322, 4, 1, kTileW},          // TileWidth
+        {323, 4, 1, kTileH},          // TileLength
+        {324, 4, kTileCount, offsetsArrayPos}, // TileOffsets
+    };
+    // Need TileByteCounts too -> 12 entries total, recalculate kExtraBase
+    entries.push_back({325, 4, kTileCount, countsArrayPos});
+    const uint32_t actualExtraBase = 8 + 2 + static_cast<uint32_t>(entries.size()) * 12 + 4;
+    const uint32_t shift = actualExtraBase - kExtraBase;
+    entries[10].valueOrOffset += shift;
+    entries[11].valueOrOffset += shift;
+    for (uint32_t i = 0; i < kTileCount; ++i) {
+        uint32_t newOff = tileDataPos + shift + i * kTileBytes;
+        extra[i * 4 + 0] = static_cast<uint8_t>(newOff & 0xFF);
+        extra[i * 4 + 1] = static_cast<uint8_t>((newOff >> 8) & 0xFF);
+        extra[i * 4 + 2] = static_cast<uint8_t>((newOff >> 16) & 0xFF);
+        extra[i * 4 + 3] = static_cast<uint8_t>((newOff >> 24) & 0xFF);
+    }
+
+    std::vector<uint8_t> tiff = BuildMinimalTiffLE(entries, extra);
+    auto ctx = MakeTestDecodeContext();
+    QuickView::Codec::DecodeResult result;
+
+    HRESULT hr = QuickView::MiniTiff::Load(tiff.data(), tiff.size(), ctx, result);
+    EXPECT_EQ(hr, S_OK);
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.width, static_cast<int>(kWidth));
+    EXPECT_EQ(result.height, static_cast<int>(kHeight));
+    ASSERT_NE(result.pixels, nullptr);
+
+    // Verify decoded pixels (every pixel should be gray 0x80 with alpha 0xFF)
+    for (uint32_t y = 0; y < kHeight; ++y) {
+        const uint8_t* row = result.pixels + static_cast<size_t>(y) * result.stride;
+        for (uint32_t x = 0; x < kWidth; ++x) {
+            EXPECT_EQ(row[x * 4 + 0], 0x80);
+            EXPECT_EQ(row[x * 4 + 1], 0x80);
+            EXPECT_EQ(row[x * 4 + 2], 0x80);
+            EXPECT_EQ(row[x * 4 + 3], 0xFF);
+        }
+    }
+
+    _aligned_free(result.pixels);
+}
+
+TEST(MiniTiffSecurityTest, Tiled16BitRgbSimdDownsampleNoOob) {
+    // 16x16 16-bit RGB single-tile TIFF exercising SIMD Pack16to8 path
+    constexpr uint32_t kWidth = 16;
+    constexpr uint32_t kHeight = 16;
+    constexpr uint32_t kTileBytes = kWidth * kHeight * 3 * 2; // 1536 bytes
+
+    constexpr uint32_t kNumEntries = 11;
+    constexpr uint32_t kExtraBase = 8 + 2 + kNumEntries * 12 + 4;
+    const uint32_t bpsPos = kExtraBase;
+    const uint32_t tileDataPos = bpsPos + 6;
+
+    std::vector<uint8_t> extra;
+    AppendU16LE(extra, 16);
+    AppendU16LE(extra, 16);
+    AppendU16LE(extra, 16);
+
+    // Fill with R=0xAA00, G=0x5500, B=0x1100 (LE)
+    for (uint32_t i = 0; i < kWidth * kHeight; ++i) {
+        AppendU16LE(extra, 0xAA00);
+        AppendU16LE(extra, 0x5500);
+        AppendU16LE(extra, 0x1100);
+    }
+
+    std::vector<TiffIfdEntrySpec> entries = {
+        {256, 4, 1, kWidth},
+        {257, 4, 1, kHeight},
+        {258, 3, 3, bpsPos},          // BitsPerSample = [16, 16, 16]
+        {259, 3, 1, 1},               // Uncompressed
+        {262, 3, 1, 2},               // RGB
+        {277, 3, 1, 3},               // SamplesPerPixel = 3
+        {284, 3, 1, 1},               // Contiguous
+        {322, 4, 1, kWidth},          // TileWidth
+        {323, 4, 1, kHeight},         // TileLength
+        {324, 4, 1, tileDataPos},     // TileOffsets (single tile)
+        {325, 4, 1, kTileBytes},      // TileByteCounts (single tile)
+    };
+
+    std::vector<uint8_t> tiff = BuildMinimalTiffLE(entries, extra);
+    auto ctx = MakeTestDecodeContext();
+    QuickView::Codec::DecodeResult result;
+
+    HRESULT hr = QuickView::MiniTiff::Load(tiff.data(), tiff.size(), ctx, result);
+    EXPECT_EQ(hr, S_OK);
+    EXPECT_TRUE(result.success);
+    ASSERT_NE(result.pixels, nullptr);
+
+    const uint8_t* p = result.pixels;
+    EXPECT_EQ(p[0], 0x11); // B
+    EXPECT_EQ(p[1], 0x55); // G
+    EXPECT_EQ(p[2], 0xAA); // R
+    EXPECT_EQ(p[3], 0xFF); // A
+
+    _aligned_free(result.pixels);
+}
+
+TEST(MiniTiffSecurityTest, RejectStripRowBytesOverflow) {
+    // Regression test for GHSA-r5qf-q487-gwcq (Bug 2):
+    // ImageWidth=65538, SamplesPerPixel=65535, BitsPerSample=8 previously wrapped uint32_t rowBytes.
+    constexpr uint32_t kNumEntries = 10;
+    constexpr uint32_t kDataPos = 8 + 2 + kNumEntries * 12 + 4;
+    std::vector<uint8_t> extra(64, 0);
+
+    std::vector<TiffIfdEntrySpec> entries = {
+        {256, 4, 1, 65538},     // ImageWidth
+        {257, 4, 1, 1},         // ImageHeight
+        {258, 3, 1, 8},         // BitsPerSample
+        {259, 3, 1, 1},         // Uncompressed
+        {262, 3, 1, 1},         // BlackIsZero
+        {273, 4, 1, kDataPos},  // StripOffsets
+        {277, 3, 1, 65535},     // SamplesPerPixel (overflows 32-bit width*samples)
+        {278, 4, 1, 1},         // RowsPerStrip
+        {279, 4, 1, 64},        // StripByteCounts
+        {317, 3, 1, 2},         // Predictor = Horizontal
+    };
+
+    std::vector<uint8_t> tiff = BuildMinimalTiffLE(entries, extra);
+    auto ctx = MakeTestDecodeContext();
+    QuickView::Codec::DecodeResult result;
+
+    HRESULT hr = QuickView::MiniTiff::Load(tiff.data(), tiff.size(), ctx, result);
+    EXPECT_NE(hr, S_OK);
+    EXPECT_FALSE(result.success);
+    if (result.pixels) _aligned_free(result.pixels);
+}
+
+TEST(MiniTiffSecurityTest, RejectZeroTileDimensions) {
+    // Regression test for GHSA-r5qf-q487-gwcq (Bug 3):
+    // TileWidth=0 or TileLength=0 previously caused integer division by zero (SIGFPE).
+    for (int mode = 0; mode < 2; ++mode) {
+        constexpr uint32_t kNumEntries = 10;
+        constexpr uint32_t kDataPos = 8 + 2 + kNumEntries * 12 + 4;
+        std::vector<uint8_t> extra(64, 0);
+
+        std::vector<TiffIfdEntrySpec> entries = {
+            {256, 4, 1, 16},
+            {257, 4, 1, 16},
+            {258, 3, 1, 8},
+            {259, 3, 1, 1},
+            {262, 3, 1, 1},
+            {277, 3, 1, 1},
+            {322, 4, 1, mode == 0 ? 0u : 16u}, // TileWidth
+            {323, 4, 1, mode == 0 ? 16u : 0u}, // TileLength
+            {324, 4, 1, kDataPos},
+            {325, 4, 1, 64},
+        };
+
+        std::vector<uint8_t> tiff = BuildMinimalTiffLE(entries, extra);
+        auto ctx = MakeTestDecodeContext();
+        QuickView::Codec::DecodeResult result;
+
+        HRESULT hr = QuickView::MiniTiff::Load(tiff.data(), tiff.size(), ctx, result);
+        EXPECT_EQ(hr, E_FAIL);
+        EXPECT_FALSE(result.success);
+        if (result.pixels) _aligned_free(result.pixels);
+    }
+}
+
+TEST(MiniTiffSecurityTest, RejectIfdCountOverflow) {
+    // Crafted IFD where count * 2 wraps 32-bit arithmetic (0x80000001 * 2 == 2)
+    std::vector<uint8_t> extra(64, 0);
+    std::vector<TiffIfdEntrySpec> entries = {
+        {256, 4, 1, 16},
+        {257, 4, 1, 16},
+        {258, 3, 1, 8},
+        {259, 3, 1, 1},
+        {262, 3, 1, 3},           // Palette
+        {273, 3, 0x80000001u, 0}, // StripOffsets with overflowing count * 2
+        {277, 3, 1, 1},
+        {279, 3, 0x80000001u, 0}, // StripByteCounts
+        {320, 3, 0x80000001u, 0}, // ColorMap with overflowing count * 2
+    };
+
+    std::vector<uint8_t> tiff = BuildMinimalTiffLE(entries, extra);
+    auto ctx = MakeTestDecodeContext();
+    QuickView::Codec::DecodeResult result;
+
+    HRESULT hr = QuickView::MiniTiff::Load(tiff.data(), tiff.size(), ctx, result);
+    EXPECT_EQ(hr, E_FAIL);
+    EXPECT_FALSE(result.success);
+    if (result.pixels) _aligned_free(result.pixels);
+}

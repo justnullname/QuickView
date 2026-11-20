@@ -22,11 +22,36 @@
 #include <cstring>
 #include <vector>
 #include <span>
+#include <atomic>
+#include <limits>
 #include <omp.h>
 #include <zlib.h>
 #include <algorithm>
 
 namespace QuickView::MiniTiff {
+
+static constexpr uint32_t kMaxImageDimension = 262144;
+static constexpr uint16_t kMaxSamplesPerPixel = 16;
+static constexpr size_t kMaxUnitBufferBytes = 256ULL * 1024 * 1024;
+
+static inline bool CheckedMul(size_t a, size_t b, size_t& out) noexcept {
+    if (a != 0 && b > (std::numeric_limits<size_t>::max)() / a) {
+        return false;
+    }
+    out = a * b;
+    return true;
+}
+
+static inline bool CheckRange(size_t offset, size_t count, size_t elemSize, size_t totalSize) noexcept {
+    if (offset > totalSize) {
+        return false;
+    }
+    size_t byteLen = 0;
+    if (!CheckedMul(count, elemSize, byteLen)) {
+        return false;
+    }
+    return byteLen <= totalSize - offset;
+}
 
 struct TiffImageDesc {
     uint32_t width = 0;
@@ -59,7 +84,7 @@ static bool DecompressPackBits(const uint8_t* src, size_t srcLen, uint8_t* dst, 
         int8_t n = static_cast<int8_t>(src[srcIdx++]);
         if (n >= 0) {
             size_t count = static_cast<size_t>(n) + 1;
-            if (srcIdx + count > srcLen || dstIdx + count > dstLen) {
+            if (count > srcLen - srcIdx || count > dstLen - dstIdx) {
                 return false;
             }
             std::memcpy(dst + dstIdx, src + srcIdx, count);
@@ -67,7 +92,7 @@ static bool DecompressPackBits(const uint8_t* src, size_t srcLen, uint8_t* dst, 
             dstIdx += count;
         } else if (n != -128) {
             size_t count = static_cast<size_t>(-n) + 1;
-            if (srcIdx >= srcLen || dstIdx + count > dstLen) {
+            if (srcIdx >= srcLen || count > dstLen - dstIdx) {
                 return false;
             }
             uint8_t val = src[srcIdx++];
@@ -79,6 +104,10 @@ static bool DecompressPackBits(const uint8_t* src, size_t srcLen, uint8_t* dst, 
 }
 
 static bool DecompressDeflate(const uint8_t* src, size_t srcLen, uint8_t* dst, size_t dstLen) {
+    if (srcLen > (std::numeric_limits<uInt>::max)() || dstLen > (std::numeric_limits<uInt>::max)()) {
+        return false;
+    }
+
     z_stream strm;
     std::memset(&strm, 0, sizeof(strm));
     strm.next_in = const_cast<Bytef*>(src);
@@ -129,7 +158,7 @@ static Status ParseTiffIFD(const uint8_t* data, size_t size, TiffImageDesc& desc
     desc.isLE = isLE;
 
     auto read16 = [&](size_t off) -> uint16_t {
-        if (off + 2 > size) return 0;
+        if (off > size || size - off < 2) return 0;
         if (isLE) {
             return data[off] | (static_cast<uint16_t>(data[off + 1]) << 8);
         } else {
@@ -138,7 +167,7 @@ static Status ParseTiffIFD(const uint8_t* data, size_t size, TiffImageDesc& desc
     };
 
     auto read32 = [&](size_t off) -> uint32_t {
-        if (off + 4 > size) return 0;
+        if (off > size || size - off < 4) return 0;
         if (isLE) {
             return data[off] | (static_cast<uint32_t>(data[off + 1]) << 8) |
                    (static_cast<uint32_t>(data[off + 2]) << 16) | (static_cast<uint32_t>(data[off + 3]) << 24);
@@ -161,13 +190,13 @@ static Status ParseTiffIFD(const uint8_t* data, size_t size, TiffImageDesc& desc
     };
 
     uint32_t ifdOffset = read32(4);
-    if (ifdOffset == 0 || ifdOffset + 2 > size) {
+    if (ifdOffset == 0 || !CheckRange(ifdOffset, 1, 2, size)) {
         return Status::Corrupt;
     }
 
     uint16_t numEntries = read16(ifdOffset);
-    size_t current = ifdOffset + 2;
-    if (current + numEntries * 12 > size) {
+    size_t current = static_cast<size_t>(ifdOffset) + 2;
+    if (!CheckRange(current, numEntries, 12, size)) {
         return Status::Corrupt;
     }
 
@@ -206,10 +235,10 @@ static Status ParseTiffIFD(const uint8_t* data, size_t size, TiffImageDesc& desc
                 } else if (count > 1) {
                     uint32_t valOrOff = read32(entryOff + 8);
                     if (type == 3) {
-                        if (valOrOff + count * 2 > size) return Status::Corrupt;
+                        if (!CheckRange(valOrOff, count, 2, size)) return Status::Corrupt;
                         desc.bitsPerSample = read16(valOrOff);
                         for (uint32_t j = 1; j < count; ++j) {
-                            if (read16(valOrOff + j * 2) != desc.bitsPerSample) {
+                            if (read16(static_cast<size_t>(valOrOff) + static_cast<size_t>(j) * 2) != desc.bitsPerSample) {
                                 return Status::Unsupported; // Inconsistent bit depths
                             }
                         }
@@ -252,10 +281,10 @@ static Status ParseTiffIFD(const uint8_t* data, size_t size, TiffImageDesc& desc
             case 320: // ColorMap
                 if (type == 3) {
                     uint32_t valOrOff = read32(entryOff + 8);
-                    if (valOrOff + count * 2 > size) return Status::Corrupt;
+                    if (!CheckRange(valOrOff, count, 2, size)) return Status::Corrupt;
                     desc.colorMap.resize(count);
                     for (uint32_t j = 0; j < count; ++j) {
-                        desc.colorMap[j] = read16(valOrOff + j * 2);
+                        desc.colorMap[j] = read16(static_cast<size_t>(valOrOff) + static_cast<size_t>(j) * 2);
                     }
                 }
                 break;
@@ -282,7 +311,7 @@ static Status ParseTiffIFD(const uint8_t* data, size_t size, TiffImageDesc& desc
             case 34675: // ICCProfile
                 if (type == 7 || type == 1) {
                     uint32_t valOrOff = read32(entryOff + 8);
-                    if (valOrOff + count <= size) {
+                    if (CheckRange(valOrOff, count, 1, size)) {
                         desc.iccProfile = std::span<const uint8_t>(data + valOrOff, count);
                     }
                 }
@@ -291,84 +320,47 @@ static Status ParseTiffIFD(const uint8_t* data, size_t size, TiffImageDesc& desc
     }
 
     // Populate offsets and byteCounts
+    auto readUintArray = [&](uint32_t arrayOffset, uint32_t count, uint16_t type, std::vector<uint64_t>& dst) -> Status {
+        if (count == 1) {
+            dst.resize(1);
+            dst[0] = arrayOffset;
+            return Status::Ok;
+        }
+        size_t elemSize = 0;
+        if (type == 3) {
+            elemSize = 2;
+        } else if (type == 4) {
+            elemSize = 4;
+        } else {
+            return Status::Unsupported;
+        }
+        if (!CheckRange(arrayOffset, count, elemSize, size)) {
+            return Status::Corrupt;
+        }
+        dst.resize(count);
+        for (uint32_t j = 0; j < count; ++j) {
+            size_t pos = static_cast<size_t>(arrayOffset) + static_cast<size_t>(j) * elemSize;
+            dst[j] = (elemSize == 2) ? read16(pos) : read32(pos);
+        }
+        return Status::Ok;
+    };
+
     if (desc.isTiled) {
         if (tileOffsetsCount == 0 || tileOffsetsCount != tileByteCountsCount) {
             return Status::Corrupt;
         }
-        desc.offsets.resize(tileOffsetsCount);
-        desc.byteCounts.resize(tileByteCountsCount);
-
-        if (tileOffsetsCount == 1) {
-            desc.offsets[0] = tileOffsetsOffset;
-            desc.byteCounts[0] = tileByteCountsOffset;
-        } else {
-            if (tileOffsetsType == 3) {
-                if (tileOffsetsOffset + tileOffsetsCount * 2 > size) return Status::Corrupt;
-                for (uint32_t j = 0; j < tileOffsetsCount; ++j) {
-                    desc.offsets[j] = read16(tileOffsetsOffset + j * 2);
-                }
-            } else if (tileOffsetsType == 4) {
-                if (tileOffsetsOffset + tileOffsetsCount * 4 > size) return Status::Corrupt;
-                for (uint32_t j = 0; j < tileOffsetsCount; ++j) {
-                    desc.offsets[j] = read32(tileOffsetsOffset + j * 4);
-                }
-            } else {
-                return Status::Unsupported;
-            }
-
-            if (tileByteCountsType == 3) {
-                if (tileByteCountsOffset + tileByteCountsCount * 2 > size) return Status::Corrupt;
-                for (uint32_t j = 0; j < tileByteCountsCount; ++j) {
-                    desc.byteCounts[j] = read16(tileByteCountsOffset + j * 2);
-                }
-            } else if (tileByteCountsType == 4) {
-                if (tileByteCountsOffset + tileByteCountsCount * 4 > size) return Status::Corrupt;
-                for (uint32_t j = 0; j < tileByteCountsCount; ++j) {
-                    desc.byteCounts[j] = read32(tileByteCountsOffset + j * 4);
-                }
-            } else {
-                return Status::Unsupported;
-            }
-        }
+        Status st = readUintArray(tileOffsetsOffset, tileOffsetsCount, tileOffsetsType, desc.offsets);
+        if (st != Status::Ok) return st;
+        st = readUintArray(tileByteCountsOffset, tileByteCountsCount, tileByteCountsType, desc.byteCounts);
+        if (st != Status::Ok) return st;
     } else {
         if (stripOffsetsCount == 0 || stripOffsetsCount != stripByteCountsCount) {
             return Status::Corrupt;
         }
-        desc.offsets.resize(stripOffsetsCount);
-        desc.byteCounts.resize(stripByteCountsCount);
-
-        if (stripOffsetsCount == 1) {
-            desc.offsets[0] = stripOffsetsOffset;
-            desc.byteCounts[0] = stripByteCountsOffset;
-        } else {
-            if (stripOffsetsType == 3) {
-                if (stripOffsetsOffset + stripOffsetsCount * 2 > size) return Status::Corrupt;
-                for (uint32_t j = 0; j < stripOffsetsCount; ++j) {
-                    desc.offsets[j] = read16(stripOffsetsOffset + j * 2);
-                }
-            } else if (stripOffsetsType == 4) {
-                if (stripOffsetsOffset + stripOffsetsCount * 4 > size) return Status::Corrupt;
-                for (uint32_t j = 0; j < stripOffsetsCount; ++j) {
-                    desc.offsets[j] = read32(stripOffsetsOffset + j * 4);
-                }
-            } else {
-                return Status::Unsupported;
-            }
-
-            if (stripByteCountsType == 3) {
-                if (stripByteCountsOffset + stripByteCountsCount * 2 > size) return Status::Corrupt;
-                for (uint32_t j = 0; j < stripByteCountsCount; ++j) {
-                    desc.byteCounts[j] = read16(stripByteCountsOffset + j * 2);
-                }
-            } else if (stripByteCountsType == 4) {
-                if (stripByteCountsOffset + stripByteCountsCount * 4 > size) return Status::Corrupt;
-                for (uint32_t j = 0; j < stripByteCountsCount; ++j) {
-                    desc.byteCounts[j] = read32(stripByteCountsOffset + j * 4);
-                }
-            } else {
-                return Status::Unsupported;
-            }
-        }
+        Status st = readUintArray(stripOffsetsOffset, stripOffsetsCount, stripOffsetsType, desc.offsets);
+        if (st != Status::Ok) return st;
+        st = readUintArray(stripByteCountsOffset, stripByteCountsCount, stripByteCountsType, desc.byteCounts);
+        if (st != Status::Ok) return st;
     }
 
     return Status::Ok;
@@ -376,6 +368,18 @@ static Status ParseTiffIFD(const uint8_t* data, size_t size, TiffImageDesc& desc
 
 static Status CapabilityGate(const TiffImageDesc& desc) {
     if (desc.width == 0 || desc.height == 0) return Status::Corrupt;
+    if (desc.width > kMaxImageDimension || desc.height > kMaxImageDimension) {
+        return Status::Unsupported;
+    }
+
+    if (desc.isTiled) {
+        if (desc.tileWidth == 0 || desc.tileHeight == 0) {
+            return Status::Corrupt;
+        }
+        if (desc.tileWidth > kMaxImageDimension || desc.tileHeight > kMaxImageDimension) {
+            return Status::Unsupported;
+        }
+    }
 
     // Phase 1 supported compressions: 1 (Uncompressed), 32773 (PackBits), 5 (LZW), 8 (Deflate), 32946 (Deflate)
     if (desc.compression != 1 && desc.compression != 32773 &&
@@ -402,6 +406,7 @@ static Status CapabilityGate(const TiffImageDesc& desc) {
     if (desc.photometric == 2 && desc.samples < 3) return Status::Corrupt;
     if (desc.photometric == 5 && desc.samples < 4) return Status::Corrupt;
     if (desc.photometric != 2 && desc.photometric != 5 && desc.samples < 1) return Status::Corrupt;
+    if (desc.samples > kMaxSamplesPerPixel) return Status::Unsupported;
 
     // Predictor: supports None (1) or Horizontal (2)
     if (desc.predictor != 1 && desc.predictor != 2) {
@@ -437,53 +442,95 @@ HRESULT LoadRegion(const uint8_t* data, size_t size,
     uint32_t bytesPerSample = desc.bitsPerSample / 8;
     if (bytesPerSample == 0) bytesPerSample = 1;
     uint32_t highByteOffset = (bytesPerSample == 2) ? (desc.isLE ? 1 : 0) : 0;
-    
-    // Intermediate buffer for 16-to-8 bit SIMD conversion to avoid allocations in hot-path
-    std::vector<uint8_t> rgb8Buf;
-    if (bytesPerSample == 2 && samples == 3 && highByteOffset == 1) {
-        rgb8Buf.resize(static_cast<size_t>(cropW) * 3);
+
+    size_t pixelStride = 0;
+    size_t rowBytes = 0;
+    if (!CheckedMul(static_cast<size_t>(samples), static_cast<size_t>(bytesPerSample), pixelStride) ||
+        pixelStride == 0 ||
+        !CheckedMul(static_cast<size_t>(desc.width), pixelStride, rowBytes)) {
+        return E_FAIL;
+    }
+
+    uint32_t tilesPerRow = 0;
+    uint32_t tilesCount = 0;
+    size_t tileRowBytes = 0;
+    size_t tileBytes = 0;
+    uint32_t rowsPerStrip = 0;
+    uint32_t stripsCount = 0;
+
+    if (desc.isTiled) {
+        uint64_t tilesPerRow64 = 1ULL + (static_cast<uint64_t>(desc.width) - 1ULL) / desc.tileWidth;
+        uint64_t tilesPerCol64 = 1ULL + (static_cast<uint64_t>(desc.height) - 1ULL) / desc.tileHeight;
+        size_t tilesCountSz = 0;
+        if (!CheckedMul(static_cast<size_t>(tilesPerRow64), static_cast<size_t>(tilesPerCol64), tilesCountSz) ||
+            tilesCountSz > static_cast<size_t>((std::numeric_limits<int>::max)()) ||
+            desc.offsets.size() < tilesCountSz || desc.byteCounts.size() < tilesCountSz) {
+            return E_FAIL;
+        }
+        tilesPerRow = static_cast<uint32_t>(tilesPerRow64);
+        tilesCount = static_cast<uint32_t>(tilesCountSz);
+
+        if (!CheckedMul(static_cast<size_t>(desc.tileWidth), pixelStride, tileRowBytes) ||
+            !CheckedMul(tileRowBytes, static_cast<size_t>(desc.tileHeight), tileBytes) ||
+            tileBytes == 0 || tileBytes > kMaxUnitBufferBytes) {
+            return E_FAIL;
+        }
+    } else {
+        rowsPerStrip = desc.rowsPerStrip;
+        if (rowsPerStrip == 0 || rowsPerStrip > desc.height) {
+            rowsPerStrip = desc.height;
+        }
+        uint64_t stripsCount64 = 1ULL + (static_cast<uint64_t>(desc.height) - 1ULL) / rowsPerStrip;
+        if (stripsCount64 > static_cast<uint64_t>((std::numeric_limits<int>::max)()) ||
+            desc.offsets.size() < stripsCount64 || desc.byteCounts.size() < stripsCount64) {
+            return E_FAIL;
+        }
+        stripsCount = static_cast<uint32_t>(stripsCount64);
     }
 
     // Prepare Output
-    int outStride = ((cropW * 4) + 63) & ~63; // 64-byte aligned
-    size_t totalBytes = static_cast<size_t>(outStride) * cropH;
+    int outStride = ((cropW * 4) + 63) & ~63; // 64-byte aligned (cropW <= kMaxImageDimension guarantees no int overflow)
+    size_t totalBytes = 0;
+    if (!CheckedMul(static_cast<size_t>(outStride), static_cast<size_t>(cropH), totalBytes)) {
+        return E_OUTOFMEMORY;
+    }
     uint8_t* pixels = ctx.allocator(totalBytes);
     if (!pixels) {
         return E_OUTOFMEMORY;
     }
     std::memset(pixels, 0, totalBytes);
 
-
-    uint32_t pixelStride = samples * bytesPerSample;
-    uint32_t rowBytes = desc.width * pixelStride;
     uint16_t predictor = desc.predictor;
     uint16_t photometric = desc.photometric;
+    const bool needRgb8SimdBuf = (photometric == 2 && bytesPerSample == 2 && samples == 3 && highByteOffset == 1);
 
-    bool decodeFailed = false;
+    std::atomic<bool> decodeFailed{false};
 
     if (desc.isTiled) {
-        uint32_t tilesPerRow = (desc.width + desc.tileWidth - 1) / desc.tileWidth;
-        uint32_t tilesPerCol = (desc.height + desc.tileHeight - 1) / desc.tileHeight;
-        uint32_t tilesCount = tilesPerRow * tilesPerCol;
-        if (desc.offsets.size() < tilesCount || desc.byteCounts.size() < tilesCount) {
-            return E_FAIL;
-        }
-
         // Tiled parallel decoder
         [[maybe_unused]] bool useParallel = (tilesCount >= 4 && cropH >= 512);
 
-        #pragma omp parallel for if(useParallel) shared(decodeFailed)
-        for (int i = 0; i < static_cast<int>(tilesCount); ++i) {
-            if (decodeFailed) continue;
+        #pragma omp parallel if(useParallel) shared(decodeFailed)
+        {
+            std::vector<uint8_t> localBuf;
+            std::vector<uint8_t> predictorBuf;
+            std::vector<uint8_t> rgb8Buf;
+            if (needRgb8SimdBuf) {
+                rgb8Buf.resize(static_cast<size_t>((std::min)(static_cast<uint32_t>(cropW), desc.tileWidth)) * 3);
+            }
+
+            #pragma omp for
+            for (int i = 0; i < static_cast<int>(tilesCount); ++i) {
+                if (decodeFailed.load(std::memory_order_relaxed)) continue;
 
                 if (ctx.checkCancel && ctx.checkCancel()) {
-                    decodeFailed = true;
+                    decodeFailed.store(true, std::memory_order_relaxed);
                     continue;
                 }
 
                 // Locate Tile boundary
-                int tileX = (i % tilesPerRow) * desc.tileWidth;
-                int tileY = (i / tilesPerRow) * desc.tileHeight;
+                int tileX = static_cast<int>((static_cast<uint32_t>(i) % tilesPerRow) * desc.tileWidth);
+                int tileY = static_cast<int>((static_cast<uint32_t>(i) / tilesPerRow) * desc.tileHeight);
                 int unitW = (std::min)(static_cast<int>(desc.tileWidth), static_cast<int>(desc.width) - tileX);
                 int unitH = (std::min)(static_cast<int>(desc.tileHeight), static_cast<int>(desc.height) - tileY);
 
@@ -499,62 +546,61 @@ HRESULT LoadRegion(const uint8_t* data, size_t size,
 
                 uint64_t offset = desc.offsets[i];
                 uint64_t byteCount = desc.byteCounts[i];
-                if (offset + byteCount > size) {
-                    decodeFailed = true;
+                if (offset > size || byteCount > size - offset) {
+                    decodeFailed.store(true, std::memory_order_relaxed);
                     continue;
                 }
 
-                size_t tileBytes = static_cast<size_t>(desc.tileWidth) * desc.tileHeight * samples;
-                std::vector<uint8_t> localBuf;
                 const uint8_t* tileData = nullptr;
 
                 if (desc.compression == 1) {
-                    if (offset + tileBytes > size) {
-                        decodeFailed = true;
+                    if (tileBytes > size - offset) {
+                        decodeFailed.store(true, std::memory_order_relaxed);
                         continue;
                     }
                     tileData = data + offset;
                 } else if (desc.compression == 32773) {
                     localBuf.resize(tileBytes);
-                    if (!DecompressPackBits(data + offset, byteCount, localBuf.data(), tileBytes)) {
-                        decodeFailed = true;
+                    if (!DecompressPackBits(data + offset, static_cast<size_t>(byteCount), localBuf.data(), tileBytes)) {
+                        decodeFailed.store(true, std::memory_order_relaxed);
                         continue;
                     }
                     tileData = localBuf.data();
                 } else if (desc.compression == 5) {
                     localBuf.resize(tileBytes);
-                    if (!DecompressLzw(data + offset, byteCount, localBuf.data(), tileBytes)) {
-                        decodeFailed = true;
+                    if (!DecompressLzw(data + offset, static_cast<size_t>(byteCount), localBuf.data(), tileBytes)) {
+                        decodeFailed.store(true, std::memory_order_relaxed);
                         continue;
                     }
                     tileData = localBuf.data();
                 } else if (desc.compression == 8 || desc.compression == 32946) {
                     localBuf.resize(tileBytes);
-                    if (!DecompressDeflate(data + offset, byteCount, localBuf.data(), tileBytes)) {
-                        decodeFailed = true;
+                    if (!DecompressDeflate(data + offset, static_cast<size_t>(byteCount), localBuf.data(), tileBytes)) {
+                        decodeFailed.store(true, std::memory_order_relaxed);
                         continue;
                     }
                     tileData = localBuf.data();
                 }
 
                 if (!tileData) {
-                    decodeFailed = true;
+                    decodeFailed.store(true, std::memory_order_relaxed);
                     continue;
                 }
 
                 // Undo predictor
-                std::vector<uint8_t> predictorBuf;
                 if (predictor == 2) {
                     if (desc.compression == 1) {
                         predictorBuf.assign(tileData, tileData + tileBytes);
                         tileData = predictorBuf.data();
                     }
                     uint8_t* mutableData = const_cast<uint8_t*>(tileData);
-                    for (int y = 0; y < (int)desc.tileHeight; ++y) {
-                        uint8_t* rowData = mutableData + y * (desc.tileWidth * pixelStride);
-                        for (int x = 1; x < (int)desc.tileWidth; ++x) {
-                            for (uint32_t c = 0; c < pixelStride; ++c) {
-                                rowData[x * pixelStride + c] += rowData[(x - 1) * pixelStride + c];
+                    for (uint32_t y = 0; y < desc.tileHeight; ++y) {
+                        uint8_t* rowData = mutableData + static_cast<size_t>(y) * tileRowBytes;
+                        for (uint32_t x = 1; x < desc.tileWidth; ++x) {
+                            size_t currBase = static_cast<size_t>(x) * pixelStride;
+                            size_t prevBase = currBase - pixelStride;
+                            for (size_t c = 0; c < pixelStride; ++c) {
+                                rowData[currBase + c] += rowData[prevBase + c];
                             }
                         }
                     }
@@ -562,15 +608,15 @@ HRESULT LoadRegion(const uint8_t* data, size_t size,
 
                 // Pack pixels falling into ROI
                 for (int y = intersectY; y < intersectEndY; ++y) {
-                    int localY = y - tileY;
-                    int outY = y - cropY;
-                    const uint8_t* srcRow = tileData + localY * (desc.tileWidth * pixelStride);
-                    uint8_t* dstRow = pixels + outY * outStride;
+                    size_t localY = static_cast<size_t>(y - tileY);
+                    size_t outY = static_cast<size_t>(y - cropY);
+                    const uint8_t* srcRow = tileData + localY * tileRowBytes;
+                    uint8_t* dstRow = pixels + outY * static_cast<size_t>(outStride);
 
                     if (photometric == 0 || photometric == 1) {
                         for (int x = intersectX; x < intersectEndX; ++x) {
-                            int localX = x - tileX;
-                            int outX = x - cropX;
+                            size_t localX = static_cast<size_t>(x - tileX);
+                            size_t outX = static_cast<size_t>(x - cropX);
                             uint8_t val = srcRow[localX * pixelStride + highByteOffset];
                             if (photometric == 0) val = 255 - val;
                             dstRow[outX * 4 + 0] = val;
@@ -582,9 +628,9 @@ HRESULT LoadRegion(const uint8_t* data, size_t size,
                         int runWidth = intersectEndX - intersectX;
                         // [Titan Perf] SIMD Accelerated 16-to-8 bit downsampling + BGRA Swizzle
                         // Only applicable when image is RGB (samples == 3) and Little-Endian (highByteOffset == 1)
-                        if (bytesPerSample == 2 && samples == 3 && highByteOffset == 1) {
-                            int localXStart = intersectX - tileX;
-                            int outXStart = intersectX - cropX;
+                        if (needRgb8SimdBuf) {
+                            size_t localXStart = static_cast<size_t>(intersectX - tileX);
+                            size_t outXStart = static_cast<size_t>(intersectX - cropX);
                             const uint16_t* src16 = reinterpret_cast<const uint16_t*>(srcRow + localXStart * pixelStride);
                             uint8_t* dst32 = dstRow + outXStart * 4;
                             
@@ -592,8 +638,8 @@ HRESULT LoadRegion(const uint8_t* data, size_t size,
                             ImageLoaderSimd::ConvertRGBToBGRA(rgb8Buf.data(), dst32, runWidth, 1, runWidth * 4);
                         } else {
                             for (int x = intersectX; x < intersectEndX; ++x) {
-                                int localX = x - tileX;
-                                int outX = x - cropX;
+                                size_t localX = static_cast<size_t>(x - tileX);
+                                size_t outX = static_cast<size_t>(x - cropX);
                                 uint8_t r = srcRow[localX * pixelStride + 0 * bytesPerSample + highByteOffset];
                                 uint8_t g = srcRow[localX * pixelStride + 1 * bytesPerSample + highByteOffset];
                                 uint8_t b = srcRow[localX * pixelStride + 2 * bytesPerSample + highByteOffset];
@@ -612,8 +658,8 @@ HRESULT LoadRegion(const uint8_t* data, size_t size,
                     } else if (photometric == 3) {
                         if (desc.colorMap.size() >= 768) {
                             for (int x = intersectX; x < intersectEndX; ++x) {
-                                int localX = x - tileX;
-                                int outX = x - cropX;
+                                size_t localX = static_cast<size_t>(x - tileX);
+                                size_t outX = static_cast<size_t>(x - cropX);
                                 uint8_t idx = srcRow[localX * pixelStride + highByteOffset];
                                 uint8_t r = static_cast<uint8_t>(desc.colorMap[idx] / 256);
                                 uint8_t g = static_cast<uint8_t>(desc.colorMap[idx + 256] / 256);
@@ -624,58 +670,59 @@ HRESULT LoadRegion(const uint8_t* data, size_t size,
                                 dstRow[outX * 4 + 3] = 255;
                             }
                         } else {
-                            decodeFailed = true;
+                            decodeFailed.store(true, std::memory_order_relaxed);
                         }
                     } else if (photometric == 5) {
-                        int localXStart = intersectX - tileX;
-                        int outXStart = intersectX - cropX;
+                        size_t localXStart = static_cast<size_t>(intersectX - tileX);
+                        size_t outXStart = static_cast<size_t>(intersectX - cropX);
                         int runWidth = intersectEndX - intersectX;
                         if (bytesPerSample == 1) {
                             ConvertCmykToBgra(srcRow + localXStart * pixelStride, dstRow + outXStart * 4, runWidth, samples);
                         } else {
                             for (int dx = 0; dx < runWidth; ++dx) {
-                                uint8_t c = srcRow[(localXStart + dx) * pixelStride + 0 * bytesPerSample + highByteOffset];
-                                uint8_t m = srcRow[(localXStart + dx) * pixelStride + 1 * bytesPerSample + highByteOffset];
-                                uint8_t ye = srcRow[(localXStart + dx) * pixelStride + 2 * bytesPerSample + highByteOffset];
-                                uint8_t k = (samples >= 4) ? srcRow[(localXStart + dx) * pixelStride + 3 * bytesPerSample + highByteOffset] : 0;
+                                size_t srcBase = (localXStart + static_cast<size_t>(dx)) * pixelStride;
+                                uint8_t c = srcRow[srcBase + 0 * bytesPerSample + highByteOffset];
+                                uint8_t m = srcRow[srcBase + 1 * bytesPerSample + highByteOffset];
+                                uint8_t ye = srcRow[srcBase + 2 * bytesPerSample + highByteOffset];
+                                uint8_t k = (samples >= 4) ? srcRow[srcBase + 3 * bytesPerSample + highByteOffset] : 0;
                                 uint8_t r = (255 - c) * (255 - k) / 255;
                                 uint8_t g = (255 - m) * (255 - k) / 255;
                                 uint8_t b = (255 - ye) * (255 - k) / 255;
-                                dstRow[(outXStart + dx) * 4 + 0] = b;
-                                dstRow[(outXStart + dx) * 4 + 1] = g;
-                                dstRow[(outXStart + dx) * 4 + 2] = r;
-                                dstRow[(outXStart + dx) * 4 + 3] = 255;
+                                dstRow[(outXStart + static_cast<size_t>(dx)) * 4 + 0] = b;
+                                dstRow[(outXStart + static_cast<size_t>(dx)) * 4 + 1] = g;
+                                dstRow[(outXStart + static_cast<size_t>(dx)) * 4 + 2] = r;
+                                dstRow[(outXStart + static_cast<size_t>(dx)) * 4 + 3] = 255;
                             }
                         }
                     }
                 }
             }
+        }
     } else {
         // Strip layout
-        uint32_t rowsPerStrip = desc.rowsPerStrip;
-        if (rowsPerStrip == 0 || rowsPerStrip > desc.height) {
-            rowsPerStrip = desc.height;
-        }
-
-        uint32_t stripsCount = (desc.height + rowsPerStrip - 1) / rowsPerStrip;
-        if (desc.offsets.size() < stripsCount || desc.byteCounts.size() < stripsCount) {
-            return E_FAIL;
-        }
-
         [[maybe_unused]] bool useParallel = (stripsCount >= 4 && cropH >= 512);
-        int startStrip = cropY / rowsPerStrip;
-        int endStrip = (cropY + cropH - 1) / rowsPerStrip;
+        int startStrip = cropY / static_cast<int>(rowsPerStrip);
+        int endStrip = (std::min)((cropY + cropH - 1) / static_cast<int>(rowsPerStrip), static_cast<int>(stripsCount) - 1);
 
-        #pragma omp parallel for if(useParallel) shared(decodeFailed)
-        for (int i = startStrip; i <= endStrip && i < static_cast<int>(stripsCount); ++i) {
-            if (decodeFailed) continue;
+        #pragma omp parallel if(useParallel) shared(decodeFailed)
+        {
+            std::vector<uint8_t> localBuf;
+            std::vector<uint8_t> predictorBuf;
+            std::vector<uint8_t> rgb8Buf;
+            if (needRgb8SimdBuf) {
+                rgb8Buf.resize(static_cast<size_t>(cropW) * 3);
+            }
+
+            #pragma omp for
+            for (int i = startStrip; i <= endStrip; ++i) {
+                if (decodeFailed.load(std::memory_order_relaxed)) continue;
 
                 if (ctx.checkCancel && ctx.checkCancel()) {
-                    decodeFailed = true;
+                    decodeFailed.store(true, std::memory_order_relaxed);
                     continue;
                 }
 
-                int startY = i * rowsPerStrip;
+                int startY = i * static_cast<int>(rowsPerStrip);
                 int unitH = (std::min)(static_cast<int>(rowsPerStrip), static_cast<int>(desc.height) - startY);
 
                 // Y overlap check
@@ -688,62 +735,68 @@ HRESULT LoadRegion(const uint8_t* data, size_t size,
 
                 uint64_t offset = desc.offsets[i];
                 uint64_t byteCount = desc.byteCounts[i];
-                if (offset + byteCount > size) {
-                    decodeFailed = true;
+                if (offset > size || byteCount > size - offset) {
+                    decodeFailed.store(true, std::memory_order_relaxed);
                     continue;
                 }
 
-                size_t stripBytes = static_cast<size_t>(unitH) * rowBytes;
-                std::vector<uint8_t> localBuf;
+                size_t stripBytes = 0;
+                if (!CheckedMul(static_cast<size_t>(unitH), rowBytes, stripBytes) ||
+                    stripBytes == 0 || stripBytes > kMaxUnitBufferBytes) {
+                    decodeFailed.store(true, std::memory_order_relaxed);
+                    continue;
+                }
+
                 const uint8_t* stripData = nullptr;
 
                 if (desc.compression == 1) {
-                    if (offset + stripBytes > size) {
-                        decodeFailed = true;
+                    if (stripBytes > size - offset) {
+                        decodeFailed.store(true, std::memory_order_relaxed);
                         continue;
                     }
                     stripData = data + offset;
                 } else if (desc.compression == 32773) {
                     localBuf.resize(stripBytes);
-                    if (!DecompressPackBits(data + offset, byteCount, localBuf.data(), stripBytes)) {
-                        decodeFailed = true;
+                    if (!DecompressPackBits(data + offset, static_cast<size_t>(byteCount), localBuf.data(), stripBytes)) {
+                        decodeFailed.store(true, std::memory_order_relaxed);
                         continue;
                     }
                     stripData = localBuf.data();
                 } else if (desc.compression == 5) {
                     localBuf.resize(stripBytes);
-                    if (!DecompressLzw(data + offset, byteCount, localBuf.data(), stripBytes)) {
-                        decodeFailed = true;
+                    if (!DecompressLzw(data + offset, static_cast<size_t>(byteCount), localBuf.data(), stripBytes)) {
+                        decodeFailed.store(true, std::memory_order_relaxed);
                         continue;
                     }
                     stripData = localBuf.data();
                 } else if (desc.compression == 8 || desc.compression == 32946) {
                     localBuf.resize(stripBytes);
-                    if (!DecompressDeflate(data + offset, byteCount, localBuf.data(), stripBytes)) {
-                        decodeFailed = true;
+                    if (!DecompressDeflate(data + offset, static_cast<size_t>(byteCount), localBuf.data(), stripBytes)) {
+                        decodeFailed.store(true, std::memory_order_relaxed);
                         continue;
                     }
                     stripData = localBuf.data();
                 }
 
                 if (!stripData) {
-                    decodeFailed = true;
+                    decodeFailed.store(true, std::memory_order_relaxed);
                     continue;
                 }
 
                 // Undo predictor
-                std::vector<uint8_t> predictorBuf;
                 if (predictor == 2) {
                     if (desc.compression == 1) {
                         predictorBuf.assign(stripData, stripData + stripBytes);
                         stripData = predictorBuf.data();
                     }
                     uint8_t* mutableData = const_cast<uint8_t*>(stripData);
-                    for (int y = 0; y < (int)unitH; ++y) {
-                        uint8_t* rowData = mutableData + y * rowBytes;
-                        for (int x = 1; x < (int)desc.width; ++x) {
-                            for (uint32_t c = 0; c < pixelStride; ++c) {
-                                rowData[x * pixelStride + c] += rowData[(x - 1) * pixelStride + c];
+                    for (int y = 0; y < unitH; ++y) {
+                        uint8_t* rowData = mutableData + static_cast<size_t>(y) * rowBytes;
+                        for (uint32_t x = 1; x < desc.width; ++x) {
+                            size_t currBase = static_cast<size_t>(x) * pixelStride;
+                            size_t prevBase = currBase - pixelStride;
+                            for (size_t c = 0; c < pixelStride; ++c) {
+                                rowData[currBase + c] += rowData[prevBase + c];
                             }
                         }
                     }
@@ -751,34 +804,36 @@ HRESULT LoadRegion(const uint8_t* data, size_t size,
 
                 // Pack pixels falling into ROI horizontally
                 for (int y = intersectY; y < intersectEndY; ++y) {
-                    int localY = y - startY;
-                    int outY = y - cropY;
+                    size_t localY = static_cast<size_t>(y - startY);
+                    size_t outY = static_cast<size_t>(y - cropY);
                     const uint8_t* srcRow = stripData + localY * rowBytes;
-                    uint8_t* dstRow = pixels + outY * outStride;
+                    uint8_t* dstRow = pixels + outY * static_cast<size_t>(outStride);
 
                     if (photometric == 0 || photometric == 1) {
                         for (int x = cropX; x < cropX + cropW; ++x) {
-                            int outX = x - cropX;
-                            uint8_t val = srcRow[x * pixelStride + highByteOffset];
+                            size_t ux = static_cast<size_t>(x);
+                            size_t outX = static_cast<size_t>(x - cropX);
+                            uint8_t val = srcRow[ux * pixelStride + highByteOffset];
                             if (photometric == 0) val = 255 - val;
                             dstRow[outX * 4 + 0] = val;
                             dstRow[outX * 4 + 1] = val;
                             dstRow[outX * 4 + 2] = val;
-                            dstRow[outX * 4 + 3] = (samples > 1) ? srcRow[x * pixelStride + bytesPerSample + highByteOffset] : 255;
+                            dstRow[outX * 4 + 3] = (samples > 1) ? srcRow[ux * pixelStride + bytesPerSample + highByteOffset] : 255;
                         }
                     } else if (photometric == 2) {
                         // [Titan Perf] SIMD Accelerated 16-to-8 bit downsampling + BGRA Swizzle for Stripped Layout
-                        if (bytesPerSample == 2 && samples == 3 && highByteOffset == 1) {
-                            const uint16_t* src16 = reinterpret_cast<const uint16_t*>(srcRow + cropX * pixelStride);
+                        if (needRgb8SimdBuf) {
+                            const uint16_t* src16 = reinterpret_cast<const uint16_t*>(srcRow + static_cast<size_t>(cropX) * pixelStride);
                             ImageLoaderSimd::Pack16to8(src16, rgb8Buf.data(), cropW * 3);
                             ImageLoaderSimd::ConvertRGBToBGRA(rgb8Buf.data(), dstRow, cropW, 1, cropW * 4);
                         } else {
                             for (int x = cropX; x < cropX + cropW; ++x) {
-                                int outX = x - cropX;
-                                uint8_t r = srcRow[x * pixelStride + 0 * bytesPerSample + highByteOffset];
-                                uint8_t g = srcRow[x * pixelStride + 1 * bytesPerSample + highByteOffset];
-                                uint8_t b = srcRow[x * pixelStride + 2 * bytesPerSample + highByteOffset];
-                                uint8_t a = (samples >= 4) ? srcRow[x * pixelStride + 3 * bytesPerSample + highByteOffset] : 255;
+                                size_t ux = static_cast<size_t>(x);
+                                size_t outX = static_cast<size_t>(x - cropX);
+                                uint8_t r = srcRow[ux * pixelStride + 0 * bytesPerSample + highByteOffset];
+                                uint8_t g = srcRow[ux * pixelStride + 1 * bytesPerSample + highByteOffset];
+                                uint8_t b = srcRow[ux * pixelStride + 2 * bytesPerSample + highByteOffset];
+                                uint8_t a = (samples >= 4) ? srcRow[ux * pixelStride + 3 * bytesPerSample + highByteOffset] : 255;
                                 if (samples >= 4 && desc.extraSamples != 1) {
                                     r = static_cast<uint8_t>((r * a + 127) / 255);
                                     g = static_cast<uint8_t>((g * a + 127) / 255);
@@ -793,8 +848,9 @@ HRESULT LoadRegion(const uint8_t* data, size_t size,
                     } else if (photometric == 3) {
                         if (desc.colorMap.size() >= 768) {
                             for (int x = cropX; x < cropX + cropW; ++x) {
-                                int outX = x - cropX;
-                                uint8_t idx = srcRow[x * pixelStride + highByteOffset];
+                                size_t ux = static_cast<size_t>(x);
+                                size_t outX = static_cast<size_t>(x - cropX);
+                                uint8_t idx = srcRow[ux * pixelStride + highByteOffset];
                                 uint8_t r = static_cast<uint8_t>(desc.colorMap[idx] / 256);
                                 uint8_t g = static_cast<uint8_t>(desc.colorMap[idx + 256] / 256);
                                 uint8_t b = static_cast<uint8_t>(desc.colorMap[idx + 512] / 256);
@@ -804,32 +860,34 @@ HRESULT LoadRegion(const uint8_t* data, size_t size,
                                 dstRow[outX * 4 + 3] = 255;
                             }
                         } else {
-                            decodeFailed = true;
+                            decodeFailed.store(true, std::memory_order_relaxed);
                         }
                     } else if (photometric == 5) {
                         if (bytesPerSample == 1) {
-                            ConvertCmykToBgra(srcRow + cropX * pixelStride, dstRow, cropW, samples);
+                            ConvertCmykToBgra(srcRow + static_cast<size_t>(cropX) * pixelStride, dstRow, cropW, samples);
                         } else {
                             for (int dx = 0; dx < cropW; ++dx) {
-                                uint8_t c = srcRow[(cropX + dx) * pixelStride + 0 * bytesPerSample + highByteOffset];
-                                uint8_t m = srcRow[(cropX + dx) * pixelStride + 1 * bytesPerSample + highByteOffset];
-                                uint8_t ye = srcRow[(cropX + dx) * pixelStride + 2 * bytesPerSample + highByteOffset];
-                                uint8_t k = (samples >= 4) ? srcRow[(cropX + dx) * pixelStride + 3 * bytesPerSample + highByteOffset] : 0;
+                                size_t srcBase = static_cast<size_t>(cropX + dx) * pixelStride;
+                                uint8_t c = srcRow[srcBase + 0 * bytesPerSample + highByteOffset];
+                                uint8_t m = srcRow[srcBase + 1 * bytesPerSample + highByteOffset];
+                                uint8_t ye = srcRow[srcBase + 2 * bytesPerSample + highByteOffset];
+                                uint8_t k = (samples >= 4) ? srcRow[srcBase + 3 * bytesPerSample + highByteOffset] : 0;
                                 uint8_t r = (255 - c) * (255 - k) / 255;
                                 uint8_t g = (255 - m) * (255 - k) / 255;
                                 uint8_t b = (255 - ye) * (255 - k) / 255;
-                                dstRow[dx * 4 + 0] = b;
-                                dstRow[dx * 4 + 1] = g;
-                                dstRow[dx * 4 + 2] = r;
-                                dstRow[dx * 4 + 3] = 255;
+                                dstRow[static_cast<size_t>(dx) * 4 + 0] = b;
+                                dstRow[static_cast<size_t>(dx) * 4 + 1] = g;
+                                dstRow[static_cast<size_t>(dx) * 4 + 2] = r;
+                                dstRow[static_cast<size_t>(dx) * 4 + 3] = 255;
                             }
                         }
                     }
                 }
             }
+        }
     }
 
-    if (decodeFailed) {
+    if (decodeFailed.load(std::memory_order_relaxed)) {
         return E_FAIL;
     }
 
