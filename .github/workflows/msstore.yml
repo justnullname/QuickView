@@ -95,6 +95,14 @@ jobs:
           "tag=$tag" >> $env:GITHUB_OUTPUT
           "run_id=$runId" >> $env:GITHUB_OUTPUT
 
+      - name: Checkout Release Notes Config
+        if: steps.check-secrets.outputs.configured == 'true'
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github/msstore-release-notes.json
+          sparse-checkout-cone-mode: false
+
       - name: Download Store MSIXBundle Artifact
         if: steps.check-secrets.outputs.configured == 'true'
         shell: pwsh
@@ -133,6 +141,7 @@ jobs:
         env:
           MSSTORE_PRODUCT_ID: ${{ secrets.MSSTORE_PRODUCT_ID || '9N1D85F032CC' }}
           NO_COMMIT: ${{ inputs.no_commit == true }}
+          RELEASE_TAG: ${{ steps.resolve.outputs.tag }}
         run: |
           $bundles = Get-ChildItem -Path "store-dist" -Filter "*.msixbundle"
           if ($bundles.Count -ne 1) {
@@ -140,10 +149,72 @@ jobs:
             exit 1
           }
           $bundlePath = $bundles[0].FullName
-          Write-Host "Submitting $bundlePath to Store App ID $env:MSSTORE_PRODUCT_ID (noCommit=$env:NO_COMMIT)..."
+          Write-Host "Uploading $bundlePath to Store App ID $env:MSSTORE_PRODUCT_ID (noCommit=$env:NO_COMMIT)..."
 
-          $args = @('publish', $bundlePath, '--appId', $env:MSSTORE_PRODUCT_ID, '--uploadTimeout', '600')
-          if ($env:NO_COMMIT -eq 'true') {
-            $args += '--noCommit'
+          # Step 1: Always upload package as draft first so we can inject localized ReleaseNotes before committing
+          msstore publish $bundlePath --appId $env:MSSTORE_PRODUCT_ID --uploadTimeout 600 --noCommit
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "msstore publish --noCommit failed with exit code $LASTEXITCODE"
+            exit $LASTEXITCODE
           }
-          msstore @args
+
+          # Step 2: Inject localized ReleaseNotes from .github/msstore-release-notes.json if version matches
+          $notesFile = ".github/msstore-release-notes.json"
+          $cleanTag = $env:RELEASE_TAG -replace '^v', ''
+          if (Test-Path $notesFile) {
+            $notesConfig = Get-Content -Raw -Encoding UTF8 $notesFile | ConvertFrom-Json
+            if ($notesConfig.version -eq $cleanTag) {
+              Write-Host "Fetching draft submission to inject localized ReleaseNotes for v$cleanTag..."
+              $rawSubmission = msstore submission get $env:MSSTORE_PRODUCT_ID | Out-String
+              $jsonStart = $rawSubmission.IndexOf('{')
+              if ($jsonStart -ge 0) {
+                $submission = $rawSubmission.Substring($jsonStart) | ConvertFrom-Json
+                $notesMap = @{}
+                foreach ($prop in $notesConfig.notes.PSObject.Properties) {
+                  $notesMap[$prop.Name.ToLowerInvariant()] = $prop.Value
+                }
+                $defaultLang = if ($notesConfig.default) { $notesConfig.default.ToLowerInvariant() } else { "en-us" }
+                $defaultText = $notesMap[$defaultLang]
+
+                $updatedCount = 0
+                if ($null -ne $submission.Listings) {
+                  foreach ($listingProp in $submission.Listings.PSObject.Properties) {
+                    $langKey = $listingProp.Name.ToLowerInvariant()
+                    $text = if ($notesMap.ContainsKey($langKey)) { $notesMap[$langKey] } else { $defaultText }
+                    if (-not [string]::IsNullOrWhiteSpace($text)) {
+                      if ($text.Length -gt 1500) { $text = $text.Substring(0, 1497) + "..." }
+                      if ($null -ne $listingProp.Value.BaseListing) {
+                        $listingProp.Value.BaseListing | Add-Member -NotePropertyName "ReleaseNotes" -NotePropertyValue $text -Force
+                        $updatedCount++
+                        Write-Host "  Updated ReleaseNotes for locale: $($listingProp.Name)"
+                      }
+                    }
+                  }
+                }
+
+                if ($updatedCount -gt 0) {
+                  $updatedJson = $submission | ConvertTo-Json -Depth 20 -Compress
+                  msstore submission update $env:MSSTORE_PRODUCT_ID $updatedJson
+                  if ($LASTEXITCODE -ne 0) {
+                    Write-Warning "msstore submission update failed with exit code $LASTEXITCODE; continuing with package submission."
+                  }
+                }
+              } else {
+                Write-Warning "Could not parse JSON from 'msstore submission get'; skipping ReleaseNotes injection."
+              }
+            } else {
+              Write-Host "Notes config version ($($notesConfig.version)) != tag ($cleanTag); skipping ReleaseNotes injection."
+            }
+          }
+
+          # Step 3: Commit for certification & release unless no_commit=true
+          if ($env:NO_COMMIT -ne 'true') {
+            Write-Host "Committing submission for Microsoft Store certification & release..."
+            msstore submission commit $env:MSSTORE_PRODUCT_ID
+            if ($LASTEXITCODE -ne 0) {
+              Write-Error "msstore submission commit failed with exit code $LASTEXITCODE"
+              exit $LASTEXITCODE
+            }
+          } else {
+            Write-Host "NO_COMMIT=true: draft saved without committing for review."
+          }
