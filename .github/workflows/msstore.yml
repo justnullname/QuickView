@@ -244,12 +244,12 @@ jobs:
             }
           }
 
-          # Step 3: Commit for certification & release unless no_commit=true
+          # Step 3: Submit existing draft for certification & release unless no_commit=true
           if ($env:NO_COMMIT -ne 'true') {
-            Write-Host "Committing submission for Microsoft Store certification & release..."
-            msstore submission commit $env:MSSTORE_PRODUCT_ID
+            Write-Host "Submitting draft for Microsoft Store certification & release..."
+            msstore submission publish $env:MSSTORE_PRODUCT_ID
             if ($LASTEXITCODE -ne 0) {
-              Write-Error "msstore submission commit failed with exit code $LASTEXITCODE"
+              Write-Error "msstore submission publish failed with exit code $LASTEXITCODE"
               exit $LASTEXITCODE
             }
           } else {
