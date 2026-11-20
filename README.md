@@ -41,6 +41,12 @@
 </p>
 
 <h3>
+    <a href="https://apps.microsoft.com/detail/9N1D85F032CC">
+        <img src="https://get.microsoft.com/images/en-us%20dark.svg" width="160" alt="Get it from Microsoft" />
+    </a>
+</h3>
+
+<h3>
     <a href="https://github.com/justnullname/QuickView/releases/latest">📥 Download Latest Release</a>
     <span> • </span>
     <a href="https://github.com/justnullname/QuickView/tree/main/ScreenShot">📸 Screenshots</a>
@@ -231,9 +237,22 @@ We are constantly evolving. Here is what's currently in development:
 
 ## 📥 Installation
 
-QuickView is primarily designed as a **Green & Portable** application.
+QuickView is available via the **Microsoft Store** (officially signed) as well as **Green & Portable** packages.
 
-### 🍃 Recommended: Portable Mode
+### 🪟 Microsoft Store (Recommended for Hassle-Free Security)
+Distributed with an **official Microsoft Store signature**, avoiding Windows Defender / SmartScreen false-positive blocks on unsigned executables, with automatic background updates:
+
+<a href="https://apps.microsoft.com/detail/9N1D85F032CC">
+    <img src="https://get.microsoft.com/images/en-us%20dark.svg" width="180" alt="Get it from Microsoft" />
+</a>
+
+*   **Direct Store Link**: [Microsoft Store — QuickView (`9N1D85F032CC`)](https://apps.microsoft.com/detail/9N1D85F032CC)
+*   **Command Line (Store via WinGet)**:
+    ```powershell
+    winget install 9N1D85F032CC
+    ```
+
+### 🍃 Portable Mode
 1. Download the `QuickView_*.zip` package from [**Releases**](https://github.com/justnullname/QuickView/releases).
 2. Unzip anywhere and run `QuickView.exe`.
 3. Use in-app **Settings > Portable Mode** to manage configuration storage.

@@ -35,6 +35,12 @@
 </p>
 
 <h3>
+    <a href="https://apps.microsoft.com/detail/9N1D85F032CC">
+        <img src="https://get.microsoft.com/images/zh-cn%20dark.svg" width="160" alt="从 Microsoft Store 获取" />
+    </a>
+</h3>
+
+<h3>
     <a href="https://github.com/justnullname/QuickView/releases/latest">📥 下载最新版</a>
     <span> • </span>
     <a href="https://github.com/justnullname/QuickView/tree/main/ScreenShot">📸 截图预览</a>
@@ -220,9 +226,22 @@ QuickView 5.0 引入了工业级色彩工具链。
 
 ## 📥 安装
 
-QuickView 的核心设计理念是 **绿色与便携**。
+QuickView 提供 **Microsoft Store 官方签名版** 与 **绿色便携版** 两种主要分发方式。
 
-### 🍃 推荐方案：绿色便携模式
+### 🪟 Microsoft Store（推荐：官方签名，免拦截）
+通过 Microsoft Store 安装的版本附带 **Microsoft 官方签名证书**，可彻底避免 Windows 安全软件与 SmartScreen 对未签名可执行文件的拦截，并支持商店自动静默更新：
+
+<a href="https://apps.microsoft.com/detail/9N1D85F032CC">
+    <img src="https://get.microsoft.com/images/zh-cn%20dark.svg" width="180" alt="从 Microsoft Store 获取" />
+</a>
+
+*   **商店直达链接**：[Microsoft Store — QuickView (`9N1D85F032CC`)](https://apps.microsoft.com/detail/9N1D85F032CC)
+*   **命令行安装（WinGet Store 源）**：
+    ```powershell
+    winget install 9N1D85F032CC
+    ```
+
+### 🍃 绿色便携模式
 1. 从 [**Releases**](https://github.com/justnullname/QuickView/releases) 下载 `QuickView_*.zip` 压缩包。
 2. 解压到任意位置并运行 `QuickView.exe`。
 3. 在应用内 **设置 > 便携模式** 中管理配置文件存储位置。
