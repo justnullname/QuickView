@@ -140,6 +140,9 @@ jobs:
         shell: pwsh
         env:
           MSSTORE_PRODUCT_ID: ${{ secrets.MSSTORE_PRODUCT_ID || '9N1D85F032CC' }}
+          MSSTORE_TENANT_ID: ${{ secrets.MSSTORE_TENANT_ID }}
+          MSSTORE_CLIENT_ID: ${{ secrets.MSSTORE_CLIENT_ID }}
+          MSSTORE_CLIENT_SECRET: ${{ secrets.MSSTORE_CLIENT_SECRET }}
           NO_COMMIT: ${{ inputs.no_commit == true }}
           RELEASE_TAG: ${{ steps.resolve.outputs.tag }}
         run: |
@@ -171,8 +174,18 @@ jobs:
                 $submission = $rawSubmission.Substring($jsonStart) | ConvertFrom-Json
                 $notesMap = @{}
                 foreach ($prop in $notesConfig.notes.PSObject.Properties) {
-                  $notesMap[$prop.Name.ToLowerInvariant()] = $prop.Value
+                  $k = $prop.Name.ToLowerInvariant()
+                  $notesMap[$k] = $prop.Value
+                  # Also index by short primary subtag (e.g. de-de -> de, fr-fr -> fr)
+                  if ($k -match '^([a-z]+)-') {
+                    $short = $Matches[1]
+                    if (-not $notesMap.ContainsKey($short)) { $notesMap[$short] = $prop.Value }
+                  }
                 }
+                # Map Chinese script tags (zh-hans / zh-hant) to zh-cn / zh-tw
+                if ($notesMap.ContainsKey('zh-cn')) { $notesMap['zh-hans'] = $notesMap['zh-cn'] }
+                if ($notesMap.ContainsKey('zh-tw')) { $notesMap['zh-hant'] = $notesMap['zh-tw'] }
+
                 $defaultLang = if ($notesConfig.default) { $notesConfig.default.ToLowerInvariant() } else { "en-us" }
                 $defaultText = $notesMap[$defaultLang]
 
@@ -180,7 +193,13 @@ jobs:
                 if ($null -ne $submission.Listings) {
                   foreach ($listingProp in $submission.Listings.PSObject.Properties) {
                     $langKey = $listingProp.Name.ToLowerInvariant()
-                    $text = if ($notesMap.ContainsKey($langKey)) { $notesMap[$langKey] } else { $defaultText }
+                    $text = if ($notesMap.ContainsKey($langKey)) {
+                      $notesMap[$langKey]
+                    } elseif ($langKey -match '^([a-z]+)-' -and $notesMap.ContainsKey($Matches[1])) {
+                      $notesMap[$Matches[1]]
+                    } else {
+                      $defaultText
+                    }
                     if (-not [string]::IsNullOrWhiteSpace($text)) {
                       if ($text.Length -gt 1500) { $text = $text.Substring(0, 1497) + "..." }
                       if ($null -ne $listingProp.Value.BaseListing) {
@@ -194,10 +213,28 @@ jobs:
 
                 if ($updatedCount -gt 0) {
                   $updatedJson = $submission | ConvertTo-Json -Depth 20 -Compress
-                  msstore submission update $env:MSSTORE_PRODUCT_ID $updatedJson
-                  if ($LASTEXITCODE -ne 0) {
-                    Write-Warning "msstore submission update failed with exit code $LASTEXITCODE; continuing with package submission."
+                  $subId = $submission.id
+                  if ([string]::IsNullOrWhiteSpace($subId)) { $subId = $submission.Id }
+
+                  # Use Partner Center REST API directly to bypass Windows 32KB command-line length limit
+                  $tokenResp = Invoke-RestMethod -Method Post `
+                    -Uri "https://login.microsoftonline.com/$env:MSSTORE_TENANT_ID/oauth2/token" `
+                    -ContentType "application/x-www-form-urlencoded" `
+                    -Body @{
+                      grant_type    = "client_credentials"
+                      client_id     = $env:MSSTORE_CLIENT_ID
+                      client_secret = $env:MSSTORE_CLIENT_SECRET
+                      resource      = "https://manage.devcenter.microsoft.com"
+                    }
+
+                  $headers = @{
+                    Authorization  = "Bearer $($tokenResp.access_token)"
+                    "Content-Type" = "application/json; charset=utf-8"
                   }
+                  $putUri = "https://manage.devcenter.microsoft.com/v1.0/my/applications/$env:MSSTORE_PRODUCT_ID/submissions/$subId"
+                  $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($updatedJson)
+                  Invoke-RestMethod -Method Put -Uri $putUri -Headers $headers -Body $bodyBytes | Out-Null
+                  Write-Host "Successfully updated localized ReleaseNotes for $updatedCount locales via Partner Center API."
                 }
               } else {
                 Write-Warning "Could not parse JSON from 'msstore submission get'; skipping ReleaseNotes injection."
