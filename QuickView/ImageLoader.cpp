@@ -1138,6 +1138,21 @@ void MoveDecodeResultToFrame(QuickView::Codec::DecodeResult &result,
   } else {
     outFrame->memoryDeleter = QuickView::MemoryDeleter::FromAlignedFree();
   }
+
+  // [GPU Pipeline] Bridge multi-layer composition data (e.g. Ultra HDR Gain Map)
+  if (result.blendOp != QuickView::GpuBlendOp::None && result.auxLayer) {
+    outFrame->blendOp = result.blendOp;
+    outFrame->shaderPayload = result.shaderPayload;
+    if (result.auxLayer->pixels) {
+      uint8_t *auxPtr = result.auxLayer->pixels;
+      if (arena && arena->Owns(auxPtr)) {
+        result.auxLayer->deleter.Clear();
+      } else {
+        result.auxLayer->deleter = QuickView::MemoryDeleter::FromAlignedFree();
+      }
+    }
+    outFrame->auxLayer = std::move(result.auxLayer);
+  }
 }
 
 HRESULT LoadBufferUnified(const uint8_t *mappedData, size_t mappedSize,
@@ -1333,7 +1348,6 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t *data, size_t size,
                                             bool preserveFloat) {
   if (!data || !size || !outFrame)
     return E_INVALIDARG;
-  (void)targetHdrHeadroomStops;
 
   // 1. Detect Format
   std::wstring fmt = DetectFormatFromContent(data, size);
@@ -1345,8 +1359,8 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t *data, size_t size,
     return E_NOTIMPL;
   }
 
-  // 2. TurboJPEG Fast Path
-  if (fmt == L"JPEG") {
+  // 2. TurboJPEG Fast Path (skip for Ultra HDR / gain-map JPEGs so unified JPEG::Load handles XMP + MPF)
+  if (fmt == L"JPEG" && !HasJpegGainMapMarkers(data, size)) {
     QV_LOG("LoadToFrame_Memory", TraceLoggingString("JPEG_Start", "Action"),
            TraceLoggingUInt64(size, "Size"));
     if (pLoaderName)
@@ -1606,6 +1620,11 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t *data, size_t size,
         pMetadata->Width = (result.metadata.Width > 0) ? result.metadata.Width : static_cast<UINT>(result.width);
         pMetadata->Height = (result.metadata.Height > 0) ? result.metadata.Height : static_cast<UINT>(result.height);
         pMetadata->Format = fmt;
+        pMetadata->ExifOrientation = result.metadata.ExifOrientation;
+        pMetadata->FormatDetails = result.metadata.FormatDetails;
+        if (!result.metadata.LoaderName.empty()) {
+          pMetadata->LoaderName = result.metadata.LoaderName;
+        }
         pMetadata->colorInfo = result.metadata.colorInfo;
         pMetadata->hdrMetadata = result.metadata.hdrMetadata;
         pMetadata->HasEmbeddedColorProfile = result.metadata.HasEmbeddedColorProfile;
@@ -1742,11 +1761,19 @@ static void PopulateHdrInfoFromWicPixelFormat(
   if (!metadata)
     return;
 
-  // For native formats where we have dedicated codecs (AVIF, JXL, RAW),
+  // For native formats where we have dedicated codecs (AVIF, JXL, RAW, PNG),
   // WIC is only used as an EXIF/GPS tag reader. Do not let WIC's intermediate
   // bitmap format overwrite our authoritative color and bit depth info!
   if (metadata->Format == L"AVIF" || metadata->Format == L"JXL" ||
-      metadata->Format == L"Raw") {
+      metadata->Format == L"Raw" || metadata->Format == L"PNG") {
+    return;
+  }
+  if (metadata->colorInfo.dataSpace == QuickView::PixelDataSpace::EncodedHdr ||
+      metadata->colorInfo.IsSceneLinear() ||
+      metadata->hdrMetadata.isHdr ||
+      metadata->hdrMetadata.hasGainMap ||
+      metadata->hdrMetadata.transfer == QuickView::TransferFunction::PQ ||
+      metadata->hdrMetadata.transfer == QuickView::TransferFunction::HLG) {
     return;
   }
 
@@ -1854,6 +1881,14 @@ static void PopulateHdrInfoFromPngInfo(const WuffsLoader::WuffsImageInfo &info,
 
   if (metadata->colorInfo.dataSpace == QuickView::PixelDataSpace::EncodedHdr) {
     metadata->hdrMetadata.isValid = true;
+    metadata->hdrMetadata.isHdr = true;
+  }
+  if (info.hasNitsMetadata) {
+    metadata->hdrMetadata.hasNitsMetadata = true;
+    metadata->hdrMetadata.maxCLLNits = info.maxCLLNits;
+    metadata->hdrMetadata.maxFALLNits = info.maxFALLNits;
+    metadata->hdrMetadata.masteringMaxNits = info.masteringMaxNits;
+    metadata->hdrMetadata.masteringMinNits = info.masteringMinNits;
   }
 }
 
@@ -7162,6 +7197,11 @@ static HRESULT LoadPNG(const uint8_t *data, size_t size,
     result.metadata.iccProfileData = std::move(info.iccProfile);
     result.metadata.HasEmbeddedColorProfile = true;
     result.metadata.colorInfo.hasEmbeddedIcc = true;
+    if (result.metadata.ColorSpace.empty()) {
+      result.metadata.ColorSpace = CImageLoader::ParseICCProfileName(
+          result.metadata.iccProfileData.data(),
+          result.metadata.iccProfileData.size());
+    }
   }
 
   PopulateHdrInfoFromPngInfo(info, &result.metadata);
@@ -14641,7 +14681,7 @@ static std::wstring CleanColorProfileName(std::wstring_view name) {
   if (name == L"RGB_D65_P3_Rel_SRG" || name == L"RGB_D65_P3_Rel_2a2") return L"Display P3";
   if (name == L"RGB_D65_P3_Rel_Lin") return L"Display P3 (Linear)";
   if (name == L"RGB_D65_202_Rel_Lin") return L"Rec.2020 (Linear)";
-  if (name == L"RGB_D65_202_Rel_PQ") return L"Rec.2020 (PQ)";
+  if (name == L"RGB_D65_202_Rel_PQ" || name == L"RGB_D65_202_Rel_PeQ") return L"Rec.2020 (PQ)";
   if (name == L"RGB_D65_202_Rel_HLG") return L"Rec.2020 (HLG)";
   if (name == L"RGB_D50_AD2_Rel_SRG" || name == L"RGB_D50_AD2_Rel_2a2") return L"Adobe RGB";
   
@@ -14667,7 +14707,7 @@ static std::wstring CleanColorProfileName(std::wstring_view name) {
       else if (tokens[2] == L"AD2") primaries = L"Adobe RGB";
       
       if (tokens[4] == L"Lin") transfer = L"Linear";
-      else if (tokens[4] == L"PQ") transfer = L"PQ";
+      else if (tokens[4] == L"PQ" || tokens[4] == L"PeQ") transfer = L"PQ";
       else if (tokens[4] == L"HLG") transfer = L"HLG";
       else if (tokens[4] == L"SRG") transfer = L"sRGB";
       

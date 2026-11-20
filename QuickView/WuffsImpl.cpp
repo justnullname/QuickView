@@ -27,6 +27,7 @@
 
 #define WUFFS_CONFIG__DST_PIXEL_FORMAT__ENABLE_ALLOWLIST
 #define WUFFS_CONFIG__DST_PIXEL_FORMAT__ALLOW_BGRA_NONPREMUL
+#define WUFFS_CONFIG__DST_PIXEL_FORMAT__ALLOW_BGRA_NONPREMUL_4X16LE
 #define WUFFS_CONFIG__DST_PIXEL_FORMAT__ALLOW_BGRA_PREMUL
 
 #define WUFFS_IMPLEMENTATION
@@ -34,6 +35,7 @@
 
 #include "WuffsLoader.h"
 #include "AnimationDecoder.h"
+#include "ImageLoaderSimd.h"
 #include "MappedFile.h"
 #include <zlib.h>
 
@@ -135,66 +137,127 @@ static bool DecodePNG_Impl(const uint8_t* data, size_t size,
                WuffsImageInfo* pInfo) {
     if (!data || size == 0) return false;
 
-    // [CMS/HDR] Pre-scan PNG critical chunks, extract bit depth / iCCP / cICP / sRGB.
-    if (pInfo) {
+    // [CMS/HDR] Pre-scan PNG critical chunks, extract bit depth / iCCP / cICP / sRGB / cLLi / mDCv.
+    static constexpr uint8_t kPngSignature[8] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
+    auto readU32BE = [](const uint8_t* ptr) -> uint32_t {
+        return (static_cast<uint32_t>(ptr[0]) << 24) |
+               (static_cast<uint32_t>(ptr[1]) << 16) |
+               (static_cast<uint32_t>(ptr[2]) << 8) |
+               static_cast<uint32_t>(ptr[3]);
+    };
+
+    if (pInfo && size >= 8 && std::memcmp(data, kPngSignature, 8) == 0) {
         const uint8_t* p = data;
         size_t offset = 8; // skip PNG signature
+        bool hasTopLevelCicp = false;
+        bool hasIccCicp = false;
+        bool hasSrgbChunk = false;
+        QuickView::ColorPrimaries iccPrimaries = QuickView::ColorPrimaries::Unknown;
+        QuickView::TransferFunction iccTransfer = QuickView::TransferFunction::Unknown;
+
         while (offset + 12 <= size) {
-            uint32_t chunk_len = (p[offset]<<24) | (p[offset+1]<<16) | (p[offset+2]<<8) | p[offset+3];
-            uint32_t chunk_type = (p[offset+4]<<24) | (p[offset+5]<<16) | (p[offset+6]<<8) | p[offset+7];
+            const uint32_t chunk_len = readU32BE(p + offset);
+            const uint32_t chunk_type = readU32BE(p + offset + 4);
+            if (static_cast<size_t>(chunk_len) > size - offset - 12) {
+                break;
+            }
+            const uint8_t* payload = p + offset + 8;
 
             if (chunk_type == 0x49484452 && chunk_len >= 13) { // IHDR
-                pInfo->bitDepth = p[offset + 8 + 8];
+                pInfo->bitDepth = payload[8];
             } else if (chunk_type == 0x63494350 && chunk_len >= 4) { // cICP
-                const uint8_t primaries = p[offset + 8];
-                const uint8_t transfer = p[offset + 9];
-                if (primaries == 1) pInfo->primaries = QuickView::ColorPrimaries::SRGB;
-                else if (primaries == 9) pInfo->primaries = QuickView::ColorPrimaries::Rec2020;
-                else if (primaries == 11 || primaries == 12) pInfo->primaries = QuickView::ColorPrimaries::DisplayP3;
-
-                if (transfer == 13) pInfo->transfer = QuickView::TransferFunction::SRGB;
-                else if (transfer == 16) pInfo->transfer = QuickView::TransferFunction::PQ;
-                else if (transfer == 18) pInfo->transfer = QuickView::TransferFunction::HLG;
-                else if (transfer == 8) pInfo->transfer = QuickView::TransferFunction::Linear;
-                else if (transfer == 1 || transfer == 6 || transfer == 14 || transfer == 15) pInfo->transfer = QuickView::TransferFunction::Rec709;
-            } else if (chunk_type == 0x73524742 && chunk_len >= 1) { // sRGB
-                if (pInfo->transfer == QuickView::TransferFunction::Unknown) {
-                    pInfo->transfer = QuickView::TransferFunction::SRGB;
-                }
-                if (pInfo->primaries == QuickView::ColorPrimaries::Unknown) {
-                    pInfo->primaries = QuickView::ColorPrimaries::SRGB;
-                }
-            } else if (chunk_type == 0x69434350 && pInfo->iccProfile.empty()) { // iCCP
-                size_t payload_offset = offset + 8;
-                if (payload_offset + chunk_len <= size) {
-                    const uint8_t* payload = p + payload_offset;
-                    // iCCP format: Name(1-79B) + Null(1B) + CompressionFlag(1B=0) + zlib_data
-                    size_t null_idx = 0;
-                    while (null_idx < 80 && null_idx < chunk_len && payload[null_idx] != 0) null_idx++;
-                    if (null_idx < chunk_len - 2 && payload[null_idx] == 0 && payload[null_idx+1] == 0) {
-                        const uint8_t* zlib_data = payload + null_idx + 2;
-                        size_t zlib_len = chunk_len - (null_idx + 2);
-                        
-                        uLongf destLen = 1048576; // Start with 1MB for ICC
-                        pInfo->iccProfile.resize(destLen);
-                        int ret = uncompress(pInfo->iccProfile.data(), &destLen, zlib_data, zlib_len);
-                        if (ret == Z_OK) {
-                            pInfo->iccProfile.resize(destLen);
-                        } else if (ret == Z_BUF_ERROR) {
-                            destLen = 1048576 * 4; // 4MB
-                            pInfo->iccProfile.resize(destLen);
-                            ret = uncompress(pInfo->iccProfile.data(), &destLen, zlib_data, zlib_len);
-                            if (ret == Z_OK) pInfo->iccProfile.resize(destLen);
-                            else pInfo->iccProfile.clear();
-                        } else {
-                            pInfo->iccProfile.clear();
+                const uint8_t primaries = payload[0];
+                const uint8_t transfer = payload[1];
+                const uint8_t matrix = payload[2];
+                if (matrix == 0) {
+                    QuickView::ColorPrimaries cicpPrim = QuickView::ColorPrimaries::Unknown;
+                    QuickView::TransferFunction cicpTransfer = QuickView::TransferFunction::Unknown;
+                    QuickView::MapCicpCodes(primaries, transfer, &cicpPrim, &cicpTransfer);
+                    if (cicpPrim != QuickView::ColorPrimaries::Unknown ||
+                        cicpTransfer != QuickView::TransferFunction::Unknown) {
+                        hasTopLevelCicp = true;
+                        if (cicpPrim != QuickView::ColorPrimaries::Unknown) {
+                            pInfo->primaries = cicpPrim;
+                        }
+                        if (cicpTransfer != QuickView::TransferFunction::Unknown) {
+                            pInfo->transfer = cicpTransfer;
                         }
                     }
+                }
+            } else if (chunk_type == 0x73524742 && chunk_len >= 1) { // sRGB
+                hasSrgbChunk = true;
+            } else if (chunk_type == 0x69434350 && pInfo->iccProfile.empty()) { // iCCP
+                // iCCP format: Name(1-79B) + Null(1B) + CompressionFlag(1B=0) + zlib_data
+                size_t null_idx = 0;
+                while (null_idx < 80 && null_idx < chunk_len && payload[null_idx] != 0) null_idx++;
+                if (chunk_len >= 2 && null_idx + 2 <= chunk_len && payload[null_idx] == 0 && payload[null_idx + 1] == 0) {
+                    const uint8_t* zlib_data = payload + null_idx + 2;
+                    size_t zlib_len = static_cast<size_t>(chunk_len) - (null_idx + 2);
+
+                    uLongf destLen = 1048576; // Start with 1MB for ICC
+                    pInfo->iccProfile.resize(destLen);
+                    int ret = uncompress(pInfo->iccProfile.data(), &destLen, zlib_data, static_cast<uLong>(zlib_len));
+                    if (ret == Z_OK) {
+                        pInfo->iccProfile.resize(destLen);
+                    } else if (ret == Z_BUF_ERROR) {
+                        destLen = 1048576 * 4; // 4MB
+                        pInfo->iccProfile.resize(destLen);
+                        ret = uncompress(pInfo->iccProfile.data(), &destLen, zlib_data, static_cast<uLong>(zlib_len));
+                        if (ret == Z_OK) pInfo->iccProfile.resize(destLen);
+                        else pInfo->iccProfile.clear();
+                    } else {
+                        pInfo->iccProfile.clear();
+                    }
+
+                    if (!pInfo->iccProfile.empty()) {
+                        if (QuickView::TryParseIccCicp(pInfo->iccProfile.data(),
+                                                       pInfo->iccProfile.size(),
+                                                       &iccPrimaries,
+                                                       &iccTransfer)) {
+                            hasIccCicp = true;
+                        }
+                    }
+                }
+            } else if (chunk_type == 0x634C4C69 && chunk_len >= 8) { // cLLi
+                const uint32_t maxCllScaled = readU32BE(payload);
+                const uint32_t maxFallScaled = readU32BE(payload + 4);
+                pInfo->maxCLLNits = static_cast<float>(maxCllScaled) / 10000.0f;
+                pInfo->maxFALLNits = static_cast<float>(maxFallScaled) / 10000.0f;
+                if (pInfo->maxCLLNits > 0.0f || pInfo->maxFALLNits > 0.0f) {
+                    pInfo->hasNitsMetadata = true;
+                }
+            } else if (chunk_type == 0x6D444376 && chunk_len >= 24) { // mDCv
+                const uint32_t maxLumScaled = readU32BE(payload + 16);
+                const uint32_t minLumScaled = readU32BE(payload + 20);
+                pInfo->masteringMaxNits = static_cast<float>(maxLumScaled) / 10000.0f;
+                pInfo->masteringMinNits = static_cast<float>(minLumScaled) / 10000.0f;
+                if (pInfo->masteringMaxNits > 0.0f || pInfo->masteringMinNits > 0.0f) {
+                    pInfo->hasNitsMetadata = true;
                 }
             } else if (chunk_type == 0x49444154 || chunk_type == 0x49454E44) { // IDAT, IEND
                 break;
             }
-            offset += 12 + chunk_len;
+            offset += 12 + static_cast<size_t>(chunk_len);
+        }
+
+        // Priority: top-level PNG cICP > ICC cicp > sRGB chunk
+        if (hasIccCicp) {
+            if (pInfo->primaries == QuickView::ColorPrimaries::Unknown &&
+                iccPrimaries != QuickView::ColorPrimaries::Unknown) {
+                pInfo->primaries = iccPrimaries;
+            }
+            if (pInfo->transfer == QuickView::TransferFunction::Unknown &&
+                iccTransfer != QuickView::TransferFunction::Unknown) {
+                pInfo->transfer = iccTransfer;
+            }
+        }
+        if (hasSrgbChunk && !hasTopLevelCicp && !hasIccCicp) {
+            if (pInfo->transfer == QuickView::TransferFunction::Unknown) {
+                pInfo->transfer = QuickView::TransferFunction::SRGB;
+            }
+            if (pInfo->primaries == QuickView::ColorPrimaries::Unknown) {
+                pInfo->primaries = QuickView::ColorPrimaries::SRGB;
+            }
         }
     }
 
@@ -227,7 +290,8 @@ static bool DecodePNG_Impl(const uint8_t* data, size_t size,
     uint32_t targetFmt = WUFFS_BASE__PIXEL_FORMAT__BGRA_PREMUL;
     uint32_t bpp = 4;
     if (pInfo && pInfo->bitDepth == 16) {
-        targetFmt = WUFFS_BASE__PIXEL_FORMAT__RGBA_NONPREMUL_4X16LE;
+        // Wuffs v0.4 only supports BGRA_NONPREMUL_4X16LE in its 16-bit PNG swizzler allowlist.
+        targetFmt = WUFFS_BASE__PIXEL_FORMAT__BGRA_NONPREMUL_4X16LE;
         bpp = 8;
     }
     wuffs_base__pixel_config__set(&ic.pixcfg, targetFmt, WUFFS_BASE__PIXEL_SUBSAMPLING__NONE, width, height);
@@ -247,6 +311,12 @@ static bool DecodePNG_Impl(const uint8_t* data, size_t size,
     WUFFS_TRY(wuffs_png__decoder__decode_frame_config(&dec, &fc, &src));
 
     WUFFS_TRY(wuffs_png__decoder__decode_frame(&dec, &pb, &src, WUFFS_BASE__PIXEL_BLEND__SRC, wuffs_base__make_slice_u8(workbuf.data(), workbuf.size()), nullptr));
+
+    if (targetFmt == WUFFS_BASE__PIXEL_FORMAT__BGRA_NONPREMUL_4X16LE) {
+        ImageLoaderSimd::SwizzleBGRA16ToRGBA16(
+            reinterpret_cast<uint16_t*>(outPtr),
+            static_cast<size_t>(width) * static_cast<size_t>(height));
+    }
 
     *outWidth = width;
     *outHeight = height;

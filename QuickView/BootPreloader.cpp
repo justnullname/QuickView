@@ -1,7 +1,11 @@
 #include "BootPreloader.h"
+#include "DisplayColorInfo.h"
+#include "EditState.h"
 #include "MappedFile.h"
 #include <algorithm>
 #include <chrono>
+
+extern AppConfig g_config;
 
 namespace QuickView {
 
@@ -163,10 +167,40 @@ void BootPreloader::Start(const std::wstring& imagePath) {
             &st
         };
 
+        // Resolve HDR target headroom selectively only for HDR/gain-map candidates
+        // so normal SDR cold starts pay zero monitor-query latency.
+        float targetHdrHeadroomStops = -1.0f;
+        if (g_config.AdvancedColorMode == 0) {
+            targetHdrHeadroomStops = 0.0f;
+        } else {
+            const auto& fmt = data->headerInfo.format;
+            const bool isHdrGainMapCandidate =
+                (fmt == L"AVIF" || fmt == L"HEIC" || fmt == L"HEIF" || fmt == L"JXL") ||
+                (data->mmf && data->mmf->data() && data->mmf->size() > 0 &&
+                 CImageLoader::HasJpegGainMapMarkers(data->mmf->data(), data->mmf->size()));
+            if (isHdrGainMapCandidate) {
+                POINT pt{};
+                GetCursorPos(&pt);
+                HMONITOR hMon = MonitorFromPoint(pt, MONITOR_DEFAULTTOPRIMARY);
+                DisplayColorState dispState{};
+                DisplayColorInfo::QueryMonitorState(hMon, &dispState);
+                if (g_config.IsAdvancedColorEnabled(dispState.advancedColorActive)) {
+                    targetHdrHeadroomStops = dispState.GetHdrHeadroomStops(g_config.HdrPeakNitsOverride);
+                    if (g_config.AdvancedColorMode == 1 && targetHdrHeadroomStops <= 0.01f) {
+                        const float fallbackPeak =
+                            (g_config.HdrPeakNitsOverride > 0.0f) ? g_config.HdrPeakNitsOverride : 1000.0f;
+                        targetHdrHeadroomStops = dispState.GetHdrHeadroomStops(fallbackPeak);
+                    }
+                } else {
+                    targetHdrHeadroomStops = 0.0f;
+                }
+            }
+        }
+
         // Prefer LoadToFrame with existing MMF so GainMap HDR, HDR headroom, and
         // cooperative cancellation all stay intact during boot decode.
         hr = loader.LoadToFrame(data->path.c_str(), frame.get(), nullptr, 0, 0, &ldr,
-                                checkCancel, &meta, true, false, -1.0f,
+                                checkCancel, &meta, true, false, targetHdrHeadroomStops,
                                 QuickView::ColorPrimaries::SRGB, data->mmf);
 
         if (SUCCEEDED(hr) && frame->IsValid() && !st.stop_requested()) {

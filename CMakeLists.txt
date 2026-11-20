@@ -480,6 +480,7 @@ add_executable(QuickViewTests
     tests/FileAssociationTests.cpp
     tests/ThemeSystemTests.cpp
     tests/UpdateManagerTests.cpp
+    tests/HdrPipelineTests.cpp
     QuickView/AiActionManager.cpp
     QuickView/GeekWidgets.cpp
     QuickView/ThemePalette.cpp
@@ -489,6 +490,8 @@ add_executable(QuickViewTests
     QuickView/OffscreenWebView2.cpp
     QuickView/LosslessTransform.cpp
     QuickView/ImageLoaderSimd.cpp
+    QuickView/WuffsImpl.cpp
+    QuickView/ComputeEngine.cpp
     QuickView/MiniTiff.cpp
     QuickView/MiniTiffLzw.cpp
     QuickView/MiniTiffCmyk.cpp

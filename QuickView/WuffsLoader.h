@@ -26,6 +26,11 @@ struct WuffsImageInfo {
     bool isAnim = false;    // true if animated (APNG)
     QuickView::TransferFunction transfer = QuickView::TransferFunction::Unknown;
     QuickView::ColorPrimaries primaries = QuickView::ColorPrimaries::Unknown;
+    bool hasNitsMetadata = false;
+    float maxCLLNits = 0.0f;
+    float maxFALLNits = 0.0f;
+    float masteringMaxNits = 0.0f;
+    float masteringMinNits = 0.0f;
     
     // [CMS] Extracted raw ICC profile data (if compressed with zlib, we decompress it on the fly)
     std::pmr::vector<uint8_t> iccProfile;

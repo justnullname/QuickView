@@ -154,6 +154,9 @@ public:
 
   // [v6.2] Static Helpers (Defined here to see ImageMetadata)
   static std::wstring ParseICCProfileName(const uint8_t *data, size_t size);
+  static bool HasJpegGainMapMarkers(const uint8_t *data, size_t size) {
+    return QuickView::HasJpegGainMapMarkers(data, size);
+  }
 
   // [v6.3] Helper to populate FormatDetails string
   static void PopulateFormatDetails(struct ImageMetadata *meta,

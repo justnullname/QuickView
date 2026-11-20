@@ -2626,10 +2626,19 @@ static bool IsActiveTitanBitmapView(const CImageLoader::ImageMetadata& meta) {
 static void ComputeBitmapSurfaceDownsampleArgs(HWND hwnd, bool* outAllowDownsampling, float* outDownsampleScale) {
     float realScale = GetCurrentRealScale(hwnd);
     D2D1_SIZE_F visualSize = GetVisualImageSize();
-    const auto& meta = GetPaneContext(PaneSlot::Primary).metadata;
+    const auto& primaryPane = GetPaneContext(PaneSlot::Primary);
+    const auto& meta = primaryPane.metadata;
     bool isPixelArt = IsEffectivelyPixelArtMode(realScale, visualSize.width, visualSize.height, meta.Entropy, meta.HasEntropy);
+    const bool isHdrSurface =
+        (GetImageResourceSurfaceFormat(primaryPane.resource) == DXGI_FORMAT_R16G16B16A16_FLOAT) ||
+        meta.hdrMetadata.isHdr ||
+        meta.hdrMetadata.hasGainMap ||
+        meta.colorInfo.dataSpace == QuickView::PixelDataSpace::EncodedHdr ||
+        meta.colorInfo.IsScRgb() ||
+        meta.colorInfo.IsSceneLinear();
     // Auto (0) or HQ Cubic (3) enables downsampling refinement when zoomed below 100%
-    *outAllowDownsampling = (realScale < 0.999f) && (g_config.ZoomModeOut == 0 || g_config.ZoomModeOut == 3) && !isPixelArt;
+    // Skip surface-level 8-bit bitmap downsampling on HDR FP16 surfaces to avoid SDR clipping.
+    *outAllowDownsampling = (realScale < 0.999f) && (g_config.ZoomModeOut == 0 || g_config.ZoomModeOut == 3) && !isPixelArt && !isHdrSurface;
     *outDownsampleScale = realScale;
 }
 
@@ -2897,11 +2906,12 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, [[maybe_unused]] bool isF
         D2D1_INTERPOLATION_MODE interpMode = GetOptimalD2DInterpolationMode(absoluteScale, cropW, cropH, meta.Entropy, meta.HasEntropy);
 
         auto DrawBitmapWithFsr = [&](const D2D1_RECT_F& dst, const D2D1_RECT_F& src, D2D1_INTERPOLATION_MODE mode, float imgW, float imgH) {
+            const bool isHdrFloatSurface = (imageSurfaceFormat == DXGI_FORMAT_R16G16B16A16_FLOAT);
             bool isSrPromoted = (res.srScale > 1.01f);
             bool canEngageSharpen = !isSrPromoted || (absoluteScale > res.srScale * 1.05f);
 
             bool isPixelArt = IsEffectivelyPixelArtMode(absoluteScale, imgW, imgH, meta.Entropy, meta.HasEntropy);
-            bool enableFsr = canEngageSharpen && (g_config.ZoomModeIn == 4 || (g_config.ZoomModeIn == 0 && absoluteScale >= 1.05f && absoluteScale < 3.0f && !isPixelArt));
+            bool enableFsr = !isHdrFloatSurface && canEngageSharpen && (g_config.ZoomModeIn == 4 || (g_config.ZoomModeIn == 0 && absoluteScale >= 1.05f && absoluteScale < 3.0f && !isPixelArt));
             if (enableFsr && absoluteScale > 1.0f && adaptiveFsrSharpness > 0.005f) {
                 ComPtr<ID2D1Effect> sharpenEffect;
                 if (SUCCEEDED(ctx->CreateEffect(CLSID_D2D1Sharpen, &sharpenEffect))) {
@@ -2932,7 +2942,7 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, [[maybe_unused]] bool isF
             // [HQ Cubic Downsampling] True D2D bicubic anti-aliased pre-filtering for Auto (0) and HQ Cubic (3)
             // Combined with adaptive Bicubic Sharper (Unsharp Mask) to restore razor-sharp text edge contrast
             // while strictly maintaining stroke topology (strokes will never merge or clump).
-            bool isDownscaleHqCubic = (drawScale < 0.999f) && (g_config.ZoomModeOut == 0 || g_config.ZoomModeOut == 3) && !isPixelArt;
+            bool isDownscaleHqCubic = !isHdrFloatSurface && (drawScale < 0.999f) && (g_config.ZoomModeOut == 0 || g_config.ZoomModeOut == 3) && !isPixelArt;
             if (isDownscaleHqCubic) {
                 ComPtr<ID2D1Effect> cropEffect;
                 if (SUCCEEDED(ctx->CreateEffect(CLSID_D2D1Crop, &cropEffect))) {
@@ -2980,7 +2990,11 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, [[maybe_unused]] bool isF
                 }
             }
 
-            ctx->DrawBitmap(res.bitmap.Get(), &dst, 1.0f, mode, &src);
+            const D2D1_INTERPOLATION_MODE drawMode =
+                (isHdrFloatSurface && mode == D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC)
+                    ? D2D1_INTERPOLATION_MODE_LINEAR
+                    : mode;
+            ctx->DrawBitmap(res.bitmap.Get(), &dst, 1.0f, drawMode, &src);
         };
 
         DrawBitmapWithFsr(destRect, srcRect, interpMode, cropW, cropH);
@@ -8998,6 +9012,11 @@ static bool TryPresentBootPreloadedFrame(HWND hwnd, const std::wstring& initialI
             return false;
         }
         primaryPane.resource.bitmap = bootBitmap;
+        if (preloadedFrame->auxLayer) {
+            primaryPane.resource.blendOp = preloadedFrame->blendOp;
+            primaryPane.resource.shaderPayload = preloadedFrame->shaderPayload;
+            primaryPane.resource.auxLayer = preloadedFrame->auxLayer->Clone();
+        }
         primaryPane.resource.animator = preloadedFrame->animator;
         primaryPane.resource.frameMeta = preloadedFrame->frameMeta;
     }
@@ -9067,8 +9086,19 @@ static bool TryPresentBootPreloadedFrame(HWND hwnd, const std::wstring& initialI
     SetWindowTextW(hwnd, titleBuf);
 
     g_imagePath = initialImagePath;
-    if (primaryPane.metadata.hdrMetadata.hasGainMap) {
-        LoadImageAsync(hwnd, initialImagePath.c_str());
+    if (primaryPane.metadata.hdrMetadata.hasGainMap &&
+        !preloadedFrame->auxLayer &&
+        !preloadedFrame->hdrMetadata.gainMapApplied) {
+        const QuickView::DisplayColorState dispState = g_compEngine
+            ? g_compEngine->GetDisplayColorState()
+            : g_renderEngine->GetDisplayColorState();
+        const bool hdrWanted =
+            g_config.IsAdvancedColorEnabled(dispState.advancedColorActive) &&
+            (dispState.GetHdrHeadroomStops(g_config.HdrPeakNitsOverride) > 0.01f ||
+             g_config.AdvancedColorMode == 1);
+        if (hdrWanted) {
+            LoadImageAsync(hwnd, initialImagePath.c_str());
+        }
     }
 
     g_waitingBootFrame = false;
@@ -9326,20 +9356,21 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCm
         g_isMasterProcess = (routeResult == QuickView::ProcessRouter::RouteResult::BecameMaster);
     }
 
+    // Load config before BootPreloader::Start and ETW so both inspect settled g_config.
+    LoadConfig();
+
     std::wstring initialImagePath = QuickView::ProcessRouter::ParseImagePath();
     bool hasInitialImage = false;
     if (!initialImagePath.empty()) {
         if (!QuickView::IsExistingDirectory(initialImagePath.c_str())) {
             hasInitialImage = true;
             g_imagePath = initialImagePath;
-            // [Boot Architecture] Kick off overlapped decoding pipeline before LoadConfig/Init
+            // [Boot Architecture] Kick off overlapped decoding pipeline before DX/window init
             QuickView::BootPreloader::Instance().Start(initialImagePath);
         }
     }
     g_isBootingWithImage = hasInitialImage;
 
-    // Load config (Must happen before ETW because logs check g_config)
-    LoadConfig();
     AppStrings::Init();
     AppStrings::SetLanguage((AppStrings::Language)g_config.Language);
 
@@ -17572,9 +17603,18 @@ void ProcessEngineEvents(HWND hwnd) {
             // upgrade for the same image.
             const bool rawFullUpgrade = evt.metadata.IsRawFullDecode &&
                 !GetPaneContext(PaneSlot::Primary).metadata.IsRawFullDecode;
+            const auto& curPrimary = GetPaneContext(PaneSlot::Primary);
+            const bool incomingHasGainMap =
+                (evt.rawFrame && (evt.rawFrame->auxLayer != nullptr || evt.rawFrame->hdrMetadata.gainMapApplied)) ||
+                evt.metadata.hdrMetadata.gainMapApplied;
+            const bool currentHasGainMap =
+                (curPrimary.resource.auxLayer != nullptr) ||
+                (curPrimary.currentFrame && (curPrimary.currentFrame->auxLayer != nullptr || curPrimary.currentFrame->hdrMetadata.gainMapApplied)) ||
+                curPrimary.metadata.hdrMetadata.gainMapApplied;
+            const bool gainMapUpgrade = incomingHasGainMap && !currentHasGainMap;
 
             // - If we are at Level 2 (Full), ignore another Level 2 (no upgrade path).
-            if (g_imageQualityLevel >= 2 && !isPreview && !rawFullUpgrade) break;
+            if (g_imageQualityLevel >= 2 && !isPreview && !rawFullUpgrade && !gainMapUpgrade) break;
 
             ComPtr<ID2D1Bitmap> bitmap;
             HRESULT hr = E_FAIL;
@@ -18197,10 +18237,30 @@ void ProcessEngineEvents(HWND hwnd) {
                  if (!evt.metadata.WhiteBalance.empty()) GetPaneContext(PaneSlot::Primary).metadata.WhiteBalance = evt.metadata.WhiteBalance;
                  if (!evt.metadata.MeteringMode.empty()) GetPaneContext(PaneSlot::Primary).metadata.MeteringMode = evt.metadata.MeteringMode;
                  if (!evt.metadata.ExposureProgram.empty()) GetPaneContext(PaneSlot::Primary).metadata.ExposureProgram = evt.metadata.ExposureProgram;
-                 if (evt.metadata.HasEmbeddedColorProfile.has_value()) GetPaneContext(PaneSlot::Primary).metadata.HasEmbeddedColorProfile = evt.metadata.HasEmbeddedColorProfile;
-                 if (!evt.metadata.iccProfileData.empty()) GetPaneContext(PaneSlot::Primary).metadata.iccProfileData = evt.metadata.iccProfileData;
-                 if (evt.metadata.colorInfo.dataSpace != QuickView::PixelDataSpace::Unknown) GetPaneContext(PaneSlot::Primary).metadata.colorInfo = evt.metadata.colorInfo;
-                 if (evt.metadata.hdrMetadata.isValid || evt.metadata.hdrMetadata.hasGainMap) GetPaneContext(PaneSlot::Primary).metadata.hdrMetadata = evt.metadata.hdrMetadata;
+                 if (evt.metadata.HasEmbeddedColorProfile.has_value()) primaryMeta.HasEmbeddedColorProfile = evt.metadata.HasEmbeddedColorProfile;
+                 if (!evt.metadata.iccProfileData.empty()) primaryMeta.iccProfileData = evt.metadata.iccProfileData;
+                 const bool existingHasNativeHdr =
+                     primaryMeta.colorInfo.dataSpace == QuickView::PixelDataSpace::EncodedHdr ||
+                     primaryMeta.colorInfo.IsSceneLinear() ||
+                     primaryMeta.hdrMetadata.isHdr ||
+                     primaryMeta.hdrMetadata.hasGainMap ||
+                     primaryMeta.hdrMetadata.transfer == QuickView::TransferFunction::PQ ||
+                     primaryMeta.hdrMetadata.transfer == QuickView::TransferFunction::HLG;
+                 const bool incomingHasHdr =
+                     evt.metadata.colorInfo.dataSpace == QuickView::PixelDataSpace::EncodedHdr ||
+                     evt.metadata.colorInfo.IsSceneLinear() ||
+                     evt.metadata.hdrMetadata.isHdr ||
+                     evt.metadata.hdrMetadata.hasGainMap ||
+                     evt.metadata.hdrMetadata.transfer == QuickView::TransferFunction::PQ ||
+                     evt.metadata.hdrMetadata.transfer == QuickView::TransferFunction::HLG;
+                 if (evt.metadata.colorInfo.dataSpace != QuickView::PixelDataSpace::Unknown &&
+                     (!existingHasNativeHdr || incomingHasHdr)) {
+                     primaryMeta.colorInfo = evt.metadata.colorInfo;
+                 }
+                 if ((evt.metadata.hdrMetadata.isValid || evt.metadata.hdrMetadata.hasGainMap) &&
+                     (!existingHasNativeHdr || incomingHasHdr)) {
+                     primaryMeta.hdrMetadata = evt.metadata.hdrMetadata;
+                 }
                  
                  // [v6.3] Propagate Format Details & Format
                  if (!evt.metadata.FormatDetails.empty()) GetPaneContext(PaneSlot::Primary).metadata.FormatDetails = evt.metadata.FormatDetails;

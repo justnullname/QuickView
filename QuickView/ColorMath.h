@@ -62,4 +62,18 @@ SurfaceSize2D ComputeBoundedBitmapSurfaceSize(
     uint32_t maxAxis = 8192u,
     uint64_t maxPixels = 4096ull * 4096ull);
 
+// Pure HDR EOTF / OETF-inverse & encoded-frame luminance estimators (scRGB: 1.0 = 80 nits)
+float PqToLinearScRgb(float v);
+float LinearScRgbToPq(float l);
+float HlgChannelInverseOetf(float v);
+const float* GetPq16ToLinearScRgbLut();
+const float* GetHlg16ToSceneLinearLut();
+float EstimateEncodedFramePeakScRgb(
+    const QuickView::RawImageFrame& frame,
+    QuickView::TransferFunction transfer,
+    float peakPercentile = 100.0f);
+float EstimateEncodedFrameAverageScRgb(
+    const QuickView::RawImageFrame& frame,
+    QuickView::TransferFunction transfer);
+
 } // namespace ColorMath

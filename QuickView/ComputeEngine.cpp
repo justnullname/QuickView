@@ -833,9 +833,12 @@ HRESULT QuickView::ComputeEngine::ComposeGainMap(
     // 2. Create views
     ComPtr<ID3D11ShaderResourceView> pSdrSRV, pGainSRV;
     ComPtr<ID3D11UnorderedAccessView> pDstUAV;
-    m_d3dDevice->CreateShaderResourceView(sdrTex, nullptr, &pSdrSRV);
-    m_d3dDevice->CreateShaderResourceView(gainTex, nullptr, &pGainSRV);
-    m_d3dDevice->CreateUnorderedAccessView(pDst.Get(), nullptr, &pDstUAV);
+    hr = m_d3dDevice->CreateShaderResourceView(sdrTex, nullptr, &pSdrSRV);
+    if (FAILED(hr)) return hr;
+    hr = m_d3dDevice->CreateShaderResourceView(gainTex, nullptr, &pGainSRV);
+    if (FAILED(hr)) return hr;
+    hr = m_d3dDevice->CreateUnorderedAccessView(pDst.Get(), nullptr, &pDstUAV);
+    if (FAILED(hr)) return hr;
 
     // 3. Upload constant buffer
     hr = EnsureComputeShader(m_csComposeGainMap, Shaders::g_csComposeGainMap, sizeof(Shaders::g_csComposeGainMap), "ComposeGainMap");
@@ -880,7 +883,8 @@ HRESULT QuickView::ComputeEngine::ComposeGainMap(
     m_d3dContext->CSSetUnorderedAccessViews(0, 1, nullUAV, nullptr);
     ID3D11ShaderResourceView* nullSRVs[] = { nullptr, nullptr };
     m_d3dContext->CSSetShaderResources(0, 2, nullSRVs);
-    m_d3dContext->CSSetConstantBuffers(0, 1, nullptr);
+    ID3D11Buffer* nullCB[] = { nullptr };
+    m_d3dContext->CSSetConstantBuffers(0, 1, nullCB);
     m_d3dContext->CSSetShader(nullptr, nullptr, 0);
 
     m_d3dContext->Flush();
@@ -1027,7 +1031,8 @@ HRESULT QuickView::ComputeEngine::ExecuteFsr1Upscale(
     // 9. Cleanup state
     m_d3dContext->CSSetUnorderedAccessViews(0, 1, nullUAV, nullptr);
     m_d3dContext->CSSetShaderResources(0, 1, nullSRV);
-    m_d3dContext->CSSetConstantBuffers(0, 1, nullptr);
+    ID3D11Buffer* nullCB[] = { nullptr };
+    m_d3dContext->CSSetConstantBuffers(0, 1, nullCB);
     m_d3dContext->CSSetShader(nullptr, nullptr, 0);
 
     m_d3dContext->Flush();

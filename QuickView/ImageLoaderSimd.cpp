@@ -220,6 +220,29 @@ void SwizzleRGBAToBGRAImpl(uint8_t* data, size_t pixelCount) {
 }
 
 // ============================================================================
+// SwizzleBGRA16ToRGBA16 - Swap 16-bit B and R channels in-place
+// ============================================================================
+void SwizzleBGRA16ToRGBA16Impl(uint16_t* data, size_t pixelCount) {
+    if (!data || pixelCount == 0) return;
+
+    const hn::ScalableTag<uint16_t> d16;
+    const size_t N = hn::Lanes(d16);
+    size_t i = 0;
+
+    for (; i + N <= pixelCount; i += N) {
+        uint16_t* px = data + i * 4;
+        hn::Vec<decltype(d16)> vB, vG, vR, vA;
+        hn::LoadInterleaved4(d16, px, vB, vG, vR, vA);
+        hn::StoreInterleaved4(vR, vG, vB, vA, d16, px);
+    }
+
+    for (; i < pixelCount; ++i) {
+        uint16_t* px = data + i * 4;
+        std::swap(px[0], px[2]);
+    }
+}
+
+// ============================================================================
 // ConvertRGBToBGRARow - Swizzle 24-bit RGB → 32-bit BGRA (with prefetching)
 // ============================================================================
 void ConvertRGBToBGRARowImpl(const uint8_t* rowSrc, uint8_t* rowDst, int width) {
@@ -1475,6 +1498,7 @@ namespace ImageLoaderSimd {
 // Export dispatch tables
 HWY_EXPORT(PremultiplyAlphaImpl);
 HWY_EXPORT(SwizzleRGBAToBGRAImpl);
+HWY_EXPORT(SwizzleBGRA16ToRGBA16Impl);
 HWY_EXPORT(ConvertRGBToBGRARowImpl);
 HWY_EXPORT(ResizeBilinearImpl);
 HWY_EXPORT(Pack16to8Impl);
@@ -1505,6 +1529,10 @@ void PremultiplyAlpha(uint8_t* data, int width, int height, int stride) {
 
 void SwizzleRGBAToBGRA(uint8_t* data, size_t pixelCount) {
     HWY_DYNAMIC_DISPATCH(SwizzleRGBAToBGRAImpl)(data, pixelCount);
+}
+
+void SwizzleBGRA16ToRGBA16(uint16_t* data, size_t pixelCount) {
+    HWY_DYNAMIC_DISPATCH(SwizzleBGRA16ToRGBA16Impl)(data, pixelCount);
 }
 
 void ConvertRGBToBGRA(const uint8_t* src, uint8_t* dst, int width, int height, int dstStride) {

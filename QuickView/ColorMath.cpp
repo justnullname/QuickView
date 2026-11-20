@@ -1,8 +1,11 @@
 #include "pch.h"
 #include "ColorMath.h"
 #include <cmath>
+#include <cstring>
 #include <algorithm>
 #include <cwctype>
+#include <mutex>
+#include <vector>
 
 namespace ColorMath {
 
@@ -290,6 +293,289 @@ SurfaceSize2D ComputeBoundedBitmapSurfaceSize(
     const uint32_t outW = static_cast<uint32_t>(std::clamp(std::llround(w), 1LL, maxAxisSigned));
     const uint32_t outH = static_cast<uint32_t>(std::clamp(std::llround(h), 1LL, maxAxisSigned));
     return { outW, outH };
+}
+
+namespace {
+
+inline float HalfBitsToFloat(uint16_t h) noexcept {
+    const uint32_t sign = static_cast<uint32_t>(h & 0x8000u) << 16;
+    const uint32_t exp = (h >> 10) & 0x1Fu;
+    uint32_t mant = h & 0x03FFu;
+    uint32_t out = 0;
+    if (exp == 0) {
+        if (mant == 0) {
+            out = sign;
+        } else {
+            int e = -14;
+            while ((mant & 0x0400u) == 0) {
+                mant <<= 1;
+                --e;
+            }
+            mant &= 0x03FFu;
+            const uint32_t outExp = static_cast<uint32_t>(e + 127) << 23;
+            out = sign | outExp | (mant << 13);
+        }
+    } else if (exp == 31) {
+        out = sign | 0x7F800000u | (mant << 13);
+    } else {
+        out = sign | ((exp - 15 + 127) << 23) | (mant << 13);
+    }
+    float f = 0.0f;
+    std::memcpy(&f, &out, sizeof(f));
+    return f;
+}
+
+template <typename LumFn>
+float ScanLinearLuminancePeak(const QuickView::RawImageFrame& frame, float peakPercentile, LumFn&& pixelLum) {
+    if (peakPercentile < 100.0f) {
+        std::vector<uint32_t> hist(32768u, 0u);
+        uint64_t totalPixels = 0;
+        for (int y = 0; y < frame.height; ++y) {
+            const uint8_t* row = frame.pixels + static_cast<size_t>(y) * frame.stride;
+            for (int x = 0; x < frame.width; ++x) {
+                const float lum = pixelLum(row, x);
+                if (!std::isfinite(lum) || lum < 0.0f) continue;
+                uint32_t bits = 0;
+                std::memcpy(&bits, &lum, sizeof(bits));
+                if (bits <= 0x7FFFFFFFu) {
+                    const uint32_t bin = bits >> 16;
+                    if (bin < 32768u) {
+                        hist[bin]++;
+                        totalPixels++;
+                    }
+                }
+            }
+        }
+        if (totalPixels > 0) {
+            const uint64_t targetExclude = static_cast<uint64_t>(
+                static_cast<double>(totalPixels) * (100.0 - static_cast<double>(peakPercentile)) / 100.0);
+            uint64_t accum = 0;
+            for (int i = 32767; i >= 0; --i) {
+                accum += hist[static_cast<size_t>(i)];
+                if (accum > targetExclude) {
+                    const uint32_t bits = static_cast<uint32_t>(i) << 16;
+                    float peak = 1.0f;
+                    std::memcpy(&peak, &bits, sizeof(peak));
+                    return (std::max)(1.0f, peak);
+                }
+            }
+        }
+        return 1.0f;
+    }
+
+    float maxLum = 0.0f;
+    for (int y = 0; y < frame.height; ++y) {
+        const uint8_t* row = frame.pixels + static_cast<size_t>(y) * frame.stride;
+        for (int x = 0; x < frame.width; ++x) {
+            const float lum = pixelLum(row, x);
+            if (std::isfinite(lum) && lum > maxLum) {
+                maxLum = lum;
+            }
+        }
+    }
+    return (std::max)(1.0f, maxLum);
+}
+
+template <typename LumFn>
+float ScanLinearLuminanceAverage(const QuickView::RawImageFrame& frame, LumFn&& pixelLum) {
+    double totalLum = 0.0;
+    for (int y = 0; y < frame.height; ++y) {
+        const uint8_t* row = frame.pixels + static_cast<size_t>(y) * frame.stride;
+        for (int x = 0; x < frame.width; ++x) {
+            const float lum = pixelLum(row, x);
+            if (std::isfinite(lum) && lum > 0.0f) {
+                totalLum += static_cast<double>(lum);
+            }
+        }
+    }
+    const double count = static_cast<double>(frame.width) * static_cast<double>(frame.height);
+    return count > 0.0 ? static_cast<float>(totalLum / count) : 0.25f;
+}
+
+inline float ComputeBt2020Luminance(float r, float g, float b) noexcept {
+    return 0.2627f * r + 0.6780f * g + 0.0593f * b;
+}
+
+inline float HlgOotfScRgb(float er, float eg, float eb) {
+    constexpr float kHlgRefPeakScRgb = 12.5f; // 1000 nits / 80 nits
+    const float ys = (std::max)(0.0f, ComputeBt2020Luminance(er, eg, eb));
+    return (ys > 0.0f) ? (std::pow(ys, 1.2f) * kHlgRefPeakScRgb) : 0.0f;
+}
+
+template <typename ScanFn>
+float DispatchLinearLuminanceScan(
+    const QuickView::RawImageFrame& frame,
+    QuickView::TransferFunction transfer,
+    float fallbackVal,
+    ScanFn&& scan) {
+    const bool isPq = (transfer == QuickView::TransferFunction::PQ);
+    const bool isHlg = (transfer == QuickView::TransferFunction::HLG);
+
+    if (frame.format == QuickView::PixelFormat::R16G16B16A16_UNORM) {
+        if (isPq) {
+            const float* lut = GetPq16ToLinearScRgbLut();
+            return scan([lut](const uint8_t* row, int x) {
+                const auto* p = reinterpret_cast<const uint16_t*>(row) + static_cast<size_t>(x) * 4u;
+                return ComputeBt2020Luminance(lut[p[0]], lut[p[1]], lut[p[2]]);
+            });
+        }
+        if (isHlg) {
+            const float* lut = GetHlg16ToSceneLinearLut();
+            return scan([lut](const uint8_t* row, int x) {
+                const auto* p = reinterpret_cast<const uint16_t*>(row) + static_cast<size_t>(x) * 4u;
+                return HlgOotfScRgb(lut[p[0]], lut[p[1]], lut[p[2]]);
+            });
+        }
+        constexpr float kInv65535 = 1.0f / 65535.0f;
+        return scan([](const uint8_t* row, int x) {
+            const auto* p = reinterpret_cast<const uint16_t*>(row) + static_cast<size_t>(x) * 4u;
+            return ComputeBt2020Luminance(p[0] * kInv65535, p[1] * kInv65535, p[2] * kInv65535);
+        });
+    }
+
+    if (frame.format == QuickView::PixelFormat::R16G16B16A16_FLOAT) {
+        if (isPq) {
+            return scan([](const uint8_t* row, int x) {
+                const auto* p = reinterpret_cast<const uint16_t*>(row) + static_cast<size_t>(x) * 4u;
+                return ComputeBt2020Luminance(
+                    PqToLinearScRgb(HalfBitsToFloat(p[0])),
+                    PqToLinearScRgb(HalfBitsToFloat(p[1])),
+                    PqToLinearScRgb(HalfBitsToFloat(p[2])));
+            });
+        }
+        if (isHlg) {
+            return scan([](const uint8_t* row, int x) {
+                const auto* p = reinterpret_cast<const uint16_t*>(row) + static_cast<size_t>(x) * 4u;
+                return HlgOotfScRgb(
+                    HlgChannelInverseOetf(HalfBitsToFloat(p[0])),
+                    HlgChannelInverseOetf(HalfBitsToFloat(p[1])),
+                    HlgChannelInverseOetf(HalfBitsToFloat(p[2])));
+            });
+        }
+        return scan([](const uint8_t* row, int x) {
+            const auto* p = reinterpret_cast<const uint16_t*>(row) + static_cast<size_t>(x) * 4u;
+            return ComputeBt2020Luminance(
+                (std::max)(0.0f, HalfBitsToFloat(p[0])),
+                (std::max)(0.0f, HalfBitsToFloat(p[1])),
+                (std::max)(0.0f, HalfBitsToFloat(p[2])));
+        });
+    }
+
+    if (frame.format == QuickView::PixelFormat::R32G32B32A32_FLOAT) {
+        if (isPq) {
+            return scan([](const uint8_t* row, int x) {
+                const auto* p = reinterpret_cast<const float*>(row) + static_cast<size_t>(x) * 4u;
+                return ComputeBt2020Luminance(
+                    PqToLinearScRgb(p[0]),
+                    PqToLinearScRgb(p[1]),
+                    PqToLinearScRgb(p[2]));
+            });
+        }
+        if (isHlg) {
+            return scan([](const uint8_t* row, int x) {
+                const auto* p = reinterpret_cast<const float*>(row) + static_cast<size_t>(x) * 4u;
+                return HlgOotfScRgb(
+                    HlgChannelInverseOetf(p[0]),
+                    HlgChannelInverseOetf(p[1]),
+                    HlgChannelInverseOetf(p[2]));
+            });
+        }
+        return scan([](const uint8_t* row, int x) {
+            const auto* p = reinterpret_cast<const float*>(row) + static_cast<size_t>(x) * 4u;
+            return ComputeBt2020Luminance(
+                (std::max)(0.0f, p[0]),
+                (std::max)(0.0f, p[1]),
+                (std::max)(0.0f, p[2]));
+        });
+    }
+
+    return fallbackVal;
+}
+
+} // namespace
+
+float PqToLinearScRgb(float v) {
+    constexpr float kM1 = 2610.0f / 16384.0f;
+    constexpr float kM2 = (2523.0f / 4096.0f) * 128.0f;
+    constexpr float kC1 = 3424.0f / 4096.0f;
+    constexpr float kC2 = (2413.0f / 4096.0f) * 32.0f;
+    constexpr float kC3 = (2392.0f / 4096.0f) * 32.0f;
+    if (!std::isfinite(v)) return 0.0f;
+    v = std::clamp(v, 0.0f, 1.0f);
+    if (v <= 0.0f) return 0.0f;
+    const float vp = std::pow(v, 1.0f / kM2);
+    const float num = (std::max)(0.0f, vp - kC1);
+    const float den = (std::max)(1e-12f, kC2 - kC3 * vp);
+    return std::pow(num / den, 1.0f / kM1) * 125.0f;
+}
+
+float LinearScRgbToPq(float l) {
+    constexpr float kM1 = 2610.0f / 16384.0f;
+    constexpr float kM2 = (2523.0f / 4096.0f) * 128.0f;
+    constexpr float kC1 = 3424.0f / 4096.0f;
+    constexpr float kC2 = (2413.0f / 4096.0f) * 32.0f;
+    constexpr float kC3 = (2392.0f / 4096.0f) * 32.0f;
+    if (!std::isfinite(l) || l <= 0.0f) return 0.0f;
+    const float norm = (std::min)(l / 125.0f, 1.0f);
+    const float lp = std::pow(norm, kM1);
+    return std::pow((kC1 + kC2 * lp) / (1.0f + kC3 * lp), kM2);
+}
+
+float HlgChannelInverseOetf(float v) {
+    constexpr float kA = 0.17883277f;
+    constexpr float kB = 0.28466892f;
+    constexpr float kC = 0.55991073f;
+    if (!std::isfinite(v)) return 0.0f;
+    v = std::clamp(v, 0.0f, 1.0f);
+    if (v <= 0.5f) {
+        return (v * v) / 3.0f;
+    }
+    return (std::exp((v - kC) / kA) + kB) / 12.0f;
+}
+
+const float* GetPq16ToLinearScRgbLut() {
+    static float s_lut[65536] = {};
+    static std::once_flag s_once;
+    std::call_once(s_once, []() {
+        for (uint32_t i = 0; i < 65536u; ++i) {
+            s_lut[i] = PqToLinearScRgb(static_cast<float>(i) / 65535.0f);
+        }
+    });
+    return s_lut;
+}
+
+const float* GetHlg16ToSceneLinearLut() {
+    static float s_lut[65536] = {};
+    static std::once_flag s_once;
+    std::call_once(s_once, []() {
+        for (uint32_t i = 0; i < 65536u; ++i) {
+            s_lut[i] = HlgChannelInverseOetf(static_cast<float>(i) / 65535.0f);
+        }
+    });
+    return s_lut;
+}
+
+float EstimateEncodedFramePeakScRgb(
+    const QuickView::RawImageFrame& frame,
+    QuickView::TransferFunction transfer,
+    float peakPercentile) {
+    if (!frame.pixels || frame.width <= 0 || frame.height <= 0) {
+        return 1.0f;
+    }
+    return DispatchLinearLuminanceScan(frame, transfer, 1.0f, [&](auto&& lumFn) {
+        return ScanLinearLuminancePeak(frame, peakPercentile, lumFn);
+    });
+}
+
+float EstimateEncodedFrameAverageScRgb(
+    const QuickView::RawImageFrame& frame,
+    QuickView::TransferFunction transfer) {
+    if (!frame.pixels || frame.width <= 0 || frame.height <= 0) {
+        return 0.25f;
+    }
+    return DispatchLinearLuminanceScan(frame, transfer, 0.25f, [&](auto&& lumFn) {
+        return ScanLinearLuminanceAverage(frame, lumFn);
+    });
 }
 
 } // namespace ColorMath

@@ -36,6 +36,21 @@ static DXGI_FORMAT ResolveImageSurfaceFormat(DXGI_FORMAT requestedFormat) {
     return DXGI_FORMAT_B8G8R8A8_UNORM;
 }
 
+static void ConfigureContextBufferPrecision(ID2D1DeviceContext* ctx, DXGI_FORMAT surfaceFormat) {
+    if (!ctx) return;
+    D2D1_RENDERING_CONTROLS controls = {};
+    ctx->GetRenderingControls(&controls);
+    const D2D1_BUFFER_PRECISION desired =
+        (surfaceFormat == DXGI_FORMAT_R16G16B16A16_FLOAT &&
+         ctx->IsBufferPrecisionSupported(D2D1_BUFFER_PRECISION_16BPC_FLOAT))
+            ? D2D1_BUFFER_PRECISION_16BPC_FLOAT
+            : D2D1_BUFFER_PRECISION_8BPC_UNORM;
+    if (controls.bufferPrecision != desired) {
+        controls.bufferPrecision = desired;
+        ctx->SetRenderingControls(&controls);
+    }
+}
+
 // ============================================================================
 // [Infinity Engine] Cascade Rendering Implementation
 // ============================================================================
@@ -310,6 +325,7 @@ HRESULT CompositionEngine::UpdateVirtualTiles(QuickView::TileManager* tileManage
             return; // [Fix15b] Device lost / GPU OOM → skip tile, defer to next frame
         }
         m_pendingContext->SetTarget(target.Get());
+        ConfigureContextBufferPrecision(m_pendingContext.Get(), pLayer->surfaceFormat);
         m_pendingContext->BeginDraw();
         
         m_pendingContext->SetTransform(D2D1::Matrix3x2F::Translation(
@@ -756,6 +772,7 @@ ID2D1DeviceContext* CompositionEngine::BeginDrawHelper(IDCompositionSurface* sur
     
     // Bind
     m_pendingContext->SetTarget(target.Get());
+    ConfigureContextBufferPrecision(m_pendingContext.Get(), surfaceFormat);
     m_pendingContext->BeginDraw();
     
     // Offset standard surface

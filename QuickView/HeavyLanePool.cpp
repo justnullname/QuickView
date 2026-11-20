@@ -1503,7 +1503,7 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                    QuantumArena* effectiveArena = nullptr;
                    if (!animResolved) {
                        if (supportsMmfDecode) {
-                           hr = m_loader->LoadToFrameFromMemory(job.mmf->data(), job.mmf->size(), &rawFrame, effectiveArena, targetW, targetH, &loaderName, &meta, -1.0f, job.mmf);
+                           hr = m_loader->LoadToFrameFromMemory(job.mmf->data(), job.mmf->size(), &rawFrame, effectiveArena, targetW, targetH, &loaderName, &meta, job.targetHdrHeadroomStops, job.mmf);
                            if (FAILED(hr)) {
                                // Fallback to file if MMF decode fails
                                hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, effectiveArena, targetW, targetH, &loaderName, cancelPred, &meta, inlineAllowFakeBase, inlineTitanFlag, job.targetHdrHeadroomStops, job.targetPrimaries, job.mmf);
@@ -3536,23 +3536,43 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                     // Downscale for THIS LOD request
                     const int targetW = (m_titanSrcW + (1 << lod) - 1) / (1 << lod);
                     const int targetH = (m_titanSrcH + (1 << lod) - 1) / (1 << lod);
-                    size_t dstStride = (size_t)targetW * 4;
-                    
+                    const size_t bpp =
+                        (fullFrame.format == QuickView::PixelFormat::R32G32B32A32_FLOAT) ? 16u :
+                        ((fullFrame.format == QuickView::PixelFormat::R16G16B16A16_UNORM ||
+                          fullFrame.format == QuickView::PixelFormat::R16G16B16A16_FLOAT) ? 8u : 4u);
+                    const size_t dstStride = static_cast<size_t>(targetW) * bpp;
+
                     if (lod > 0) {
-                        size_t dstSize = dstStride * targetH;
-                        uint8_t* dstBuf = (uint8_t*)_aligned_malloc(dstSize, 32);
+                        const size_t dstSize = dstStride * static_cast<size_t>(targetH);
+                        uint8_t* dstBuf = static_cast<uint8_t*>(_aligned_malloc(dstSize, 32));
                         if (!dstBuf) {
                             hr = E_OUTOFMEMORY;
                         } else {
-                            ImageLoaderSimd::ResizeBilinear(frameSharedPtr.get(), fullFrame.width, fullFrame.height,
-                                                      fullFrame.stride, dstBuf, targetW, targetH, (int)dstStride);
-                            
+                            if (bpp == 4) {
+                                ImageLoaderSimd::ResizeBilinear(frameSharedPtr.get(), fullFrame.width, fullFrame.height,
+                                                          fullFrame.stride, dstBuf, targetW, targetH, static_cast<int>(dstStride));
+                            } else {
+                                const uint8_t* srcBase = frameSharedPtr.get();
+                                for (int y = 0; y < targetH; ++y) {
+                                    const int sy = (std::min)(fullFrame.height - 1,
+                                                              static_cast<int>((static_cast<int64_t>(y) * fullFrame.height) / targetH));
+                                    const uint8_t* srcRow = srcBase + static_cast<size_t>(sy) * fullFrame.stride;
+                                    uint8_t* dstRow = dstBuf + static_cast<size_t>(y) * dstStride;
+                                    for (int x = 0; x < targetW; ++x) {
+                                        const int sx = (std::min)(fullFrame.width - 1,
+                                                                  static_cast<int>((static_cast<int64_t>(x) * fullFrame.width) / targetW));
+                                        memcpy(dstRow + static_cast<size_t>(x) * bpp,
+                                               srcRow + static_cast<size_t>(sx) * bpp, bpp);
+                                    }
+                                }
+                            }
+
                             fullFrame.pixels = dstBuf;
                             fullFrame.width = targetW;
                             fullFrame.height = targetH;
-                            fullFrame.stride = (int)dstStride;
+                            fullFrame.stride = static_cast<int>(dstStride);
                             fullFrame.memoryDeleter = QuickView::MemoryDeleter::FromAlignedFree();
-                            
+
                             QV_LOG("P15_MasterRoute",
                                 TraceLoggingString("SoftwareDownscale", "Action"),
                                 TraceLoggingInt32(targetW, "Width"),
@@ -3563,7 +3583,6 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                         fullFrame.pixels = frameSharedPtr.get();
                         fullFrame.width = targetW;
                         fullFrame.height = targetH;
-                        fullFrame.stride = (int)dstStride;
                         {
                             auto* ctx = new(std::nothrow) SharedPtrCtx{ frameSharedPtr };
                             if (ctx) {
