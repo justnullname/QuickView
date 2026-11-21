@@ -69,8 +69,31 @@ struct SrModelEntry {
     bool defaultCompareMode = false;
 };
 
+struct SrParamOption {
+    int32_t value = 0;
+    std::string label;
+};
+
 struct SrParamEntry {
-    QVX_ParamDesc desc{};
+    std::string id;
+    std::string label;
+    std::string tooltip;
+    QVX_ParamType type = QVX_PARAM_TYPE_BOOL;
+
+    bool defaultBool = false;
+    int32_t intMin = 0;
+    int32_t intMax = 0;
+    int32_t intStep = 1;
+    int32_t intDefault = 0;
+    float floatMin = 0.0f;
+    float floatMax = 0.0f;
+    float floatStep = 0.01f;
+    float floatDefault = 0.0f;
+    std::string formatStr;
+
+    int32_t enumDefault = 0;
+    std::vector<SrParamOption> enumOptions;
+
     float currentValue = 0.0f;
 };
 

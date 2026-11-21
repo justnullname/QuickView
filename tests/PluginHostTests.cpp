@@ -120,8 +120,8 @@ TEST_F(PluginHostTests, NcnnVulkanGpuUpscaleAndProgress) {
     // Verify Dynamic Parameters (Denoise & Tile Size)
     auto params = host.GetCurrentSrParams();
     EXPECT_GE(params.size(), 2u);
-    EXPECT_STREQ(params[0].desc.id, "denoise");
-    EXPECT_STREQ(params[1].desc.id, "tile_size");
+    EXPECT_EQ(params[0].id, "denoise");
+    EXPECT_EQ(params[1].id, "tile_size");
 
     // 64x64 Source Texture
     D3D11_TEXTURE2D_DESC srcDesc{};

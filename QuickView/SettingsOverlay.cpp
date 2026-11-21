@@ -4422,7 +4422,7 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
 
                     bool hasVisibleParams = false;
                     for (size_t i = 0; i < s_dynParams.size(); ++i) {
-                        if (strcmp(s_dynParams[i].desc.id, "denoise") == 0 && currentModelId != "realesr-general-x4v3") {
+                        if (s_dynParams[i].id == "denoise" && currentModelId != "realesr-general-x4v3") {
                             continue;
                         }
                         hasVisibleParams = true;
@@ -4435,24 +4435,24 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
 
                     for (size_t i = 0; i < s_dynParams.size() && i < 32; ++i) {
                         const auto& p = s_dynParams[i];
-                        if (strcmp(p.desc.id, "denoise") == 0 && currentModelId != "realesr-general-x4v3") {
+                        if (p.id == "denoise" && currentModelId != "realesr-general-x4v3") {
                             continue;
                         }
-                        s_paramLabels[i] = Utf8ToWide(p.desc.label ? p.desc.label : p.desc.id);
+                        s_paramLabels[i] = Utf8ToWide(!p.label.empty() ? p.label : p.id);
 
                         const wchar_t* pTooltip = nullptr;
-                        if (p.desc.tooltip && p.desc.tooltip[0] != '\0') {
-                            s_paramTooltips[i] = Utf8ToWide(p.desc.tooltip);
+                        if (!p.tooltip.empty()) {
+                            s_paramTooltips[i] = Utf8ToWide(p.tooltip);
                             pTooltip = s_paramTooltips[i].c_str();
                         }
 
-                        if (p.desc.type == QVX_PARAM_TYPE_FLOAT) {
+                        if (p.type == QVX_PARAM_TYPE_FLOAT) {
                             s_dynFloats[i] = p.currentValue;
                             SettingsItem itemParam = { s_paramLabels[i], OptionType::Slider, nullptr, &s_dynFloats[i] };
                             itemParam.tooltipText = pTooltip;
-                            itemParam.minVal = p.desc.float_param.min_val;
-                            itemParam.maxVal = p.desc.float_param.max_val;
-                            itemParam.step = p.desc.float_param.step;
+                            itemParam.minVal = p.floatMin;
+                            itemParam.maxVal = p.floatMax;
+                            itemParam.step = p.floatStep;
                             itemParam.displayFormat = L"%.2f";
                             itemParam.isDisabled = !uiSrEnabled;
 
@@ -4460,7 +4460,7 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
                                 if (!item || !item->pFloatVal) return;
                                 int idx = static_cast<int>(item->pFloatVal - s_dynFloats);
                                 if (idx >= 0 && idx < static_cast<int>(s_dynParams.size())) {
-                                    QuickView::PluginHost::Instance().SetParamValue(s_dynParams[idx].desc.id, *item->pFloatVal);
+                                    QuickView::PluginHost::Instance().SetParamValue(s_dynParams[idx].id, *item->pFloatVal);
                                     SaveConfig();
                                     extern HWND g_mainHwnd;
                                     extern void RefreshImageDisplay(HWND hwnd);
@@ -4471,16 +4471,16 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
                                 if (!item || !item->pFloatVal) return;
                                 int idx = static_cast<int>(item->pFloatVal - s_dynFloats);
                                 if (idx >= 0 && idx < static_cast<int>(s_dynParams.size())) {
-                                    QuickView::PluginHost::Instance().SetParamValue(s_dynParams[idx].desc.id, *item->pFloatVal);
+                                    QuickView::PluginHost::Instance().SetParamValue(s_dynParams[idx].id, *item->pFloatVal);
                                 }
                             };
                             itemParam.onReset = []([[maybe_unused]] SettingsOverlay* overlay, SettingsItem* item) {
                                 if (!item || !item->pFloatVal) return;
                                 int idx = static_cast<int>(item->pFloatVal - s_dynFloats);
                                 if (idx >= 0 && idx < static_cast<int>(s_dynParams.size())) {
-                                    float defVal = s_dynParams[idx].desc.float_param.default_val;
+                                    float defVal = s_dynParams[idx].floatDefault;
                                     *item->pFloatVal = defVal;
-                                    QuickView::PluginHost::Instance().SetParamValue(s_dynParams[idx].desc.id, defVal);
+                                    QuickView::PluginHost::Instance().SetParamValue(s_dynParams[idx].id, defVal);
                                     SaveConfig();
                                     if (overlay) overlay->RequestRebuild();
                                     extern HWND g_mainHwnd;
@@ -4489,7 +4489,7 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
                                 }
                             };
                             tabPlugins.items.push_back(std::move(itemParam));
-                        } else if (p.desc.type == QVX_PARAM_TYPE_BOOL) {
+                        } else if (p.type == QVX_PARAM_TYPE_BOOL) {
                             s_dynBools[i] = (p.currentValue != 0.0f);
                             SettingsItem itemParam = { s_paramLabels[i], OptionType::Toggle, &s_dynBools[i] };
                             itemParam.tooltipText = pTooltip;
@@ -4499,7 +4499,7 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
                                 if (!item || !item->pBoolVal) return;
                                 int idx = static_cast<int>(item->pBoolVal - s_dynBools);
                                 if (idx >= 0 && idx < static_cast<int>(s_dynParams.size())) {
-                                    QuickView::PluginHost::Instance().SetParamValue(s_dynParams[idx].desc.id, *item->pBoolVal ? 1.0f : 0.0f);
+                                    QuickView::PluginHost::Instance().SetParamValue(s_dynParams[idx].id, *item->pBoolVal ? 1.0f : 0.0f);
                                     SaveConfig();
                                     extern HWND g_mainHwnd;
                                     extern void RefreshImageDisplay(HWND hwnd);
@@ -4507,13 +4507,13 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
                                 }
                             };
                             tabPlugins.items.push_back(std::move(itemParam));
-                        } else if (p.desc.type == QVX_PARAM_TYPE_INT) {
+                        } else if (p.type == QVX_PARAM_TYPE_INT) {
                             s_dynFloats[i] = p.currentValue;
                             SettingsItem itemParam = { s_paramLabels[i], OptionType::Slider, nullptr, &s_dynFloats[i] };
                             itemParam.tooltipText = pTooltip;
-                            itemParam.minVal = static_cast<float>(p.desc.int_param.min_val);
-                            itemParam.maxVal = static_cast<float>(p.desc.int_param.max_val);
-                            itemParam.step = static_cast<float>(p.desc.int_param.step > 0 ? p.desc.int_param.step : 1);
+                            itemParam.minVal = static_cast<float>(p.intMin);
+                            itemParam.maxVal = static_cast<float>(p.intMax);
+                            itemParam.step = static_cast<float>(p.intStep > 0 ? p.intStep : 1);
                             itemParam.displayFormat = L"%.0f";
                             itemParam.isDisabled = !uiSrEnabled;
 
@@ -4522,7 +4522,7 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
                                 int idx = static_cast<int>(item->pFloatVal - s_dynFloats);
                                 if (idx >= 0 && idx < static_cast<int>(s_dynParams.size())) {
                                     float quantVal = static_cast<float>(static_cast<int>(*item->pFloatVal + 0.5f));
-                                    QuickView::PluginHost::Instance().SetParamValue(s_dynParams[idx].desc.id, quantVal);
+                                    QuickView::PluginHost::Instance().SetParamValue(s_dynParams[idx].id, quantVal);
                                     SaveConfig();
                                     extern HWND g_mainHwnd;
                                     extern void RefreshImageDisplay(HWND hwnd);
@@ -4534,16 +4534,16 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
                                 int idx = static_cast<int>(item->pFloatVal - s_dynFloats);
                                 if (idx >= 0 && idx < static_cast<int>(s_dynParams.size())) {
                                     float quantVal = static_cast<float>(static_cast<int>(*item->pFloatVal + 0.5f));
-                                    QuickView::PluginHost::Instance().SetParamValue(s_dynParams[idx].desc.id, quantVal);
+                                    QuickView::PluginHost::Instance().SetParamValue(s_dynParams[idx].id, quantVal);
                                 }
                             };
                             itemParam.onReset = []([[maybe_unused]] SettingsOverlay* overlay, SettingsItem* item) {
                                 if (!item || !item->pFloatVal) return;
                                 int idx = static_cast<int>(item->pFloatVal - s_dynFloats);
                                 if (idx >= 0 && idx < static_cast<int>(s_dynParams.size())) {
-                                    float defVal = static_cast<float>(s_dynParams[idx].desc.int_param.default_val);
+                                    float defVal = static_cast<float>(s_dynParams[idx].intDefault);
                                     *item->pFloatVal = defVal;
-                                    QuickView::PluginHost::Instance().SetParamValue(s_dynParams[idx].desc.id, defVal);
+                                    QuickView::PluginHost::Instance().SetParamValue(s_dynParams[idx].id, defVal);
                                     SaveConfig();
                                     if (overlay) overlay->RequestRebuild();
                                     extern HWND g_mainHwnd;
@@ -4552,16 +4552,15 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
                                 }
                             };
                             tabPlugins.items.push_back(std::move(itemParam));
-                        } else if (p.desc.type == QVX_PARAM_TYPE_ENUM && p.desc.enum_param.options && p.desc.enum_param.option_count > 0) {
+                        } else if (p.type == QVX_PARAM_TYPE_ENUM && !p.enumOptions.empty()) {
                             s_enumOptionLabels[i].clear();
                             s_enumOptionViews[i].clear();
                             s_enumOptionValues[i].clear();
 
                             const int32_t curEnumVal = static_cast<int32_t>(std::lround(p.currentValue));
                             int selectedEnumIdx = 0;
-                            for (uint32_t o = 0; o < p.desc.enum_param.option_count; ++o) {
-                                const auto& opt = p.desc.enum_param.options[o];
-                                if (!opt.label) continue;
+                            for (const auto& opt : p.enumOptions) {
+                                if (opt.label.empty()) continue;
                                 if (opt.value == curEnumVal) {
                                     selectedEnumIdx = static_cast<int>(s_enumOptionLabels[i].size());
                                 }
@@ -4584,7 +4583,7 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
                                         const int choice = *item->pIntVal;
                                         if (choice >= 0 && choice < static_cast<int>(s_enumOptionValues[idx].size())) {
                                             QuickView::PluginHost::Instance().SetParamValue(
-                                                s_dynParams[idx].desc.id, static_cast<float>(s_enumOptionValues[idx][choice]));
+                                                s_dynParams[idx].id, static_cast<float>(s_enumOptionValues[idx][choice]));
                                             SaveConfig();
                                             extern HWND g_mainHwnd;
                                             extern void RefreshImageDisplay(HWND hwnd);

@@ -688,27 +688,50 @@ std::vector<SrParamEntry> PluginHost::GetCurrentSrParams() const {
         if (!pDesc || !pDesc->id) continue;
 
         SrParamEntry entry;
-        entry.desc = *pDesc;
+        entry.id = pDesc->id;
+        entry.label = pDesc->label ? pDesc->label : "";
+        entry.tooltip = pDesc->tooltip ? pDesc->tooltip : "";
+        entry.type = pDesc->type;
 
         float val = 0.0f;
         switch (pDesc->type) {
             case QVX_PARAM_TYPE_BOOL:
-                val = pDesc->bool_param.default_val ? 1.0f : 0.0f;
+                entry.defaultBool = pDesc->bool_param.default_val;
+                val = entry.defaultBool ? 1.0f : 0.0f;
                 break;
             case QVX_PARAM_TYPE_INT:
-                val = static_cast<float>(pDesc->int_param.default_val);
+                entry.intMin = pDesc->int_param.min_val;
+                entry.intMax = pDesc->int_param.max_val;
+                entry.intStep = pDesc->int_param.step;
+                entry.intDefault = pDesc->int_param.default_val;
+                entry.formatStr = pDesc->int_param.format_str ? pDesc->int_param.format_str : "";
+                val = static_cast<float>(entry.intDefault);
                 break;
             case QVX_PARAM_TYPE_FLOAT:
-                val = pDesc->float_param.default_val;
+                entry.floatMin = pDesc->float_param.min_val;
+                entry.floatMax = pDesc->float_param.max_val;
+                entry.floatStep = pDesc->float_param.step;
+                entry.floatDefault = pDesc->float_param.default_val;
+                entry.formatStr = pDesc->float_param.format_str ? pDesc->float_param.format_str : "";
+                val = entry.floatDefault;
                 break;
             case QVX_PARAM_TYPE_ENUM:
-                val = static_cast<float>(pDesc->enum_param.default_val);
+                entry.enumDefault = pDesc->enum_param.default_val;
+                val = static_cast<float>(entry.enumDefault);
+                if (pDesc->enum_param.options && pDesc->enum_param.option_count > 0) {
+                    entry.enumOptions.reserve(pDesc->enum_param.option_count);
+                    for (uint32_t optIdx = 0; optIdx < pDesc->enum_param.option_count; ++optIdx) {
+                        const auto& opt = pDesc->enum_param.options[optIdx];
+                        if (!opt.label) continue;
+                        entry.enumOptions.push_back({ opt.value, opt.label });
+                    }
+                }
                 break;
         }
 
         // Check cached storage
         for (const auto& kv : m_dynamicParams) {
-            if (kv.first == pDesc->id) {
+            if (kv.first == entry.id) {
                 val = kv.second;
                 break;
             }
@@ -1824,8 +1847,15 @@ bool PluginHost::DownloadModel(
 
     LogDownloadDebug("[QVX-Download] PluginHost::DownloadModel start: target='%ls', url='%s'\n", targetRelativePath.c_str(), downloadUrl.c_str());
 
-    // Release any active SR context or loaded module to release file locks on models directory
-    UnloadSrPlugin();
+    // Release any active SR context without unloading the plugin DLL
+    {
+        std::lock_guard<std::recursive_mutex> lock(m_srMutex);
+        if (m_srVTable && m_srContext) {
+            WaitForInFlightUpscales();
+            m_srVTable->destroy_context(m_srContext);
+            m_srContext = nullptr;
+        }
+    }
 
     std::wstring fullModelsDir = GetWritableModelsDirectory();
     if (!SystemInfo::EnsureDirectoryRecursive(fullModelsDir)) {
@@ -1948,10 +1978,6 @@ bool PluginHost::DownloadModel(
 
     LogDownloadDebug("[QVX-Download] PluginHost::DownloadModel finished: ok=%d\n", ok ? 1 : 0);
 
-    if (onProgress) {
-        onProgress(ok ? 1.0f : 0.0f, true, ok, userData);
-    }
-
     if (ok) {
         std::lock_guard<std::recursive_mutex> lock(m_srMutex);
         m_modelsCacheValid = false;
@@ -1960,6 +1986,10 @@ bool PluginHost::DownloadModel(
             m_srVTable->destroy_context(m_srContext);
             m_srContext = nullptr;
         }
+    }
+
+    if (onProgress) {
+        onProgress(ok ? 1.0f : 0.0f, true, ok, userData);
     }
     return ok;
 }
