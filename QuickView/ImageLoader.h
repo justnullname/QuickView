@@ -182,6 +182,9 @@ public:
 
     // [v3.2] Debug: Record the actual Loader used
     std::wstring loaderName;
+
+    // [CMS] Color descriptors extracted alongside pixels
+    QuickView::PixelColorMetadata colorMeta;
   };
 
   // --- NEW: PMR-backed Decoded Image (Zero-Copy) ---
@@ -315,7 +318,8 @@ public:
                                  uint8_t *mmfBuf, size_t mmfBufSize, int *outW,
                                  int *outH, int *outStride,
                                  QuickView::SimpleCallback dcReadyCallback = {},
-                                 CancelPredicate checkCancel = {});
+                                 CancelPredicate checkCancel = {},
+                                 QuickView::PixelColorMetadata *outColorMeta = nullptr);
 
   // ============================================================================
   // [Direct D2D] Zero-Copy Loading API
@@ -472,7 +476,8 @@ public:
   static HRESULT LoadThumbJXL_DC(const uint8_t *data, size_t size,
                                  ThumbData *pData,
                                  ImageMetadata *pMetadata = nullptr,
-                                 bool allowFakeBase = true);
+                                 bool allowFakeBase = true,
+                                 bool preserveSourceColor = false);
   static HRESULT LoadThumbAVIF_Proxy(const uint8_t *data, size_t size,
                                      int targetSize, ThumbData *pData,
                                      bool allowSlow = true,

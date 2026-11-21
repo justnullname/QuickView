@@ -500,6 +500,9 @@ struct RawImageFrame {
         onAuxLayerReady.Clear();
         svg.reset(); // [D2D Native] Release SVG data
         iccProfile.clear(); // Ensure it is cleared on reset
+        colorInfo = {};
+        hdrMetadata = {};
+        exifOrientation = 1;
         measuredPeakScRgb = -1.0f;
         measuredAverageScRgb = -1.0f;
         // [GPU Pipeline] Release auxiliary layer
@@ -663,6 +666,72 @@ private:
         // other.svg / other.auxLayer / other.animator are moved (nullptr)
     }
 };
+
+// ============================================================================
+// PixelColorMetadata - Transport Bundle for Color Descriptors
+// ============================================================================
+struct PixelColorMetadata {
+    std::vector<uint8_t> iccProfile;
+    PixelColorInfo colorInfo;
+    HdrStaticMetadata hdrMetadata;
+    int exifOrientation = 1;
+
+    void Clear() noexcept {
+        iccProfile.clear();
+        colorInfo = {};
+        hdrMetadata = {};
+        exifOrientation = 1;
+    }
+
+    [[nodiscard]] bool HasColorDescriptor() const noexcept {
+        return !iccProfile.empty() ||
+               colorInfo.hasEmbeddedIcc ||
+               colorInfo.primaries != ColorPrimaries::Unknown ||
+               colorInfo.transfer != TransferFunction::Unknown ||
+               colorInfo.dataSpace != PixelDataSpace::Unknown ||
+               hdrMetadata.isValid;
+    }
+};
+
+[[nodiscard]] inline PixelColorMetadata ExtractColorMetadata(const RawImageFrame& frame) {
+    PixelColorMetadata meta;
+    meta.iccProfile = frame.iccProfile;
+    meta.colorInfo = frame.colorInfo;
+    meta.hdrMetadata = frame.hdrMetadata;
+    meta.exifOrientation = frame.exifOrientation;
+    return meta;
+}
+
+inline void ApplyColorMetadata(RawImageFrame& dst, const PixelColorMetadata& meta,
+                               bool applyOrientation = false) {
+    dst.iccProfile = meta.iccProfile;
+    dst.colorInfo = meta.colorInfo;
+    if (!dst.iccProfile.empty()) {
+        dst.colorInfo.hasEmbeddedIcc = true;
+    }
+    dst.hdrMetadata = meta.hdrMetadata;
+    if (applyOrientation && meta.exifOrientation >= 1 && meta.exifOrientation <= 8) {
+        dst.exifOrientation = meta.exifOrientation;
+    }
+}
+
+inline void MergeColorInfo(PixelColorInfo& dst, const PixelColorInfo& src) noexcept {
+    if (dst.dataSpace == PixelDataSpace::Unknown && src.dataSpace != PixelDataSpace::Unknown) {
+        dst.dataSpace = src.dataSpace;
+    }
+    if (dst.transfer == TransferFunction::Unknown && src.transfer != TransferFunction::Unknown) {
+        dst.transfer = src.transfer;
+    }
+    if (dst.primaries == ColorPrimaries::Unknown && src.primaries != ColorPrimaries::Unknown) {
+        dst.primaries = src.primaries;
+    }
+    if (dst.nominalBitDepth == 0 && src.nominalBitDepth != 0) {
+        dst.nominalBitDepth = src.nominalBitDepth;
+    }
+    if (src.hasEmbeddedIcc) {
+        dst.hasEmbeddedIcc = true;
+    }
+}
 
 // ============================================================================
 // Stride Alignment Helper

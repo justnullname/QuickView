@@ -364,6 +364,7 @@ private:
         int lod = -1;           // Which LOD level this cache represents
         ImageID imageId = 0;    // Which image (invalidate on switch)
         uint64_t lastAccessTime = 0; // [Titan Perf] LRU timestamp
+        std::shared_ptr<const QuickView::PixelColorMetadata> colorMeta;
     };
     LODCache m_lodCache;
     LODCache m_masterLOD0Cache; // [NEW] Keep LOD0 decoded image across requests
@@ -388,7 +389,7 @@ private:
     HRESULT FullDecodeAndCacheLOD(
         Worker &worker, const JobInfo &job, QuickView::RawImageFrame &outTile,
         std::wstring &loader, CImageLoader::CancelPredicate checkCancel = {});
-    HRESULT SliceTileFromLODCache(const JobInfo& job, QuickView::RawImageFrame& outTile, std::wstring& loader);
+    HRESULT SliceTileFromLODCache(const LODCache& cache, const JobInfo& job, QuickView::RawImageFrame& outTile, std::wstring& loader);
     HRESULT LaunchDecodeWorker(Worker& worker, const JobInfo& job, int targetW, int targetH, QuickView::RawImageFrame& outFrame, CImageLoader::ImageMetadata& outMeta, CImageLoader::CancelPredicate checkCancel, bool fullDecode = false, bool noFakeBase = false);
     bool ShouldUseSingleDecode(int lod) const;
     bool ShouldUseSingleDecodeForWebP(int lod) const;
@@ -410,6 +411,7 @@ private:
         ImageID imageId = 0;
         std::wstring tempPath; // only used when not DELETE_ON_CLOSE; usually empty
         bool isPooled = false; // eligible for m_reservePool reuse
+        QuickView::PixelColorMetadata colorMeta;
 
         bool hasResources() const noexcept {
             return view != nullptr || heapBuffer != nullptr || hMap != nullptr || hFile != INVALID_HANDLE_VALUE;
@@ -430,6 +432,7 @@ private:
             imageId = 0;
             tempPath.clear();
             isPooled = false;
+            colorMeta.Clear();
         }
 
         // Rule of 5: move must transfer isPooled or the reserve pool is dead.
@@ -440,6 +443,7 @@ private:
             : hFile(o.hFile), hMap(o.hMap), view(o.view), heapBuffer(o.heapBuffer)
             , sizeBytes(o.sizeBytes), width(o.width), height(o.height), stride(o.stride)
             , imageId(o.imageId), tempPath(std::move(o.tempPath)), isPooled(o.isPooled)
+            , colorMeta(std::move(o.colorMeta))
         {
             o.hFile = INVALID_HANDLE_VALUE;
             o.hMap = nullptr;
@@ -447,6 +451,7 @@ private:
             o.heapBuffer = nullptr;
             o.sizeBytes = 0; o.width = 0; o.height = 0; o.stride = 0; o.imageId = 0;
             o.isPooled = false;
+            o.colorMeta.Clear();
         }
         MasterBackingStore& operator=(MasterBackingStore&& o) noexcept {
             if (this != &o) {
@@ -454,9 +459,11 @@ private:
                 hFile = o.hFile; hMap = o.hMap; view = o.view; heapBuffer = o.heapBuffer;
                 sizeBytes = o.sizeBytes; width = o.width; height = o.height; stride = o.stride;
                 imageId = o.imageId; tempPath = std::move(o.tempPath); isPooled = o.isPooled;
+                colorMeta = std::move(o.colorMeta);
                 o.hFile = INVALID_HANDLE_VALUE; o.hMap = nullptr; o.view = nullptr; o.heapBuffer = nullptr;
                 o.sizeBytes = 0; o.width = 0; o.height = 0; o.stride = 0; o.imageId = 0;
                 o.isPooled = false;
+                o.colorMeta.Clear();
             }
             return *this;
         }
@@ -467,13 +474,15 @@ private:
     MasterBackingStore m_masterBacking;
     std::mutex m_masterBackingMutex;
     void ResetMasterBackingStore();
-    HRESULT BuildMasterBackingStore(const uint8_t* pixels, int width, int height, int stride, ImageID imageId);
+    HRESULT BuildMasterBackingStore(const uint8_t* pixels, int width, int height, int stride, ImageID imageId,
+                                    const QuickView::PixelColorMetadata* colorMeta = nullptr);
     // [Direct-to-MMF] Pre-create empty MMF file of given size; returns view pointer for direct decode.
     HRESULT BuildMasterBackingStoreEmpty(int width, int height, int stride, ImageID imageId);
     // [Fix] Returns a unique_lock that MUST be held for the entire duration of master view usage.
     // This prevents ResetBenchState from releasing the MMF while tile workers are reading it.
     bool AcquireMasterBackingView(ImageID imageId, const uint8_t** outPixels, int* outW, int* outH, int* outStride,
-                                   std::unique_lock<std::mutex>& outLock);
+                                   std::unique_lock<std::mutex>& outLock,
+                                   QuickView::PixelColorMetadata* outColorMeta = nullptr);
 
     // [MMF Pool] Infrastructure
     // At most two exact-size file-backed masters are retained for reuse.  We

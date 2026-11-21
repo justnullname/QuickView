@@ -1417,8 +1417,9 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
 
                         const uint8_t* masterView = nullptr;
                         int mW = 0, mH = 0, mS = 0;
+                        QuickView::PixelColorMetadata masterColorMeta;
                         std::unique_lock<std::mutex> masterLock;
-                        if (AcquireMasterBackingView(job.imageId, &masterView, &mW, &mH, &mS, masterLock)) {
+                        if (AcquireMasterBackingView(job.imageId, &masterView, &mW, &mH, &mS, masterLock, &masterColorMeta)) {
                             size_t dstStride = (size_t)targetW * 4;
                             size_t dstSize = dstStride * targetH;
                             uint8_t* dstBuf = (uint8_t*)_aligned_malloc(dstSize, 32);
@@ -1435,10 +1436,16 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                                 rawFrame.memoryDeleter = QuickView::MemoryDeleter::FromAlignedFree();
                                 rawFrame.srcWidth = mW;   // [v10.1] Preserve original resolution
                                 rawFrame.srcHeight = mH;  // for cache-hit metadata recovery
+                                QuickView::ApplyColorMetadata(rawFrame, masterColorMeta, true);
                                 
                                 meta.Width = mW;
                                 meta.Height = mH;
-                                meta.ExifOrientation = 1; // Handled by MMF decoder
+                                meta.ExifOrientation = rawFrame.exifOrientation;
+                                meta.colorInfo = rawFrame.colorInfo;
+                                meta.hdrMetadata = rawFrame.hdrMetadata;
+                                if (!rawFrame.iccProfile.empty()) {
+                                    meta.HasEmbeddedColorProfile = true;
+                                }
 
                                 loaderName = L"MasterWarmup(MMF)";
                                 hr = S_OK;
@@ -1596,10 +1603,16 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                    // Check LOD cache first — O(1) memcpy slice
                    decodeStart = std::chrono::high_resolution_clock::now();
                    {
-                       std::lock_guard lock(m_lodCacheMutex);
-                       if (m_lodCache.pixels && m_lodCache.lod == job.tileCoord.lod
-                           && m_lodCache.imageId == job.imageId) {
-                           hr = SliceTileFromLODCache(job, rawFrame, loaderName);
+                       LODCache cacheSnap;
+                       {
+                           std::lock_guard lock(m_lodCacheMutex);
+                           if (m_lodCache.pixels && m_lodCache.lod == job.tileCoord.lod
+                               && m_lodCache.imageId == job.imageId) {
+                               cacheSnap = m_lodCache;
+                           }
+                       }
+                       if (cacheSnap.pixels) {
+                           hr = SliceTileFromLODCache(cacheSnap, job, rawFrame, loaderName);
                            if (SUCCEEDED(hr)) goto tile_decode_done;
                        }
                    }
@@ -1725,9 +1738,14 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                         decodeStart = std::chrono::high_resolution_clock::now();
 
                         // Re-check cache after waiting (mutex is held by waitLock)
+                        LODCache cacheSnap;
                         if (m_lodCache.pixels && m_lodCache.lod == job.tileCoord.lod
                             && m_lodCache.imageId == job.imageId) {
-                            hr = SliceTileFromLODCache(job, rawFrame, loaderName);
+                            cacheSnap = m_lodCache;
+                        }
+                        waitLock.unlock();
+                        if (cacheSnap.pixels) {
+                            hr = SliceTileFromLODCache(cacheSnap, job, rawFrame, loaderName);
                             loaderName = L"LODCache Slice"; // [UI Fix] explicitly show cache slice
                             goto tile_decode_done;
                         }
@@ -1918,8 +1936,15 @@ tile_decode_done: ; // [P14] Jump target for fast path (skip legacy TJ decode)
             }
 
             evt.metadata = std::move(meta);
-            if (evt.metadata.iccProfileData.empty() && evt.rawFrame && !evt.rawFrame->iccProfile.empty()) {
-                evt.metadata.iccProfileData.assign(evt.rawFrame->iccProfile.begin(), evt.rawFrame->iccProfile.end());
+            if (evt.rawFrame) {
+                if (evt.metadata.iccProfileData.empty() && !evt.rawFrame->iccProfile.empty()) {
+                    evt.metadata.iccProfileData.assign(evt.rawFrame->iccProfile.begin(), evt.rawFrame->iccProfile.end());
+                    evt.metadata.HasEmbeddedColorProfile = true;
+                }
+                QuickView::MergeColorInfo(evt.metadata.colorInfo, evt.rawFrame->colorInfo);
+                if (!evt.metadata.hdrMetadata.isValid && evt.rawFrame->hdrMetadata.isValid) {
+                    evt.metadata.hdrMetadata = evt.rawFrame->hdrMetadata;
+                }
             }
             if (evt.metadata.ColorSpace.empty() && !evt.metadata.iccProfileData.empty()) {
                 evt.metadata.ColorSpace = CImageLoader::ParseICCProfileName(evt.metadata.iccProfileData.data(), evt.metadata.iccProfileData.size());
@@ -2277,10 +2302,11 @@ void HeavyLanePool::EnsureMasterWarmup(const std::wstring& path, ImageID imageId
             if (!mmfView || mmfSize == 0) goto fallback_heap;
 
             int decW = 0, decH = 0, decStride = 0;
+            QuickView::PixelColorMetadata decodedColorMeta;
 
             hr = CImageLoader::FullDecodeToMMF(mmf->data(), mmf->size(), mmfView, mmfSize,
                                                &decW, &decH, &decStride, {},
-                                               cancelPred);
+                                               cancelPred, &decodedColorMeta);
             // [Fix] pass cancellation check to FullDecodeToMMF
 
             if (st.stop_requested() || m_generationID.load(std::memory_order_acquire) != warmupGen) return;
@@ -2294,6 +2320,7 @@ void HeavyLanePool::EnsureMasterWarmup(const std::wstring& path, ImageID imageId
                     m_masterBacking.width = decW;
                     m_masterBacking.height = decH;
                     m_masterBacking.stride = decStride;
+                    m_masterBacking.colorMeta = std::move(decodedColorMeta);
                 }
 
                 // No memcpy, no FlushViewOfFile needed — VMM handles it
@@ -2361,8 +2388,15 @@ void HeavyLanePool::EnsureMasterWarmup(const std::wstring& path, ImageID imageId
                     TraceLoggingUInt32((uint32_t)hr, "HR"));
                 return;
             }
+            if (fullFrame.format != QuickView::PixelFormat::BGRA8888 &&
+                fullFrame.format != QuickView::PixelFormat::BGRX8888) {
+                QV_LOG("MMF_Warmup",
+                    TraceLoggingString("HeapFallback Non4BppSkipped", "Action"));
+                return;
+            }
 
-            hr = BuildMasterBackingStore(fullFrame.pixels, fullFrame.width, fullFrame.height, fullFrame.stride, imageId);
+            const QuickView::PixelColorMetadata colorMeta = QuickView::ExtractColorMetadata(fullFrame);
+            hr = BuildMasterBackingStore(fullFrame.pixels, fullFrame.width, fullFrame.height, fullFrame.stride, imageId, &colorMeta);
             if (SUCCEEDED(hr)) {
                 std::lock_guard lock(m_lodCacheMutex);
                 m_masterLOD0Cache = {};
@@ -2612,7 +2646,8 @@ static void CloseMappingHandles(HANDLE hFile, HANDLE hMap) {
     if (hFile != INVALID_HANDLE_VALUE) CloseHandle(hFile);
 }
 
-HRESULT HeavyLanePool::BuildMasterBackingStore(const uint8_t* pixels, int width, int height, int stride, ImageID imageId) {
+HRESULT HeavyLanePool::BuildMasterBackingStore(const uint8_t* pixels, int width, int height, int stride, ImageID imageId,
+                                              const QuickView::PixelColorMetadata* colorMeta) {
     if (!pixels || width <= 0 || height <= 0 || stride <= 0) return E_INVALIDARG;
 
     size_t totalBytes = (size_t)stride * (size_t)height;
@@ -2633,6 +2668,7 @@ HRESULT HeavyLanePool::BuildMasterBackingStore(const uint8_t* pixels, int width,
         store.height = height;
         store.stride = stride;
         store.imageId = imageId;
+        if (colorMeta) store.colorMeta = *colorMeta;
         {
             std::lock_guard lock(m_masterBackingMutex);
             m_masterBacking = std::move(store);
@@ -2670,6 +2706,7 @@ HRESULT HeavyLanePool::BuildMasterBackingStore(const uint8_t* pixels, int width,
     store.stride = stride;
     store.imageId = imageId;
     store.isPooled = false;
+    if (colorMeta) store.colorMeta = *colorMeta;
 
     {
         std::lock_guard lock(m_masterBackingMutex);
@@ -2680,7 +2717,8 @@ HRESULT HeavyLanePool::BuildMasterBackingStore(const uint8_t* pixels, int width,
 }
 
 bool HeavyLanePool::AcquireMasterBackingView(ImageID imageId, const uint8_t** outPixels, int* outW, int* outH, int* outStride,
-                                               std::unique_lock<std::mutex>& outLock) {
+                                               std::unique_lock<std::mutex>& outLock,
+                                               QuickView::PixelColorMetadata* outColorMeta) {
     if (!outPixels || !outW || !outH || !outStride) return false;
 
     std::unique_lock lock(m_masterBackingMutex);
@@ -2690,6 +2728,9 @@ bool HeavyLanePool::AcquireMasterBackingView(ImageID imageId, const uint8_t** ou
     *outW = m_masterBacking.width;
     *outH = m_masterBacking.height;
     *outStride = m_masterBacking.stride;
+    if (outColorMeta) {
+        *outColorMeta = m_masterBacking.colorMeta;
+    }
     outLock = std::move(lock); // Transfer lock ownership to caller
     return true;
 }
@@ -2719,6 +2760,7 @@ HRESULT HeavyLanePool::BuildMasterBackingStoreEmpty(int width, int height, int s
         store.height = height;
         store.stride = stride;
         store.imageId = 0; // Sentinel: decoder has not completed.
+        store.colorMeta.Clear();
         {
             std::lock_guard lock(m_masterBackingMutex);
             m_masterBacking = std::move(store);
@@ -2756,6 +2798,7 @@ HRESULT HeavyLanePool::BuildMasterBackingStoreEmpty(int width, int height, int s
             candidate.stride = stride;
             candidate.imageId = 0; // Sentinel: NOT ready for reading
             candidate.isPooled = true;
+            candidate.colorMeta.Clear();
 
             // Keep full-capacity mapping when present (fastest reuse path).
             if (!candidate.view) {
@@ -2945,8 +2988,8 @@ HRESULT HeavyLanePool::LaunchDecodeWorker(
     bool fullDecode,
     bool noFakeBase) {
 
+    using QuickView::ToolProcess::ComputeDecodeMapLayout;
     using QuickView::ToolProcess::DecodeResultHeader;
-    constexpr uint64_t kHeaderBytes = sizeof(DecodeResultHeader);
 
     if (job.path.empty()) return E_INVALIDARG;
     if (targetW <= 0 || targetH <= 0) return E_INVALIDARG;
@@ -2955,8 +2998,11 @@ HRESULT HeavyLanePool::LaunchDecodeWorker(
     const uint64_t payloadBytes64 = static_cast<uint64_t>(targetW) * static_cast<uint64_t>(targetH) * 4ull;
     if (payloadBytes64 == 0) return E_FAIL;
 
-    const uint64_t mapBytes64 = kHeaderBytes + payloadBytes64;
-    if (mapBytes64 > static_cast<uint64_t>(std::numeric_limits<SIZE_T>::max())) return E_OUTOFMEMORY;
+    const auto layout = ComputeDecodeMapLayout(payloadBytes64);
+    if (layout.totalMapBytes == 0 ||
+        layout.totalMapBytes > static_cast<uint64_t>((std::numeric_limits<SIZE_T>::max)())) {
+        return E_OUTOFMEMORY;
+    }
 
     static std::atomic<uint64_t> s_workerSeq{ 0 };
     const uint64_t seq = s_workerSeq.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -2966,24 +3012,37 @@ HRESULT HeavyLanePool::LaunchDecodeWorker(
                GetCurrentProcessId(),
                static_cast<unsigned long long>(seq));
 
-    const DWORD mapSizeHigh = static_cast<DWORD>(mapBytes64 >> 32);
-    const DWORD mapSizeLow  = static_cast<DWORD>(mapBytes64 & 0xFFFFFFFFull);
+    const DWORD mapSizeHigh = static_cast<DWORD>(layout.totalMapBytes >> 32);
+    const DWORD mapSizeLow  = static_cast<DWORD>(layout.totalMapBytes & 0xFFFFFFFFull);
 
-    HANDLE hMap = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, mapSizeHigh, mapSizeLow, mapName);
+    HANDLE hMap = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE | SEC_RESERVE,
+                                     mapSizeHigh, mapSizeLow, mapName);
     if (!hMap) return HRESULT_FROM_WIN32(GetLastError());
 
-    uint8_t* mapView = static_cast<uint8_t*>(MapViewOfFile(hMap, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, static_cast<SIZE_T>(mapBytes64)));
+    uint8_t* mapView = static_cast<uint8_t*>(MapViewOfFile(
+        hMap, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, static_cast<SIZE_T>(layout.totalMapBytes)));
     if (!mapView) {
         HRESULT hr = HRESULT_FROM_WIN32(GetLastError());
         CloseHandle(hMap);
         return hr;
     }
 
+    if (!VirtualAlloc(mapView, static_cast<SIZE_T>(layout.headerBytes), MEM_COMMIT, PAGE_READWRITE)) {
+        HRESULT hr = HRESULT_FROM_WIN32(GetLastError());
+        UnmapViewOfFile(mapView);
+        CloseHandle(hMap);
+        return hr;
+    }
+
     auto* header = reinterpret_cast<DecodeResultHeader*>(mapView);
     *header = {};
-    header->magic   = QuickView::ToolProcess::kDecodeWorkerMagic;
-    header->version = QuickView::ToolProcess::kDecodeWorkerVersion;
-    header->hr      = static_cast<int32_t>(E_PENDING);
+    header->magic         = QuickView::ToolProcess::kDecodeWorkerMagic;
+    header->version       = QuickView::ToolProcess::kDecodeWorkerVersion;
+    header->hr            = static_cast<int32_t>(E_PENDING);
+    header->pixelOffset   = layout.pixelOffset;
+    header->pixelCapacity = layout.pixelCapacity;
+    header->iccOffset     = layout.iccOffset;
+    header->iccCapacity   = layout.iccCapacity;
 
     // Build command line
     wchar_t exePath[MAX_PATH] = {};
@@ -3118,45 +3177,103 @@ HRESULT HeavyLanePool::LaunchDecodeWorker(
         return childHr;
     }
 
-    if (header->width == 0 || header->height == 0 || header->stride == 0) {
+    if (!QuickView::ToolProcess::ValidateDecodeResultHeader(*header, layout)) {
         UnmapViewOfFile(mapView);
         CloseHandle(hMap);
         return E_FAIL;
     }
 
-    const uint64_t payloadBytes = header->payloadBytes;
-    const uint64_t minPayload = static_cast<uint64_t>(header->stride) * static_cast<uint64_t>(header->height);
-    if (payloadBytes < minPayload || payloadBytes > payloadBytes64) {
-        UnmapViewOfFile(mapView);
-        CloseHandle(hMap);
-        return E_FAIL;
-    }
+    auto sanitizePixelFormat = [](uint8_t raw) -> QuickView::PixelFormat {
+        switch (static_cast<QuickView::PixelFormat>(raw)) {
+            case QuickView::PixelFormat::BGRA8888:
+            case QuickView::PixelFormat::BGRX8888:
+            case QuickView::PixelFormat::RGBA8888:
+            case QuickView::PixelFormat::R32G32B32A32_FLOAT:
+            case QuickView::PixelFormat::R16G16B16A16_UNORM:
+            case QuickView::PixelFormat::R16G16B16A16_FLOAT:
+                return static_cast<QuickView::PixelFormat>(raw);
+            default:
+                return QuickView::PixelFormat::BGRA8888;
+        }
+    };
 
     // [Phase 4] Zero-Copy MMF: Keep MapView alive, use directly as pixel data.
     // Eliminates 400MB+ memcpy for large images.
-    outFrame.pixels = mapView + kHeaderBytes;
+    outFrame.pixels = mapView + layout.pixelOffset;
     outFrame.width  = static_cast<int>(header->width);
     outFrame.height = static_cast<int>(header->height);
     outFrame.stride = static_cast<int>(header->stride);
-    outFrame.format = QuickView::PixelFormat::BGRA8888;
+    outFrame.format = sanitizePixelFormat(header->pixelFormat);
     // Capture MMF handles; release when RawImageFrame is destroyed
     {
         auto* ctx = new(std::nothrow) MmfDeleterCtx{ mapView, hMap };
-        if (ctx) {
-            outFrame.memoryDeleter.ctx = ctx;
-            outFrame.memoryDeleter.pfn = [](uint8_t*, void* c) {
-                auto* lctx = static_cast<MmfDeleterCtx*>(c);
-                UnmapViewOfFile(lctx->mapView);
-                CloseHandle(lctx->hMap);
-            };
-            outFrame.memoryDeleter.ctxDeleter = [](void* c) { delete static_cast<MmfDeleterCtx*>(c); };
+        if (!ctx) {
+            outFrame.pixels = nullptr;
+            outFrame.width  = 0;
+            outFrame.height = 0;
+            outFrame.stride = 0;
+            UnmapViewOfFile(mapView);
+            CloseHandle(hMap);
+            return E_OUTOFMEMORY;
         }
+        outFrame.memoryDeleter.ctx = ctx;
+        outFrame.memoryDeleter.pfn = [](uint8_t*, void* c) {
+            auto* lctx = static_cast<MmfDeleterCtx*>(c);
+            UnmapViewOfFile(lctx->mapView);
+            CloseHandle(lctx->hMap);
+        };
+        outFrame.memoryDeleter.ctxDeleter = [](void* c) { delete static_cast<MmfDeleterCtx*>(c); };
     }
 
-    // Propagate EXIF orientation and true source dimensions from child
-    outMeta.ExifOrientation = static_cast<int>(header->exifOrientation);
-    outMeta.Width  = static_cast<int>(header->originalWidth);
-    outMeta.Height = static_cast<int>(header->originalHeight);
+    // Restore color descriptors and ICC profile
+    outFrame.colorInfo.dataSpace       = static_cast<QuickView::PixelDataSpace>(header->colorDataSpace);
+    outFrame.colorInfo.transfer        = static_cast<QuickView::TransferFunction>(header->colorTransfer);
+    outFrame.colorInfo.primaries       = static_cast<QuickView::ColorPrimaries>(header->colorPrimaries);
+    outFrame.colorInfo.nominalBitDepth = header->nominalBitDepth;
+    outFrame.colorInfo.hasEmbeddedIcc  = (header->hasEmbeddedIcc != 0) || (header->iccBytes > 0);
+
+    QuickView::ToolProcess::UnpackHdrFlags(
+        header->hdrFlags,
+        outFrame.hdrMetadata.isValid,
+        outFrame.hdrMetadata.isHdr,
+        outFrame.hdrMetadata.isSceneLinear,
+        outFrame.hdrMetadata.hasNitsMetadata,
+        outFrame.hdrMetadata.hasGainMap,
+        outFrame.hdrMetadata.gainMapApplied);
+    outFrame.hdrMetadata.transfer                 = static_cast<QuickView::TransferFunction>(header->hdrTransfer);
+    outFrame.hdrMetadata.primaries                = static_cast<QuickView::ColorPrimaries>(header->hdrPrimaries);
+    outFrame.hdrMetadata.maxCLLNits               = header->maxCLLNits;
+    outFrame.hdrMetadata.maxFALLNits              = header->maxFALLNits;
+    outFrame.hdrMetadata.masteringMinNits         = header->masteringMinNits;
+    outFrame.hdrMetadata.masteringMaxNits         = header->masteringMaxNits;
+    outFrame.hdrMetadata.gainMapBaseHeadroom      = header->gainMapBaseHeadroom;
+    outFrame.hdrMetadata.gainMapAlternateHeadroom = header->gainMapAlternateHeadroom;
+    outFrame.hdrMetadata.gainMapAppliedHeadroom   = header->gainMapAppliedHeadroom;
+
+    if (header->iccBytes > 0) {
+        const uint8_t* iccPtr = mapView + layout.iccOffset;
+        outFrame.iccProfile.assign(iccPtr, iccPtr + header->iccBytes);
+        outMeta.iccProfileData.assign(outFrame.iccProfile.begin(), outFrame.iccProfile.end());
+        outMeta.HasEmbeddedColorProfile = true;
+        if (outMeta.ColorSpace.empty()) {
+            outMeta.ColorSpace = CImageLoader::ParseICCProfileName(
+                outMeta.iccProfileData.data(), outMeta.iccProfileData.size());
+        }
+    } else {
+        outFrame.iccProfile.clear();
+    }
+
+    // Propagate EXIF orientation, color descriptors, and true source dimensions from child
+    const int validOrientation =
+        (header->exifOrientation >= 1 && header->exifOrientation <= 8)
+            ? static_cast<int>(header->exifOrientation)
+            : 1;
+    outFrame.exifOrientation = validOrientation;
+    outMeta.ExifOrientation  = validOrientation;
+    outMeta.colorInfo        = outFrame.colorInfo;
+    outMeta.hdrMetadata      = outFrame.hdrMetadata;
+    outMeta.Width  = static_cast<UINT>(header->originalWidth);
+    outMeta.Height = static_cast<UINT>(header->originalHeight);
     if (header->originalWidth > 0 && header->originalHeight > 0) {
         outFrame.srcWidth  = static_cast<int>(header->originalWidth);
         outFrame.srcHeight = static_cast<int>(header->originalHeight);
@@ -3256,6 +3373,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
         const uint8_t* masterPixelsView = nullptr;
         int masterW = 0, masterH = 0, masterStride = 0;
         bool masterFromRam = false;
+        QuickView::PixelColorMetadata masterColorMeta;
         {
             std::lock_guard lock(m_lodCacheMutex);
             if (m_masterLOD0Cache.pixels && m_masterLOD0Cache.imageId == job.imageId) {
@@ -3263,13 +3381,19 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                 masterW = m_masterLOD0Cache.width;
                 masterH = m_masterLOD0Cache.height;
                 masterStride = m_masterLOD0Cache.stride;
+                if (m_masterLOD0Cache.colorMeta) {
+                    masterColorMeta = *m_masterLOD0Cache.colorMeta;
+                }
                 masterPixelsView = masterPixels.get();
                 masterFromRam = true;
             }
         }
         std::unique_lock<std::mutex> masterLock;
         if (!masterPixelsView) {
-            AcquireMasterBackingView(job.imageId, &masterPixelsView, &masterW, &masterH, &masterStride, masterLock);
+            AcquireMasterBackingView(job.imageId, &masterPixelsView, &masterW, &masterH, &masterStride, masterLock, &masterColorMeta);
+        }
+        if (!masterColorMeta.HasColorDescriptor() && cascadeSource.colorMeta && cascadeSource.colorMeta->HasColorDescriptor()) {
+            masterColorMeta = *cascadeSource.colorMeta;
         }
         
         if (masterPixelsView) {
@@ -3317,6 +3441,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                     fullFrame.stride = (int)dstStride;
                     fullFrame.format = QuickView::PixelFormat::BGRA8888;
                     fullFrame.memoryDeleter = QuickView::MemoryDeleter::FromAlignedFree();
+                    QuickView::ApplyColorMetadata(fullFrame, masterColorMeta);
                     hr = S_OK;
                 }
             } else {
@@ -3335,6 +3460,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                             fullFrame.memoryDeleter.ctxDeleter = [](void* c) { delete static_cast<SharedPtrCtx*>(c); };
                         }
                     }
+                    QuickView::ApplyColorMetadata(fullFrame, masterColorMeta);
                     hr = S_OK;
                     QV_LOG("P15_MasterRoute", TraceLoggingString("ZeroCopy LOD0 RAM", "Action"));
                 } else {
@@ -3355,6 +3481,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                         fullFrame.stride = (int)dstStride;
                         fullFrame.format = QuickView::PixelFormat::BGRA8888;
                         fullFrame.memoryDeleter = QuickView::MemoryDeleter::FromAlignedFree();
+                        QuickView::ApplyColorMetadata(fullFrame, masterColorMeta);
                         hr = S_OK;
                         QV_LOG("P15_MasterRoute", TraceLoggingString("MMF CopyOut LOD0", "Action"));
                     }
@@ -3393,8 +3520,9 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                 // Warmup done — try to acquire Master Cache
                 const uint8_t* masterView = nullptr;
                 int mW = 0, mH = 0, mS = 0;
+                QuickView::PixelColorMetadata warmupColorMeta;
                 std::unique_lock<std::mutex> masterLock;
-                if (AcquireMasterBackingView(job.imageId, &masterView, &mW, &mH, &mS, masterLock)) {
+                if (AcquireMasterBackingView(job.imageId, &masterView, &mW, &mH, &mS, masterLock, &warmupColorMeta)) {
                     const int targetW = (m_titanSrcW + (1 << lod) - 1) / (1 << lod);
                     const int targetH = (m_titanSrcH + (1 << lod) - 1) / (1 << lod);
                     size_t dstStride = (size_t)targetW * 4;
@@ -3417,6 +3545,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                         fullFrame.stride = (int)dstStride;
                         fullFrame.format = QuickView::PixelFormat::BGRA8888;
                         fullFrame.memoryDeleter = QuickView::MemoryDeleter::FromAlignedFree();
+                        QuickView::ApplyColorMetadata(fullFrame, warmupColorMeta);
                         hr = S_OK;
                         
                         QV_LOG("P15_MasterRoute",
@@ -3490,6 +3619,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
             if (!warmupResolved && SUCCEEDED(hr) && fullFrame.IsValid()) {
                 loader = L"DecodeWorker(LOD)";
                 
+                const QuickView::PixelColorMetadata decodedColorMeta = QuickView::ExtractColorMetadata(fullFrame);
                 auto deleter = fullFrame.memoryDeleter;
                 uint8_t* rawPixels = fullFrame.Detach(); // Take ownership
                 
@@ -3511,16 +3641,19 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                           m_titanFormat.load() == QuickView::TitanFormat::AVIF ||
                           m_titanFormat.load() == QuickView::TitanFormat::JXL) &&
                         ((size_t)fullFrame.width >= 8000 || (size_t)fullFrame.height >= 8000) &&
+                        (fullFrame.format == QuickView::PixelFormat::BGRA8888 ||
+                         fullFrame.format == QuickView::PixelFormat::BGRX8888) &&
                         !ShouldUseHeapBacking(frameBytes);
                     bool backedByMmf = false;
                     if (shouldBuildBacking) {
-                        if (SUCCEEDED(BuildMasterBackingStore(frameSharedPtr.get(), fullFrame.width, fullFrame.height, fullFrame.stride, job.imageId))) {
+                        if (SUCCEEDED(BuildMasterBackingStore(frameSharedPtr.get(), fullFrame.width, fullFrame.height, fullFrame.stride, job.imageId, &decodedColorMeta))) {
                             backedByMmf = true;
                             QV_LOG("Worker_Route", TraceLoggingString("Phase4 MasterCache PersistedToMMF", "Action"));
                         }
                     }
                     
                     if (!backedByMmf) {
+                        auto sharedMeta = std::make_shared<const QuickView::PixelColorMetadata>(decodedColorMeta);
                         std::lock_guard lock(m_lodCacheMutex);
                         m_masterLOD0Cache.pixels = frameSharedPtr;
                         m_masterLOD0Cache.width = fullFrame.width;
@@ -3528,6 +3661,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                         m_masterLOD0Cache.stride = fullFrame.stride;
                         m_masterLOD0Cache.lod = 0;
                         m_masterLOD0Cache.imageId = job.imageId;
+                        m_masterLOD0Cache.colorMeta = std::move(sharedMeta);
                     } else {
                         std::lock_guard lock(m_lodCacheMutex);
                         m_masterLOD0Cache = {};
@@ -3594,6 +3728,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                         
                         QV_LOG("P15_MasterRoute", TraceLoggingString("ZeroCopy LOD0", "Action"));
                     }
+                    QuickView::ApplyColorMetadata(fullFrame, decodedColorMeta);
                 } else {
                     // [Direct LOD] Bypassed Master Cache. Subprocess already returned exact LOD target size.
                     fullFrame.pixels = frameSharedPtr.get();
@@ -3608,6 +3743,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                             fullFrame.memoryDeleter.ctxDeleter = [](void* c) { delete static_cast<SharedPtrCtx*>(c); };
                         }
                     }
+                    QuickView::ApplyColorMetadata(fullFrame, decodedColorMeta);
                     
                     QV_LOG("DecodeWorker_Result",
                         TraceLoggingString("DirectLOD Applied", "Action"),
@@ -3656,6 +3792,9 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
         TraceLoggingUInt64(fullFrame.GetBufferSize() / (1024*1024), "CachedMB"));
     
     // Cache the full decoded buffer
+    auto sharedColorMeta = std::make_shared<const QuickView::PixelColorMetadata>(
+        QuickView::ExtractColorMetadata(fullFrame));
+    LODCache cacheSnap;
     {
         std::lock_guard lock(m_lodCacheMutex);
         
@@ -3679,26 +3818,28 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
         m_lodCache.stride = fullFrame.stride;
         m_lodCache.lod = lod;
         m_lodCache.imageId = job.imageId;
-        
-        // Now slice the requesting tile from the freshly cached buffer
-        hr = SliceTileFromLODCache(job, outTile, loader);
+        m_lodCache.colorMeta = std::move(sharedColorMeta);
+        cacheSnap = m_lodCache;
     }
+
+    // Slice outside m_lodCacheMutex so other workers can slice concurrently
+    hr = SliceTileFromLODCache(cacheSnap, job, outTile, loader);
     
     guard.succeeded = true;
     m_lodCacheFailCount.store(0); // [B4] Reset fail count on success
     return hr;
 }
 
-HRESULT HeavyLanePool::SliceTileFromLODCache(const JobInfo& job, RawImageFrame& out, std::wstring& loader) {
-    // Caller must hold m_lodCacheMutex
-    if (!m_lodCache.pixels) return E_FAIL;
+HRESULT HeavyLanePool::SliceTileFromLODCache(const LODCache& cache, const JobInfo& job, RawImageFrame& out, std::wstring& loader) {
+    // Lock-free against m_lodCacheMutex: caller supplies an owning LODCache snapshot.
+    if (!cache.pixels) return E_FAIL;
     
     const int TILE_SIZE = 512;
     int tileX = job.tileCoord.col * TILE_SIZE;
     int tileY = job.tileCoord.row * TILE_SIZE;
     
-    int copyW = std::min(TILE_SIZE, m_lodCache.width - tileX);
-    int copyH = std::min(TILE_SIZE, m_lodCache.height - tileY);
+    int copyW = std::min(TILE_SIZE, cache.width - tileX);
+    int copyH = std::min(TILE_SIZE, cache.height - tileY);
     
     if (copyW <= 0 || copyH <= 0) return E_FAIL;
     
@@ -3711,8 +3852,8 @@ HRESULT HeavyLanePool::SliceTileFromLODCache(const JobInfo& job, RawImageFrame& 
     
     // Row-by-row copy from cached LOD buffer
     int dstStride = TILE_SIZE * 4; // BGRA
-    int srcStride = m_lodCache.stride;
-    const uint8_t* srcBase = m_lodCache.pixels.get();
+    int srcStride = cache.stride;
+    const uint8_t* srcBase = cache.pixels.get();
     
     for (int y = 0; y < copyH; y++) {
         memcpy(
@@ -3732,6 +3873,9 @@ HRESULT HeavyLanePool::SliceTileFromLODCache(const JobInfo& job, RawImageFrame& 
     {
         out.memoryDeleter.ctx = mgr;
         out.memoryDeleter.pfn = [](uint8_t* p, void* c) { static_cast<QuickView::TileMemoryManager*>(c)->Free(p); };
+    }
+    if (cache.colorMeta) {
+        QuickView::ApplyColorMetadata(out, *cache.colorMeta);
     }
     
     loader = L"LODCache Slice";

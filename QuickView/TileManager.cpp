@@ -463,8 +463,13 @@ namespace QuickView {
     
     void TileManager::InvalidateGpuTiles() {
         std::lock_guard lock(m_mutex);
+        int demoted = 0;
         for (auto& layer : m_layers) {
-            if (layer) layer->InvalidateGpuTiles();
+            if (layer) demoted += layer->InvalidateGpuTiles();
+        }
+        if (demoted > 0) {
+            const int remaining = m_readyCount.load(std::memory_order_relaxed) - demoted;
+            m_readyCount.store(remaining > 0 ? remaining : 0, std::memory_order_relaxed);
         }
     }
     

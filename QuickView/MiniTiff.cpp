@@ -925,6 +925,8 @@ HRESULT LoadRegion(const uint8_t* data, size_t size,
     if (!desc.iccProfile.empty() && desc.photometric != 5) {
         result.metadata.iccProfileData.assign(desc.iccProfile.begin(), desc.iccProfile.end());
         result.metadata.HasEmbeddedColorProfile = true;
+        result.metadata.colorInfo.hasEmbeddedIcc = true;
+        result.metadata.colorInfo.dataSpace = QuickView::PixelDataSpace::EncodedSdr;
     } else {
         result.metadata.HasEmbeddedColorProfile = false;
         result.metadata.colorInfo.dataSpace = QuickView::PixelDataSpace::EncodedSdr;

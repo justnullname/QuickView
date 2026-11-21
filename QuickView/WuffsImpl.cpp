@@ -134,7 +134,8 @@ static bool DecodePNG_Impl(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
                BufferSink& outSink,
                CancelPredicate checkCancel,
-               WuffsImageInfo* pInfo) {
+               WuffsImageInfo* pInfo,
+               bool force8BitBgra) {
     if (!data || size == 0) return false;
 
     // [CMS/HDR] Pre-scan PNG critical chunks, extract bit depth / iCCP / cICP / sRGB / cLLi / mDCv.
@@ -289,7 +290,7 @@ static bool DecodePNG_Impl(const uint8_t* data, size_t size,
 
     uint32_t targetFmt = WUFFS_BASE__PIXEL_FORMAT__BGRA_PREMUL;
     uint32_t bpp = 4;
-    if (pInfo && pInfo->bitDepth == 16) {
+    if (pInfo && pInfo->bitDepth == 16 && !force8BitBgra) {
         // Wuffs v0.4 only supports BGRA_NONPREMUL_4X16LE in its 16-bit PNG swizzler allowlist.
         targetFmt = WUFFS_BASE__PIXEL_FORMAT__BGRA_NONPREMUL_4X16LE;
         bpp = 8;
@@ -322,9 +323,9 @@ static bool DecodePNG_Impl(const uint8_t* data, size_t size,
     *outHeight = height;
     return true;
 }
-bool DecodePNG(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::pmr::vector<uint8_t>& out, CancelPredicate c, WuffsImageInfo* p) { auto sink = MakeBufferSink(out); return DecodePNG_Impl(d, s, w, h, sink, c, p); }
-bool DecodePNG(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::vector<uint8_t>& out, CancelPredicate c, WuffsImageInfo* p) { auto sink = MakeBufferSink(out); return DecodePNG_Impl(d, s, w, h, sink, c, p); }
-bool DecodePNG(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, AllocatorFunc alloc, CancelPredicate c, WuffsImageInfo* p) { BufferAdapter a(alloc); auto sink = MakeBufferSink(a); return DecodePNG_Impl(d, s, w, h, sink, c, p); }
+bool DecodePNG(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::pmr::vector<uint8_t>& out, CancelPredicate c, WuffsImageInfo* p, bool force8BitBgra) { auto sink = MakeBufferSink(out); return DecodePNG_Impl(d, s, w, h, sink, c, p, force8BitBgra); }
+bool DecodePNG(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::vector<uint8_t>& out, CancelPredicate c, WuffsImageInfo* p, bool force8BitBgra) { auto sink = MakeBufferSink(out); return DecodePNG_Impl(d, s, w, h, sink, c, p, force8BitBgra); }
+bool DecodePNG(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, AllocatorFunc alloc, CancelPredicate c, WuffsImageInfo* p, bool force8BitBgra) { BufferAdapter a(alloc); auto sink = MakeBufferSink(a); return DecodePNG_Impl(d, s, w, h, sink, c, p, force8BitBgra); }
 
 // ------------------------------------------------------------
 // GIF Decoder

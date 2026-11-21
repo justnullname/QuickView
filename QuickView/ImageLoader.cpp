@@ -452,6 +452,93 @@ static bool IsJxlDefaultSrgb(const JxlColorEncoding& enc) {
          enc.transfer_function == JXL_TRANSFER_FUNCTION_SRGB;
 }
 
+static void ExtractJxlOutputColorMetadata(
+    JxlDecoder *dec, const JxlBasicInfo &info,
+    QuickView::PixelColorMetadata *outColor,
+    CImageLoader::ImageMetadata *outMeta = nullptr) {
+  if (!dec || (!outColor && !outMeta))
+    return;
+
+  // Query TARGET_DATA first so metadata matches the pixel buffer libjxl emits
+  // when no output profile override was forced; fall back to TARGET_ORIGINAL.
+  std::vector<uint8_t> icc;
+  size_t iccSize = 0;
+  JxlColorProfileTarget iccTarget = JXL_COLOR_PROFILE_TARGET_DATA;
+  if (JXL_DEC_SUCCESS != JxlDecoderGetICCProfileSize(dec, iccTarget, &iccSize) ||
+      iccSize == 0) {
+    iccTarget = JXL_COLOR_PROFILE_TARGET_ORIGINAL;
+    if (JXL_DEC_SUCCESS !=
+        JxlDecoderGetICCProfileSize(dec, iccTarget, &iccSize)) {
+      iccSize = 0;
+    }
+  }
+  if (iccSize > 0) {
+    icc.resize(iccSize);
+    if (JXL_DEC_SUCCESS != JxlDecoderGetColorAsICCProfile(
+                               dec, iccTarget, icc.data(), iccSize)) {
+      icc.clear();
+    }
+  }
+
+  JxlColorEncoding enc = {};
+  if (JXL_DEC_SUCCESS !=
+      JxlDecoderGetColorAsEncodedProfile(dec, JXL_COLOR_PROFILE_TARGET_DATA,
+                                         &enc)) {
+    JxlDecoderGetColorAsEncodedProfile(dec, JXL_COLOR_PROFILE_TARGET_ORIGINAL,
+                                       &enc);
+  }
+
+  QuickView::PixelColorInfo colorInfo;
+  QuickView::HdrStaticMetadata hdrMeta;
+  colorInfo.hasEmbeddedIcc = !icc.empty();
+  colorInfo.nominalBitDepth =
+      static_cast<uint8_t>((std::min)(info.bits_per_sample, 255u));
+
+  if (enc.color_space != JXL_COLOR_SPACE_UNKNOWN) {
+    const auto transfer = MapJxlTransferFunction(enc.transfer_function);
+    const auto primaries = MapJxlPrimaries(enc.primaries);
+    colorInfo.transfer = transfer;
+    colorInfo.primaries = primaries;
+    colorInfo.dataSpace =
+        (transfer == QuickView::TransferFunction::PQ ||
+         transfer == QuickView::TransferFunction::HLG)
+            ? QuickView::PixelDataSpace::EncodedHdr
+            : (transfer == QuickView::TransferFunction::Linear
+                   ? QuickView::PixelDataSpace::SceneLinear
+                   : QuickView::PixelDataSpace::EncodedSdr);
+    hdrMeta.isValid = true;
+    hdrMeta.transfer = transfer;
+    hdrMeta.primaries = primaries;
+    hdrMeta.isSceneLinear = (transfer == QuickView::TransferFunction::Linear);
+    hdrMeta.isHdr = (transfer == QuickView::TransferFunction::PQ ||
+                     transfer == QuickView::TransferFunction::HLG);
+  } else if (!icc.empty()) {
+    colorInfo.dataSpace = QuickView::PixelDataSpace::EncodedSdr;
+  }
+
+  if (outColor) {
+    outColor->iccProfile = icc;
+    outColor->colorInfo = colorInfo;
+    outColor->hdrMetadata = hdrMeta;
+  }
+  if (outMeta) {
+    if (!icc.empty()) {
+      outMeta->iccProfileData.assign(icc.begin(), icc.end());
+      std::wstring desc =
+          CImageLoader::ParseICCProfileName(icc.data(), icc.size());
+      if (!desc.empty())
+        outMeta->ColorSpace = desc;
+    }
+    outMeta->colorInfo = colorInfo;
+    outMeta->hdrMetadata = hdrMeta;
+    if (enc.color_space != JXL_COLOR_SPACE_UNKNOWN) {
+      outMeta->HasEmbeddedColorProfile = !IsJxlDefaultSrgb(enc);
+    } else {
+      outMeta->HasEmbeddedColorProfile = !icc.empty();
+    }
+  }
+}
+
 // [v18] Fallback Metadata Prober for Native JXL Path
 static void ProbeJxlMetadataNative(const uint8_t *data, size_t size,
                                    CImageLoader::ImageMetadata *pMetadata) {
@@ -1180,7 +1267,7 @@ HRESULT LoadBufferUnified(const uint8_t *mappedData, size_t mappedSize,
         (ctx.targetWidth > 0 || ctx.targetHeight > 0 || ctx.forceRenderFull)) {
       CImageLoader::ThumbData tmp;
       HRESULT hr = CImageLoader::LoadThumbJXL_DC(
-          mappedData, mappedSize, &tmp, ctx.pMetadata, ctx.allowFakeBase);
+          mappedData, mappedSize, &tmp, ctx.pMetadata, ctx.allowFakeBase, true);
       if (hr == E_ABORT) {
         if (ctx.targetWidth < 1000 && ctx.targetHeight < 1000) {
           return E_ABORT;
@@ -1198,6 +1285,24 @@ HRESULT LoadBufferUnified(const uint8_t *mappedData, size_t mappedSize,
         result.format = PixelFormat::BGRA8888;
         result.success = true;
         result.metadata.LoaderName = tmp.loaderName;
+        if (tmp.origWidth > 0 && result.metadata.Width == 0)
+          result.metadata.Width = static_cast<UINT>(tmp.origWidth);
+        if (tmp.origHeight > 0 && result.metadata.Height == 0)
+          result.metadata.Height = static_cast<UINT>(tmp.origHeight);
+        result.metadata.colorInfo = tmp.colorMeta.colorInfo;
+        result.metadata.hdrMetadata = tmp.colorMeta.hdrMetadata;
+        if (!tmp.colorMeta.iccProfile.empty()) {
+          result.metadata.iccProfileData.assign(
+              tmp.colorMeta.iccProfile.begin(),
+              tmp.colorMeta.iccProfile.end());
+          result.metadata.HasEmbeddedColorProfile = true;
+          result.metadata.colorInfo.hasEmbeddedIcc = true;
+          if (result.metadata.ColorSpace.empty()) {
+            result.metadata.ColorSpace = CImageLoader::ParseICCProfileName(
+                result.metadata.iccProfileData.data(),
+                result.metadata.iccProfileData.size());
+          }
+        }
         return S_OK;
       } else if (FAILED(hr) && hr != E_NOTIMPL) {
         return hr;
@@ -1868,7 +1973,7 @@ static void PopulateHdrInfoFromPngInfo(const WuffsLoader::WuffsImageInfo &info,
   } else if (metadata->colorInfo.primaries ==
              QuickView::ColorPrimaries::Unknown) {
     metadata->colorInfo.primaries =
-        metadata->HasEmbeddedColorProfile
+        metadata->HasEmbeddedColorProfile.value_or(false)
             ? GuessPrimariesFromMetadataColorSpace(*metadata)
             : QuickView::ColorPrimaries::SRGB;
   }
@@ -2631,14 +2736,6 @@ static HRESULT LoadJpegRegion_V3(const uint8_t *buf, size_t bufSize,
                                     outFrame->pixels, contentW, contentH,
                                     outFrame->stride);
 
-    // [CMS] Extract ICC Profile from TurboJPEG (Software Resized)
-    uint8_t *iccBuf = nullptr;
-    size_t iccSize = 0;
-    if (tj3GetICCProfile(tj, &iccBuf, &iccSize) == 0 && iccSize > 0) {
-      outFrame->iccProfile.assign(iccBuf, iccBuf + iccSize);
-      tj3Free(iccBuf);
-    }
-
     // Free temp
     if (!arena)
       _aligned_free(pDecodeBuf);
@@ -2690,14 +2787,17 @@ static HRESULT LoadJpegRegion_V3(const uint8_t *buf, size_t bufSize,
                        TJPF_BGRX) != 0) {
       return E_FAIL;
     }
+  }
 
-    // [CMS] Extract ICC Profile from TurboJPEG (Direct Decode)
-    uint8_t *iccBuf = nullptr;
-    size_t iccSize = 0;
-    if (tj3GetICCProfile(tj, &iccBuf, &iccSize) == 0 && iccSize > 0) {
-      outFrame->iccProfile.assign(iccBuf, iccBuf + iccSize);
-      tj3Free(iccBuf);
-    }
+  outFrame->colorInfo.dataSpace = QuickView::PixelDataSpace::EncodedSdr;
+  outFrame->colorInfo.transfer = QuickView::TransferFunction::SRGB;
+  outFrame->colorInfo.nominalBitDepth = 8;
+  uint8_t *iccBuf = nullptr;
+  size_t iccSize = 0;
+  if (tj3GetICCProfile(tj, &iccBuf, &iccSize) == 0 && iccSize > 0) {
+    outFrame->iccProfile.assign(iccBuf, iccBuf + iccSize);
+    outFrame->colorInfo.hasEmbeddedIcc = true;
+    tj3Free(iccBuf);
   }
 
   return S_OK;
@@ -2810,7 +2910,10 @@ HRESULT CImageLoader::FullDecodeToMMF(
     const uint8_t *data, size_t size, uint8_t *mmfBuf, size_t mmfBufSize,
     int *outW, int *outH, int *outStride,
     [[maybe_unused]] QuickView::SimpleCallback dcReadyCallback,
-    CancelPredicate checkCancel) {
+    CancelPredicate checkCancel,
+    QuickView::PixelColorMetadata *outColorMeta) {
+  if (outColorMeta)
+    outColorMeta->Clear();
   if (!data || size < 4 || !mmfBuf || !outW || !outH || !outStride)
     return E_INVALIDARG;
 
@@ -2848,9 +2951,9 @@ HRESULT CImageLoader::FullDecodeToMMF(
     }
     JxlDecoderSetParallelRunner(dec, JxlThreadParallelRunner, runner);
 
-    // Subscribe to FRAME_PROGRESSION to catch the DC (1:8) stage
-    int events =
-        JXL_DEC_BASIC_INFO | JXL_DEC_FULL_IMAGE | JXL_DEC_FRAME_PROGRESSION;
+    // Subscribe to COLOR_ENCODING + FRAME_PROGRESSION to preserve color profile
+    int events = JXL_DEC_BASIC_INFO | JXL_DEC_COLOR_ENCODING |
+                 JXL_DEC_FULL_IMAGE | JXL_DEC_FRAME_PROGRESSION;
     if (JXL_DEC_SUCCESS != JxlDecoderSubscribeEvents(dec, events)) {
       JxlDecoderDestroy(dec);
       JxlThreadParallelRunnerDestroy(runner);
@@ -2891,15 +2994,8 @@ HRESULT CImageLoader::FullDecodeToMMF(
       if (st == JXL_DEC_BASIC_INFO) {
         if (JXL_DEC_SUCCESS != JxlDecoderGetBasicInfo(dec, &info))
           break;
-
-        // Force sRGB output
-        JxlColorEncoding ce = {};
-        ce.color_space = JXL_COLOR_SPACE_RGB;
-        ce.white_point = JXL_WHITE_POINT_D65;
-        ce.primaries = JXL_PRIMARIES_SRGB;
-        ce.transfer_function = JXL_TRANSFER_FUNCTION_SRGB;
-        ce.rendering_intent = JXL_RENDERING_INTENT_PERCEPTUAL;
-        JxlDecoderSetOutputColorProfile(dec, &ce, NULL, 0);
+      } else if (st == JXL_DEC_COLOR_ENCODING) {
+        ExtractJxlOutputColorMetadata(dec, info, outColorMeta, nullptr);
       } else if (st == JXL_DEC_NEED_IMAGE_OUT_BUFFER) {
         size_t needed = 0;
         if (JXL_DEC_SUCCESS !=
@@ -2987,10 +3083,31 @@ HRESULT CImageLoader::FullDecodeToMMF(
       return p->buf;
     };
 
-    if (!WuffsLoader::DecodePNG(data, size, &w, &h, allocator, checkCancel) ||
+    WuffsLoader::WuffsImageInfo pngInfo;
+    if (!WuffsLoader::DecodePNG(data, size, &w, &h, allocator, checkCancel,
+                                &pngInfo, true) ||
         !allocOK) {
       QV_LOG("MMF_Decode", TraceLoggingString("PNG Failed", "Action"));
       return E_FAIL;
+    }
+
+    if (outColorMeta) {
+      ImageMetadata tmpMeta;
+      if (!pngInfo.iccProfile.empty()) {
+        tmpMeta.iccProfileData.assign(pngInfo.iccProfile.begin(),
+                                      pngInfo.iccProfile.end());
+        tmpMeta.HasEmbeddedColorProfile = true;
+        tmpMeta.colorInfo.hasEmbeddedIcc = true;
+        tmpMeta.ColorSpace = CImageLoader::ParseICCProfileName(
+            tmpMeta.iccProfileData.data(), tmpMeta.iccProfileData.size());
+      }
+      PopulateHdrInfoFromPngInfo(pngInfo, &tmpMeta);
+      outColorMeta->iccProfile.assign(tmpMeta.iccProfileData.begin(),
+                                      tmpMeta.iccProfileData.end());
+      outColorMeta->colorInfo = tmpMeta.colorInfo;
+      outColorMeta->colorInfo.nominalBitDepth = 8; // Direct-to-MMF always decodes 8-bit BGRA
+      outColorMeta->hdrMetadata = tmpMeta.hdrMetadata;
+      outColorMeta->exifOrientation = 1;
     }
 
     *outW = (int)w;
@@ -3011,19 +3128,42 @@ HRESULT CImageLoader::FullDecodeToMMF(
   if (FAILED(hr) || !heapFrame.IsValid())
     return FAILED(hr) ? hr : E_FAIL;
 
-  size_t needed = (size_t)heapFrame.stride * (size_t)heapFrame.height;
-  if (needed > mmfBufSize) {
+  // MasterBackingStore expects 4-bpp BGRA8888 / BGRX8888 buffers.
+  if (heapFrame.format != QuickView::PixelFormat::BGRA8888 &&
+      heapFrame.format != QuickView::PixelFormat::BGRX8888) {
+    return E_NOTIMPL;
+  }
+
+  const size_t needed = static_cast<size_t>(heapFrame.stride) *
+                        static_cast<size_t>(heapFrame.height);
+  const size_t packedRowBytes = static_cast<size_t>(heapFrame.width) * 4u;
+  const size_t packedTotalBytes =
+      packedRowBytes * static_cast<size_t>(heapFrame.height);
+
+  int committedStride = heapFrame.stride;
+  if (needed <= mmfBufSize) {
+    memcpy(mmfBuf, heapFrame.pixels, needed);
+  } else if (packedTotalBytes <= mmfBufSize) {
+    for (int y = 0; y < heapFrame.height; ++y) {
+      memcpy(mmfBuf + static_cast<size_t>(y) * packedRowBytes,
+             heapFrame.pixels + static_cast<size_t>(y) * heapFrame.stride,
+             packedRowBytes);
+    }
+    committedStride = static_cast<int>(packedRowBytes);
+  } else {
     QV_LOG("MMF_Decode", TraceLoggingString("Fallback OOM", "Action"),
            TraceLoggingUInt64(needed / (1024 * 1024), "NeededMB"),
            TraceLoggingUInt64(mmfBufSize / (1024 * 1024), "MmfMB"));
     return E_OUTOFMEMORY;
   }
 
-  memcpy(mmfBuf, heapFrame.pixels, needed);
+  if (outColorMeta) {
+    *outColorMeta = QuickView::ExtractColorMetadata(heapFrame);
+  }
 
   *outW = heapFrame.width;
   *outH = heapFrame.height;
-  *outStride = heapFrame.stride;
+  *outStride = committedStride;
 
   QV_LOG("MMF_Decode", TraceLoggingString("FallbackCopy OK", "Action"),
          TraceLoggingInt32(heapFrame.width, "Width"),
@@ -3180,6 +3320,14 @@ HRESULT CImageLoader::LoadRegionToFrame(
             if (roiResult.pixels) {
               _aligned_free(roiResult.pixels);
             }
+            outFrame->iccProfile.assign(
+                roiResult.metadata.iccProfileData.begin(),
+                roiResult.metadata.iccProfileData.end());
+            outFrame->colorInfo = roiResult.metadata.colorInfo;
+            if (!outFrame->iccProfile.empty()) {
+              outFrame->colorInfo.hasEmbeddedIcc = true;
+            }
+            outFrame->hdrMetadata = roiResult.metadata.hdrMetadata;
             if (pLoaderName) {
               *pLoaderName = L"MiniTIFF Region";
             }
@@ -3231,6 +3379,9 @@ HRESULT CImageLoader::LoadRegionGeneric_StrategyB(
   if (FAILED(hr))
     return hr;
 
+  if (fullFrame.GetBytesPerPixel() != 4)
+    return E_NOTIMPL;
+
   RegionScalePlan plan{};
   if (!BuildRegionScalePlan(srcRect, fullFrame.width, fullFrame.height, scale,
                             explicitTargetW, explicitTargetH, &plan)) {
@@ -3272,6 +3423,13 @@ HRESULT CImageLoader::LoadRegionGeneric_StrategyB(
           (size_t)plan.cropX * 4,
       plan.cropW, plan.cropH, (int)fullFrame.stride, outFrame->pixels,
       plan.contentW, plan.contentH, outFrame->stride);
+
+  outFrame->iccProfile = std::move(fullFrame.iccProfile);
+  outFrame->colorInfo = fullFrame.colorInfo;
+  if (!outFrame->iccProfile.empty()) {
+    outFrame->colorInfo.hasEmbeddedIcc = true;
+  }
+  outFrame->hdrMetadata = fullFrame.hdrMetadata;
 
   return S_OK;
 }
@@ -3384,6 +3542,24 @@ HRESULT CImageLoader::LoadWebPRegionToFrame(
                                       plan.contentH, outFrame->stride);
   }
 
+  outFrame->colorInfo.dataSpace = QuickView::PixelDataSpace::EncodedSdr;
+  outFrame->colorInfo.transfer = QuickView::TransferFunction::SRGB;
+  outFrame->colorInfo.nominalBitDepth = 8;
+  {
+    WebPData webpData = {srcData, srcSize};
+    WebPDemuxer *demux = WebPDemux(&webpData);
+    if (demux) {
+      WebPChunkIterator chunk;
+      if (WebPDemuxGetChunk(demux, "ICCP", 1, &chunk)) {
+        outFrame->iccProfile.assign(chunk.chunk.bytes,
+                                    chunk.chunk.bytes + chunk.chunk.size);
+        outFrame->colorInfo.hasEmbeddedIcc = !outFrame->iccProfile.empty();
+        WebPDemuxReleaseChunkIterator(&chunk);
+      }
+      WebPDemuxDelete(demux);
+    }
+  }
+
   return S_OK;
 }
 
@@ -3458,7 +3634,7 @@ HRESULT CImageLoader::LoadJxlRegionToFrame(
   }
 
   if (JXL_DEC_SUCCESS !=
-      JxlDecoderSubscribeEvents(dec, JXL_DEC_BASIC_INFO | JXL_DEC_FULL_IMAGE)) {
+      JxlDecoderSubscribeEvents(dec, JXL_DEC_BASIC_INFO | JXL_DEC_COLOR_ENCODING | JXL_DEC_FULL_IMAGE)) {
     return E_FAIL;
   }
 
@@ -3471,6 +3647,7 @@ HRESULT CImageLoader::LoadJxlRegionToFrame(
   HRESULT hr = E_FAIL;
   RegionScalePlan plan{};
   bool planReady = false;
+  QuickView::PixelColorMetadata jxlColor;
 
   uint8_t *tempBuf = nullptr;
   int tempStride = 0;
@@ -3500,18 +3677,6 @@ HRESULT CImageLoader::LoadJxlRegionToFrame(
         QV_LOG("JXL_ROI", TraceLoggingString("GetBasicInfo Failed", "Action"));
         break;
       }
-
-      // Force sRGB output to match full-decode color behavior.
-      JxlColorEncoding ce = {};
-      ce.color_space = JXL_COLOR_SPACE_RGB;
-      ce.white_point = JXL_WHITE_POINT_D65;
-      ce.primaries = JXL_PRIMARIES_SRGB;
-      ce.transfer_function = JXL_TRANSFER_FUNCTION_SRGB;
-      ce.rendering_intent = JXL_RENDERING_INTENT_PERCEPTUAL;
-      // [Fix] Non-fatal: match full-decode path (line ~6865) which ignores this
-      // return value. libjxl may reject sRGB override for some images but still
-      // decode correctly with native profile.
-      JxlDecoderSetOutputColorProfile(dec, &ce, NULL, 0);
 
       if (!BuildRegionScalePlan(srcRect, (int)info.xsize, (int)info.ysize,
                                 scale, explicitTargetW, explicitTargetH,
@@ -3553,6 +3718,8 @@ HRESULT CImageLoader::LoadJxlRegionToFrame(
         hr = E_FAIL;
         break;
       }
+    } else if (st == JXL_DEC_COLOR_ENCODING) {
+      ExtractJxlOutputColorMetadata(dec, info, &jxlColor, nullptr);
     } else if (st == JXL_DEC_FULL_IMAGE) {
       hr = S_OK;
       break;
@@ -3624,6 +3791,8 @@ HRESULT CImageLoader::LoadJxlRegionToFrame(
   if (tempBuf && !arena) {
     _aligned_free(tempBuf);
   }
+
+  QuickView::ApplyColorMetadata(*outFrame, jxlColor);
 
   return S_OK;
 }
@@ -5233,6 +5402,10 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
         result.metadata.iccProfileData.assign(
             chunk.chunk.bytes, chunk.chunk.bytes + chunk.chunk.size);
         result.metadata.HasEmbeddedColorProfile = true;
+        result.metadata.colorInfo.hasEmbeddedIcc =
+            !result.metadata.iccProfileData.empty();
+        result.metadata.colorInfo.dataSpace =
+            QuickView::PixelDataSpace::EncodedSdr;
         WebPDemuxReleaseChunkIterator(&chunk);
       }
 
@@ -12454,11 +12627,13 @@ HRESULT CImageLoader::LoadThumbWebPFromMemory(const uint8_t *data, size_t size,
 HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t *pFile, size_t fileSize,
                                       ThumbData *pData,
                                       ImageMetadata *pMetadata,
-                                      bool allowFakeBase) {
+                                      bool allowFakeBase,
+                                      bool preserveSourceColor) {
   if (!pFile || fileSize == 0 || !pData)
     return E_INVALIDARG;
 
   pData->isValid = false;
+  pData->colorMeta.Clear();
   // Default to true. If we fall back to Full Decode (Small), we set it to
   // false.
   pData->isBlurry = true;
@@ -12489,8 +12664,9 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t *pFile, size_t fileSize,
   // 3. Subscribe Events
   // Must subscribe to FRAME_PROGRESSION to catch 1:8.
   // Also subscribe PREVIEW_IMAGE as fallback when DC is missing.
-  int events = JXL_DEC_BASIC_INFO | JXL_DEC_FULL_IMAGE | JXL_DEC_FRAME |
-               JXL_DEC_FRAME_PROGRESSION | JXL_DEC_PREVIEW_IMAGE;
+  int events = JXL_DEC_BASIC_INFO | JXL_DEC_COLOR_ENCODING | JXL_DEC_FULL_IMAGE |
+               JXL_DEC_FRAME | JXL_DEC_FRAME_PROGRESSION |
+               JXL_DEC_PREVIEW_IMAGE;
   if (pMetadata)
     events |= JXL_DEC_BOX;
 
@@ -12522,13 +12698,15 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t *pFile, size_t fileSize,
       if (JXL_DEC_SUCCESS != JxlDecoderGetBasicInfo(dec, &info))
         return cleanup(E_FAIL);
 
-      JxlColorEncoding color_encoding = {};
-      color_encoding.color_space = JXL_COLOR_SPACE_RGB;
-      color_encoding.white_point = JXL_WHITE_POINT_D65;
-      color_encoding.primaries = JXL_PRIMARIES_SRGB;
-      color_encoding.transfer_function = JXL_TRANSFER_FUNCTION_SRGB;
-      color_encoding.rendering_intent = JXL_RENDERING_INTENT_PERCEPTUAL;
-      JxlDecoderSetOutputColorProfile(dec, &color_encoding, NULL, 0);
+      if (!preserveSourceColor) {
+        JxlColorEncoding srgbEncoding = {};
+        srgbEncoding.color_space = JXL_COLOR_SPACE_RGB;
+        srgbEncoding.white_point = JXL_WHITE_POINT_D65;
+        srgbEncoding.primaries = JXL_PRIMARIES_SRGB;
+        srgbEncoding.transfer_function = JXL_TRANSFER_FUNCTION_SRGB;
+        srgbEncoding.rendering_intent = JXL_RENDERING_INTENT_PERCEPTUAL;
+        JxlDecoderSetOutputColorProfile(dec, &srgbEncoding, nullptr, 0);
+      }
 
       pData->origWidth = static_cast<int>(info.xsize);
       pData->origHeight = static_cast<int>(info.ysize);
@@ -12553,6 +12731,9 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t *pFile, size_t fileSize,
                TraceLoggingBool(info.uses_original_profile, "Modular"),
                TraceLoggingBool(info.have_preview, "HavePreview"));
       }
+    } else if (status == JXL_DEC_COLOR_ENCODING) {
+      ExtractJxlOutputColorMetadata(
+          dec, info, preserveSourceColor ? &pData->colorMeta : nullptr, pMetadata);
     } else if (status == JXL_DEC_FRAME_PROGRESSION) {
       isProgressive = true;
       // [v8.3] Catch the Rabbit
@@ -14630,37 +14811,52 @@ HRESULT CImageLoader::LoadToFrame(
   SetupDeleter(pixels);
 
   // [v5.3] WIC Fallback Metadata Population
-  if (pMetadata) {
-    ReadMetadata(filePath, pMetadata);
-    pMetadata->LoaderName = loaderName;
-    // Removed: PopulateHdrInfoFromWicPixelFormat(outWicFormat, pMetadata); to
-    // preserve orig format from ReadMetadata
-    if (pMetadata->FormatDetails.empty())
-      pMetadata->FormatDetails = L"Legacy WIC";
-    // Ensure basic hdrMetadata is always valid for Info Panel display
-    if (!pMetadata->hdrMetadata.isValid) {
-      pMetadata->hdrMetadata.isValid = true;
-      pMetadata->hdrMetadata.transfer =
-          (isFloat || isHalfFloat) ? QuickView::TransferFunction::Linear
-                                   : QuickView::TransferFunction::SRGB;
-      pMetadata->hdrMetadata.primaries = QuickView::ColorPrimaries::SRGB;
-      pMetadata->hdrMetadata.isHdr = false;
-      pMetadata->hdrMetadata.isSceneLinear = (isFloat || isHalfFloat);
-      if (isFloat || isHalfFloat) {
-        pMetadata->colorInfo.dataSpace = QuickView::PixelDataSpace::SceneLinear;
-      } else {
-        pMetadata->colorInfo.dataSpace = QuickView::PixelDataSpace::EncodedSdr;
-      }
+  ImageMetadata localMeta;
+  ImageMetadata *metaTarget = pMetadata ? pMetadata : &localMeta;
+  ReadMetadata(filePath, metaTarget);
+  metaTarget->LoaderName = loaderName;
+  // Removed: PopulateHdrInfoFromWicPixelFormat(outWicFormat, metaTarget); to
+  // preserve orig format from ReadMetadata
+  if (metaTarget->FormatDetails.empty())
+    metaTarget->FormatDetails = L"Legacy WIC";
+  // Ensure basic hdrMetadata is always valid for Info Panel display
+  if (!metaTarget->hdrMetadata.isValid) {
+    metaTarget->hdrMetadata.isValid = true;
+    metaTarget->hdrMetadata.transfer =
+        (isFloat || isHalfFloat) ? QuickView::TransferFunction::Linear
+                                 : QuickView::TransferFunction::SRGB;
+    metaTarget->hdrMetadata.primaries = QuickView::ColorPrimaries::SRGB;
+    metaTarget->hdrMetadata.isHdr = false;
+    metaTarget->hdrMetadata.isSceneLinear = (isFloat || isHalfFloat);
+    if (isFloat || isHalfFloat) {
+      metaTarget->colorInfo.dataSpace = QuickView::PixelDataSpace::SceneLinear;
+    } else {
+      metaTarget->colorInfo.dataSpace = QuickView::PixelDataSpace::EncodedSdr;
     }
-    if (pMetadata->colorInfo.nominalBitDepth == 0) {
-      pMetadata->colorInfo.nominalBitDepth =
-          isFloat ? 32 : ((isHalfFloat || isHighBitDepth) ? 16 : 8);
-    }
-    if (pMetadata->colorInfo.transfer == QuickView::TransferFunction::Unknown) {
-      pMetadata->colorInfo.transfer = (isFloat || isHalfFloat)
-                                          ? QuickView::TransferFunction::Linear
-                                          : QuickView::TransferFunction::SRGB;
-    }
+  }
+  if (metaTarget->colorInfo.nominalBitDepth == 0) {
+    metaTarget->colorInfo.nominalBitDepth =
+        isFloat ? 32 : ((isHalfFloat || isHighBitDepth) ? 16 : 8);
+  }
+  if (metaTarget->colorInfo.transfer == QuickView::TransferFunction::Unknown) {
+    metaTarget->colorInfo.transfer = (isFloat || isHalfFloat)
+                                         ? QuickView::TransferFunction::Linear
+                                         : QuickView::TransferFunction::SRGB;
+  }
+
+  outFrame->iccProfile.assign(metaTarget->iccProfileData.begin(),
+                              metaTarget->iccProfileData.end());
+  outFrame->colorInfo = metaTarget->colorInfo;
+  if (!outFrame->iccProfile.empty()) {
+    outFrame->colorInfo.hasEmbeddedIcc = true;
+  }
+  outFrame->hdrMetadata = metaTarget->hdrMetadata;
+  if (metaTarget->ExifOrientation >= 1 && metaTarget->ExifOrientation <= 8) {
+    outFrame->exifOrientation = metaTarget->ExifOrientation;
+  }
+  if (metaTarget->Width > 0 && metaTarget->Height > 0) {
+    outFrame->srcWidth = static_cast<int>(metaTarget->Width);
+    outFrame->srcHeight = static_cast<int>(metaTarget->Height);
   }
 
   return S_OK;

@@ -481,6 +481,8 @@ add_executable(QuickViewTests
     tests/ThemeSystemTests.cpp
     tests/UpdateManagerTests.cpp
     tests/HdrPipelineTests.cpp
+    tests/ColorPipelineTests.cpp
+    QuickView/TileManager.cpp
     QuickView/AiActionManager.cpp
     QuickView/GeekWidgets.cpp
     QuickView/ThemePalette.cpp

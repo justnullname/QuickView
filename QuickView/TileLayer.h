@@ -38,6 +38,24 @@ namespace QuickView {
         }
     };
 
+    // Reset GPU handles on an entry and demote only Ready tiles whose CPU frame was freed.
+    // Queued/Loading tiles have no frame yet and must stay in-flight so OnTileReady accepts them.
+    inline bool InvalidateTileEntryGpu(TileEntry& entry) noexcept {
+        if (!entry.data) return false;
+        entry.data->uploaded = false;
+        entry.data->bitmap = nullptr;
+        if (!entry.data->frame || !entry.data->frame->pixels) {
+            TileStateCode expected = TileStateCode::Ready;
+            if (entry.state.compare_exchange_strong(expected, TileStateCode::Empty,
+                                                    std::memory_order_acq_rel,
+                                                    std::memory_order_acquire)) {
+                entry.data->state = TileStateCode::Empty;
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Abstract Base Layer
     class ITileStateLayer {
     public:
@@ -53,7 +71,7 @@ namespace QuickView {
         // Reset Logic
         virtual void ResetQueueStatus() = 0;
         virtual void Clear() = 0;
-        virtual void InvalidateGpuTiles() = 0;
+        virtual int InvalidateGpuTiles() = 0;
         
         // Dimensions
         virtual int GetWidth() const = 0;
@@ -105,13 +123,14 @@ namespace QuickView {
             m_grid.resize((size_t)m_width * m_height);
         }
 
-        void InvalidateGpuTiles() override {
+        int InvalidateGpuTiles() override {
+            int demotedReadyCount = 0;
             for (auto& entry : m_grid) {
-                if (entry.data) {
-                    entry.data->uploaded = false;
-                    entry.data->bitmap = nullptr;
+                if (InvalidateTileEntryGpu(entry)) {
+                    ++demotedReadyCount;
                 }
             }
+            return demotedReadyCount;
         }
 
         int GetWidth() const override { return m_width; }
@@ -179,14 +198,15 @@ namespace QuickView {
             m_map.clear();
         }
 
-        void InvalidateGpuTiles() override {
+        int InvalidateGpuTiles() override {
             std::lock_guard<std::mutex> lock(m_mutex);
+            int demotedReadyCount = 0;
             for (auto& kv : m_map) {
-                if (kv.second && kv.second->data) {
-                    kv.second->data->uploaded = false;
-                    kv.second->data->bitmap = nullptr;
+                if (kv.second && InvalidateTileEntryGpu(*kv.second)) {
+                    ++demotedReadyCount;
                 }
             }
+            return demotedReadyCount;
         }
 
         int GetWidth() const override { return m_width; }

@@ -6979,6 +6979,7 @@ void RefreshImageDisplay(HWND hwnd) {
                 // [Titan] Invalidate tiles to trigger CMS re-upload
                 if (g_pImageEngine && g_pImageEngine->IsTitanModeEnabled()) {
                     g_pImageEngine->InvalidateGpuTiles();
+                    g_forceTitanTileReseed.store(true, std::memory_order_release);
                 }
                 needsRepaint = true;
             }
@@ -8436,10 +8437,20 @@ static int RunDecodeWorker(int argc, LPWSTR* argv) {
     }
 
     auto* header = reinterpret_cast<DecodeResultHeader*>(view);
-    *header = {};
-    header->magic   = kDecodeWorkerMagic;
-    header->version = kDecodeWorkerVersion;
-    header->hr      = static_cast<int32_t>(E_FAIL);
+    const auto expectedLayout = ComputeDecodeMapLayout(
+        static_cast<uint64_t>(targetW) * static_cast<uint64_t>(targetH) * 4ull);
+    if (expectedLayout.totalMapBytes == 0 ||
+        header->magic != kDecodeWorkerMagic ||
+        header->version != kDecodeWorkerVersion ||
+        header->pixelOffset != expectedLayout.pixelOffset ||
+        header->pixelCapacity != expectedLayout.pixelCapacity ||
+        header->iccOffset != expectedLayout.iccOffset ||
+        header->iccCapacity != expectedLayout.iccCapacity) {
+        UnmapViewOfFile(view);
+        CloseHandle(hMap);
+        return 2;
+    }
+    header->hr = static_cast<int32_t>(E_FAIL);
 
     HRESULT hr = E_FAIL;
     do {
@@ -8477,22 +8488,103 @@ static int RunDecodeWorker(int argc, LPWSTR* argv) {
             break;
         }
 
+        const uint64_t bpp = rawFrame.GetBytesPerPixel();
         const uint64_t payloadBytes = static_cast<uint64_t>(rawFrame.stride) * static_cast<uint64_t>(rawFrame.height);
-        const uint64_t payloadCap   = static_cast<uint64_t>(targetW) * static_cast<uint64_t>(targetH) * 4ull;
-        if (payloadBytes == 0 || payloadBytes > payloadCap) {
+        const uint64_t packedRowBytes = static_cast<uint64_t>(rawFrame.width) * bpp;
+        const uint64_t packedBytes = packedRowBytes * static_cast<uint64_t>(rawFrame.height);
+        if (bpp == 0 || rawFrame.width <= 0 || rawFrame.height <= 0 || rawFrame.stride <= 0 ||
+            static_cast<uint64_t>(rawFrame.stride) < packedRowBytes ||
+            payloadBytes == 0 || packedBytes == 0) {
+            hr = E_FAIL;
+            break;
+        }
+        const bool usePackedCopy = (payloadBytes > header->pixelCapacity);
+        const uint64_t committedPayloadBytes = usePackedCopy ? packedBytes : payloadBytes;
+        const uint32_t committedStride = usePackedCopy
+            ? static_cast<uint32_t>(packedRowBytes)
+            : static_cast<uint32_t>(rawFrame.stride);
+        if (committedPayloadBytes > header->pixelCapacity) {
             hr = E_FAIL;
             break;
         }
 
-        memcpy(view + sizeof(DecodeResultHeader), rawFrame.pixels, static_cast<size_t>(payloadBytes));
+        void* committedPixels = VirtualAlloc(
+            view + header->pixelOffset,
+            static_cast<SIZE_T>(committedPayloadBytes),
+            MEM_COMMIT,
+            PAGE_READWRITE);
+        if (!committedPixels) {
+            hr = E_OUTOFMEMORY;
+            break;
+        }
+        if (!usePackedCopy) {
+            memcpy(committedPixels, rawFrame.pixels, static_cast<size_t>(committedPayloadBytes));
+        } else {
+            uint8_t* dstBytes = static_cast<uint8_t*>(committedPixels);
+            for (int y = 0; y < rawFrame.height; ++y) {
+                memcpy(dstBytes + static_cast<size_t>(y) * static_cast<size_t>(packedRowBytes),
+                       rawFrame.pixels + static_cast<size_t>(y) * static_cast<size_t>(rawFrame.stride),
+                       static_cast<size_t>(packedRowBytes));
+            }
+        }
+
+        const uint8_t* effectiveIccPtr =
+            !rawFrame.iccProfile.empty() ? rawFrame.iccProfile.data() : meta.iccProfileData.data();
+        const size_t effectiveIccSize =
+            !rawFrame.iccProfile.empty() ? rawFrame.iccProfile.size() : meta.iccProfileData.size();
+        uint32_t writtenIccBytes = 0;
+        if (effectiveIccPtr && effectiveIccSize > 0 && effectiveIccSize <= header->iccCapacity) {
+            void* committedIcc = VirtualAlloc(
+                view + header->iccOffset,
+                effectiveIccSize,
+                MEM_COMMIT,
+                PAGE_READWRITE);
+            if (committedIcc) {
+                memcpy(committedIcc, effectiveIccPtr, effectiveIccSize);
+                writtenIccBytes = static_cast<uint32_t>(effectiveIccSize);
+            }
+        }
+
+        QuickView::PixelColorInfo effectiveColor = rawFrame.colorInfo;
+        QuickView::MergeColorInfo(effectiveColor, meta.colorInfo);
+        const QuickView::HdrStaticMetadata& effectiveHdr =
+            rawFrame.hdrMetadata.isValid ? rawFrame.hdrMetadata : meta.hdrMetadata;
+        const UINT origW = (meta.Width > 0) ? meta.Width
+                           : (rawFrame.srcWidth > 0 ? static_cast<UINT>(rawFrame.srcWidth) : static_cast<UINT>(rawFrame.width));
+        const UINT origH = (meta.Height > 0) ? meta.Height
+                           : (rawFrame.srcHeight > 0 ? static_cast<UINT>(rawFrame.srcHeight) : static_cast<UINT>(rawFrame.height));
+        const int effectiveOrientation =
+            (rawFrame.exifOrientation >= 1 && rawFrame.exifOrientation <= 8) ? rawFrame.exifOrientation
+            : ((meta.ExifOrientation >= 1 && meta.ExifOrientation <= 8) ? meta.ExifOrientation : 1);
 
         header->width            = static_cast<uint32_t>(rawFrame.width);
         header->height           = static_cast<uint32_t>(rawFrame.height);
-        header->stride           = static_cast<uint32_t>(rawFrame.stride);
-        header->originalWidth    = static_cast<uint32_t>(meta.Width);
-        header->originalHeight   = static_cast<uint32_t>(meta.Height);
-        header->exifOrientation  = static_cast<uint32_t>(meta.ExifOrientation);
-        header->payloadBytes     = payloadBytes;
+        header->stride           = committedStride;
+        header->originalWidth    = static_cast<uint32_t>(origW);
+        header->originalHeight   = static_cast<uint32_t>(origH);
+        header->exifOrientation  = static_cast<uint32_t>(effectiveOrientation);
+
+        header->pixelFormat      = static_cast<uint8_t>(rawFrame.format);
+        header->colorDataSpace   = static_cast<uint8_t>(effectiveColor.dataSpace);
+        header->colorTransfer    = static_cast<uint8_t>(effectiveColor.transfer);
+        header->colorPrimaries   = static_cast<uint8_t>(effectiveColor.primaries);
+        header->nominalBitDepth  = effectiveColor.nominalBitDepth;
+        header->hasEmbeddedIcc   = (effectiveColor.hasEmbeddedIcc || writtenIccBytes > 0) ? 1 : 0;
+        header->hdrFlags         = PackHdrFlags(
+            effectiveHdr.isValid, effectiveHdr.isHdr, effectiveHdr.isSceneLinear,
+            effectiveHdr.hasNitsMetadata, effectiveHdr.hasGainMap, effectiveHdr.gainMapApplied);
+        header->hdrTransfer      = static_cast<uint8_t>(effectiveHdr.transfer);
+        header->hdrPrimaries     = static_cast<uint8_t>(effectiveHdr.primaries);
+        header->maxCLLNits               = effectiveHdr.maxCLLNits;
+        header->maxFALLNits              = effectiveHdr.maxFALLNits;
+        header->masteringMinNits         = effectiveHdr.masteringMinNits;
+        header->masteringMaxNits         = effectiveHdr.masteringMaxNits;
+        header->gainMapBaseHeadroom      = effectiveHdr.gainMapBaseHeadroom;
+        header->gainMapAlternateHeadroom = effectiveHdr.gainMapAlternateHeadroom;
+        header->gainMapAppliedHeadroom   = effectiveHdr.gainMapAppliedHeadroom;
+
+        header->payloadBytes     = committedPayloadBytes;
+        header->iccBytes         = writtenIccBytes;
         hr = S_OK;
     } while (false);
 

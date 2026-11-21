@@ -46,17 +46,20 @@ bool DecodePNG(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
                std::pmr::vector<uint8_t>& outPixels,
                CancelPredicate checkCancel = {},
-               WuffsImageInfo* pInfo = nullptr);
+               WuffsImageInfo* pInfo = nullptr,
+               bool force8BitBgra = false);
 bool DecodePNG(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
                std::vector<uint8_t>& outPixels,
                CancelPredicate checkCancel = {},
-               WuffsImageInfo* pInfo = nullptr);
+               WuffsImageInfo* pInfo = nullptr,
+               bool force8BitBgra = false);
 bool DecodePNG(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
                AllocatorFunc alloc,
                CancelPredicate checkCancel = {},
-               WuffsImageInfo* pInfo = nullptr);
+               WuffsImageInfo* pInfo = nullptr,
+               bool force8BitBgra = false);
 
 /// <summary>
 /// Decode GIF image (first frame) to BGRA pixels

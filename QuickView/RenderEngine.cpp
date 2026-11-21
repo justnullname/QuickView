@@ -2082,17 +2082,21 @@ HRESULT CRenderEngine::ResolveSourceColorContext(
   }
 
   if (effectiveCmsMode == 1 || effectiveCmsMode == 5) {
-    if (frame.hdrMetadata.primaries == QuickView::ColorPrimaries::DisplayP3 ||
-        frame.hdrMetadata.primaries == QuickView::ColorPrimaries::AdobeRGB ||
-        frame.hdrMetadata.primaries == QuickView::ColorPrimaries::ProPhotoRGB) {
+    const QuickView::ColorPrimaries effectivePrimaries =
+        frame.colorInfo.primaries != QuickView::ColorPrimaries::Unknown
+            ? frame.colorInfo.primaries
+            : frame.hdrMetadata.primaries;
+    if (effectivePrimaries == QuickView::ColorPrimaries::DisplayP3 ||
+        effectivePrimaries == QuickView::ColorPrimaries::AdobeRGB ||
+        effectivePrimaries == QuickView::ColorPrimaries::ProPhotoRGB) {
       if (SUCCEEDED(
-              LoadColorContextForPrimaries(frame.hdrMetadata.primaries, outContext))) {
+              LoadColorContextForPrimaries(effectivePrimaries, outContext))) {
         return S_OK;
       }
     }
 
     if (frame.colorInfo.IsSrgb() ||
-        frame.hdrMetadata.primaries == QuickView::ColorPrimaries::SRGB) {
+        effectivePrimaries == QuickView::ColorPrimaries::SRGB) {
       return GetOrCreateSrgbColorContext(outContext);
     }
 
