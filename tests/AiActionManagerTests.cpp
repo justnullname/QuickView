@@ -5,6 +5,8 @@
 #include <windows.h>
 #include <shlwapi.h>
 #include <shlobj.h>
+#include <winsock2.h>
+#pragma comment(lib, "ws2_32.lib")
 
 // Stubs for test harness
 OSDState g_osd;
@@ -523,7 +525,98 @@ TEST_F(AiActionManagerTest, VisualProviderSnapshotAndRenderIntegrationInpaintSli
     QuickView::AI::AiActionManager::SetVisualFrameProviders(nullptr, nullptr);
 }
 
+TEST_F(AiActionManagerTest, RateLimited429IsRetriedOnSameRequest) {
+    WSADATA wsa;
+    ASSERT_EQ(WSAStartup(MAKEWORD(2, 2), &wsa), 0);
+    SOCKET listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    ASSERT_EQ(bind(listener, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)), 0);
+    ASSERT_EQ(listen(listener, 4), 0);
+    int addrLen = sizeof(addr);
+    getsockname(listener, reinterpret_cast<sockaddr*>(&addr), &addrLen);
+    const int port = ntohs(addr.sin_port);
 
+    // First POST gets 429 (Retry-After: 0), the next gets 400 so the task ends quickly.
+    static std::atomic<int> s_posts{ 0 };
+    static std::string s_retryHeaders;
+    s_posts = 0;
+    s_retryHeaders.clear();
+    std::thread server([listener]() {
+        for (;;) {
+            SOCKET c = accept(listener, nullptr, nullptr);
+            if (c == INVALID_SOCKET) return;
+            std::string req;
+            char chunk[65536];
+            size_t hdrEnd = std::string::npos;
+            size_t bodyLen = 0;
+            for (;;) {
+                if (hdrEnd == std::string::npos && (hdrEnd = req.find("\r\n\r\n")) != std::string::npos) {
+                    size_t cl = req.find("Content-Length:");
+                    if (cl != std::string::npos && cl < hdrEnd) bodyLen = std::stoul(req.substr(cl + 15));
+                }
+                if (hdrEnd != std::string::npos && req.size() >= hdrEnd + 4 + bodyLen) break;
+                int n = recv(c, chunk, sizeof(chunk), 0);
+                if (n <= 0) break;
+                req.append(chunk, n);
+            }
+            std::string resp = "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+            if (req.rfind("POST", 0) == 0) {
+                if (++s_posts == 1) {
+                    resp = "HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\nRetry-After: 0\r\nContent-Length: 2\r\n\r\n{}";
+                } else {
+                    s_retryHeaders = req.substr(0, hdrEnd);
+                    resp = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 2\r\n\r\n{}";
+                }
+            }
+            send(c, resp.data(), static_cast<int>(resp.size()), 0);
+            closesocket(c);
+        }
+    });
 
+    QuickView::AI::AiActionManager::SetVisualFrameProviders(
+        [](QuickView::AI::VisualFrameSnapshot& out) -> bool {
+            out.imagePath = L"C:\\fake_visual_snapshot.jpg";
+            return true;
+        },
+        [](const QuickView::AI::VisualFrameSnapshot&, std::vector<uint8_t>& outBgra, uint32_t& outW, uint32_t& outH, uint32_t& outStride) -> bool {
+            outW = 40;
+            outH = 20;
+            outStride = 40 * 4;
+            outBgra.assign(40 * 20 * 4, 255);
+            return true;
+        });
 
+    auto& mgr = QuickView::AI::AiActionManager::Instance();
+    mgr.GetProfiles()[0].baseUrl = "http://127.0.0.1:" + std::to_string(port) + "/";
+    mgr.GetProfiles()[0].protocol = QuickView::AI::ApiProtocol::StabilityInpaint;
 
+    HANDLE hDone = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    static QuickView::AI::ExecutionResult s_lastRes;
+    s_lastRes = {};
+    struct WaitCtx { HANDLE ev; };
+    mgr.ExecuteInpaint(
+        2, 2, 38, 18, L"test fill", nullptr,
+        QuickView::AI::ActionCallback(
+            [](void* ctx, const QuickView::AI::ExecutionResult& res) {
+                s_lastRes = res;
+                SetEvent(static_cast<WaitCtx*>(ctx)->ev);
+            },
+            new WaitCtx{ hDone },
+            [](void* ctx) { delete static_cast<WaitCtx*>(ctx); }));
+
+    EXPECT_EQ(WaitForSingleObject(hDone, 15000), WAIT_OBJECT_0);
+    CloseHandle(hDone);
+    closesocket(listener);
+    server.join();
+    WSACleanup();
+    QuickView::AI::AiActionManager::SetVisualFrameProviders(nullptr, nullptr);
+
+    EXPECT_EQ(s_posts.load(), 2);
+    EXPECT_EQ(s_lastRes.httpStatusCode, 400u);
+    // The retried request still carries the original headers, once.
+    size_t first = s_retryHeaders.find("Content-Type:");
+    EXPECT_NE(first, std::string::npos);
+    EXPECT_EQ(s_retryHeaders.find("Content-Type:", first + 1), std::string::npos);
+}

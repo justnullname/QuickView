@@ -18,6 +18,9 @@
 #include "AsyncJob.h"
 #include "SystemInfo.h"
 
+#define LLM_RETRY_IMPLEMENTATION
+#include "llm_retry.hpp"
+
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "crypt32.lib")
 #pragma comment(lib, "windowscodecs.lib")
@@ -160,7 +163,7 @@ struct HttpExchangeResult {
     std::wstring errorMessage;
 };
 
-static HttpExchangeResult SendRequestAndReadResponse(
+static HttpExchangeResult SendRequestAndReadResponseOnce(
     HINTERNET hRequest,
     const std::wstring& headers,
     const void* payloadData,
@@ -261,6 +264,43 @@ static HttpExchangeResult SendRequestAndReadResponse(
 
     res.ok = true;
     return res;
+}
+
+// Retries 408/429/5xx/529 with exponential backoff (honoring Retry-After up to 30 s)
+// before the error reaches the user. Headers are already on the handle after the first send.
+static HttpExchangeResult SendRequestAndReadResponse(
+    HINTERNET hRequest,
+    const std::wstring& headers,
+    const void* payloadData,
+    DWORD payloadLen,
+    const wchar_t* hostName,
+    INTERNET_PORT port,
+    bool isLocal,
+    uint64_t expectedTaskId,
+    const std::atomic<uint64_t>& currentTaskId)
+{
+    llm::RetryConfig cfg;
+    cfg.base_delay_ms = 1000.0;
+    const std::wstring noHeaders;
+    HttpExchangeResult last;
+    int attempt = 0;
+    try {
+        return llm::with_retry<HttpExchangeResult>([&]() -> HttpExchangeResult {
+            last = SendRequestAndReadResponseOnce(hRequest, ++attempt == 1 ? headers : noHeaders,
+                payloadData, payloadLen, hostName, port, isLocal, expectedTaskId, currentTaskId);
+            if (last.ok || last.interrupted || last.statusCode == 0) return last;
+            DWORD retryAfter = 0;
+            DWORD size = sizeof(retryAfter);
+            double retryAfterSec = -1.0;
+            if (WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_RETRY_AFTER | WINHTTP_QUERY_FLAG_NUMBER,
+                                    WINHTTP_HEADER_NAME_BY_INDEX, &retryAfter, &size, WINHTTP_NO_HEADER_INDEX)) {
+                retryAfterSec = static_cast<double>(retryAfter);
+            }
+            throw llm::LLMError{ static_cast<int>(last.statusCode), "", retryAfterSec <= 30.0, retryAfterSec };
+        }, cfg).value;
+    } catch (const llm::LLMError&) {
+        return last;
+    }
 }
 
 static std::string BinaryToBase64(const uint8_t* data, size_t len) {

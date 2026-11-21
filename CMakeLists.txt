@@ -159,7 +159,7 @@ endif()
 set_target_properties(QuickView PROPERTIES LINK_FLAGS "${QUICKVIEW_LINK_FLAGS}")
 
 # Include paths
-target_include_directories(QuickView PRIVATE QuickView third_party/yyjson third_party/unrar-mini third_party/webview2)
+target_include_directories(QuickView PRIVATE QuickView third_party/yyjson third_party/unrar-mini third_party/webview2 third_party/llm-retry)
 
 # Disable PCH for specific files (as defined in .vcxproj)
 set_source_files_properties(QuickView/WuffsImpl.cpp PROPERTIES SKIP_PRECOMPILED_HEADERS ON)
@@ -540,7 +540,7 @@ target_link_libraries(QuickViewTests PRIVATE
     libjxl::jxl_cms
     hwy::hwy
 )
-target_include_directories(QuickViewTests PRIVATE QuickView third_party/yyjson third_party/unrar-mini)
+target_include_directories(QuickViewTests PRIVATE QuickView third_party/yyjson third_party/unrar-mini third_party/llm-retry)
 target_compile_definitions(QuickViewTests PRIVATE UNICODE _UNICODE)
 add_test(NAME QuickViewTests COMMAND QuickViewTests)
 
