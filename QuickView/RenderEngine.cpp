@@ -755,7 +755,9 @@ QuickView::HdrContentKind ClassifyHdrContent(const QuickView::RawImageFrame &fra
     return QuickView::HdrContentKind::AbsolutePhotometric;
   }
 
-  if (frame.colorInfo.IsSceneLinear() || frame.hdrMetadata.isSceneLinear) {
+  if (frame.colorInfo.IsSceneLinear() || frame.hdrMetadata.isSceneLinear ||
+      frame.format == QuickView::PixelFormat::R16G16B16A16_FLOAT ||
+      frame.format == QuickView::PixelFormat::R32G32B32A32_FLOAT) {
     return QuickView::HdrContentKind::RelativeSceneLinear;
   }
 
@@ -1273,10 +1275,14 @@ BuildToneMapSettings(const QuickView::RawImageFrame &frame,
           srcPrimaries = QuickView::ColorPrimaries::SRGB;
       }
       else if (IsHdrLikeFrame(frame)) {
-          // Other HDR-like formats (e.g. FP16 JXR/PNG/TIFF)
-          // Default to Rec.2020 as a safe bet for high-range float data,
-          // but if it's actually Linear SRGB, this might need further tuning.
-          srcPrimaries = QuickView::ColorPrimaries::Rec2020;
+          // Untagged linear floating-point HDR frames (e.g. scRGB JXR, EXR, Radiance HDR)
+          // use linear Rec.709 / sRGB primaries; PQ/HLG encoded HDR already defaulted to Rec.2020 above.
+          const bool isFloatLinear =
+              frame.format == QuickView::PixelFormat::R16G16B16A16_FLOAT ||
+              frame.format == QuickView::PixelFormat::R32G32B32A32_FLOAT ||
+              frame.colorInfo.IsSceneLinear();
+          srcPrimaries = isFloatLinear ? QuickView::ColorPrimaries::SRGB
+                                       : QuickView::ColorPrimaries::Rec2020;
       } else {
           // Untagged SDR respects user fallback setting
           switch (g_config.CmsDefaultFallback) {
@@ -1312,7 +1318,9 @@ BuildToneMapSettings(const QuickView::RawImageFrame &frame,
   settings.colorMatrix[ 8] = matrix.m[2][0]; settings.colorMatrix[ 9] = matrix.m[2][1]; settings.colorMatrix[10] = matrix.m[2][2]; settings.colorMatrix[11] = 0.0f;
   settings.colorMatrix[12] = 0.0f;           settings.colorMatrix[13] = 0.0f;           settings.colorMatrix[14] = 0.0f;           settings.colorMatrix[15] = 1.0f;
 
-  if (!frame.colorInfo.IsSceneLinear()) {
+  if (!frame.colorInfo.IsSceneLinear() &&
+      frame.format != QuickView::PixelFormat::R16G16B16A16_FLOAT &&
+      frame.format != QuickView::PixelFormat::R32G32B32A32_FLOAT) {
     settings.transferFunction = static_cast<uint32_t>(frame.colorInfo.transfer);
   } else {
     settings.transferFunction = static_cast<uint32_t>(QuickView::TransferFunction::Linear);

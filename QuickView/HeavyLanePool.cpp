@@ -2995,7 +2995,10 @@ HRESULT HeavyLanePool::LaunchDecodeWorker(
     if (targetW <= 0 || targetH <= 0) return E_INVALIDARG;
     if (checkCancel && checkCancel()) return E_ABORT;
 
-    const uint64_t payloadBytes64 = static_cast<uint64_t>(targetW) * static_cast<uint64_t>(targetH) * 4ull;
+    // Base-layer preview may return FP16 (8 bpp) or FP32 (16 bpp) HDR frames;
+    // SEC_RESERVE only reserves VA space and commits only actual payloadBytes pages.
+    const uint64_t reserveBpp = fullDecode ? 4ull : 16ull;
+    const uint64_t payloadBytes64 = static_cast<uint64_t>(targetW) * static_cast<uint64_t>(targetH) * reserveBpp;
     if (payloadBytes64 == 0) return E_FAIL;
 
     const auto layout = ComputeDecodeMapLayout(payloadBytes64);

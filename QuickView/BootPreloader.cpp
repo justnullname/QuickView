@@ -229,9 +229,9 @@ void BootPreloader::Start(const std::wstring& imagePath) {
                 meta.ColorSpace = CImageLoader::ParseICCProfileName(
                     frame->iccProfile.data(), frame->iccProfile.size());
             }
-            if (meta.colorInfo.dataSpace == QuickView::PixelDataSpace::Unknown &&
-                frame->colorInfo.dataSpace != QuickView::PixelDataSpace::Unknown) {
-                meta.colorInfo = frame->colorInfo;
+            QuickView::MergeColorInfo(meta.colorInfo, frame->colorInfo);
+            if (!meta.hdrMetadata.isValid && frame->hdrMetadata.isValid) {
+                meta.hdrMetadata = frame->hdrMetadata;
             }
             frame->sourceFileSize = meta.FileSize;
             frame->sourceFormat = meta.Format;

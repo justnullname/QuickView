@@ -8437,9 +8437,14 @@ static int RunDecodeWorker(int argc, LPWSTR* argv) {
     }
 
     auto* header = reinterpret_cast<DecodeResultHeader*>(view);
-    const auto expectedLayout = ComputeDecodeMapLayout(
-        static_cast<uint64_t>(targetW) * static_cast<uint64_t>(targetH) * 4ull);
-    if (expectedLayout.totalMapBytes == 0 ||
+    const uint64_t pixels64 = static_cast<uint64_t>(targetW) * static_cast<uint64_t>(targetH);
+    const uint64_t minPixelCap = pixels64 * 4ull;
+    const uint64_t maxPixelCap = pixels64 * 16ull;
+    const auto expectedLayout = ComputeDecodeMapLayout(header->pixelCapacity, header->iccCapacity);
+    if (pixels64 == 0 ||
+        header->pixelCapacity < minPixelCap ||
+        header->pixelCapacity > maxPixelCap ||
+        expectedLayout.totalMapBytes == 0 ||
         header->magic != kDecodeWorkerMagic ||
         header->version != kDecodeWorkerVersion ||
         header->pixelOffset != expectedLayout.pixelOffset ||
@@ -8454,8 +8459,13 @@ static int RunDecodeWorker(int argc, LPWSTR* argv) {
 
     HRESULT hr = E_FAIL;
     do {
-        // Minimal loader instance (no D2D/DComp needed)
+        // Minimal loader instance with WIC factory (no D2D/DComp needed)
         CImageLoader loader;
+        Microsoft::WRL::ComPtr<IWICImagingFactory> wicFactory;
+        if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                       IID_PPV_ARGS(&wicFactory))) && wicFactory) {
+            loader.Initialize(wicFactory.Get());
+        }
 
         QuickView::RawImageFrame rawFrame;
         std::wstring loaderName;

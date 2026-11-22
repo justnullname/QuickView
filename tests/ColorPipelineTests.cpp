@@ -540,3 +540,304 @@ TEST(ColorPipelineTests, LiveDecodeWorkerSubprocessPreservesIccOverSecReserve) {
     UnmapViewOfFile(mapView);
     CloseHandle(hMap);
 }
+
+namespace {
+
+std::filesystem::path FindHdrTestAsset(const wchar_t* filename) {
+    const std::filesystem::path sourceDir = std::filesystem::path(__FILE__).parent_path();
+    const std::filesystem::path candidates[] = {
+        std::filesystem::current_path() / "Local-Files" / "test_img" / "Hdr" / filename,
+        sourceDir.parent_path() / "Local-Files" / "test_img" / "Hdr" / filename,
+    };
+    for (const auto& candidate : candidates) {
+        std::error_code ec;
+        if (std::filesystem::exists(candidate, ec)) {
+            return candidate;
+        }
+    }
+    return {};
+}
+
+float HalfToFloat(uint16_t h) {
+    const uint32_t sign = static_cast<uint32_t>(h & 0x8000u) << 16;
+    const uint32_t exp = (h >> 10) & 0x1Fu;
+    uint32_t mant = h & 0x03FFu;
+    uint32_t out = 0;
+    if (exp == 0) {
+        if (mant == 0) {
+            out = sign;
+        } else {
+            int e = -14;
+            while ((mant & 0x0400u) == 0) {
+                mant <<= 1;
+                --e;
+            }
+            mant &= 0x03FFu;
+            const uint32_t outExp = static_cast<uint32_t>(e + 127) << 23;
+            out = sign | outExp | (mant << 13);
+        }
+    } else if (exp == 31) {
+        out = sign | 0x7F800000u | (mant << 13);
+    } else {
+        out = sign | ((exp - 15 + 127) << 23) | (mant << 13);
+    }
+    float f = 0.0f;
+    std::memcpy(&f, &out, sizeof(f));
+    return f;
+}
+
+std::vector<uint8_t> BuildSynthetic2x2Ico() {
+    // Minimal 2x2 32bpp uncompressed Windows ICO without ICC/EXIF tags (routes through WIC fallback).
+    // ICONDIR (6B) + ICONDIRENTRY (16B) + BITMAPINFOHEADER (40B) + XOR (16B) + AND (8B) = 86B.
+    std::vector<uint8_t> ico(86, 0);
+    // ICONDIR
+    ico[2] = 1; // Type = ICO
+    ico[4] = 1; // Count = 1
+    // ICONDIRENTRY (offset 6)
+    ico[6] = 2; // Width
+    ico[7] = 2; // Height
+    ico[10] = 1; // Planes
+    ico[12] = 32; // BitCount
+    const uint32_t bytesInRes = 64; // 40 + 16 + 8
+    const uint32_t imageOffset = 22;
+    std::memcpy(ico.data() + 14, &bytesInRes, sizeof(bytesInRes));
+    std::memcpy(ico.data() + 18, &imageOffset, sizeof(imageOffset));
+    // BITMAPINFOHEADER (offset 22)
+    const uint32_t biSize = 40;
+    const int32_t biWidth = 2;
+    const int32_t biHeight = 4; // 2 * 2 (XOR + AND)
+    const uint16_t biPlanes = 1;
+    const uint16_t biBitCount = 32;
+    std::memcpy(ico.data() + 22, &biSize, sizeof(biSize));
+    std::memcpy(ico.data() + 26, &biWidth, sizeof(biWidth));
+    std::memcpy(ico.data() + 30, &biHeight, sizeof(biHeight));
+    std::memcpy(ico.data() + 34, &biPlanes, sizeof(biPlanes));
+    std::memcpy(ico.data() + 36, &biBitCount, sizeof(biBitCount));
+    // XOR 2x2 BGRA pixels (offset 62..77)
+    for (size_t i = 0; i < 4; ++i) {
+        ico[62 + i * 4 + 0] = 0x80u;
+        ico[62 + i * 4 + 1] = 0x80u;
+        ico[62 + i * 4 + 2] = 0x80u;
+        ico[62 + i * 4 + 3] = 0xFFu;
+    }
+    return ico;
+}
+
+struct LiveWorkerOutput {
+    DWORD exitCode = 999;
+    QuickView::ToolProcess::DecodeResultHeader header{};
+    std::vector<uint8_t> pixelBytes;
+    std::vector<uint8_t> iccBytes;
+};
+
+void ExecuteDecodeWorkerSubprocess(
+    const std::filesystem::path& workerExe,
+    const std::filesystem::path& inputPath,
+    const wchar_t* mapTag,
+    int targetW,
+    int targetH,
+    uint64_t reserveBpp,
+    LiveWorkerOutput* outResult) {
+    using namespace QuickView::ToolProcess;
+    ASSERT_NE(outResult, nullptr);
+
+    const uint64_t pixelCap = static_cast<uint64_t>(targetW) * static_cast<uint64_t>(targetH) * reserveBpp;
+    const DecodeMapLayout layout = ComputeDecodeMapLayout(pixelCap);
+    ASSERT_NE(layout.totalMapBytes, 0u);
+
+    wchar_t mapName[128] = {};
+    swprintf_s(mapName, L"Local\\QuickView_TestDW_%lu_%ls", GetCurrentProcessId(), mapTag);
+
+    HANDLE hMap = CreateFileMappingW(
+        INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE | SEC_RESERVE,
+        static_cast<DWORD>(layout.totalMapBytes >> 32),
+        static_cast<DWORD>(layout.totalMapBytes & 0xFFFFFFFFull),
+        mapName);
+    ASSERT_NE(hMap, nullptr);
+
+    uint8_t* mapView = static_cast<uint8_t*>(MapViewOfFile(
+        hMap, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, static_cast<SIZE_T>(layout.totalMapBytes)));
+    ASSERT_NE(mapView, nullptr);
+
+    ASSERT_NE(VirtualAlloc(mapView, static_cast<SIZE_T>(layout.headerBytes), MEM_COMMIT, PAGE_READWRITE), nullptr);
+    auto* header = reinterpret_cast<DecodeResultHeader*>(mapView);
+    *header = {};
+    header->magic = kDecodeWorkerMagic;
+    header->version = kDecodeWorkerVersion;
+    header->hr = static_cast<int32_t>(E_PENDING);
+    header->pixelOffset = layout.pixelOffset;
+    header->pixelCapacity = layout.pixelCapacity;
+    header->iccOffset = layout.iccOffset;
+    header->iccCapacity = layout.iccCapacity;
+
+    std::wstring cmd = L"\"" + workerExe.wstring() + L"\" --decode-worker --input \"" +
+                       inputPath.wstring() + L"\" --out-map \"" + mapName +
+                       L"\" --target-w " + std::to_wstring(targetW) +
+                       L" --target-h " + std::to_wstring(targetH) +
+                       L" --no-fake-base";
+    std::vector<wchar_t> cmdBuf(cmd.begin(), cmd.end());
+    cmdBuf.push_back(L'\0');
+
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_FORCEOFFFEEDBACK;
+    PROCESS_INFORMATION pi{};
+    ASSERT_TRUE(CreateProcessW(nullptr, cmdBuf.data(), nullptr, nullptr, FALSE,
+                               CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi));
+    CloseHandle(pi.hThread);
+
+    DWORD waitRes = WaitForSingleObject(pi.hProcess, 15000);
+    GetExitCodeProcess(pi.hProcess, &outResult->exitCode);
+    CloseHandle(pi.hProcess);
+
+    ASSERT_EQ(waitRes, WAIT_OBJECT_0);
+    outResult->header = *header;
+    if (ValidateDecodeResultHeader(*header, layout)) {
+        outResult->pixelBytes.assign(
+            mapView + layout.pixelOffset,
+            mapView + layout.pixelOffset + header->payloadBytes);
+        if (header->iccBytes > 0) {
+            outResult->iccBytes.assign(
+                mapView + layout.iccOffset,
+                mapView + layout.iccOffset + header->iccBytes);
+        }
+    }
+
+    UnmapViewOfFile(mapView);
+    CloseHandle(hMap);
+}
+
+} // namespace
+
+TEST(ColorPipelineTests, LiveDecodeWorkerPreservesJxrAndWdpHdrScRgbMetadata) {
+    wchar_t exeBuf[MAX_PATH] = {};
+    DWORD exeLen = GetModuleFileNameW(nullptr, exeBuf, MAX_PATH);
+    ASSERT_GT(exeLen, 0u);
+    std::filesystem::path exeDir = std::filesystem::path(exeBuf).parent_path();
+    std::filesystem::path workerExe = exeDir / L"QuickView.exe";
+    if (!std::filesystem::exists(workerExe)) {
+        GTEST_SKIP() << "QuickView.exe not present next to test binary";
+    }
+
+    const auto jxrPath = FindHdrTestAsset(L"cyberpunk2077.jxr");
+    const auto wdpPath = FindHdrTestAsset(L"anthony.wdp");
+    if (jxrPath.empty() || wdpPath.empty()) {
+        GTEST_SKIP() << "HDR JXR/WDP test assets not found";
+    }
+
+    auto scanFp16MinMax = [](const uint8_t* data, uint32_t width, uint32_t height, uint32_t stride,
+                             float* outMin, float* outMax) {
+        float minV = 1e9f;
+        float maxV = -1e9f;
+        for (uint32_t y = 0; y < height; ++y) {
+            const auto* row = reinterpret_cast<const uint16_t*>(data + static_cast<size_t>(y) * stride);
+            for (uint32_t x = 0; x < width; ++x) {
+                for (uint32_t c = 0; c < 3; ++c) {
+                    const float v = HalfToFloat(row[x * 4u + c]);
+                    if (v < minV) minV = v;
+                    if (v > maxV) maxV = v;
+                }
+            }
+        }
+        *outMin = minV;
+        *outMax = maxV;
+    };
+
+    // 1. Floating-point HDR JXR without ICC (cyberpunk2077.jxr, 64bppRGBAHalf)
+    {
+        LiveWorkerOutput res;
+        ASSERT_NO_FATAL_FAILURE(ExecuteDecodeWorkerSubprocess(
+            workerExe, jxrPath, L"jxr", 1024, 768, 16ull, &res));
+        EXPECT_EQ(res.exitCode, 0u);
+        EXPECT_EQ(static_cast<HRESULT>(res.header.hr), S_OK);
+        EXPECT_EQ(res.header.pixelFormat, static_cast<uint8_t>(QuickView::PixelFormat::R16G16B16A16_FLOAT));
+        EXPECT_EQ(res.header.colorDataSpace, static_cast<uint8_t>(QuickView::PixelDataSpace::SceneLinearScRgb));
+        EXPECT_EQ(res.header.colorTransfer, static_cast<uint8_t>(QuickView::TransferFunction::Linear));
+        EXPECT_EQ(res.header.colorPrimaries, static_cast<uint8_t>(QuickView::ColorPrimaries::SRGB));
+
+        bool isValid = false, isHdr = false, isSceneLinear = false;
+        bool hasNits = false, hasGainMap = false, gainApplied = false;
+        QuickView::ToolProcess::UnpackHdrFlags(
+            res.header.hdrFlags, isValid, isHdr, isSceneLinear, hasNits, hasGainMap, gainApplied);
+        EXPECT_TRUE(isValid);
+        EXPECT_TRUE(isHdr);
+        EXPECT_TRUE(isSceneLinear);
+
+        ASSERT_FALSE(res.pixelBytes.empty());
+        float minRgb = 0.0f, maxRgb = 0.0f;
+        scanFp16MinMax(res.pixelBytes.data(), res.header.width, res.header.height, res.header.stride,
+                       &minRgb, &maxRgb);
+        EXPECT_GT(maxRgb, 10.0f);
+    }
+
+    // 2. Fixed-point HDR WDP/JXR (anthony.wdp, 48bppRGBFixedPoint)
+    {
+        LiveWorkerOutput res;
+        ASSERT_NO_FATAL_FAILURE(ExecuteDecodeWorkerSubprocess(
+            workerExe, wdpPath, L"wdp", 800, 600, 16ull, &res));
+        EXPECT_EQ(res.exitCode, 0u);
+        EXPECT_EQ(static_cast<HRESULT>(res.header.hr), S_OK);
+        EXPECT_EQ(res.header.pixelFormat, static_cast<uint8_t>(QuickView::PixelFormat::R16G16B16A16_FLOAT));
+        EXPECT_EQ(res.header.colorDataSpace, static_cast<uint8_t>(QuickView::PixelDataSpace::SceneLinearScRgb));
+        EXPECT_EQ(res.header.colorTransfer, static_cast<uint8_t>(QuickView::TransferFunction::Linear));
+        EXPECT_NE(res.header.colorPrimaries, static_cast<uint8_t>(QuickView::ColorPrimaries::Unknown));
+        EXPECT_NE(res.header.colorPrimaries, static_cast<uint8_t>(QuickView::ColorPrimaries::Rec2020));
+        EXPECT_GT(res.header.iccBytes, 0u);
+
+        bool isValid = false, isHdr = false, isSceneLinear = false;
+        bool hasNits = false, hasGainMap = false, gainApplied = false;
+        QuickView::ToolProcess::UnpackHdrFlags(
+            res.header.hdrFlags, isValid, isHdr, isSceneLinear, hasNits, hasGainMap, gainApplied);
+        EXPECT_TRUE(isValid);
+        EXPECT_TRUE(isHdr);
+        EXPECT_TRUE(isSceneLinear);
+
+        ASSERT_FALSE(res.pixelBytes.empty());
+        float minRgb = 0.0f, maxRgb = 0.0f;
+        scanFp16MinMax(res.pixelBytes.data(), res.header.width, res.header.height, res.header.stride,
+                       &minRgb, &maxRgb);
+        EXPECT_GT(maxRgb, 2.0f);
+        EXPECT_LT(minRgb, 0.0f);
+    }
+}
+
+TEST(ColorPipelineTests, LiveDecodeWorkerUntaggedSdrPreservesUnknownPrimaries) {
+    wchar_t exeBuf[MAX_PATH] = {};
+    DWORD exeLen = GetModuleFileNameW(nullptr, exeBuf, MAX_PATH);
+    ASSERT_GT(exeLen, 0u);
+    std::filesystem::path exeDir = std::filesystem::path(exeBuf).parent_path();
+    std::filesystem::path workerExe = exeDir / L"QuickView.exe";
+    if (!std::filesystem::exists(workerExe)) {
+        GTEST_SKIP() << "QuickView.exe not present next to test binary";
+    }
+
+    const std::vector<uint8_t> ico = BuildSynthetic2x2Ico();
+    wchar_t tempDir[MAX_PATH] = {};
+    ASSERT_GT(GetTempPathW(MAX_PATH, tempDir), 0u);
+    std::filesystem::path tempIco =
+        std::filesystem::path(tempDir) / L"qv_color_pipeline_test_untagged.ico";
+    struct TempFileGuard {
+        std::filesystem::path p;
+        ~TempFileGuard() {
+            std::error_code ec;
+            std::filesystem::remove(p, ec);
+        }
+    } fileGuard{tempIco};
+
+    {
+        std::ofstream ofs(tempIco, std::ios::binary | std::ios::trunc);
+        ASSERT_TRUE(ofs.is_open());
+        ofs.write(reinterpret_cast<const char*>(ico.data()), static_cast<std::streamsize>(ico.size()));
+        ASSERT_TRUE(ofs.good());
+    }
+
+    LiveWorkerOutput res;
+    ASSERT_NO_FATAL_FAILURE(ExecuteDecodeWorkerSubprocess(
+        workerExe, tempIco, L"ico", 2, 2, 16ull, &res));
+    EXPECT_EQ(res.exitCode, 0u);
+    EXPECT_EQ(static_cast<HRESULT>(res.header.hr), S_OK);
+    EXPECT_EQ(res.header.pixelFormat, static_cast<uint8_t>(QuickView::PixelFormat::BGRA8888));
+    EXPECT_EQ(res.header.colorDataSpace, static_cast<uint8_t>(QuickView::PixelDataSpace::EncodedSdr));
+    EXPECT_EQ(res.header.colorPrimaries, static_cast<uint8_t>(QuickView::ColorPrimaries::Unknown));
+    EXPECT_EQ(res.header.iccBytes, 0u);
+}
