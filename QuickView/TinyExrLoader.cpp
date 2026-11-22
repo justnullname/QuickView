@@ -64,7 +64,40 @@ namespace TinyExrLoader {
 
     bool LoadEXRFromMemory(const uint8_t* inData, size_t size,
                            int* width, int* height, 
-                           std::vector<float>& outData) {
+                           std::vector<float>& outData,
+                           ExrChromaticities* outChromaticities) {
+        if (outChromaticities) {
+            *outChromaticities = {};
+            EXRVersion exrVersion;
+            if (ParseEXRVersionFromMemory(&exrVersion, inData, size) == TINYEXR_SUCCESS) {
+                EXRHeader exrHeader;
+                InitEXRHeader(&exrHeader);
+                const char* attrErr = nullptr;
+                if (ParseEXRHeaderFromMemory(&exrHeader, &exrVersion, inData, size, &attrErr) == TINYEXR_SUCCESS) {
+                    for (int i = 0; i < exrHeader.num_custom_attributes; ++i) {
+                        const EXRAttribute& attr = exrHeader.custom_attributes[i];
+                        if (strcmp(attr.name, "chromaticities") == 0 && attr.value && attr.size == 32) {
+                            float vals[8] = {};
+                            memcpy(vals, attr.value, 32);
+                            outChromaticities->valid = true;
+                            outChromaticities->redX = vals[0];
+                            outChromaticities->redY = vals[1];
+                            outChromaticities->greenX = vals[2];
+                            outChromaticities->greenY = vals[3];
+                            outChromaticities->blueX = vals[4];
+                            outChromaticities->blueY = vals[5];
+                            outChromaticities->whiteX = vals[6];
+                            outChromaticities->whiteY = vals[7];
+                            break;
+                        }
+                    }
+                    FreeEXRHeader(&exrHeader);
+                } else if (attrErr) {
+                    FreeEXRErrorMessage(attrErr);
+                }
+            }
+        }
+
         float* out = nullptr; 
         int w = 0, h = 0;
         const char* err = nullptr;

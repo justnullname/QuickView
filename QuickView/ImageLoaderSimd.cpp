@@ -283,25 +283,30 @@ void ConvertRGBToBGRARowImpl(const uint8_t* rowSrc, uint8_t* rowDst, int width) 
 // ============================================================================
 // FindPeakFloat - scan R32G32B32A32_FLOAT for max RGB component
 // ============================================================================
+inline bool IsFiniteFloatPtr(const float* p) noexcept {
+    uint32_t bits = 0;
+    std::memcpy(&bits, p, sizeof(bits));
+    return (bits & 0x7F800000u) != 0x7F800000u;
+}
+
+inline bool IsFiniteHalfBits(uint16_t h) noexcept {
+    return (h & 0x7C00u) != 0x7C00u;
+}
+
 float FindPeakFloatImpl(const float* data, size_t pixelCount) {
     if (!data || pixelCount == 0) return 1.0f;
 
     const hn::ScalableTag<float> df;
+    const hn::Rebind<uint32_t, decltype(df)> du32;
     const size_t N = hn::Lanes(df);
-    // Each pixel is 4 floats (RGBA). Process N/4 pixels per vector? No.
-    // Actually we load N floats at a time (mixed RGBA), then reduce.
-    // To mask out alpha, we use a mask pattern: 1,1,1,0 repeating.
+    const auto expMask32 = hn::Set(du32, uint32_t{0x7F800000u});
 
     auto vPeak = hn::Set(df, 1.0f);
     size_t i = 0;
 
-    // Create alpha mask: for float[N], positions 3,7,11,15... are alpha -> zero them
-    // We process 2 pixels (8 floats) at a time minimum for clean alignment
-
     const size_t pixelsPerIter = N / 4;
 
     if (pixelsPerIter >= 1) {
-        // Build mask to zero alpha channel: position % 4 == 3 -> 0.0, else 1.0
         HWY_ALIGN float maskArr[HWY_MAX_LANES_D(hn::ScalableTag<float>)];
         for (size_t k = 0; k < N; ++k) {
             maskArr[k] = (k % 4 == 3) ? 0.0f : 1.0f;
@@ -309,7 +314,9 @@ float FindPeakFloatImpl(const float* data, size_t pixelCount) {
         const auto vMask = hn::Load(df, maskArr);
 
         for (; i + pixelsPerIter <= pixelCount; i += pixelsPerIter) {
-            auto v = hn::LoadU(df, data + i * 4);
+            auto vu = hn::LoadU(du32, reinterpret_cast<const uint32_t*>(data + i * 4));
+            auto finiteMask = hn::Ne(hn::And(vu, expMask32), expMask32);
+            auto v = hn::BitCast(df, hn::IfThenElseZero(finiteMask, vu));
             v = hn::Mul(v, vMask); // Zero out alpha channels
             vPeak = hn::Max(vPeak, v);
         }
@@ -320,10 +327,10 @@ float FindPeakFloatImpl(const float* data, size_t pixelCount) {
 
     // Scalar tail
     for (; i < pixelCount; ++i) {
-        const float r = data[i * 4 + 0];
-        const float g = data[i * 4 + 1];
-        const float b = data[i * 4 + 2];
-        peak = std::max({peak, r, g, b});
+        const float* px = data + i * 4;
+        if (IsFiniteFloatPtr(px + 0) && px[0] > peak) peak = px[0];
+        if (IsFiniteFloatPtr(px + 1) && px[1] > peak) peak = px[1];
+        if (IsFiniteFloatPtr(px + 2) && px[2] > peak) peak = px[2];
     }
 
     return peak;
@@ -336,7 +343,9 @@ float FindPeakLuminanceFloatImpl(const float* data, size_t pixelCount) {
     if (!data || pixelCount == 0) return 1.0f;
 
     const hn::ScalableTag<float> df;
+    const hn::Rebind<uint32_t, decltype(df)> du32;
     const size_t N = hn::Lanes(df);
+    const auto expMask32 = hn::Set(du32, uint32_t{0x7F800000u});
 
     const auto wR = hn::Set(df, 0.2627f);
     const auto wG = hn::Set(df, 0.6780f);
@@ -346,8 +355,17 @@ float FindPeakLuminanceFloatImpl(const float* data, size_t pixelCount) {
     size_t i = 0;
 
     for (; i + N <= pixelCount; i += N) {
-        hn::Vec<decltype(df)> vR, vG, vB, vA;
-        hn::LoadInterleaved4(df, data + i * 4, vR, vG, vB, vA);
+        hn::Vec<decltype(du32)> uR, uG, uB, uA;
+        hn::LoadInterleaved4(du32, reinterpret_cast<const uint32_t*>(data + i * 4), uR, uG, uB, uA);
+
+        auto finR = hn::Ne(hn::And(uR, expMask32), expMask32);
+        auto finG = hn::Ne(hn::And(uG, expMask32), expMask32);
+        auto finB = hn::Ne(hn::And(uB, expMask32), expMask32);
+        auto valid = hn::And(hn::And(finR, finG), finB);
+
+        auto vR = hn::BitCast(df, hn::IfThenElseZero(valid, uR));
+        auto vG = hn::BitCast(df, hn::IfThenElseZero(valid, uG));
+        auto vB = hn::BitCast(df, hn::IfThenElseZero(valid, uB));
 
         auto vLum = hn::Mul(vR, wR);
         vLum = hn::MulAdd(vG, wG, vLum);
@@ -360,11 +378,11 @@ float FindPeakLuminanceFloatImpl(const float* data, size_t pixelCount) {
 
     // Scalar tail
     for (; i < pixelCount; ++i) {
-        const float r = data[i * 4 + 0];
-        const float g = data[i * 4 + 1];
-        const float b = data[i * 4 + 2];
-        float lum = r * 0.2627f + g * 0.6780f + b * 0.0593f;
-        if (lum < 0.0f) lum = 0.0f;
+        const float* px = data + i * 4;
+        if (!IsFiniteFloatPtr(px + 0) || !IsFiniteFloatPtr(px + 1) || !IsFiniteFloatPtr(px + 2)) {
+            continue;
+        }
+        const float lum = px[0] * 0.2627f + px[1] * 0.6780f + px[2] * 0.0593f;
         if (lum > peak) peak = lum;
     }
 
@@ -650,7 +668,9 @@ float SumLuminanceFloatRangeImpl(const float* row, int x0, int x1) {
     if (!row || x1 <= x0) return 0.0f;
 
     const hn::ScalableTag<float> df;
+    const hn::Rebind<uint32_t, decltype(df)> du32;
     const size_t pixelsPerVec = hn::Lanes(df);
+    const auto expMask32 = hn::Set(du32, uint32_t{0x7F800000u});
     size_t x = static_cast<size_t>(x0);
     size_t end = static_cast<size_t>(x1);
 
@@ -661,8 +681,17 @@ float SumLuminanceFloatRangeImpl(const float* row, int x0, int x1) {
     auto vAccum = vZero;
 
     for (; x + pixelsPerVec <= end; x += pixelsPerVec) {
-        hn::Vec<decltype(df)> vR, vG, vB, vA;
-        hn::LoadInterleaved4(df, row + x * 4, vR, vG, vB, vA);
+        hn::Vec<decltype(du32)> uR, uG, uB, uA;
+        hn::LoadInterleaved4(du32, reinterpret_cast<const uint32_t*>(row + x * 4), uR, uG, uB, uA);
+
+        auto finR = hn::Ne(hn::And(uR, expMask32), expMask32);
+        auto finG = hn::Ne(hn::And(uG, expMask32), expMask32);
+        auto finB = hn::Ne(hn::And(uB, expMask32), expMask32);
+        auto valid = hn::And(hn::And(finR, finG), finB);
+
+        auto vR = hn::BitCast(df, hn::IfThenElseZero(valid, uR));
+        auto vG = hn::BitCast(df, hn::IfThenElseZero(valid, uG));
+        auto vB = hn::BitCast(df, hn::IfThenElseZero(valid, uB));
 
         auto vLum = hn::Add(hn::Mul(vR, wR), hn::Add(hn::Mul(vG, wG), hn::Mul(vB, wB)));
         vLum = hn::Max(vZero, vLum);
@@ -674,7 +703,13 @@ float SumLuminanceFloatRangeImpl(const float* row, int x0, int x1) {
 
     for (; x < end; ++x) {
         const float* px = row + x * 4;
-        total += (std::max)(0.0f, px[0] * 0.2627f + px[1] * 0.6780f + px[2] * 0.0593f);
+        if (!IsFiniteFloatPtr(px + 0) || !IsFiniteFloatPtr(px + 1) || !IsFiniteFloatPtr(px + 2)) {
+            continue;
+        }
+        const float lum = px[0] * 0.2627f + px[1] * 0.6780f + px[2] * 0.0593f;
+        if (lum > 0.0f) {
+            total += lum;
+        }
     }
 
     return total;
@@ -722,20 +757,29 @@ void ConvertUint16ToHalfImpl(const uint16_t* src, uint16_t* dst, size_t pixelCou
 float FindPeakHalfImpl(const uint16_t* data_u16, size_t pixelCount) {
     if (!data_u16 || pixelCount == 0) return 0.0f;
 
-    const hwy::float16_t* data = reinterpret_cast<const hwy::float16_t*>(data_u16);
     const hn::ScalableTag<float> df;
     const hn::ScalableTag<hwy::float16_t> dh;
+    const hn::Rebind<uint16_t, decltype(dh)> du16;
     const size_t N_h = hn::Lanes(dh);
-    
+    const auto expMask16 = hn::Set(du16, uint16_t{0x7C00u});
+
     auto vMax = hn::Zero(df);
     size_t i = 0;
 
     for (; i + N_h <= pixelCount; i += N_h) {
-        hn::Vec<decltype(dh)> vR, vG, vB, vA;
-        hn::LoadInterleaved4(dh, data + i * 4, vR, vG, vB, vA);
+        hn::Vec<decltype(du16)> uR, uG, uB, uA;
+        hn::LoadInterleaved4(du16, data_u16 + i * 4, uR, uG, uB, uA);
+
+        uR = hn::IfThenElseZero(hn::Ne(hn::And(uR, expMask16), expMask16), uR);
+        uG = hn::IfThenElseZero(hn::Ne(hn::And(uG, expMask16), expMask16), uG);
+        uB = hn::IfThenElseZero(hn::Ne(hn::And(uB, expMask16), expMask16), uB);
+
+        auto vR = hn::BitCast(dh, uR);
+        auto vG = hn::BitCast(dh, uG);
+        auto vB = hn::BitCast(dh, uB);
 
         hn::Half<decltype(dh)> dh_half;
-        
+
         auto r_low = hn::PromoteTo(df, hn::LowerHalf(dh_half, vR));
         auto g_low = hn::PromoteTo(df, hn::LowerHalf(dh_half, vG));
         auto b_low = hn::PromoteTo(df, hn::LowerHalf(dh_half, vB));
@@ -753,10 +797,12 @@ float FindPeakHalfImpl(const uint16_t* data_u16, size_t pixelCount) {
 
     for (; i < pixelCount; ++i) {
         const uint16_t* px = data_u16 + i * 4;
-        float r = DirectX::PackedVector::XMConvertHalfToFloat(px[0]);
-        float g = DirectX::PackedVector::XMConvertHalfToFloat(px[1]);
-        float b = DirectX::PackedVector::XMConvertHalfToFloat(px[2]);
-        peak = (std::max)({peak, r, g, b});
+        for (int c = 0; c < 3; ++c) {
+            if (IsFiniteHalfBits(px[c])) {
+                const float v = DirectX::PackedVector::XMConvertHalfToFloat(px[c]);
+                if (v > peak) peak = v;
+            }
+        }
     }
 
     return peak;
@@ -768,10 +814,11 @@ float FindPeakHalfImpl(const uint16_t* data_u16, size_t pixelCount) {
 float FindPeakLuminanceHalfImpl(const uint16_t* data_u16, size_t pixelCount) {
     if (!data_u16 || pixelCount == 0) return 0.0f;
 
-    const hwy::float16_t* data = reinterpret_cast<const hwy::float16_t*>(data_u16);
     const hn::ScalableTag<float> df;
     const hn::ScalableTag<hwy::float16_t> dh;
+    const hn::Rebind<uint16_t, decltype(dh)> du16;
     const size_t N_h = hn::Lanes(dh);
+    const auto expMask16 = hn::Set(du16, uint16_t{0x7C00u});
 
     const auto wR = hn::Set(df, 0.2627f);
     const auto wG = hn::Set(df, 0.6780f);
@@ -781,8 +828,17 @@ float FindPeakLuminanceHalfImpl(const uint16_t* data_u16, size_t pixelCount) {
     size_t i = 0;
 
     for (; i + N_h <= pixelCount; i += N_h) {
-        hn::Vec<decltype(dh)> vR, vG, vB, vA;
-        hn::LoadInterleaved4(dh, data + i * 4, vR, vG, vB, vA);
+        hn::Vec<decltype(du16)> uR, uG, uB, uA;
+        hn::LoadInterleaved4(du16, data_u16 + i * 4, uR, uG, uB, uA);
+
+        auto finR = hn::Ne(hn::And(uR, expMask16), expMask16);
+        auto finG = hn::Ne(hn::And(uG, expMask16), expMask16);
+        auto finB = hn::Ne(hn::And(uB, expMask16), expMask16);
+        auto valid = hn::And(hn::And(finR, finG), finB);
+
+        auto vR = hn::BitCast(dh, hn::IfThenElseZero(valid, uR));
+        auto vG = hn::BitCast(dh, hn::IfThenElseZero(valid, uG));
+        auto vB = hn::BitCast(dh, hn::IfThenElseZero(valid, uB));
 
         hn::Half<decltype(dh)> dh_half;
 
@@ -805,11 +861,13 @@ float FindPeakLuminanceHalfImpl(const uint16_t* data_u16, size_t pixelCount) {
 
     for (; i < pixelCount; ++i) {
         const uint16_t* px = data_u16 + i * 4;
+        if (!IsFiniteHalfBits(px[0]) || !IsFiniteHalfBits(px[1]) || !IsFiniteHalfBits(px[2])) {
+            continue;
+        }
         float r = DirectX::PackedVector::XMConvertHalfToFloat(px[0]);
         float g = DirectX::PackedVector::XMConvertHalfToFloat(px[1]);
         float b = DirectX::PackedVector::XMConvertHalfToFloat(px[2]);
-        float lum = r * 0.2627f + g * 0.6780f + b * 0.0593f;
-        if (lum < 0.0f) lum = 0.0f;
+        const float lum = r * 0.2627f + g * 0.6780f + b * 0.0593f;
         if (lum > peak) peak = lum;
     }
 
@@ -822,11 +880,12 @@ float FindPeakLuminanceHalfImpl(const uint16_t* data_u16, size_t pixelCount) {
 float SumLuminanceHalfRangeImpl(const uint16_t* row_u16, int x0, int x1) {
     if (!row_u16 || x1 <= x0) return 0.0f;
 
-    const hwy::float16_t* row = reinterpret_cast<const hwy::float16_t*>(row_u16);
     const hn::ScalableTag<float> df;
     const hn::ScalableTag<hwy::float16_t> dh;
+    const hn::Rebind<uint16_t, decltype(dh)> du16;
     const size_t N_h = hn::Lanes(dh);
-    
+    const auto expMask16 = hn::Set(du16, uint16_t{0x7C00u});
+
     size_t x = static_cast<size_t>(x0);
     size_t end = static_cast<size_t>(x1);
 
@@ -837,11 +896,20 @@ float SumLuminanceHalfRangeImpl(const uint16_t* row_u16, int x0, int x1) {
     auto vAccum = vZero;
 
     for (; x + N_h <= end; x += N_h) {
-        hn::Vec<decltype(dh)> vR, vG, vB, vA;
-        hn::LoadInterleaved4(dh, row + x * 4, vR, vG, vB, vA);
+        hn::Vec<decltype(du16)> uR, uG, uB, uA;
+        hn::LoadInterleaved4(du16, row_u16 + x * 4, uR, uG, uB, uA);
+
+        auto finR = hn::Ne(hn::And(uR, expMask16), expMask16);
+        auto finG = hn::Ne(hn::And(uG, expMask16), expMask16);
+        auto finB = hn::Ne(hn::And(uB, expMask16), expMask16);
+        auto valid = hn::And(hn::And(finR, finG), finB);
+
+        auto vR = hn::BitCast(dh, hn::IfThenElseZero(valid, uR));
+        auto vG = hn::BitCast(dh, hn::IfThenElseZero(valid, uG));
+        auto vB = hn::BitCast(dh, hn::IfThenElseZero(valid, uB));
 
         hn::Half<decltype(dh)> dh_half;
-        
+
         auto r_low = hn::PromoteTo(df, hn::LowerHalf(dh_half, vR));
         auto g_low = hn::PromoteTo(df, hn::LowerHalf(dh_half, vG));
         auto b_low = hn::PromoteTo(df, hn::LowerHalf(dh_half, vB));
@@ -861,10 +929,16 @@ float SumLuminanceHalfRangeImpl(const uint16_t* row_u16, int x0, int x1) {
 
     for (; x < end; ++x) {
         const uint16_t* px = row_u16 + x * 4;
+        if (!IsFiniteHalfBits(px[0]) || !IsFiniteHalfBits(px[1]) || !IsFiniteHalfBits(px[2])) {
+            continue;
+        }
         float r = DirectX::PackedVector::XMConvertHalfToFloat(px[0]);
         float g = DirectX::PackedVector::XMConvertHalfToFloat(px[1]);
         float b = DirectX::PackedVector::XMConvertHalfToFloat(px[2]);
-        total += (std::max)(0.0f, r * 0.2627f + g * 0.6780f + b * 0.0593f);
+        const float lum = r * 0.2627f + g * 0.6780f + b * 0.0593f;
+        if (lum > 0.0f) {
+            total += lum;
+        }
     }
 
     return total;

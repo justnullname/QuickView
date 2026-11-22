@@ -2622,8 +2622,7 @@ namespace {
     static std::wstring BuildDynamicRangeLabel(const CImageLoader::ImageMetadata& metadata);
     static std::wstring BuildRenderPathLabel(const CImageLoader::ImageMetadata& metadata,
                                              const QuickView::DisplayColorState& displayState);
-    static std::wstring BuildDisplayHeadroomLabel(const CImageLoader::ImageMetadata& metadata,
-                                                  const QuickView::DisplayColorState& displayState);
+    static std::wstring BuildDisplayHeadroomLabel(const QuickView::DisplayColorState& displayState);
     static std::wstring BuildMasteringDisplayLabel(const QuickView::HdrStaticMetadata& hdr);
     static std::wstring BuildGainRatioLabel(const QuickView::HdrStaticMetadata& hdr);
     static std::wstring BuildGainBlendWeightLabel(const QuickView::HdrStaticMetadata& hdr,
@@ -3418,7 +3417,7 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
             if (metadata.MeasuredPeakNits > 0.0f) {
                 PushInfoRow(rows, L"\U00002600", L"ImagePeak", FormatHdrNits(metadata.MeasuredPeakNits), {}, L"Max content luminance detected by SIMD scan");
             }
-            PushInfoRow(rows, L"\U0001F4A1", L"Display", BuildDisplayHeadroomLabel(metadata, displayState), {}, {}, TruncateMode::EndEllipsis);
+            PushInfoRow(rows, L"\U0001F4A1", L"Display", BuildDisplayHeadroomLabel(displayState), {}, {}, TruncateMode::EndEllipsis);
 
             if (metadata.hdrMetadata.hasGainMap) {
                 PushInfoRow(rows, L"\U0001F5BC", L"Base", L"SDR Base Layer", {}, {}, TruncateMode::EndEllipsis);
@@ -3618,18 +3617,12 @@ namespace {
         return sdrWhite;
     }
 
-    static float ResolveContentPeakNitsForLabel(const CImageLoader::ImageMetadata& metadata, float fallbackNits) {
-        if (metadata.MeasuredPeakNits > 0.0f) return metadata.MeasuredPeakNits;
-        if (metadata.hdrMetadata.maxCLLNits > 0.0f) return metadata.hdrMetadata.maxCLLNits;
-        if (metadata.hdrMetadata.masteringMaxNits > 0.0f) return metadata.hdrMetadata.masteringMaxNits;
-        return fallbackNits;
-    }
-
-    static std::wstring BuildDisplayHeadroomLabel(const CImageLoader::ImageMetadata& metadata,
-                                                  const QuickView::DisplayColorState& displayState) {
+    static std::wstring BuildDisplayHeadroomLabel(const QuickView::DisplayColorState& displayState) {
         const float sdrWhite = displayState.sdrWhiteLevelNits > 0.0f ? displayState.sdrWhiteLevelNits : 80.0f;
         const float peak = ResolveDisplayPeakNitsForLabel(displayState);
-        const float full = ResolveContentPeakNitsForLabel(metadata, peak);
+        const float full = displayState.maxFullFrameLuminanceNits > 0.0f
+            ? displayState.maxFullFrameLuminanceNits
+            : peak;
 
         std::wstring peakSuffix = L"";
         if (g_config.HdrPeakNitsOverride > 0.0f) {

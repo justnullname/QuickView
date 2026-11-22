@@ -9,6 +9,7 @@
 #include "GalleryOverlay.h"
 #include "AppStrings.h"
 #include "ImageEngine.h"
+#include "PaneContext.h"
 #include "Plugin/PluginHost.h"
 #include "DialogController.h"
 #include "OSDState.h"
@@ -3681,10 +3682,31 @@ void SettingsOverlay::BuildImageTab(SettingsTab& tabImage) {
     itemAdvColor.tooltipText = AppStrings::g.Settings_Tooltip_AdvancedColor;
     itemAdvColor.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         SaveConfig();
+        if (g_pImageEngine) {
+            g_pImageEngine->InvalidateAllCache();
+        }
         extern HWND g_mainHwnd;
         extern FireAndForget LoadImageAsync(HWND hwnd, std::wstring path, bool showOSD = true, QuickView::BrowseDirection dir = QuickView::BrowseDirection::IDLE);
         if (g_mainHwnd) {
             SendMessageW(g_mainHwnd, WM_DISPLAYCHANGE, 0, 0);
+            auto* compareCtrl = AppContext::GetInstance().CompareCtrl.get();
+            if (compareCtrl && compareCtrl->IsActive()) {
+                const auto& leftPane = GetPaneContext(PaneSlot::Left);
+                if (leftPane.valid && !leftPane.path.empty()) {
+                    compareCtrl->LoadImageIntoLeftSlot(
+                        g_mainHwnd,
+                        leftPane.path,
+                        CompareSlotCallback(
+                            [](void* u, bool success) {
+                                if (success) {
+                                    auto* self = static_cast<CompareController*>(u);
+                                    self->MarkDirty();
+                                    RequestRepaint(QuickView::PaintLayer::Image | QuickView::PaintLayer::Dynamic);
+                                }
+                            },
+                            compareCtrl));
+                }
+            }
             if (!g_imagePath.empty()) {
                 LoadImageAsync(g_mainHwnd, g_imagePath, false, QuickView::BrowseDirection::IDLE);
             }

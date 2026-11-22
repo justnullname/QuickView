@@ -14,6 +14,7 @@
 #include "Plugin/qvx_sr.h"
 #include <mutex>
 #include <array>
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -96,6 +97,8 @@ public:
         int effectiveCmsMode = 1;
         bool enableSoftProofing = false;
         std::wstring softProofProfilePath;
+        bool hasDisplayStateOverride = false;
+        QuickView::DisplayColorState displayStateOverride;
     };
 
 
@@ -118,17 +121,47 @@ public:
     /// </summary>
     HRESULT Initialize(HWND hwnd);
 
-    void SetAdvancedColorMode(bool enabled) { m_isAdvancedColor = enabled; }
-    void SetDisplayColorState(const QuickView::DisplayColorState& state) {
+    void InvalidateMonitorColorProfile() {
         std::lock_guard<std::mutex> lock(m_cacheMutex);
-        if (state.gdiDeviceName != m_displayColorState.gdiDeviceName ||
-            state.advancedColorActive != m_displayColorState.advancedColorActive) {
-            m_cachedMonitorColorContext.Reset();
-            m_cachedDestDeviceName.clear();
-            m_cachedMonitorProfilePath.clear();
-            m_cachedMonitorIsSrgb = false;
+        m_cachedMonitorColorContext.Reset();
+        m_cachedDestDeviceName.clear();
+        m_cachedMonitorProfilePath.clear();
+        m_cachedMonitorIsSrgb = false;
+    }
+
+    void SetAdvancedColorMode(bool enabled) {
+        if (m_isAdvancedColor != enabled) {
+            m_isAdvancedColor = enabled;
+            std::lock_guard<std::recursive_mutex> gpuLock(m_gpuContextMutex);
+            m_bakeCache.Reset();
         }
-        m_displayColorState = state;
+    }
+    void SetDisplayColorState(const QuickView::DisplayColorState& state) {
+        bool hdrParamsChanged = false;
+        {
+            std::lock_guard<std::mutex> lock(m_cacheMutex);
+            const bool profileSensitiveChanged =
+                state.gdiDeviceName != m_displayColorState.gdiDeviceName ||
+                state.advancedColorActive != m_displayColorState.advancedColorActive ||
+                state.wideColorActive != m_displayColorState.wideColorActive ||
+                state.highDynamicRangeUserEnabled != m_displayColorState.highDynamicRangeUserEnabled;
+            if (profileSensitiveChanged) {
+                m_cachedMonitorColorContext.Reset();
+                m_cachedDestDeviceName.clear();
+                m_cachedMonitorProfilePath.clear();
+                m_cachedMonitorIsSrgb = false;
+            }
+            hdrParamsChanged =
+                state.advancedColorActive != m_displayColorState.advancedColorActive ||
+                std::abs(state.sdrWhiteLevelNits - m_displayColorState.sdrWhiteLevelNits) > 0.01f ||
+                std::abs(state.maxLuminanceNits - m_displayColorState.maxLuminanceNits) > 0.01f;
+            m_displayColorState = state;
+        }
+        // Acquire m_gpuContextMutex only after releasing m_cacheMutex to avoid lock-order inversion.
+        if (hdrParamsChanged) {
+            std::lock_guard<std::recursive_mutex> gpuLock(m_gpuContextMutex);
+            m_bakeCache.Reset();
+        }
     }
     QuickView::DisplayColorState GetDisplayColorState() const {
         std::lock_guard<std::mutex> lock(m_cacheMutex);
@@ -238,7 +271,8 @@ private:
                                       ID2D1ColorContext** outContext);
     HRESULT ResolveDestinationColorContext(const QuickView::RawImageFrame& frame,
                                           ID2D1ColorContext** outContext,
-                                          bool* outIsSrgb = nullptr) const;
+                                          bool* outIsSrgb = nullptr,
+                                          const QuickView::DisplayColorState* displayStateOverride = nullptr) const;
     HRESULT LoadColorContextForPrimaries(QuickView::ColorPrimaries primaries,
                                          ID2D1ColorContext** outContext) const;
     bool ShouldUseHdrOutputForFrame(const QuickView::RawImageFrame& frame) const;
@@ -264,17 +298,25 @@ private:
         const void* lastAuxPixels = nullptr;
         UINT lastBaseW = 0, lastBaseH = 0;
         UINT lastAuxW = 0, lastAuxH = 0;
+        QuickView::PixelFormat lastBaseFormat = QuickView::PixelFormat::BGRA8888;
+        UINT lastBaseStride = 0;
+        UINT lastAuxStride = 0;
         Microsoft::WRL::ComPtr<ID3D11Texture2D> baseTexture;
         Microsoft::WRL::ComPtr<ID3D11Texture2D> auxTexture;
-        Microsoft::WRL::ComPtr<ID2D1Bitmap1> bakedBitmap;
         float lastHeadroom = -1.0f;
 
         void Reset() {
             lastBasePixels = nullptr;
             lastAuxPixels = nullptr;
+            lastBaseW = 0;
+            lastBaseH = 0;
+            lastAuxW = 0;
+            lastAuxH = 0;
+            lastBaseFormat = QuickView::PixelFormat::BGRA8888;
+            lastBaseStride = 0;
+            lastAuxStride = 0;
             baseTexture.Reset();
             auxTexture.Reset();
-            bakedBitmap.Reset();
             lastHeadroom = -1.0f;
         }
     } m_bakeCache;

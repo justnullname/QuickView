@@ -128,7 +128,7 @@ struct DisplayColorState {
     }
 
     bool ShouldBypassMonitorProfileForSdr() const {
-        return wideColorActive && !highDynamicRangeUserEnabled;
+        return wideColorActive || advancedColorActive;
     }
 
     bool HasChromaticities() const {

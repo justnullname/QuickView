@@ -580,7 +580,18 @@ HRESULT CompositionEngine::Initialize(HWND hwnd, ID3D11Device* d3dDevice, ID2D1D
     return hr;
 }
 
+bool CompositionEngine::SetAdvancedColorEnabled(bool enabled) {
+    const bool prevAdvanced = m_isAdvancedColor;
+    const DXGI_FORMAT prevFormat = m_surfaceFormat;
+    m_allowAdvancedColor = enabled;
+    m_isAdvancedColor = m_allowAdvancedColor && m_displayColorInfo.GetState().ShouldUseScRgbPipeline();
+    m_surfaceFormat = m_isAdvancedColor ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_B8G8R8A8_UNORM;
+    return (m_isAdvancedColor != prevAdvanced) || (m_surfaceFormat != prevFormat);
+}
+
 bool CompositionEngine::RefreshDisplayColorState(bool forceHdrSimulation) {
+    const bool prevIsAdvancedColor = m_isAdvancedColor;
+    const DXGI_FORMAT prevSurfaceFormat = m_surfaceFormat;
     const bool changed = m_displayColorInfo.Refresh(m_hwnd, forceHdrSimulation);
     m_isAdvancedColor = m_allowAdvancedColor && m_displayColorInfo.GetState().ShouldUseScRgbPipeline();
     m_surfaceFormat = m_isAdvancedColor ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_B8G8R8A8_UNORM;
@@ -601,7 +612,7 @@ bool CompositionEngine::RefreshDisplayColorState(bool forceHdrSimulation) {
             TraceLoggingBool(m_displayColorInfo.GetState().advancedColorSupported, "AdvancedColorSupported"));
     }
 
-    return changed;
+    return changed || (m_isAdvancedColor != prevIsAdvancedColor) || (m_surfaceFormat != prevSurfaceFormat);
 }
 
 // ============================================================================

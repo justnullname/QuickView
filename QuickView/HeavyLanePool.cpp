@@ -3072,6 +3072,14 @@ HRESULT HeavyLanePool::LaunchDecodeWorker(
     if (noFakeBase) {
         cmdLine += L" --no-fake-base";
     }
+    if (!fullDecode) {
+        cmdLine += L" --preserve-float";
+        if (job.targetHdrHeadroomStops >= 0.0f) {
+            wchar_t hdrBuf[64];
+            swprintf_s(hdrBuf, L" --hdr-headroom %.4f", job.targetHdrHeadroomStops);
+            cmdLine += hdrBuf;
+        }
+    }
 
     std::vector<wchar_t> cmdBuffer(cmdLine.begin(), cmdLine.end());
     cmdBuffer.push_back(L'\0');

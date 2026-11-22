@@ -11,6 +11,7 @@
 
 
 #include "ImageLoader.h"
+#include "ColorMath.h"
 #include "QuickViewETW.h"
 #include "AsyncJob.h"
 static constexpr const char *CURRENT_MODULE = "ImageLoader";
@@ -74,7 +75,6 @@ static void
 PopulateAvifHdrStaticMetadata(const avifImage *image,
                               QuickView::HdrStaticMetadata *hdrMetadata);
 static float DecodePqToLinearScRgb(float value);
-static float DecodeHlgToLinear(float value);
 static float DecodeSrgbToLinear(float value);
 static float DecodeRec709ToLinear(float value);
 static float DecodeTransferToLinear(float value,
@@ -368,6 +368,19 @@ static void FindHeifGainMapManual(const uint8_t *data, size_t size,
   }
 }
 
+static bool ContainsBytesSpan(const uint8_t *haystack, size_t haystackLen,
+                              const char *needle, size_t needleLen) {
+  if (!haystack || !needle || needleLen == 0 || haystackLen < needleLen) {
+    return false;
+  }
+  for (size_t i = 0; i + needleLen <= haystackLen; ++i) {
+    if (memcmp(haystack + i, needle, needleLen) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // [v18] Fallback Metadata Prober for Native WIC Path
 static void ProbeHdrMetadataNative(const uint8_t *data, size_t size,
                                    QuickView::HdrStaticMetadata *pHdr,
@@ -384,8 +397,11 @@ static void ProbeHdrMetadataNative(const uint8_t *data, size_t size,
         PopulateAvifHdrStaticMetadata(decoder->image, pHdr);
         if (pMetadata) {
           pMetadata->colorInfo.nominalBitDepth = decoder->image->depth;
-          pMetadata->colorInfo.primaries = MapAvifPrimaries(decoder->image->colorPrimaries);
-          pMetadata->colorInfo.transfer = MapAvifTransferFunction(decoder->image->transferCharacteristics);
+          pMetadata->colorInfo.primaries = pHdr->primaries;
+          pMetadata->colorInfo.transfer = pHdr->transfer;
+          pMetadata->colorInfo.dataSpace =
+              pHdr->isHdr ? QuickView::PixelDataSpace::EncodedHdr
+                          : QuickView::PixelDataSpace::EncodedSdr;
           if (decoder->image->icc.data && decoder->image->icc.size > 0) {
             pMetadata->HasEmbeddedColorProfile = true;
             pMetadata->colorInfo.hasEmbeddedIcc = true;
@@ -422,23 +438,33 @@ static void ProbeHdrMetadataNative(const uint8_t *data, size_t size,
     }
   }
 
-  // 3. Detect Apple HDR Gain Map (iso:hdrgainmap URN presence)
-  const char *appleUrn = "urn:com:apple:photo:2020:aux:hdrgainmap";
-  const size_t urnLen = strlen(appleUrn);
-  const size_t urnScanLimit = (size > 64000) ? 64000 : size;
-  for (size_t i = 0; i + urnLen <= urnScanLimit; ++i) {
-    if (memcmp(data + i, appleUrn, urnLen) == 0) {
-      pHdr->hasGainMap = true;
-      pHdr->isValid = true;
-      // Apple GainMap JPEGs always use Display P3 space natively
+  // 3. Detect Apple or ISO 21496-1 HDR Gain Map URNs in first or last 64KB (meta after mdat)
+  constexpr const char *kAppleUrn = "urn:com:apple:photo:2020:aux:hdrgainmap";
+  constexpr size_t kAppleUrnLen = 37;
+  constexpr const char *kIsoGainMapUrn = "urn:iso:std:iso:ts:21496:-1";
+  constexpr size_t kIsoGainMapUrnLen = 27;
+
+  const size_t headLimit = (size > 64000) ? 64000 : size;
+  const bool hasHeadApple = ContainsBytesSpan(data, headLimit, kAppleUrn, kAppleUrnLen);
+  const bool hasTailApple = (size > 64000) &&
+      ContainsBytesSpan(data + (size - 64000), 64000, kAppleUrn, kAppleUrnLen);
+  const bool hasHeadIso = ContainsBytesSpan(data, headLimit, kIsoGainMapUrn, kIsoGainMapUrnLen);
+  const bool hasTailIso = (size > 64000) &&
+      ContainsBytesSpan(data + (size - 64000), 64000, kIsoGainMapUrn, kIsoGainMapUrnLen);
+
+  if (hasHeadApple || hasTailApple || hasHeadIso || hasTailIso) {
+    pHdr->hasGainMap = true;
+    pHdr->isValid = true;
+    if (pHdr->primaries == QuickView::ColorPrimaries::Unknown) {
       pHdr->primaries = QuickView::ColorPrimaries::DisplayP3;
-      // Default headroom: 1.5 stops (Apple standard when no explicit tag found)
-      if (pHdr->gainMapAlternateHeadroom <= 0.0f)
-        pHdr->gainMapAlternateHeadroom = 1.5f;
-      QV_LOG("Metadata_HDR",
-             TraceLoggingString("AppleGainMap Detected", "Action"));
-      break;
     }
+    if (pHdr->gainMapAlternateHeadroom <= 0.0f)
+      pHdr->gainMapAlternateHeadroom = 1.5f;
+    if (pMetadata && pMetadata->colorInfo.primaries == QuickView::ColorPrimaries::Unknown) {
+      pMetadata->colorInfo.primaries = pHdr->primaries;
+    }
+    QV_LOG("Metadata_HDR",
+           TraceLoggingString("GainMap URN Detected", "Action"));
   }
 }
 
@@ -1065,15 +1091,6 @@ HRESULT CollapseFloatResultToSdr(const QuickView::Codec::DecodeContext &ctx,
     return S_FALSE;
   }
 
-  // [v6.2.5.3] Force-complete HDR metadata in floating-point format.
-  // Any image decoded to float values has brightness potential exceeding SDR white point (1.0).
-  // Even if it is not marked as HDR due to missing metadata (e.g., JXL float images),
-  // we must force-mark it to prevent downstream components (including CPU Clip and GPU RenderEngine)
-  // from misidentifying it as SDR, which would cause large-scale clipping and overexposure of highlights above 1.0.
-  if (!result.metadata.hdrMetadata.isHdr) {
-    result.metadata.hdrMetadata.isHdr = true;
-  }
-
   // [v6.2.5.3] Fully unleash GPU compute: the main rendering pipeline (both FastLane/HeavyLane will set
   // preserveFloat=true) and never executes any CPU-side ToneMap that causes highlight clipping or compromised quality.
   // Downscaling is avoided! FP16/FP32 are preserved and sent intact to RenderEngine, utilizing its built-in high-precision
@@ -1131,6 +1148,9 @@ HRESULT CollapseFloatResultToSdr(const QuickView::Codec::DecodeContext &ctx,
   result.metadata.colorInfo.dataSpace = QuickView::PixelDataSpace::EncodedSdr;
   result.metadata.colorInfo.transfer = QuickView::TransferFunction::SRGB;
   result.metadata.colorInfo.nominalBitDepth = 8;
+  result.metadata.hdrMetadata.isHdr = false;
+  result.metadata.hdrMetadata.isSceneLinear = false;
+  result.metadata.hdrMetadata.transfer = QuickView::TransferFunction::SRGB;
   if (result.metadata.FormatDetails.find(L"SDR Target") == std::wstring::npos) {
     if (!result.metadata.FormatDetails.empty()) {
       result.metadata.FormatDetails += L" / ";
@@ -1442,6 +1462,58 @@ HRESULT LoadBufferUnified(const uint8_t *mappedData, size_t mappedSize,
 } // namespace
 
 static int ReadJpegExifOrientation(const uint8_t *data, size_t size);
+static QuickView::ColorPrimaries GuessPrimariesFromMetadataColorSpace(
+    const CImageLoader::ImageMetadata &metadata);
+
+static void ApplyJpegIccColorMetadata(
+    const uint8_t *iccData, size_t iccSize,
+    QuickView::PixelColorInfo &colorInfo,
+    QuickView::HdrStaticMetadata &hdrMeta,
+    std::wstring *outColorSpace = nullptr) {
+  if (!iccData || iccSize == 0)
+    return;
+
+  const std::wstring parsedName =
+      CImageLoader::ParseICCProfileName(iccData, iccSize);
+  if (outColorSpace && !parsedName.empty()) {
+    *outColorSpace = parsedName;
+  }
+
+  QuickView::ColorPrimaries cicpPrimaries = QuickView::ColorPrimaries::Unknown;
+  QuickView::TransferFunction cicpTransfer = QuickView::TransferFunction::Unknown;
+  if (QuickView::TryParseIccCicp(iccData, iccSize, &cicpPrimaries,
+                                  &cicpTransfer)) {
+    if (cicpPrimaries != QuickView::ColorPrimaries::Unknown) {
+      colorInfo.primaries = cicpPrimaries;
+      hdrMeta.primaries = cicpPrimaries;
+    }
+    if (cicpTransfer != QuickView::TransferFunction::Unknown) {
+      colorInfo.transfer = cicpTransfer;
+      hdrMeta.transfer = cicpTransfer;
+      if (cicpTransfer == QuickView::TransferFunction::PQ ||
+          cicpTransfer == QuickView::TransferFunction::HLG) {
+        colorInfo.dataSpace = QuickView::PixelDataSpace::EncodedHdr;
+        hdrMeta.isValid = true;
+        hdrMeta.isHdr = true;
+        hdrMeta.isSceneLinear = false;
+      }
+    }
+  }
+
+  if (colorInfo.primaries == QuickView::ColorPrimaries::Unknown &&
+      !parsedName.empty()) {
+    CImageLoader::ImageMetadata tmpMeta;
+    tmpMeta.ColorSpace = parsedName;
+    const QuickView::ColorPrimaries guessed =
+        GuessPrimariesFromMetadataColorSpace(tmpMeta);
+    if (guessed != QuickView::ColorPrimaries::Unknown) {
+      colorInfo.primaries = guessed;
+      if (hdrMeta.primaries == QuickView::ColorPrimaries::Unknown) {
+        hdrMeta.primaries = guessed;
+      }
+    }
+  }
+}
 
 // Unified in-memory frame loading entry for MMF/Titan paths.
 HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t *data, size_t size,
@@ -1605,6 +1677,9 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t *data, size_t size,
     outFrame->stride = QuickView::CalculateAlignedStride(finalW, 4);
     outFrame->format = PixelFormat::BGRA8888;
     outFrame->formatDetails = L"8-bit JPEG (MMF)";
+    outFrame->colorInfo.dataSpace = QuickView::PixelDataSpace::EncodedSdr;
+    outFrame->colorInfo.transfer = QuickView::TransferFunction::SRGB;
+    outFrame->colorInfo.nominalBitDepth = 8;
     outFrame->srcWidth = width;
     outFrame->srcHeight = height;
     if (chosenFactor.num != chosenFactor.denom) {
@@ -1645,14 +1720,27 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t *data, size_t size,
     size_t iccSize = 0;
     if (tj3GetICCProfile(handle, &iccBuf, &iccSize) == 0 && iccSize > 0) {
       outFrame->iccProfile.assign(iccBuf, iccBuf + iccSize);
+      outFrame->colorInfo.hasEmbeddedIcc = true;
+
+      std::wstring parsedColorSpace;
+      ApplyJpegIccColorMetadata(iccBuf, iccSize, outFrame->colorInfo,
+                                outFrame->hdrMetadata, &parsedColorSpace);
 
       // [v10.1] Sync back to metadata for unified Info Panel & CMS check
       if (pMetadata) {
         pMetadata->iccProfileData.assign(iccBuf, iccBuf + iccSize);
         pMetadata->HasEmbeddedColorProfile = true;
+        if (!parsedColorSpace.empty()) {
+          pMetadata->ColorSpace = parsedColorSpace;
+        }
       }
 
       tj3Free(iccBuf);
+    }
+
+    if (pMetadata) {
+      pMetadata->colorInfo = outFrame->colorInfo;
+      pMetadata->hdrMetadata = outFrame->hdrMetadata;
     }
 
     // [EXIF Orientation] Extract Tag 0x0112 from JPEG binary payload
@@ -2055,10 +2143,9 @@ PopulateHdrInfoFromPsdHeader(const uint8_t *data, size_t size,
                                        ? QuickView::TransferFunction::Linear
                                        : QuickView::TransferFunction::SRGB;
   }
-  if (metadata->colorInfo.primaries == QuickView::ColorPrimaries::Unknown) {
-    metadata->colorInfo.primaries = (colorMode == 3 || colorMode == 1)
-                                        ? QuickView::ColorPrimaries::SRGB
-                                        : QuickView::ColorPrimaries::Unknown;
+  if (metadata->colorInfo.primaries == QuickView::ColorPrimaries::Unknown &&
+      depth >= 32 && (colorMode == 3 || colorMode == 1)) {
+    metadata->colorInfo.primaries = QuickView::ColorPrimaries::SRGB;
   }
   metadata->colorInfo.dataSpace = (depth >= 32)
                                       ? QuickView::PixelDataSpace::SceneLinear
@@ -2066,6 +2153,8 @@ PopulateHdrInfoFromPsdHeader(const uint8_t *data, size_t size,
 
   if (depth >= 32) {
     metadata->hdrMetadata.isValid = true;
+    metadata->hdrMetadata.isHdr = true;
+    metadata->hdrMetadata.isSceneLinear = true;
     metadata->hdrMetadata.transfer = QuickView::TransferFunction::Linear;
     metadata->hdrMetadata.primaries = metadata->colorInfo.primaries;
   }
@@ -5466,6 +5555,15 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
             !result.metadata.iccProfileData.empty();
         result.metadata.colorInfo.dataSpace =
             QuickView::PixelDataSpace::EncodedSdr;
+        result.metadata.colorInfo.transfer = QuickView::TransferFunction::SRGB;
+        result.metadata.colorInfo.nominalBitDepth = 8;
+        std::wstring parsedName;
+        ApplyJpegIccColorMetadata(chunk.chunk.bytes, chunk.chunk.size,
+                                  result.metadata.colorInfo,
+                                  result.metadata.hdrMetadata, &parsedName);
+        if (!parsedName.empty()) {
+          result.metadata.ColorSpace = parsedName;
+        }
         WebPDemuxReleaseChunkIterator(&chunk);
       }
 
@@ -6773,7 +6871,8 @@ static bool ContainsUltraHdrXmpSignature(const uint8_t *xmpData,
          xml.find("HDRGainMap") != std::string::npos ||
          xml.find("GainMapMin") != std::string::npos ||
          xml.find("GainMapMax") != std::string::npos ||
-         xml.find("HDRCapacityMax") != std::string::npos;
+         xml.find("HDRCapacityMax") != std::string::npos ||
+         xml.find("GContainer") != std::string::npos;
 }
 
 // Extract float value from XMP attribute: attrName="value"
@@ -6800,8 +6899,97 @@ static bool FindXmpAttr(const std::string &xml, const char *attrName,
   return (ep != buf);
 }
 
+// Extract 1 or 3 float values from XMP attribute OR <tagBase><rdf:Seq><rdf:li>...</rdf:li></rdf:Seq></tagBase>
+static bool FindXmpFloatArray(const std::string &xml, const char *tagBase,
+                              float out[3]) {
+  std::string attrName = std::string(tagBase) + "=";
+  float scalar = 0.0f;
+  if (FindXmpAttr(xml, attrName.c_str(), &scalar)) {
+    out[0] = out[1] = out[2] = scalar;
+    return true;
+  }
+
+  const std::string openPrefix = std::string("<") + tagBase;
+  size_t searchPos = 0;
+  while (searchPos < xml.size()) {
+    const size_t tagPos = xml.find(openPrefix, searchPos);
+    if (tagPos == std::string::npos)
+      break;
+    const size_t afterPrefix = tagPos + openPrefix.size();
+    if (afterPrefix >= xml.size())
+      break;
+    const char nextCh = xml[afterPrefix];
+    if (nextCh != '>' && nextCh != ' ' && nextCh != '\t' && nextCh != '\r' &&
+        nextCh != '\n') {
+      searchPos = afterPrefix;
+      continue;
+    }
+    const size_t gtPos = xml.find('>', afterPrefix);
+    if (gtPos == std::string::npos)
+      break;
+    if (gtPos > afterPrefix && xml[gtPos - 1] == '/') {
+      searchPos = gtPos + 1;
+      continue;
+    }
+    const std::string closeTag = std::string("</") + tagBase + ">";
+    const size_t closePos = xml.find(closeTag, gtPos + 1);
+    if (closePos == std::string::npos)
+      break;
+
+    float vals[3] = {};
+    int count = 0;
+    size_t cur = gtPos + 1;
+    while (cur < closePos && count < 3) {
+      const size_t liStart = xml.find("<rdf:li", cur);
+      if (liStart == std::string::npos || liStart >= closePos)
+        break;
+      const size_t liGt = xml.find('>', liStart + 7);
+      if (liGt == std::string::npos || liGt >= closePos)
+        break;
+      const size_t liClose = xml.find("</rdf:li>", liGt + 1);
+      if (liClose == std::string::npos || liClose > closePos)
+        break;
+
+      size_t valStart = liGt + 1;
+      while (valStart < liClose &&
+             (xml[valStart] == ' ' || xml[valStart] == '\t' ||
+              xml[valStart] == '\r' || xml[valStart] == '\n')) {
+        ++valStart;
+      }
+      char buf[64] = {};
+      const size_t valLen = (std::min)(liClose - valStart, size_t{63});
+      memcpy(buf, xml.data() + valStart, valLen);
+      char *ep = nullptr;
+      const float parsed = strtof(buf, &ep);
+      if (ep != buf) {
+        vals[count++] = parsed;
+      }
+      cur = liClose + 9;
+    }
+
+    if (count == 1) {
+      out[0] = out[1] = out[2] = vals[0];
+      return true;
+    }
+    if (count == 2) {
+      out[0] = vals[0];
+      out[1] = vals[1];
+      out[2] = vals[1];
+      return true;
+    }
+    if (count >= 3) {
+      out[0] = vals[0];
+      out[1] = vals[1];
+      out[2] = vals[2];
+      return true;
+    }
+    searchPos = closePos + closeTag.size();
+  }
+  return false;
+}
+
 // Parse XMP hdrgm: namespace → GpuShaderPayload
-// Returns true if valid Ultra HDR metadata found
+// Returns true only if actual numeric gain-map parameters were found.
 static bool ParseXmpToPayload(const uint8_t *xmpData, size_t xmpLen,
                               GpuShaderPayload &payload) {
   if (!xmpData || xmpLen < 10)
@@ -6812,30 +7000,209 @@ static bool ParseXmpToPayload(const uint8_t *xmpData, size_t xmpLen,
     return false;
   }
 
-  float v;
-  // GainMapMin (scalar → broadcast to RGB)
-  if (FindXmpAttr(xml, "hdrgm:GainMapMin=", &v))
-    payload.gainMapMin[0] = payload.gainMapMin[1] = payload.gainMapMin[2] = v;
-  if (FindXmpAttr(xml, "hdrgm:GainMapMax=", &v))
-    payload.gainMapMax[0] = payload.gainMapMax[1] = payload.gainMapMax[2] = v;
-  if (FindXmpAttr(xml, "hdrgm:Gamma=", &v))
-    payload.gamma[0] = payload.gamma[1] = payload.gamma[2] = v;
-  if (FindXmpAttr(xml, "hdrgm:OffsetSDR=", &v))
-    payload.offsetSdr[0] = payload.offsetSdr[1] = payload.offsetSdr[2] = v;
-  if (FindXmpAttr(xml, "hdrgm:OffsetHDR=", &v))
-    payload.offsetHdr[0] = payload.offsetHdr[1] = payload.offsetHdr[2] = v;
-  if (FindXmpAttr(xml, "hdrgm:HDRCapacityMin=", &v))
+  bool parsedAny = false;
+  float arr[3] = {};
+  if (FindXmpFloatArray(xml, "hdrgm:GainMapMin", arr)) {
+    memcpy(payload.gainMapMin, arr, sizeof(arr));
+    parsedAny = true;
+  }
+  if (FindXmpFloatArray(xml, "hdrgm:GainMapMax", arr)) {
+    memcpy(payload.gainMapMax, arr, sizeof(arr));
+    parsedAny = true;
+  }
+  if (FindXmpFloatArray(xml, "hdrgm:Gamma", arr)) {
+    memcpy(payload.gamma, arr, sizeof(arr));
+    parsedAny = true;
+  }
+  if (FindXmpFloatArray(xml, "hdrgm:OffsetSDR", arr)) {
+    memcpy(payload.offsetSdr, arr, sizeof(arr));
+    parsedAny = true;
+  }
+  if (FindXmpFloatArray(xml, "hdrgm:OffsetHDR", arr)) {
+    memcpy(payload.offsetHdr, arr, sizeof(arr));
+    parsedAny = true;
+  }
+
+  float v = 0.0f;
+  if (FindXmpAttr(xml, "hdrgm:HDRCapacityMin=", &v)) {
     payload.hdrCapacityMin = v;
-  if (FindXmpAttr(xml, "hdrgm:HDRCapacityMax=", &v))
+    parsedAny = true;
+  }
+  if (FindXmpAttr(xml, "hdrgm:HDRCapacityMax=", &v)) {
     payload.hdrCapacityMax = v;
+    parsedAny = true;
+  }
 
   // BaseRenditionIsHDR
   if (xml.find("hdrgm:BaseRenditionIsHDR=\"True\"") != std::string::npos ||
       xml.find("hdrgm:BaseRenditionIsHDR=\"true\"") != std::string::npos) {
     payload.baseIsHdr = 1.0f;
+  } else if (xml.find("hdrgm:BaseRenditionIsHDR=\"False\"") !=
+                 std::string::npos ||
+             xml.find("hdrgm:BaseRenditionIsHDR=\"false\"") !=
+                 std::string::npos) {
+    payload.baseIsHdr = 0.0f;
   }
 
+  return parsedAny;
+}
+
+// Parse ISO/TS 21496-1 APP2 binary metadata (bytes after "urn:iso:std:iso:ts:21496:-1\0")
+static bool ParseIso21496App2ToPayload(const uint8_t *body, size_t bodyLen,
+                                         GpuShaderPayload &payload) {
+  auto readU16 = [](const uint8_t *p) -> uint16_t {
+    return static_cast<uint16_t>((static_cast<uint16_t>(p[0]) << 8) |
+                                 static_cast<uint16_t>(p[1]));
+  };
+  auto readU32 = [](const uint8_t *p) -> uint32_t {
+    return (static_cast<uint32_t>(p[0]) << 24) |
+           (static_cast<uint32_t>(p[1]) << 16) |
+           (static_cast<uint32_t>(p[2]) << 8) |
+           static_cast<uint32_t>(p[3]);
+  };
+  auto readI32 = [&](const uint8_t *p) -> int32_t {
+    return static_cast<int32_t>(readU32(p));
+  };
+
+  if (!body || bodyLen < 21u)
+    return false;
+  const uint16_t minVer = readU16(body + 0);
+  if (minVer > 0u)
+    return false;
+  const uint8_t flags = body[4];
+  const size_t channels = (flags & 0x80u) ? 3u : 1u;
+  if (bodyLen < 21u + channels * 40u)
+    return false;
+
+  const uint32_t baseDen = readU32(body + 9);
+  const uint32_t altDen = readU32(body + 17);
+  if (baseDen == 0u || altDen == 0u)
+    return false;
+
+  const float baseHeadroom = static_cast<float>(
+      static_cast<double>(readU32(body + 5)) / static_cast<double>(baseDen));
+  const float altHeadroom = static_cast<float>(
+      static_cast<double>(readU32(body + 13)) / static_cast<double>(altDen));
+  const bool baseIsHdr = (baseHeadroom > altHeadroom);
+
+  GpuShaderPayload parsed = payload;
+  for (size_t c = 0; c < channels; ++c) {
+    const uint8_t *ch = body + 21u + c * 40u;
+    const int32_t minN = readI32(ch + 0);
+    const uint32_t minD = readU32(ch + 4);
+    const int32_t maxN = readI32(ch + 8);
+    const uint32_t maxD = readU32(ch + 12);
+    const uint32_t gamN = readU32(ch + 16);
+    const uint32_t gamD = readU32(ch + 20);
+    const int32_t baseOffN = readI32(ch + 24);
+    const uint32_t baseOffD = readU32(ch + 28);
+    const int32_t altOffN = readI32(ch + 32);
+    const uint32_t altOffD = readU32(ch + 36);
+    if (minD == 0u || maxD == 0u || gamN == 0u || gamD == 0u ||
+        baseOffD == 0u || altOffD == 0u) {
+      return false;
+    }
+
+    parsed.gainMapMin[c] =
+        static_cast<float>(static_cast<double>(minN) / static_cast<double>(minD));
+    parsed.gainMapMax[c] =
+        static_cast<float>(static_cast<double>(maxN) / static_cast<double>(maxD));
+    parsed.gamma[c] =
+        static_cast<float>(static_cast<double>(gamN) / static_cast<double>(gamD));
+    const float baseOff = static_cast<float>(
+        static_cast<double>(baseOffN) / static_cast<double>(baseOffD));
+    const float altOff = static_cast<float>(
+        static_cast<double>(altOffN) / static_cast<double>(altOffD));
+    parsed.offsetSdr[c] = baseIsHdr ? altOff : baseOff;
+    parsed.offsetHdr[c] = baseIsHdr ? baseOff : altOff;
+  }
+
+  if (channels == 1u) {
+    parsed.gainMapMin[1] = parsed.gainMapMin[2] = parsed.gainMapMin[0];
+    parsed.gainMapMax[1] = parsed.gainMapMax[2] = parsed.gainMapMax[0];
+    parsed.gamma[1] = parsed.gamma[2] = parsed.gamma[0];
+    parsed.offsetSdr[1] = parsed.offsetSdr[2] = parsed.offsetSdr[0];
+    parsed.offsetHdr[1] = parsed.offsetHdr[2] = parsed.offsetHdr[0];
+  }
+
+  parsed.baseIsHdr = baseIsHdr ? 1.0f : 0.0f;
+  parsed.hdrCapacityMin = baseIsHdr ? altHeadroom : baseHeadroom;
+  parsed.hdrCapacityMax = baseIsHdr ? baseHeadroom : altHeadroom;
+  payload = parsed;
   return true;
+}
+
+static bool ScanSecondaryGainMapMetadata(const uint8_t *jpegData,
+                                         size_t jpegSize,
+                                         GpuShaderPayload &out) {
+  if (!jpegData || jpegSize < 4 || jpegData[0] != 0xFF || jpegData[1] != 0xD8)
+    return false;
+
+  bool foundApp2 = false;
+  bool foundXmp = false;
+  GpuShaderPayload app2Payload = out;
+  GpuShaderPayload xmpPayload = out;
+
+  size_t offset = 2;
+  while (offset + 1 < jpegSize) {
+    if (jpegData[offset] != 0xFF) {
+      ++offset;
+      continue;
+    }
+    while (offset + 1 < jpegSize && jpegData[offset + 1] == 0xFF) {
+      ++offset;
+    }
+    if (offset + 1 >= jpegSize)
+      break;
+
+    const uint8_t marker = jpegData[offset + 1];
+    if (marker == 0x00 || marker == 0x01 || (marker >= 0xD0 && marker <= 0xD8)) {
+      offset += 2;
+      continue;
+    }
+    if (marker == 0xDA || marker == 0xD9) {
+      break;
+    }
+    if (offset + 4 > jpegSize)
+      break;
+    const uint16_t segLen = static_cast<uint16_t>(
+        (static_cast<uint16_t>(jpegData[offset + 2]) << 8) | jpegData[offset + 3]);
+    if (segLen < 2 || static_cast<size_t>(segLen) > jpegSize - offset - 2)
+      break;
+
+    const uint8_t *payload = jpegData + offset + 4;
+    const size_t payloadLen = static_cast<size_t>(segLen) - 2;
+
+    if (marker == 0xE1 && payloadLen >= 28) {
+      constexpr const char *kXmpId = "http://ns.adobe.com/xap/1.0/";
+      if (memcmp(payload, kXmpId, 28) == 0) {
+        const size_t hdrLen = (payloadLen >= 29 && payload[28] == '\0') ? 29 : 28;
+        if (ParseXmpToPayload(payload + hdrLen, payloadLen - hdrLen, xmpPayload)) {
+          foundXmp = true;
+        }
+      }
+    } else if (marker == 0xE2 && payloadLen >= 28) {
+      constexpr const char kIsoHdr[28] = "urn:iso:std:iso:ts:21496:-1";
+      if (memcmp(payload, kIsoHdr, 28) == 0) {
+        if (ParseIso21496App2ToPayload(payload + 28, payloadLen - 28,
+                                        app2Payload)) {
+          foundApp2 = true;
+        }
+      }
+    }
+
+    offset += 2 + static_cast<size_t>(segLen);
+  }
+
+  if (foundApp2) {
+    out = app2Payload;
+    return true;
+  }
+  if (foundXmp) {
+    out = xmpPayload;
+    return true;
+  }
+  return false;
 }
 
 // Find second JPEG SOI (0xFF 0xD8) in MPF container → Gain Map offset
@@ -7041,6 +7408,10 @@ static HRESULT Load(const uint8_t *pBuf, size_t bufSize,
   bool hasUltraHdr = false;
   bool ultraHdrPayloadParsed = false;
 
+  result.metadata.colorInfo.dataSpace = QuickView::PixelDataSpace::EncodedSdr;
+  result.metadata.colorInfo.transfer = QuickView::TransferFunction::SRGB;
+  result.metadata.colorInfo.nominalBitDepth = 8;
+
   // [CMS] Extract and Merge Multi-segment ICC Profile from APP2 markers
   {
     // First pass: identify markers for UltraHDR
@@ -7081,9 +7452,20 @@ static HRESULT Load(const uint8_t *pBuf, size_t bufSize,
             QV_LOG("UltraHDR_XMP", TraceLoggingString("ParseFailed", "Action"));
           }
         }
+      } else if (marker->marker == JPEG_APP0 + 2 &&
+                 marker->data_length >= 28) {
+        constexpr const char kIsoHdr[28] = "urn:iso:std:iso:ts:21496:-1";
+        if (memcmp(marker->data, kIsoHdr, 28) == 0) {
+          hasUltraHdr = true;
+          if (UltraHdr::ParseIso21496App2ToPayload(
+                  marker->data + 28, marker->data_length - 28,
+                  ultraHdrPayload)) {
+            ultraHdrPayload.sdrWidth = (uint32_t)cinfo.image_width;
+            ultraHdrPayload.sdrHeight = (uint32_t)cinfo.image_height;
+            ultraHdrPayloadParsed = true;
+          }
+        }
       }
-
-      // Handled above or via jpeg_read_icc_profile
     }
 
     // Official libjpeg-turbo ICC Profile Reader (Handles multi-segment, sequence alignment & validation)
@@ -7093,7 +7475,9 @@ static HRESULT Load(const uint8_t *pBuf, size_t bufSize,
       result.metadata.iccProfileData.assign(iccBuf, iccBuf + iccLen);
       result.metadata.HasEmbeddedColorProfile = true;
       result.metadata.colorInfo.hasEmbeddedIcc = true;
-      std::wstring parsedName = CImageLoader::ParseICCProfileName(iccBuf, iccLen);
+      std::wstring parsedName;
+      ApplyJpegIccColorMetadata(iccBuf, iccLen, result.metadata.colorInfo,
+                                result.metadata.hdrMetadata, &parsedName);
       if (!parsedName.empty()) {
         result.metadata.ColorSpace = parsedName;
       }
@@ -7263,9 +7647,9 @@ static HRESULT Load(const uint8_t *pBuf, size_t bufSize,
   result.stride = stride;
   result.format = ctx.format;
   result.success = true;
-  result.metadata.colorInfo.dataSpace = QuickView::PixelDataSpace::EncodedSdr;
-  result.metadata.colorInfo.transfer = QuickView::TransferFunction::SRGB;
-  result.metadata.colorInfo.nominalBitDepth = 8;
+  if (result.metadata.colorInfo.nominalBitDepth == 0) {
+    result.metadata.colorInfo.nominalBitDepth = 8;
+  }
 
   // [Fix] Respect EasyExif result if available. Fallback to Raw Scan only if
   // needed.
@@ -7274,14 +7658,36 @@ static HRESULT Load(const uint8_t *pBuf, size_t bufSize,
   }
 
   // ============================================================
-  // [Ultra HDR] Phase 2: Metadata always; Gain Map decode only when
-  // HDR target is active (uses pBuf — still the original file buffer)
+  // [Ultra HDR] Phase 2: Scan secondary MPF gain-map image markers
+  // for metadata accuracy even on SDR targets; decode AuxLayer only
+  // when HDR compositing is active.
   // ============================================================
   if (hasUltraHdr) {
     result.metadata.hdrMetadata.hasGainMap = true;
     result.metadata.hdrMetadata.isValid = true;
     result.metadata.hdrMetadata.isHdr = false;
-    result.metadata.hdrMetadata.transfer = QuickView::TransferFunction::SRGB;
+    if (result.metadata.hdrMetadata.transfer ==
+        QuickView::TransferFunction::Unknown) {
+      result.metadata.hdrMetadata.transfer = QuickView::TransferFunction::SRGB;
+    }
+
+    ultraHdrPayload.sdrWidth = (uint32_t)result.width;
+    ultraHdrPayload.sdrHeight = (uint32_t)result.height;
+
+    const uint8_t *gainJpegData = nullptr;
+    size_t gainJpegSize = 0;
+    if (UltraHdr::FindMpfSecondImage(pBuf, bufSize, &gainJpegData,
+                                     &gainJpegSize)) {
+      GpuShaderPayload secondaryPayload = ultraHdrPayload;
+      if (UltraHdr::ScanSecondaryGainMapMetadata(gainJpegData, gainJpegSize,
+                                                 secondaryPayload)) {
+        ultraHdrPayload = secondaryPayload;
+        ultraHdrPayload.sdrWidth = (uint32_t)result.width;
+        ultraHdrPayload.sdrHeight = (uint32_t)result.height;
+        ultraHdrPayloadParsed = true;
+      }
+    }
+
     if (ultraHdrPayloadParsed) {
       result.metadata.hdrMetadata.gainMapBaseHeadroom =
           ultraHdrPayload.hdrCapacityMin;
@@ -7289,24 +7695,17 @@ static HRESULT Load(const uint8_t *pBuf, size_t bufSize,
           ultraHdrPayload.hdrCapacityMax;
     }
     result.metadata.FormatDetails += L" Ultra HDR";
-    ultraHdrPayload.sdrWidth = (uint32_t)result.width;
-    ultraHdrPayload.sdrHeight = (uint32_t)result.height;
 
-    if (!PrefersSdrTarget(ctx)) {
-      const uint8_t *gainJpegData = nullptr;
-      size_t gainJpegSize = 0;
-      if (ultraHdrPayloadParsed &&
-          UltraHdr::FindMpfSecondImage(pBuf, bufSize, &gainJpegData,
-                                       &gainJpegSize)) {
-        QV_LOG("UltraHDR_Scan",
-               TraceLoggingString("MPF GainMap Found", "Action"));
-        auto auxLayer =
-            UltraHdr::DecodeGainMapJpeg(gainJpegData, gainJpegSize, ctx);
-        if (auxLayer) {
-          result.blendOp = GpuBlendOp::UltraHdrGainMap;
-          result.auxLayer = std::move(auxLayer);
-          result.shaderPayload = ultraHdrPayload;
-        }
+    if (!PrefersSdrTarget(ctx) && ultraHdrPayloadParsed && gainJpegData &&
+        gainJpegSize > 0) {
+      QV_LOG("UltraHDR_Scan",
+             TraceLoggingString("MPF GainMap Found", "Action"));
+      auto auxLayer =
+          UltraHdr::DecodeGainMapJpeg(gainJpegData, gainJpegSize, ctx);
+      if (auxLayer) {
+        result.blendOp = GpuBlendOp::UltraHdrGainMap;
+        result.auxLayer = std::move(auxLayer);
+        result.shaderPayload = ultraHdrPayload;
       }
     }
   }
@@ -7633,7 +8032,11 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
 
   JxlBasicInfo info = {};
   JxlColorEncoding encodedColor = {};
-  bool useHighBitDepthOutput = false;
+  bool useFloat16LinearOutput = false;
+  bool useUint16Output = false;
+  QuickView::PixelDataSpace outputDataSpace = QuickView::PixelDataSpace::EncodedSdr;
+  QuickView::TransferFunction outputTransfer = QuickView::TransferFunction::SRGB;
+  QuickView::ColorPrimaries outputPrimaries = QuickView::ColorPrimaries::Unknown;
   QuickView::TransferFunction transfer = QuickView::TransferFunction::Unknown;
   QuickView::ColorPrimaries primaries = QuickView::ColorPrimaries::Unknown;
   // Default RGBA
@@ -7720,19 +8123,25 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
     }
 
     else if (status == JXL_DEC_COLOR_ENCODING) {
-      // Always extract ICC profile
+      // Follow libjxl decode order: inspect TARGET_ORIGINAL first, apply
+      // JxlDecoderSetOutputColorProfile if needed, then query TARGET_DATA on fallback.
       size_t iccSize = 0;
-      JxlColorProfileTarget target = JXL_COLOR_PROFILE_TARGET_ORIGINAL;
-      if (JXL_DEC_SUCCESS != JxlDecoderGetICCProfileSize(dec, target, &iccSize)) {
-        target = JXL_COLOR_PROFILE_TARGET_DATA;
-        JxlDecoderGetICCProfileSize(dec, target, &iccSize);
+      JxlColorProfileTarget iccTarget = JXL_COLOR_PROFILE_TARGET_ORIGINAL;
+      if (JXL_DEC_SUCCESS != JxlDecoderGetICCProfileSize(dec, iccTarget, &iccSize) ||
+          iccSize == 0) {
+        iccTarget = JXL_COLOR_PROFILE_TARGET_DATA;
+        if (JXL_DEC_SUCCESS != JxlDecoderGetICCProfileSize(dec, iccTarget, &iccSize)) {
+          iccSize = 0;
+        }
       }
-      
+
+      result.metadata.iccProfileData.clear();
+      result.metadata.colorInfo.hasEmbeddedIcc = false;
       if (iccSize > 0) {
         result.metadata.iccProfileData.resize(iccSize);
         if (JXL_DEC_SUCCESS ==
             JxlDecoderGetColorAsICCProfile(
-                dec, target, result.metadata.iccProfileData.data(), iccSize)) {
+                dec, iccTarget, result.metadata.iccProfileData.data(), iccSize)) {
           result.metadata.colorInfo.hasEmbeddedIcc = true;
           std::wstring desc =
               CImageLoader::ParseICCProfileName(result.metadata.iccProfileData.data(), iccSize);
@@ -7742,75 +8151,197 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
           result.metadata.iccProfileData.clear();
         }
       }
-      if (ctx.pMetadata) {
-        ctx.pMetadata->iccProfileData = result.metadata.iccProfileData;
-        ctx.pMetadata->colorInfo.hasEmbeddedIcc = result.metadata.colorInfo.hasEmbeddedIcc;
-        if (!result.metadata.ColorSpace.empty())
-          ctx.pMetadata->ColorSpace = result.metadata.ColorSpace;
-      }
 
-      JxlColorProfileTarget target2 = JXL_COLOR_PROFILE_TARGET_ORIGINAL;
+      encodedColor = {};
       if (JXL_DEC_SUCCESS !=
-          JxlDecoderGetColorAsEncodedProfile(dec, target2, &encodedColor)) {
-        if (target2 != JXL_COLOR_PROFILE_TARGET_DATA) {
-          target2 = JXL_COLOR_PROFILE_TARGET_DATA;
-          JxlDecoderGetColorAsEncodedProfile(dec, target2, &encodedColor);
-        }
-      }
-      
-      // Determine HasEmbeddedColorProfile from encoded parameters
-      if (encodedColor.color_space != JXL_COLOR_SPACE_UNKNOWN) {
-        result.metadata.HasEmbeddedColorProfile = !IsJxlDefaultSrgb(encodedColor);
-      } else {
-        result.metadata.HasEmbeddedColorProfile = true;
-      }
-      if (ctx.pMetadata) {
-        ctx.pMetadata->HasEmbeddedColorProfile = result.metadata.HasEmbeddedColorProfile;
+          JxlDecoderGetColorAsEncodedProfile(dec, JXL_COLOR_PROFILE_TARGET_ORIGINAL, &encodedColor)) {
+        encodedColor = {};
+        encodedColor.color_space = JXL_COLOR_SPACE_UNKNOWN;
       }
 
+      transfer = QuickView::TransferFunction::Unknown;
+      primaries = QuickView::ColorPrimaries::Unknown;
       if (encodedColor.color_space != JXL_COLOR_SPACE_UNKNOWN) {
         transfer = MapJxlTransferFunction(encodedColor.transfer_function);
         primaries = MapJxlPrimaries(encodedColor.primaries);
-        useHighBitDepthOutput =
-            !ctx.forcePreview && !PrefersSdrTarget(ctx) &&
-            (transfer == QuickView::TransferFunction::Linear ||
-             transfer == QuickView::TransferFunction::PQ ||
-             transfer == QuickView::TransferFunction::HLG ||
-             info.bits_per_sample > 8);
+        result.metadata.HasEmbeddedColorProfile = !IsJxlDefaultSrgb(encodedColor);
+      } else {
+        // Custom embedded ICC (e.g. CICP-tagged PQ/HLG or wide-gamut ICC JXL)
+        QuickView::ColorPrimaries cicpPrimaries = QuickView::ColorPrimaries::Unknown;
+        QuickView::TransferFunction cicpTransfer = QuickView::TransferFunction::Unknown;
+        if (!result.metadata.iccProfileData.empty() &&
+            QuickView::TryParseIccCicp(result.metadata.iccProfileData.data(),
+                                       result.metadata.iccProfileData.size(),
+                                       &cicpPrimaries, &cicpTransfer)) {
+          if (cicpTransfer != QuickView::TransferFunction::Unknown)
+            transfer = cicpTransfer;
+          if (cicpPrimaries != QuickView::ColorPrimaries::Unknown)
+            primaries = cicpPrimaries;
+        }
+        if (primaries == QuickView::ColorPrimaries::Unknown &&
+            !result.metadata.ColorSpace.empty()) {
+          primaries = GuessPrimariesFromMetadataColorSpace(result.metadata);
+        }
+        result.metadata.HasEmbeddedColorProfile = true;
+      }
 
-        if (useHighBitDepthOutput) {
-          JxlColorEncoding linearColor = encodedColor;
-          linearColor.transfer_function = JXL_TRANSFER_FUNCTION_LINEAR;
-          (void)JxlDecoderSetOutputColorProfile(dec, &linearColor, NULL, 0);
+      const bool isHdrTransfer =
+          (transfer == QuickView::TransferFunction::PQ ||
+           transfer == QuickView::TransferFunction::HLG);
+      const bool isLinearOrFloat =
+          (!isHdrTransfer) &&
+          (transfer == QuickView::TransferFunction::Linear ||
+           info.exponent_bits_per_sample > 0);
+
+      auto syncFromTargetData = [&]() {
+        JxlColorEncoding dataEnc = {};
+        if (JXL_DEC_SUCCESS == JxlDecoderGetColorAsEncodedProfile(
+                dec, JXL_COLOR_PROFILE_TARGET_DATA, &dataEnc) &&
+            dataEnc.color_space != JXL_COLOR_SPACE_UNKNOWN) {
+          const auto dataTf = MapJxlTransferFunction(dataEnc.transfer_function);
+          const auto dataPr = MapJxlPrimaries(dataEnc.primaries);
+          outputTransfer = (dataTf != QuickView::TransferFunction::Unknown)
+                               ? dataTf
+                               : QuickView::TransferFunction::SRGB;
+          outputPrimaries = dataPr;
+          outputDataSpace =
+              (outputTransfer == QuickView::TransferFunction::PQ ||
+               outputTransfer == QuickView::TransferFunction::HLG)
+                  ? QuickView::PixelDataSpace::EncodedHdr
+                  : (outputTransfer == QuickView::TransferFunction::Linear
+                         ? QuickView::PixelDataSpace::SceneLinear
+                         : QuickView::PixelDataSpace::EncodedSdr);
+        } else {
+          outputTransfer = QuickView::TransferFunction::SRGB;
+          outputPrimaries = QuickView::ColorPrimaries::SRGB;
+          outputDataSpace = QuickView::PixelDataSpace::EncodedSdr;
         }
 
-        result.metadata.colorInfo.transfer =
-            useHighBitDepthOutput ? QuickView::TransferFunction::Linear
-                                  : transfer;
-        result.metadata.colorInfo.primaries = primaries;
-        result.metadata.colorInfo.nominalBitDepth =
-            static_cast<uint8_t>((std::min)(info.bits_per_sample, 255u));
-        result.metadata.colorInfo.dataSpace =
-            useHighBitDepthOutput
-                ? QuickView::PixelDataSpace::SceneLinear
-                : ((transfer == QuickView::TransferFunction::PQ ||
-                    transfer == QuickView::TransferFunction::HLG)
-                       ? QuickView::PixelDataSpace::EncodedHdr
-                       : QuickView::PixelDataSpace::EncodedSdr);
-        result.metadata.hdrMetadata.isValid = true;
-        result.metadata.hdrMetadata.transfer = transfer;
-        result.metadata.hdrMetadata.primaries = primaries;
-        result.metadata.hdrMetadata.isSceneLinear =
-            useHighBitDepthOutput ||
-            transfer == QuickView::TransferFunction::Linear;
-        result.metadata.hdrMetadata.isHdr =
-            transfer == QuickView::TransferFunction::PQ ||
-            transfer == QuickView::TransferFunction::HLG;
-
-        if (ctx.pMetadata) {
-          ctx.pMetadata->colorInfo = result.metadata.colorInfo;
-          ctx.pMetadata->hdrMetadata = result.metadata.hdrMetadata;
+        size_t dataIccSize = 0;
+        if (JXL_DEC_SUCCESS == JxlDecoderGetICCProfileSize(
+                dec, JXL_COLOR_PROFILE_TARGET_DATA, &dataIccSize) &&
+            dataIccSize > 0) {
+          result.metadata.iccProfileData.resize(dataIccSize);
+          if (JXL_DEC_SUCCESS == JxlDecoderGetColorAsICCProfile(
+                  dec, JXL_COLOR_PROFILE_TARGET_DATA,
+                  result.metadata.iccProfileData.data(), dataIccSize)) {
+            result.metadata.colorInfo.hasEmbeddedIcc = true;
+            std::wstring desc = CImageLoader::ParseICCProfileName(
+                result.metadata.iccProfileData.data(), dataIccSize);
+            if (!desc.empty())
+              result.metadata.ColorSpace = desc;
+          } else {
+            result.metadata.iccProfileData.clear();
+            result.metadata.colorInfo.hasEmbeddedIcc = false;
+          }
+        } else {
+          result.metadata.iccProfileData.clear();
+          result.metadata.colorInfo.hasEmbeddedIcc = false;
         }
+      };
+
+      useFloat16LinearOutput = false;
+      useUint16Output = false;
+      if (isHdrTransfer) {
+        // Never invoke JxlDecoderSetDesiredIntensityTarget or request libjxl internal linear conversion:
+        // libjxl scales relative/PQ linear output by intensity_target (not 80 nits) and ignores
+        // SetOutputColorProfile for non-XYB images without CMS. Output native PQ/HLG codewords instead.
+        bool outputProfileOk = (info.uses_original_profile == JXL_TRUE);
+        if (!info.uses_original_profile) {
+          if (encodedColor.color_space == JXL_COLOR_SPACE_RGB) {
+            outputProfileOk =
+                (JXL_DEC_SUCCESS ==
+                 JxlDecoderSetOutputColorProfile(dec, &encodedColor, nullptr, 0));
+          } else {
+            JxlColorEncoding cicpEnc = {};
+            cicpEnc.color_space = JXL_COLOR_SPACE_RGB;
+            cicpEnc.white_point = JXL_WHITE_POINT_D65;
+            switch (primaries) {
+            case QuickView::ColorPrimaries::Rec2020:
+              cicpEnc.primaries = JXL_PRIMARIES_2100;
+              break;
+            case QuickView::ColorPrimaries::DisplayP3:
+              cicpEnc.primaries = JXL_PRIMARIES_P3;
+              break;
+            default:
+              cicpEnc.primaries = JXL_PRIMARIES_SRGB;
+              break;
+            }
+            cicpEnc.transfer_function =
+                (transfer == QuickView::TransferFunction::PQ)
+                    ? JXL_TRANSFER_FUNCTION_PQ
+                    : JXL_TRANSFER_FUNCTION_HLG;
+            cicpEnc.rendering_intent = JXL_RENDERING_INTENT_RELATIVE;
+            outputProfileOk =
+                (JXL_DEC_SUCCESS ==
+                 JxlDecoderSetOutputColorProfile(dec, &cicpEnc, nullptr, 0));
+          }
+        }
+
+        useUint16Output = !ctx.forcePreview;
+        outputDataSpace = QuickView::PixelDataSpace::EncodedHdr;
+        outputTransfer = transfer;
+        outputPrimaries = primaries;
+        if (!info.uses_original_profile && !outputProfileOk) {
+          syncFromTargetData();
+        }
+      } else if (isLinearOrFloat) {
+        bool outputProfileOk = (info.uses_original_profile == JXL_TRUE);
+        if (!info.uses_original_profile &&
+            encodedColor.color_space == JXL_COLOR_SPACE_RGB) {
+          outputProfileOk =
+              (JXL_DEC_SUCCESS ==
+               JxlDecoderSetOutputColorProfile(dec, &encodedColor, nullptr, 0));
+        }
+
+        useFloat16LinearOutput = !ctx.forcePreview;
+        outputDataSpace = QuickView::PixelDataSpace::SceneLinear;
+        outputTransfer = QuickView::TransferFunction::Linear;
+        outputPrimaries = primaries;
+        if (!info.uses_original_profile && !outputProfileOk) {
+          syncFromTargetData();
+        }
+      } else {
+        bool outputProfileMatchedOriginal = (info.uses_original_profile == JXL_TRUE);
+        if (!info.uses_original_profile &&
+            encodedColor.color_space == JXL_COLOR_SPACE_RGB) {
+          outputProfileMatchedOriginal =
+              (JXL_DEC_SUCCESS ==
+               JxlDecoderSetOutputColorProfile(dec, &encodedColor, nullptr, 0));
+        }
+
+        useUint16Output =
+            !ctx.forcePreview && !PrefersSdrTarget(ctx) && info.bits_per_sample > 8;
+        outputDataSpace = QuickView::PixelDataSpace::EncodedSdr;
+        outputTransfer = (transfer != QuickView::TransferFunction::Unknown)
+                             ? transfer
+                             : QuickView::TransferFunction::SRGB;
+        outputPrimaries = primaries;
+        if (!info.uses_original_profile && !outputProfileMatchedOriginal) {
+          syncFromTargetData();
+        }
+      }
+
+      result.metadata.colorInfo.transfer = outputTransfer;
+      result.metadata.colorInfo.primaries = outputPrimaries;
+      result.metadata.colorInfo.nominalBitDepth =
+          static_cast<uint8_t>((std::min)(info.bits_per_sample, 255u));
+      result.metadata.colorInfo.dataSpace = outputDataSpace;
+      result.metadata.hdrMetadata.isValid = true;
+      result.metadata.hdrMetadata.transfer = transfer;
+      result.metadata.hdrMetadata.primaries = primaries;
+      result.metadata.hdrMetadata.isHdr =
+          isHdrTransfer || (info.exponent_bits_per_sample > 0);
+      result.metadata.hdrMetadata.isSceneLinear =
+          (outputDataSpace == QuickView::PixelDataSpace::SceneLinear ||
+           outputDataSpace == QuickView::PixelDataSpace::SceneLinearScRgb);
+
+      if (ctx.pMetadata) {
+        ctx.pMetadata->HasEmbeddedColorProfile = result.metadata.HasEmbeddedColorProfile;
+        ctx.pMetadata->iccProfileData = result.metadata.iccProfileData;
+        ctx.pMetadata->ColorSpace = result.metadata.ColorSpace;
+        ctx.pMetadata->colorInfo = result.metadata.colorInfo;
+        ctx.pMetadata->hdrMetadata = result.metadata.hdrMetadata;
       }
     }
 
@@ -7904,8 +8435,10 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
       }
       // else: not forcePreview, ignore DC event and continue to full decode
     } else if (status == JXL_DEC_NEED_IMAGE_OUT_BUFFER) {
-      if (useHighBitDepthOutput) {
+      if (useFloat16LinearOutput) {
         format.data_type = JXL_TYPE_FLOAT16;
+      } else if (useUint16Output) {
+        format.data_type = JXL_TYPE_UINT16;
       }
 
       size_t bufferSize = 0;
@@ -7967,6 +8500,11 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
         result.height = info.ysize; // [Fix Bug #137]
         result.stride = info.xsize * 4;
         result.format = PixelFormat::BGRA8888;
+        result.metadata.colorInfo.dataSpace = QuickView::PixelDataSpace::EncodedSdr;
+        result.metadata.colorInfo.transfer = QuickView::TransferFunction::SRGB;
+        result.metadata.colorInfo.nominalBitDepth = 8;
+        result.metadata.hdrMetadata.isHdr = false;
+        result.metadata.hdrMetadata.isSceneLinear = false;
         result.success = true;
 
         result.metadata.FormatDetails = L"JXL";
@@ -8018,22 +8556,34 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
       result.pixels = pixels;
       result.width = finalW;
       result.height = finalH;
-      if (useHighBitDepthOutput) {
+      if (useFloat16LinearOutput) {
         result.stride = finalW * 8;
         result.format = PixelFormat::R16G16B16A16_FLOAT;
-        result.metadata.colorInfo.dataSpace =
-            QuickView::PixelDataSpace::SceneLinear;
-        result.metadata.colorInfo.transfer =
-            QuickView::TransferFunction::Linear;
-        result.metadata.colorInfo.primaries = primaries;
+        result.metadata.colorInfo.dataSpace = outputDataSpace;
+        result.metadata.colorInfo.transfer = outputTransfer;
+        result.metadata.colorInfo.primaries = outputPrimaries;
         result.metadata.colorInfo.nominalBitDepth =
             static_cast<uint8_t>((std::min)(info.bits_per_sample, 255u));
         result.metadata.hdrMetadata.isSceneLinear = true;
+      } else if (useUint16Output) {
+        result.stride = finalW * 8;
+        result.format = PixelFormat::R16G16B16A16_UNORM;
+        result.metadata.colorInfo.dataSpace = outputDataSpace;
+        result.metadata.colorInfo.transfer = outputTransfer;
+        result.metadata.colorInfo.primaries = outputPrimaries;
+        result.metadata.colorInfo.nominalBitDepth =
+            static_cast<uint8_t>((std::min)(info.bits_per_sample, 255u));
+        result.metadata.hdrMetadata.isSceneLinear = false;
       } else {
         // [v8.6] Fix: JXL outputs RGBA Straight, D2D needs BGRA Premultiplied.
         ImageLoaderSimd::SwizzleRGBAToBGRA(pixels, (size_t)finalW * finalH);
         result.stride = finalW * 4;
         result.format = PixelFormat::BGRA8888;
+        result.metadata.colorInfo.dataSpace = outputDataSpace;
+        result.metadata.colorInfo.transfer = outputTransfer;
+        result.metadata.colorInfo.primaries = outputPrimaries;
+        result.metadata.colorInfo.nominalBitDepth = 8;
+        result.metadata.hdrMetadata.isSceneLinear = false;
       }
       result.success = true;
 
@@ -8048,7 +8598,8 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
       result.metadata.hdrMetadata.primaries = primaries;
       result.metadata.hdrMetadata.isHdr =
           (transfer == QuickView::TransferFunction::PQ ||
-           transfer == QuickView::TransferFunction::HLG);
+           transfer == QuickView::TransferFunction::HLG ||
+           info.exponent_bits_per_sample > 0);
 
       // [v6.2] Parse Captured EXIF
       if (!jxlExifBuffer.empty() && result.metadata.IsEmpty()) {
@@ -8103,9 +8654,7 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
   if (!decoder)
     return E_OUTOFMEMORY;
 
-  if (!PrefersSdrTarget(ctx)) {
-    decoder->imageContentToDecode |= AVIF_IMAGE_CONTENT_GAIN_MAP;
-  }
+  decoder->imageContentToDecode |= AVIF_IMAGE_CONTENT_GAIN_MAP;
 
   decoder->strictFlags = AVIF_STRICT_DISABLED;
   const unsigned int threads = std::thread::hardware_concurrency();
@@ -8147,23 +8696,54 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
     }
   }
 
-  const QuickView::TransferFunction transfer =
+  QuickView::TransferFunction transfer =
       MapAvifTransferFunction(decoder->image->transferCharacteristics);
-  const QuickView::ColorPrimaries primaries =
+  QuickView::ColorPrimaries primaries =
       MapAvifPrimaries(decoder->image->colorPrimaries);
+  const bool hasIcc =
+      (decoder->image->icc.data && decoder->image->icc.size > 0);
+  if (hasIcc) {
+    result.metadata.iccProfileData.assign(
+        decoder->image->icc.data,
+        decoder->image->icc.data + decoder->image->icc.size);
+    result.metadata.HasEmbeddedColorProfile = true;
+    result.metadata.colorInfo.hasEmbeddedIcc = true;
+    std::wstring desc = CImageLoader::ParseICCProfileName(
+        decoder->image->icc.data, decoder->image->icc.size);
+    if (!desc.empty()) {
+      result.metadata.ColorSpace = desc;
+    }
+    QuickView::ColorPrimaries cicpPrimaries = QuickView::ColorPrimaries::Unknown;
+    QuickView::TransferFunction cicpTransfer = QuickView::TransferFunction::Unknown;
+    if (QuickView::TryParseIccCicp(decoder->image->icc.data,
+                                    decoder->image->icc.size,
+                                    &cicpPrimaries, &cicpTransfer)) {
+      if (transfer == QuickView::TransferFunction::Unknown &&
+          cicpTransfer != QuickView::TransferFunction::Unknown) {
+        transfer = cicpTransfer;
+      }
+      if (primaries == QuickView::ColorPrimaries::Unknown &&
+          cicpPrimaries != QuickView::ColorPrimaries::Unknown) {
+        primaries = cicpPrimaries;
+      }
+    }
+    if (primaries == QuickView::ColorPrimaries::Unknown &&
+        !result.metadata.ColorSpace.empty()) {
+      primaries = GuessPrimariesFromMetadataColorSpace(result.metadata);
+    }
+  }
+
   const bool preferSdrTarget = PrefersSdrTarget(ctx);
   const bool isPureHdrFormat =
       (transfer == QuickView::TransferFunction::Linear ||
        transfer == QuickView::TransferFunction::PQ ||
        transfer == QuickView::TransferFunction::HLG);
+  const bool isHighBitDepthSdr =
+      (decoder->image->depth > 8) && !isPureHdrFormat && !decoder->image->gainMap;
   const bool useHighBitDepthOutput =
       isPureHdrFormat ||
       (!preferSdrTarget && decoder->image->gainMap != nullptr) ||
-      (!preferSdrTarget && decoder->image->depth > 8);
-  const bool hasIcc =
-      (decoder->image->icc.data && decoder->image->icc.size > 0);
-  const bool isHighBitDepthIccSdr =
-      (decoder->image->depth > 8) && hasIcc && !isPureHdrFormat;
+      (!preferSdrTarget && isHighBitDepthSdr);
 
   if (useHighBitDepthOutput) {
     if (decoder->image->gainMap) {
@@ -8192,12 +8772,10 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
         result.metadata.colorInfo.primaries =
             result.metadata.hdrMetadata.primaries;
         result.metadata.colorInfo.nominalBitDepth = decoder->image->depth;
-        if (decoder->image->icc.data && decoder->image->icc.size > 0) {
-          result.metadata.iccProfileData.assign(decoder->image->icc.data,
-                                                decoder->image->icc.data +
-                                                    decoder->image->icc.size);
-          result.metadata.colorInfo.hasEmbeddedIcc = true;
-        }
+        // Gain map output is already linearized into alt/base output primaries; clear base SDR ICC to prevent double transform.
+        result.metadata.iccProfileData.clear();
+        result.metadata.HasEmbeddedColorProfile = false;
+        result.metadata.colorInfo.hasEmbeddedIcc = false;
         result.metadata.FormatDetails = gainMapFormatDetails;
         avifDecoderDestroy(decoder);
         return S_OK;
@@ -8234,7 +8812,7 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
       return E_OUTOFMEMORY;
     }
 
-    if (isHighBitDepthIccSdr) {
+    if (isHighBitDepthSdr) {
 // Copy high precision raw pixels without manual CPU linearization to prevent
 // double ICC-LUT mismatch
 #pragma omp parallel for schedule(static)
@@ -8256,66 +8834,24 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
       result.metadata.Height = origH;
       result.metadata.colorInfo.dataSpace =
           QuickView::PixelDataSpace::EncodedSdr;
-      result.metadata.colorInfo.transfer = transfer;
+      result.metadata.colorInfo.transfer =
+          (transfer != QuickView::TransferFunction::Unknown)
+              ? transfer
+              : QuickView::TransferFunction::SRGB;
       result.metadata.colorInfo.primaries = primaries;
       result.metadata.colorInfo.nominalBitDepth = decoder->image->depth;
       PopulateAvifHdrStaticMetadata(decoder->image,
                                     &result.metadata.hdrMetadata);
       result.metadata.hdrMetadata.isSceneLinear = false;
       result.metadata.hdrMetadata.isHdr = false;
-      if (hasIcc) {
-        result.metadata.iccProfileData.assign(decoder->image->icc.data,
-                                              decoder->image->icc.data +
-                                                  decoder->image->icc.size);
-        result.metadata.colorInfo.hasEmbeddedIcc = true;
-      }
       wchar_t fmtBuf[128];
-      swprintf_s(fmtBuf, L"%d-bit SDR AVIF [ICC]", decoder->image->depth);
+      swprintf_s(fmtBuf,
+                 hasIcc ? L"%d-bit SDR AVIF [ICC]" : L"%d-bit SDR AVIF",
+                 decoder->image->depth);
       result.metadata.FormatDetails = fmtBuf;
       avifRGBImageFreePixels(&rgb);
       avifDecoderDestroy(decoder);
       return S_OK;
-    }
-
-    // 1. Thread-safe static lookup tables precomputation (Magic Statics)
-    const uint16_t *lutColorPtr = nullptr;
-    std::vector<uint16_t> localLutColor; // Fallback for rare/custom curves
-
-    if (transfer == QuickView::TransferFunction::PQ) {
-      static const auto pqLut = []() {
-        std::vector<uint16_t> arr(65536);
-        for (int i = 0; i < 65536; ++i) {
-          float v = static_cast<float>(i) / 65535.0f;
-          float linearColor =
-              DecodeTransferToLinear(v, QuickView::TransferFunction::PQ);
-          arr[i] = DirectX::PackedVector::XMConvertFloatToHalf(linearColor);
-        }
-        return arr;
-      }();
-      lutColorPtr = pqLut.data();
-    } else if (transfer == QuickView::TransferFunction::HLG) {
-      static const auto hlgLut = []() {
-        std::vector<uint16_t> arr(65536);
-        for (int i = 0; i < 65536; ++i) {
-          float v = static_cast<float>(i) / 65535.0f;
-          float linearColor =
-              DecodeTransferToLinear(v, QuickView::TransferFunction::HLG);
-          arr[i] = DirectX::PackedVector::XMConvertFloatToHalf(linearColor);
-        }
-        return arr;
-      }();
-      lutColorPtr = hlgLut.data();
-    } else {
-      // Dynamic computation fallback for very rare non-standard transfer
-      // functions
-      localLutColor.resize(65536);
-      for (int i = 0; i < 65536; ++i) {
-        float v = static_cast<float>(i) / 65535.0f;
-        float linearColor = DecodeTransferToLinear(v, transfer);
-        localLutColor[i] =
-            DirectX::PackedVector::XMConvertFloatToHalf(linearColor);
-      }
-      lutColorPtr = localLutColor.data();
     }
 
     static const auto alphaLut = []() {
@@ -8328,18 +8864,68 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
     }();
     const uint16_t *lutAlphaPtr = alphaLut.data();
 
+    if (transfer == QuickView::TransferFunction::HLG) {
+      // ITU-R BT.2100 HLG OOTF is luminance-coupled across channels (Ys^0.2).
+      const float *hlgInvLut = ColorMath::GetHlg16ToSceneLinearLut();
+#pragma omp parallel for schedule(static)
+      for (int y = 0; y < height; ++y) {
+        uint16_t *dst = reinterpret_cast<uint16_t *>(
+            pixels + static_cast<size_t>(y) * stride);
+        const uint16_t *src = reinterpret_cast<const uint16_t *>(
+            rgb.pixels + static_cast<size_t>(y) * rgb.rowBytes);
+        for (int x = 0; x < width; ++x) {
+          const float er = hlgInvLut[src[x * 4 + 0]];
+          const float eg = hlgInvLut[src[x * 4 + 1]];
+          const float eb = hlgInvLut[src[x * 4 + 2]];
+          const float ys = 0.2627f * er + 0.6780f * eg + 0.0593f * eb;
+          const float gain = (ys > 0.0f) ? (std::pow(ys, 0.2f) * 12.5f) : 0.0f;
+          dst[x * 4 + 0] = DirectX::PackedVector::XMConvertFloatToHalf(er * gain);
+          dst[x * 4 + 1] = DirectX::PackedVector::XMConvertFloatToHalf(eg * gain);
+          dst[x * 4 + 2] = DirectX::PackedVector::XMConvertFloatToHalf(eb * gain);
+          dst[x * 4 + 3] = lutAlphaPtr[src[x * 4 + 3]];
+        }
+      }
+    } else {
+      // 1. Thread-safe static lookup tables precomputation (Magic Statics)
+      const uint16_t *lutColorPtr = nullptr;
+      std::vector<uint16_t> localLutColor; // Fallback for rare/custom curves
+
+      if (transfer == QuickView::TransferFunction::PQ) {
+        static const auto pqLut = []() {
+          std::vector<uint16_t> arr(65536);
+          for (int i = 0; i < 65536; ++i) {
+            float v = static_cast<float>(i) / 65535.0f;
+            float linearColor =
+                DecodeTransferToLinear(v, QuickView::TransferFunction::PQ);
+            arr[i] = DirectX::PackedVector::XMConvertFloatToHalf(linearColor);
+          }
+          return arr;
+        }();
+        lutColorPtr = pqLut.data();
+      } else {
+        localLutColor.resize(65536);
+        for (int i = 0; i < 65536; ++i) {
+          float v = static_cast<float>(i) / 65535.0f;
+          float linearColor = DecodeTransferToLinear(v, transfer);
+          localLutColor[i] =
+              DirectX::PackedVector::XMConvertFloatToHalf(linearColor);
+        }
+        lutColorPtr = localLutColor.data();
+      }
+
 // 2. Perform zero-calculation memory-aligned lookup copy
 #pragma omp parallel for schedule(static)
-    for (int y = 0; y < height; ++y) {
-      uint16_t *dst = reinterpret_cast<uint16_t *>(
-          pixels + static_cast<size_t>(y) * stride);
-      const uint16_t *src = reinterpret_cast<const uint16_t *>(
-          rgb.pixels + static_cast<size_t>(y) * rgb.rowBytes);
-      for (int x = 0; x < width; ++x) {
-        dst[x * 4 + 0] = lutColorPtr[src[x * 4 + 0]];
-        dst[x * 4 + 1] = lutColorPtr[src[x * 4 + 1]];
-        dst[x * 4 + 2] = lutColorPtr[src[x * 4 + 2]];
-        dst[x * 4 + 3] = lutAlphaPtr[src[x * 4 + 3]];
+      for (int y = 0; y < height; ++y) {
+        uint16_t *dst = reinterpret_cast<uint16_t *>(
+            pixels + static_cast<size_t>(y) * stride);
+        const uint16_t *src = reinterpret_cast<const uint16_t *>(
+            rgb.pixels + static_cast<size_t>(y) * rgb.rowBytes);
+        for (int x = 0; x < width; ++x) {
+          dst[x * 4 + 0] = lutColorPtr[src[x * 4 + 0]];
+          dst[x * 4 + 1] = lutColorPtr[src[x * 4 + 1]];
+          dst[x * 4 + 2] = lutColorPtr[src[x * 4 + 2]];
+          dst[x * 4 + 3] = lutAlphaPtr[src[x * 4 + 3]];
+        }
       }
     }
 
@@ -8353,23 +8939,22 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
     result.metadata.Width = origW;
     result.metadata.Height = origH;
     result.metadata.colorInfo.dataSpace =
-        QuickView::PixelDataSpace::SceneLinear;
+        (transfer == QuickView::TransferFunction::PQ ||
+         transfer == QuickView::TransferFunction::HLG)
+            ? QuickView::PixelDataSpace::SceneLinearScRgb
+            : QuickView::PixelDataSpace::SceneLinear;
     result.metadata.colorInfo.transfer = QuickView::TransferFunction::Linear;
     result.metadata.colorInfo.primaries = primaries;
     result.metadata.colorInfo.nominalBitDepth = decoder->image->depth;
     PopulateAvifHdrStaticMetadata(decoder->image, &result.metadata.hdrMetadata);
+    result.metadata.hdrMetadata.transfer = transfer;
+    result.metadata.hdrMetadata.primaries = primaries;
     result.metadata.hdrMetadata.isSceneLinear = true;
     result.metadata.hdrMetadata.isHdr =
         (transfer == QuickView::TransferFunction::Linear ||
          transfer == QuickView::TransferFunction::PQ ||
          transfer == QuickView::TransferFunction::HLG ||
          decoder->image->gainMap != nullptr);
-    if (decoder->image->icc.data && decoder->image->icc.size > 0) {
-      result.metadata.iccProfileData.assign(decoder->image->icc.data,
-                                            decoder->image->icc.data +
-                                                decoder->image->icc.size);
-      result.metadata.colorInfo.hasEmbeddedIcc = true;
-    }
 
     wchar_t fmtBuf[128];
     swprintf_s(fmtBuf, L"%d-bit HDR AVIF", decoder->image->depth);
@@ -8428,25 +9013,23 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
   result.metadata.Width = origW;
   result.metadata.Height = origH;
   PopulateAvifHdrStaticMetadata(decoder->image, &result.metadata.hdrMetadata);
-  result.metadata.colorInfo.transfer = result.metadata.hdrMetadata.transfer;
-  result.metadata.colorInfo.primaries = result.metadata.hdrMetadata.primaries;
+  result.metadata.hdrMetadata.transfer = transfer;
+  result.metadata.hdrMetadata.primaries = primaries;
+  result.metadata.colorInfo.transfer =
+      (transfer != QuickView::TransferFunction::Unknown)
+          ? transfer
+          : QuickView::TransferFunction::SRGB;
+  result.metadata.colorInfo.primaries = primaries;
   result.metadata.colorInfo.nominalBitDepth = static_cast<uint8_t>(
       (std::min)(static_cast<uint32_t>(decoder->image->depth), 255u));
   result.metadata.colorInfo.dataSpace =
-      (result.metadata.hdrMetadata.transfer ==
-           QuickView::TransferFunction::PQ ||
-       result.metadata.hdrMetadata.transfer == QuickView::TransferFunction::HLG)
+      (transfer == QuickView::TransferFunction::PQ ||
+       transfer == QuickView::TransferFunction::HLG)
           ? QuickView::PixelDataSpace::EncodedHdr
           : QuickView::PixelDataSpace::EncodedSdr;
   result.metadata.hdrMetadata.isHdr = result.metadata.colorInfo.dataSpace ==
                                       QuickView::PixelDataSpace::EncodedHdr;
 
-  if (decoder->image->icc.data && decoder->image->icc.size > 0) {
-    result.metadata.iccProfileData.assign(decoder->image->icc.data,
-                                          decoder->image->icc.data +
-                                              decoder->image->icc.size);
-    result.metadata.colorInfo.hasEmbeddedIcc = true;
-  }
   wchar_t fmtBuf[128];
   swprintf_s(fmtBuf, L"%d-bit AVIF", decoder->image->depth);
   result.metadata.FormatDetails = fmtBuf;
@@ -8715,13 +9298,61 @@ static HRESULT Load(LPCWSTR filePath, const DecodeContext &ctx,
 
 // NanoSVG namespace removed
 
+static inline float SanitizeFloatChannelForHdr(const float *ptr,
+                                                bool isAlpha) noexcept {
+  uint32_t bits = 0;
+  std::memcpy(&bits, ptr, sizeof(bits));
+  const uint32_t absBits = bits & 0x7FFFFFFFu;
+  if (isAlpha) {
+    if (absBits > 0x7F800000u)
+      return 1.0f;
+    if (absBits == 0x7F800000u)
+      return (bits & 0x80000000u) ? 0.0f : 1.0f;
+    return std::clamp(*ptr, 0.0f, 1.0f);
+  }
+  if (absBits > 0x7F800000u)
+    return 0.0f;
+  if (absBits == 0x7F800000u)
+    return (bits & 0x80000000u) ? -65504.0f : 65504.0f;
+  return std::clamp(*ptr, -65504.0f, 65504.0f);
+}
+
+static QuickView::ColorPrimaries MapExrChromaticities(
+    const TinyExrLoader::ExrChromaticities &chroma) {
+  if (!chroma.valid)
+    return QuickView::ColorPrimaries::SRGB;
+
+  auto matches = [&](float rx, float ry, float gx, float gy, float bx,
+                     float by) {
+    constexpr float kTol = 0.015f;
+    return std::abs(chroma.redX - rx) <= kTol &&
+           std::abs(chroma.redY - ry) <= kTol &&
+           std::abs(chroma.greenX - gx) <= kTol &&
+           std::abs(chroma.greenY - gy) <= kTol &&
+           std::abs(chroma.blueX - bx) <= kTol &&
+           std::abs(chroma.blueY - by) <= kTol;
+  };
+
+  if (matches(0.708f, 0.292f, 0.170f, 0.797f, 0.131f, 0.046f))
+    return QuickView::ColorPrimaries::Rec2020;
+  if (matches(0.680f, 0.320f, 0.265f, 0.690f, 0.150f, 0.060f))
+    return QuickView::ColorPrimaries::DisplayP3;
+  if (matches(0.7347f, 0.2653f, 0.0f, 1.0f, 0.0001f, -0.0770f))
+    return QuickView::ColorPrimaries::ACES;
+  if (matches(0.640f, 0.330f, 0.300f, 0.600f, 0.150f, 0.060f))
+    return QuickView::ColorPrimaries::SRGB;
+  return QuickView::ColorPrimaries::SRGB;
+}
+
 namespace TinyEXR {
 static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
                     DecodeResult &result) {
   int w = 0, h = 0;
   std::vector<float> floatPixels;
+  TinyExrLoader::ExrChromaticities exrChroma;
 
-  if (!TinyExrLoader::LoadEXRFromMemory(data, size, &w, &h, floatPixels)) {
+  if (!TinyExrLoader::LoadEXRFromMemory(data, size, &w, &h, floatPixels,
+                                        &exrChroma)) {
     return E_FAIL;
   }
 
@@ -8782,16 +9413,19 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
 
     for (int ox = 0; ox < outW; ++ox) {
       int sx = srcXForOut[ox];
-      rowDst[ox * 4 + 0] =
-          DirectX::PackedVector::XMConvertFloatToHalf(rowSrc[sx * 4 + 0]);
-      rowDst[ox * 4 + 1] =
-          DirectX::PackedVector::XMConvertFloatToHalf(rowSrc[sx * 4 + 1]);
-      rowDst[ox * 4 + 2] =
-          DirectX::PackedVector::XMConvertFloatToHalf(rowSrc[sx * 4 + 2]);
-      rowDst[ox * 4 + 3] =
-          DirectX::PackedVector::XMConvertFloatToHalf(rowSrc[sx * 4 + 3]);
+      const float r = SanitizeFloatChannelForHdr(&rowSrc[sx * 4 + 0], false);
+      const float g = SanitizeFloatChannelForHdr(&rowSrc[sx * 4 + 1], false);
+      const float b = SanitizeFloatChannelForHdr(&rowSrc[sx * 4 + 2], false);
+      const float a = SanitizeFloatChannelForHdr(&rowSrc[sx * 4 + 3], true);
+      rowDst[ox * 4 + 0] = DirectX::PackedVector::XMConvertFloatToHalf(r);
+      rowDst[ox * 4 + 1] = DirectX::PackedVector::XMConvertFloatToHalf(g);
+      rowDst[ox * 4 + 2] = DirectX::PackedVector::XMConvertFloatToHalf(b);
+      rowDst[ox * 4 + 3] = DirectX::PackedVector::XMConvertFloatToHalf(a);
     }
   }
+
+  const QuickView::ColorPrimaries exrPrimaries =
+      MapExrChromaticities(exrChroma);
 
   result.pixels = pixels;
   result.width = outW;
@@ -8807,12 +9441,13 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
   result.metadata.Height = h;
   result.metadata.colorInfo.dataSpace = QuickView::PixelDataSpace::SceneLinear;
   result.metadata.colorInfo.transfer = QuickView::TransferFunction::Linear;
-  result.metadata.colorInfo.primaries = QuickView::ColorPrimaries::SRGB;
+  result.metadata.colorInfo.primaries = exrPrimaries;
   result.metadata.colorInfo.nominalBitDepth = 16;
   result.metadata.hdrMetadata.isValid = true;
   result.metadata.hdrMetadata.isHdr = true;
   result.metadata.hdrMetadata.isSceneLinear = true;
   result.metadata.hdrMetadata.transfer = QuickView::TransferFunction::Linear;
+  result.metadata.hdrMetadata.primaries = exrPrimaries;
   return S_OK;
 }
 } // namespace TinyEXR
@@ -8823,9 +9458,11 @@ struct HeaderInfo {
   uint16_t channels = 0;
   uint32_t width = 0;
   uint32_t height = 0;
-  uint16_t depth = 0;       // 8/16 supported
+  uint16_t depth = 0;       // 8/16/32 supported
   uint16_t colorMode = 0;   // 1=Gray, 3=RGB supported
   uint16_t compression = 0; // 0=Raw, 1=RLE
+  size_t imageResOffset = 0;
+  uint32_t imageResLen = 0;
   size_t imageDataOffset = 0;
 };
 
@@ -8888,6 +9525,8 @@ static bool ParseHeader(const uint8_t *data, size_t size, HeaderInfo &out) {
   off += 4;
   if (!FitsRange(off, imageResLen, size))
     return false;
+  out.imageResOffset = off;
+  out.imageResLen = imageResLen;
   off += static_cast<size_t>(imageResLen);
 
   uint64_t layerMaskLen = 0;
@@ -9009,6 +9648,87 @@ static void WriteChannelToBgraRow(uint8_t *dstRow,
   }
 }
 
+template <typename Vec>
+static bool ExtractPsdIccProfile(const uint8_t *data, size_t size,
+                                 const HeaderInfo &header,
+                                 Vec &outIcc) {
+  outIcc.clear();
+  if (!data || header.imageResLen == 0 ||
+      !FitsRange(header.imageResOffset, header.imageResLen, size)) {
+    return false;
+  }
+
+  size_t r = header.imageResOffset;
+  const size_t end = header.imageResOffset + static_cast<size_t>(header.imageResLen);
+  while (r + 12u <= end) {
+    if (std::memcmp(data + r, "8BIM", 4) != 0)
+      break;
+    const uint16_t resId = ReadBE16(data + r + 4);
+    const uint8_t nameLen = data[r + 6];
+    const size_t paddedNameLen = 1u + static_cast<size_t>(nameLen);
+    const size_t nameFieldBytes = (paddedNameLen + 1u) & ~size_t{1u};
+    r += 6u;
+    if (nameFieldBytes > end - r)
+      break;
+    r += nameFieldBytes;
+    if (4u > end - r)
+      break;
+    const uint32_t dataLen = ReadBE32(data + r);
+    r += 4u;
+    if (static_cast<size_t>(dataLen) > end - r)
+      break;
+    if (resId == 0x040Fu && dataLen > 0) {
+      outIcc.assign(data + r, data + r + dataLen);
+      return true;
+    }
+    const size_t paddedDataLen =
+        (static_cast<size_t>(dataLen) + 1u) & ~size_t{1u};
+    if (paddedDataLen > end - r)
+      break;
+    r += paddedDataLen;
+  }
+  return false;
+}
+
+static void WriteChannelToFloatRow(float *dstRow,
+                                   const std::vector<uint32_t> &srcXForOut,
+                                   const uint8_t *srcRow, uint16_t colorMode,
+                                   uint16_t channelIndex) {
+  const size_t outW = srcXForOut.size();
+  auto readSanitized = [&](uint32_t srcX, bool isAlpha) -> float {
+    const uint32_t bits =
+        ReadBE32(srcRow + static_cast<size_t>(srcX) * 4u);
+    float val = 0.0f;
+    std::memcpy(&val, &bits, sizeof(val));
+    return SanitizeFloatChannelForHdr(&val, isAlpha);
+  };
+
+  if (colorMode == 3) {
+    if (channelIndex < 3) {
+      for (size_t ox = 0; ox < outW; ++ox) {
+        dstRow[ox * 4u + channelIndex] = readSanitized(srcXForOut[ox], false);
+      }
+    } else if (channelIndex == 3) {
+      for (size_t ox = 0; ox < outW; ++ox) {
+        dstRow[ox * 4u + 3u] = readSanitized(srcXForOut[ox], true);
+      }
+    }
+  } else if (colorMode == 1) {
+    if (channelIndex == 0) {
+      for (size_t ox = 0; ox < outW; ++ox) {
+        const float v = readSanitized(srcXForOut[ox], false);
+        dstRow[ox * 4u + 0u] = v;
+        dstRow[ox * 4u + 1u] = v;
+        dstRow[ox * 4u + 2u] = v;
+      }
+    } else if (channelIndex == 1) {
+      for (size_t ox = 0; ox < outW; ++ox) {
+        dstRow[ox * 4u + 3u] = readSanitized(srcXForOut[ox], true);
+      }
+    }
+  }
+}
+
 static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
                     DecodeResult &result) {
   HeaderInfo header;
@@ -9017,7 +9737,8 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
 
   const bool supportedColorMode =
       (header.colorMode == 3 || header.colorMode == 1);
-  const bool supportedDepth = (header.depth == 8 || header.depth == 16);
+  const bool supportedDepth =
+      (header.depth == 8 || header.depth == 16 || header.depth == 32);
   const bool supportedCompression =
       (header.compression == 0 || header.compression == 1);
   if (!supportedColorMode || !supportedDepth || !supportedCompression)
@@ -9047,7 +9768,9 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
     }
   }
 
-  const int stride = CalculateSIMDAlignedStride(static_cast<int>(outW), 4);
+  const bool isFloat32 = (header.depth == 32);
+  const int bpp = isFloat32 ? 16 : 4;
+  const int stride = CalculateSIMDAlignedStride(static_cast<int>(outW), bpp);
   if (stride <= 0)
     return E_FAIL;
 
@@ -9058,10 +9781,19 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
     return E_OUTOFMEMORY;
 
   std::memset(pixels, 0, totalSize);
-  for (uint32_t y = 0; y < outH; ++y) {
-    uint8_t *row = pixels + static_cast<size_t>(y) * stride;
-    for (uint32_t x = 0; x < outW; ++x) {
-      row[static_cast<size_t>(x) * 4 + 3] = 255;
+  if (isFloat32) {
+    for (uint32_t y = 0; y < outH; ++y) {
+      float *row = reinterpret_cast<float *>(pixels + static_cast<size_t>(y) * stride);
+      for (uint32_t x = 0; x < outW; ++x) {
+        row[static_cast<size_t>(x) * 4u + 3u] = 1.0f;
+      }
+    }
+  } else {
+    for (uint32_t y = 0; y < outH; ++y) {
+      uint8_t *row = pixels + static_cast<size_t>(y) * stride;
+      for (uint32_t x = 0; x < outW; ++x) {
+        row[static_cast<size_t>(x) * 4u + 3u] = 255;
+      }
     }
   }
 
@@ -9083,8 +9815,10 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
     srcYToOut[sy] = static_cast<int32_t>(oy);
   }
 
+  const size_t bytesPerChannelSample =
+      isFloat32 ? 4u : ((header.depth == 16) ? 2u : 1u);
   const size_t rowBytes =
-      static_cast<size_t>(header.width) * ((header.depth == 16) ? 2u : 1u);
+      static_cast<size_t>(header.width) * bytesPerChannelSample;
   const size_t compressionOffset = header.imageDataOffset + 2;
 
   const auto isRelevantChannel = [&](uint16_t c) -> bool {
@@ -9111,8 +9845,13 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
         const int32_t oy = srcYToOut[sy];
         if (oy >= 0 && isRelevantChannel(c)) {
           uint8_t *dstRow = pixels + static_cast<size_t>(oy) * stride;
-          WriteChannelToBgraRow(dstRow, srcXForOut, ptr, header.depth,
-                                header.colorMode, c);
+          if (isFloat32) {
+            WriteChannelToFloatRow(reinterpret_cast<float *>(dstRow),
+                                   srcXForOut, ptr, header.colorMode, c);
+          } else {
+            WriteChannelToBgraRow(dstRow, srcXForOut, ptr, header.depth,
+                                  header.colorMode, c);
+          }
         }
         ptr += rowBytes;
       }
@@ -9152,8 +9891,14 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
                                  rowBytes))
             return E_FAIL;
           uint8_t *dstRow = pixels + static_cast<size_t>(oy) * stride;
-          WriteChannelToBgraRow(dstRow, srcXForOut, decodedRow.data(),
-                                header.depth, header.colorMode, c);
+          if (isFloat32) {
+            WriteChannelToFloatRow(reinterpret_cast<float *>(dstRow),
+                                   srcXForOut, decodedRow.data(),
+                                   header.colorMode, c);
+          } else {
+            WriteChannelToBgraRow(dstRow, srcXForOut, decodedRow.data(),
+                                  header.depth, header.colorMode, c);
+          }
         }
 
         compPtr += packedLen;
@@ -9161,9 +9906,8 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
     }
   }
 
-  // Evaluate true transparency using zero-alpha RGB check heuristic to avoid showing
-  // checkerboard grids in dark shadow regions where a custom alpha channel name is saved.
-  if (header.channels >= (header.colorMode == 3 ? 4u : 2u)) {
+  // Evaluate true transparency using zero-alpha RGB check heuristic for 8/16->8-bit BGRA
+  if (!isFloat32 && header.channels >= (header.colorMode == 3 ? 4u : 2u)) {
     size_t zeroAlphaCount = 0;
     size_t zeroAlphaButNotEmptyCount = 0;
     const bool isRgb = (header.colorMode == 3);
@@ -9216,7 +9960,8 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
   result.width = static_cast<int>(outW);
   result.height = static_cast<int>(outH);
   result.stride = stride;
-  result.format = PixelFormat::BGRA8888;
+  result.format =
+      isFloat32 ? PixelFormat::R32G32B32A32_FLOAT : PixelFormat::BGRA8888;
   result.success = true;
   result.metadata.Format = (header.version == 2) ? L"PSB" : L"PSD";
   result.metadata.LoaderName =
@@ -9236,21 +9981,51 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
   result.metadata.FormatDetails = details;
   result.metadata.colorInfo.nominalBitDepth = static_cast<uint8_t>(
       (std::min)(header.depth, static_cast<uint16_t>(255)));
-  result.metadata.colorInfo.primaries = QuickView::ColorPrimaries::SRGB;
-  result.metadata.colorInfo.transfer = (header.depth >= 32)
-                                           ? QuickView::TransferFunction::Linear
-                                           : QuickView::TransferFunction::SRGB;
-  result.metadata.colorInfo.dataSpace =
-      (header.depth >= 32) ? QuickView::PixelDataSpace::SceneLinear
-                           : QuickView::PixelDataSpace::EncodedSdr;
-  // Populate HDR metadata for high bit-depth PSD/PSB
-  result.metadata.hdrMetadata.isValid = true;
-  result.metadata.hdrMetadata.transfer =
-      (header.depth >= 32) ? QuickView::TransferFunction::Linear
-                           : QuickView::TransferFunction::SRGB;
-  result.metadata.hdrMetadata.primaries = QuickView::ColorPrimaries::SRGB;
-  result.metadata.hdrMetadata.isHdr = (header.depth >= 32);
-  result.metadata.hdrMetadata.isSceneLinear = (header.depth >= 32);
+
+  if (ExtractPsdIccProfile(data, size, header, result.metadata.iccProfileData) &&
+      !result.metadata.iccProfileData.empty()) {
+    result.metadata.HasEmbeddedColorProfile = true;
+    result.metadata.colorInfo.hasEmbeddedIcc = true;
+    std::wstring parsedName;
+    ApplyJpegIccColorMetadata(result.metadata.iccProfileData.data(),
+                              result.metadata.iccProfileData.size(),
+                              result.metadata.colorInfo,
+                              result.metadata.hdrMetadata, &parsedName);
+    if (!parsedName.empty()) {
+      result.metadata.ColorSpace = parsedName;
+    }
+  } else {
+    result.metadata.HasEmbeddedColorProfile = false;
+  }
+
+  if (isFloat32) {
+    result.metadata.colorInfo.dataSpace = QuickView::PixelDataSpace::SceneLinear;
+    result.metadata.colorInfo.transfer = QuickView::TransferFunction::Linear;
+    if (result.metadata.colorInfo.primaries == QuickView::ColorPrimaries::Unknown) {
+      result.metadata.colorInfo.primaries = QuickView::ColorPrimaries::SRGB;
+    }
+    result.metadata.hdrMetadata.isValid = true;
+    result.metadata.hdrMetadata.isHdr = true;
+    result.metadata.hdrMetadata.isSceneLinear = true;
+    result.metadata.hdrMetadata.transfer = QuickView::TransferFunction::Linear;
+    result.metadata.hdrMetadata.primaries = result.metadata.colorInfo.primaries;
+  } else {
+    if (result.metadata.colorInfo.dataSpace !=
+        QuickView::PixelDataSpace::EncodedHdr) {
+      result.metadata.colorInfo.dataSpace =
+          QuickView::PixelDataSpace::EncodedSdr;
+    }
+    if (result.metadata.colorInfo.transfer ==
+        QuickView::TransferFunction::Unknown) {
+      result.metadata.colorInfo.transfer = QuickView::TransferFunction::SRGB;
+    }
+    result.metadata.hdrMetadata.isHdr =
+        (result.metadata.colorInfo.dataSpace ==
+         QuickView::PixelDataSpace::EncodedHdr);
+    result.metadata.hdrMetadata.isSceneLinear = false;
+    result.metadata.hdrMetadata.transfer = result.metadata.colorInfo.transfer;
+    result.metadata.hdrMetadata.primaries = result.metadata.colorInfo.primaries;
+  }
   return S_OK;
 }
 } // namespace PsdComposite
@@ -9370,13 +10145,13 @@ static HRESULT Load(LPCWSTR filePath, const DecodeContext &ctx,
 
   if (fileMap && fileMap->IsValid()) {
     ProbeHdrMetadataNative(fileMap->data(), fileMap->size(),
-                           &result.metadata.hdrMetadata);
+                           &result.metadata.hdrMetadata, &result.metadata);
   } else {
     // Fallback (should not happen in Unified path)
     QuickView::MappedFile mapping(filePath);
     if (mapping.IsValid())
       ProbeHdrMetadataNative(mapping.data(), mapping.size(),
-                             &result.metadata.hdrMetadata);
+                             &result.metadata.hdrMetadata, &result.metadata);
   }
 
   ComPtr<IWICBitmapDecoder> decoder;
@@ -9406,14 +10181,24 @@ static HRESULT Load(LPCWSTR filePath, const DecodeContext &ctx,
   WICPixelFormatGUID srcFormat;
   frame->GetPixelFormat(&srcFormat);
 
-  bool isHighBitDepth = (srcFormat == GUID_WICPixelFormat64bppRGBAHalf ||
-                         srcFormat == GUID_WICPixelFormat128bppRGBAFloat ||
-                         srcFormat == GUID_WICPixelFormat64bppRGBA ||
-                         srcFormat == GUID_WICPixelFormat48bppRGB ||
-                         result.metadata.hdrMetadata.isHdr ||
-                         result.metadata.hdrMetadata.hasGainMap);
-
+  ProbeNativeWicFrameInfo(frame.Get(), factory, &result.metadata);
   PopulateHdrInfoFromWicPixelFormat(srcFormat, &result.metadata);
+
+  const bool isNativeFloatScRgb =
+      IsWicFloatOrHalfFormat(srcFormat) || IsWicFixedPointOrXrFormat(srcFormat);
+  const bool isIntegerHighBitDepth =
+      (srcFormat == GUID_WICPixelFormat64bppRGBA ||
+       srcFormat == GUID_WICPixelFormat64bppPRGBA ||
+       srcFormat == GUID_WICPixelFormat64bppRGB ||
+       srcFormat == GUID_WICPixelFormat48bppRGB ||
+       srcFormat == GUID_WICPixelFormat32bppRGBA1010102);
+  const bool isHdrPqOrHlgTransfer =
+      (result.metadata.hdrMetadata.transfer == QuickView::TransferFunction::PQ ||
+       result.metadata.hdrMetadata.transfer == QuickView::TransferFunction::HLG ||
+       result.metadata.colorInfo.transfer == QuickView::TransferFunction::PQ ||
+       result.metadata.colorInfo.transfer == QuickView::TransferFunction::HLG);
+  const bool preferSdrTarget = PrefersSdrTarget(ctx);
+  const bool hasGainMap = result.metadata.hdrMetadata.hasGainMap;
 
   // Get original dimensions (always preserved in metadata)
   UINT origW, origH;
@@ -9483,25 +10268,39 @@ static HRESULT Load(LPCWSTR filePath, const DecodeContext &ctx,
     decodeH = origH;
   }
 
-  // Format conversion (HDR-aware)
+  // Format conversion (HDR-aware 4-case routing)
   ComPtr<IWICFormatConverter> converter;
   if (FAILED(factory->CreateFormatConverter(&converter)))
     return E_FAIL;
 
   WICPixelFormatGUID targetFmt = GUID_WICPixelFormat32bppPBGRA;
-  if (isHighBitDepth && !PrefersSdrTarget(ctx)) {
+  PixelFormat outFormat = PixelFormat::BGRA8888;
+  int bpp = 4;
+
+  if (isNativeFloatScRgb && !preferSdrTarget) {
     targetFmt = GUID_WICPixelFormat64bppRGBAHalf;
-    result.format = PixelFormat::R16G16B16A16_FLOAT;
-  } else {
-    result.format = PixelFormat::BGRA8888;
+    outFormat = PixelFormat::R16G16B16A16_FLOAT;
+    bpp = 8;
+  } else if (!isNativeFloatScRgb && !hasGainMap && isHdrPqOrHlgTransfer) {
+    if (isIntegerHighBitDepth) {
+      targetFmt = GUID_WICPixelFormat64bppRGBA;
+      outFormat = PixelFormat::R16G16B16A16_UNORM;
+      bpp = 8;
+    }
+  } else if (!isNativeFloatScRgb && !hasGainMap && isIntegerHighBitDepth &&
+             !preferSdrTarget) {
+    targetFmt = GUID_WICPixelFormat64bppRGBA;
+    outFormat = PixelFormat::R16G16B16A16_UNORM;
+    bpp = 8;
   }
+
+  result.format = outFormat;
 
   if (FAILED(converter->Initialize(decodeSource.Get(), targetFmt,
                                    WICBitmapDitherTypeNone, nullptr, 0.f,
                                    WICBitmapPaletteTypeMedianCut)))
     return E_FAIL;
 
-  int bpp = (isHighBitDepth && !PrefersSdrTarget(ctx)) ? 8 : 4;
   int stride = CalculateSIMDAlignedStride(decodeW, bpp);
   size_t bufSize = (size_t)stride * decodeH;
   uint8_t *pixels = ctx.allocator(bufSize);
@@ -9520,51 +10319,92 @@ static HRESULT Load(LPCWSTR filePath, const DecodeContext &ctx,
                                    ? L"WIC HEIF (Native Transform)"
                                    : L"WIC HEIF (Native Accelerated)";
 
-  if (isHighBitDepth && !PrefersSdrTarget(ctx)) {
+  const QuickView::ColorPrimaries resolvedPrimaries =
+      (result.metadata.colorInfo.primaries != QuickView::ColorPrimaries::Unknown)
+          ? result.metadata.colorInfo.primaries
+          : result.metadata.hdrMetadata.primaries;
+
+  if (isNativeFloatScRgb && !preferSdrTarget) {
     result.metadata.colorInfo.dataSpace =
         QuickView::PixelDataSpace::SceneLinearScRgb;
     result.metadata.colorInfo.transfer = QuickView::TransferFunction::Linear;
     result.metadata.colorInfo.primaries = QuickView::ColorPrimaries::SRGB;
-
     result.metadata.colorInfo.nominalBitDepth =
         (srcFormat == GUID_WICPixelFormat64bppRGBAHalf ||
          srcFormat == GUID_WICPixelFormat64bppRGBA)
             ? 16
             : 32;
-
-    result.metadata.hdrMetadata.isHdr =
-        (result.metadata.hdrMetadata.isHdr ||
-         result.metadata.hdrMetadata.hasGainMap ||
-         result.metadata.hdrMetadata.transfer ==
-             QuickView::TransferFunction::PQ ||
-         result.metadata.hdrMetadata.transfer ==
-             QuickView::TransferFunction::HLG);
+    result.metadata.hdrMetadata.isValid = true;
+    result.metadata.hdrMetadata.isHdr = true;
     result.metadata.hdrMetadata.isSceneLinear = true;
-
+    result.metadata.hdrMetadata.transfer = QuickView::TransferFunction::Linear;
+    result.metadata.hdrMetadata.primaries = QuickView::ColorPrimaries::SRGB;
     result.metadata.FormatDetails = L"High Precision HEIF / Linear scRGB";
-    if (result.metadata.hdrMetadata.transfer == QuickView::TransferFunction::PQ)
-      result.metadata.FormatDetails += L" / Source PQ";
-    else if (result.metadata.hdrMetadata.transfer ==
-             QuickView::TransferFunction::HLG)
-      result.metadata.FormatDetails += L" / Source HLG";
+  } else if (!isNativeFloatScRgb && !hasGainMap && isHdrPqOrHlgTransfer) {
+    const QuickView::TransferFunction hdrTransfer =
+        (result.metadata.hdrMetadata.transfer == QuickView::TransferFunction::PQ ||
+         result.metadata.hdrMetadata.transfer == QuickView::TransferFunction::HLG)
+            ? result.metadata.hdrMetadata.transfer
+            : result.metadata.colorInfo.transfer;
+    result.metadata.colorInfo.dataSpace = QuickView::PixelDataSpace::EncodedHdr;
+    result.metadata.colorInfo.transfer = hdrTransfer;
+    result.metadata.colorInfo.primaries = resolvedPrimaries;
+    result.metadata.colorInfo.nominalBitDepth =
+        (outFormat == PixelFormat::R16G16B16A16_UNORM) ? 16 : 8;
+    result.metadata.hdrMetadata.isValid = true;
+    result.metadata.hdrMetadata.isHdr = true;
+    result.metadata.hdrMetadata.isSceneLinear = false;
+    result.metadata.hdrMetadata.transfer = hdrTransfer;
+    result.metadata.hdrMetadata.primaries = resolvedPrimaries;
 
-    if (result.metadata.hdrMetadata.primaries ==
-        QuickView::ColorPrimaries::Rec2020)
-      result.metadata.FormatDetails += L" / Source P2020";
-    else if (result.metadata.hdrMetadata.primaries ==
-             QuickView::ColorPrimaries::DisplayP3)
-      result.metadata.FormatDetails += L" / Source P3";
-  } else {
+    result.metadata.FormatDetails = L"HDR HEIF (Encoded)";
+    if (hdrTransfer == QuickView::TransferFunction::PQ)
+      result.metadata.FormatDetails += L" / Source PQ";
+    else if (hdrTransfer == QuickView::TransferFunction::HLG)
+      result.metadata.FormatDetails += L" / Source HLG";
+  } else if (hasGainMap && !isNativeFloatScRgb) {
+    const QuickView::ColorPrimaries basePrimaries =
+        (resolvedPrimaries != QuickView::ColorPrimaries::Unknown)
+            ? resolvedPrimaries
+            : GuessPrimariesFromMetadataColorSpace(result.metadata);
     result.metadata.colorInfo.dataSpace = QuickView::PixelDataSpace::EncodedSdr;
     result.metadata.colorInfo.transfer = QuickView::TransferFunction::SRGB;
+    result.metadata.colorInfo.primaries = basePrimaries;
     result.metadata.colorInfo.nominalBitDepth = 8;
-    if (isHighBitDepth && result.metadata.FormatDetails.find(L"SDR Target") ==
-                              std::wstring::npos) {
-      if (!result.metadata.FormatDetails.empty()) {
-        result.metadata.FormatDetails += L" / ";
-      }
-      result.metadata.FormatDetails += L"SDR Target";
+    result.metadata.hdrMetadata.isValid = true;
+    result.metadata.hdrMetadata.isHdr = false;
+    result.metadata.hdrMetadata.isSceneLinear = false;
+    result.metadata.hdrMetadata.transfer = QuickView::TransferFunction::SRGB;
+    result.metadata.hdrMetadata.primaries = basePrimaries;
+    result.metadata.FormatDetails = L"HEIF [GainMap]";
+  } else {
+    const QuickView::TransferFunction sdrTransfer =
+        (result.metadata.colorInfo.transfer != QuickView::TransferFunction::Unknown &&
+         result.metadata.colorInfo.transfer != QuickView::TransferFunction::Linear)
+            ? result.metadata.colorInfo.transfer
+            : QuickView::TransferFunction::SRGB;
+    result.metadata.colorInfo.dataSpace = QuickView::PixelDataSpace::EncodedSdr;
+    result.metadata.colorInfo.transfer = sdrTransfer;
+    result.metadata.colorInfo.primaries = resolvedPrimaries;
+    result.metadata.colorInfo.nominalBitDepth =
+        (outFormat == PixelFormat::R16G16B16A16_UNORM) ? 16 : 8;
+    result.metadata.hdrMetadata.isHdr = false;
+    result.metadata.hdrMetadata.isSceneLinear = false;
+    result.metadata.hdrMetadata.transfer = sdrTransfer;
+    result.metadata.hdrMetadata.primaries = resolvedPrimaries;
+    result.metadata.FormatDetails =
+        (outFormat == PixelFormat::R16G16B16A16_UNORM) ? L"High-Bit SDR HEIF"
+                                                       : L"HEIF";
+    if (isNativeFloatScRgb &&
+        result.metadata.FormatDetails.find(L"SDR Target") == std::wstring::npos) {
+      result.metadata.FormatDetails += L" / SDR Target";
     }
+  }
+
+  if (result.metadata.hdrMetadata.primaries == QuickView::ColorPrimaries::Rec2020) {
+    result.metadata.FormatDetails += L" / Source P2020";
+  } else if (result.metadata.hdrMetadata.primaries == QuickView::ColorPrimaries::DisplayP3) {
+    result.metadata.FormatDetails += L" / Source P3";
   }
   return S_OK;
 }
@@ -15152,15 +15992,6 @@ static float DecodePqToLinearScRgb(float value) {
   return nits / 80.0f;
 }
 
-static float DecodeHlgToLinear(float value) {
-  value = (std::clamp)(value, 0.0f, 1.0f);
-  const float scene =
-      (value <= 0.5f)
-          ? ((value * value) / 3.0f)
-          : ((expf((value - 0.55991073f) / 0.17883277f) + 0.28466892f) / 12.0f);
-  return powf((std::max)(scene, 0.0f), 1.2f) * 12.5f;
-}
-
 static float DecodeSrgbToLinear(float value) {
   value = (std::clamp)(value, 0.0f, 1.0f);
   if (value <= 0.04045f)
@@ -15322,12 +16153,28 @@ PopulateAvifHdrStaticMetadata(const avifImage *image,
   hdrMetadata->transfer =
       MapAvifTransferFunction(image->transferCharacteristics);
   hdrMetadata->primaries = MapAvifPrimaries(image->colorPrimaries);
+  if (image->icc.data && image->icc.size > 0 &&
+      (hdrMetadata->transfer == QuickView::TransferFunction::Unknown ||
+       hdrMetadata->primaries == QuickView::ColorPrimaries::Unknown)) {
+    QuickView::ColorPrimaries cicpPrimaries = QuickView::ColorPrimaries::Unknown;
+    QuickView::TransferFunction cicpTransfer = QuickView::TransferFunction::Unknown;
+    if (QuickView::TryParseIccCicp(image->icc.data, image->icc.size,
+                                    &cicpPrimaries, &cicpTransfer)) {
+      if (hdrMetadata->transfer == QuickView::TransferFunction::Unknown &&
+          cicpTransfer != QuickView::TransferFunction::Unknown) {
+        hdrMetadata->transfer = cicpTransfer;
+      }
+      if (hdrMetadata->primaries == QuickView::ColorPrimaries::Unknown &&
+          cicpPrimaries != QuickView::ColorPrimaries::Unknown) {
+        hdrMetadata->primaries = cicpPrimaries;
+      }
+    }
+  }
   hdrMetadata->isSceneLinear =
       (hdrMetadata->transfer == QuickView::TransferFunction::Linear);
   hdrMetadata->isHdr =
       hdrMetadata->transfer == QuickView::TransferFunction::PQ ||
-      hdrMetadata->transfer == QuickView::TransferFunction::HLG ||
-      image->depth > 8;
+      hdrMetadata->transfer == QuickView::TransferFunction::HLG;
   hdrMetadata->hasGainMap = (image->gainMap != nullptr);
   hdrMetadata->gainMapApplied = false;
   hdrMetadata->gainMapAppliedHeadroom = 0.0f;
@@ -15354,15 +16201,21 @@ PopulateAvifHdrStaticMetadata(const avifImage *image,
   }
 }
 
-[[maybe_unused]] static float
+static float
 DecodeTransferToLinear(float value, QuickView::TransferFunction tf) {
   switch (tf) {
   case QuickView::TransferFunction::Linear:
     return value;
   case QuickView::TransferFunction::PQ:
     return DecodePqToLinearScRgb(value);
-  case QuickView::TransferFunction::HLG:
-    return DecodeHlgToLinear(value);
+  case QuickView::TransferFunction::HLG: {
+    const float e = ColorMath::HlgChannelInverseOetf(value);
+    return (e > 0.0f) ? (powf(e, 1.2f) * 12.5f) : 0.0f;
+  }
+  case QuickView::TransferFunction::Gamma22:
+    return (value > 0.0f) ? powf((std::clamp)(value, 0.0f, 1.0f), 2.2f) : 0.0f;
+  case QuickView::TransferFunction::Gamma28:
+    return (value > 0.0f) ? powf((std::clamp)(value, 0.0f, 1.0f), 2.8f) : 0.0f;
   case QuickView::TransferFunction::Rec709:
     return DecodeRec709ToLinear(value);
   case QuickView::TransferFunction::SRGB:

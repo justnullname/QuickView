@@ -494,6 +494,7 @@ add_executable(QuickViewTests
     QuickView/ImageLoaderSimd.cpp
     QuickView/WuffsImpl.cpp
     QuickView/ComputeEngine.cpp
+    QuickView/DisplayColorInfo.cpp
     QuickView/MiniTiff.cpp
     QuickView/MiniTiffLzw.cpp
     QuickView/MiniTiffCmyk.cpp
@@ -538,8 +539,10 @@ target_link_libraries(QuickViewTests PRIVATE
     libjpeg-turbo::turbojpeg-static
     brotli::common
     brotli::dec
+    brotli::enc
     libjxl::jxl
     libjxl::jxl_cms
+    lcms2::lcms2
     hwy::hwy
 )
 target_include_directories(QuickViewTests PRIVATE QuickView third_party/yyjson third_party/unrar-mini)

@@ -62,6 +62,7 @@ struct TiffImageDesc {
     uint16_t bitsPerSample = 8;
     uint16_t planarConfig = 1;
     uint16_t predictor = 1;
+    uint16_t sampleFormat = 1;
     uint16_t orientation = 1;
     uint16_t extraSamples = 0;
     uint32_t rowsPerStrip = 0;
@@ -278,6 +279,9 @@ static Status ParseTiffIFD(const uint8_t* data, size_t size, TiffImageDesc& desc
             case 317: // Predictor
                 desc.predictor = static_cast<uint16_t>(getTagValue(entryOff, type, count));
                 break;
+            case 339: // SampleFormat
+                desc.sampleFormat = static_cast<uint16_t>(getTagValue(entryOff, type, count));
+                break;
             case 320: // ColorMap
                 if (type == 3) {
                     uint32_t valOrOff = read32(entryOff + 8);
@@ -387,8 +391,11 @@ static Status CapabilityGate(const TiffImageDesc& desc) {
         return Status::Unsupported;
     }
 
-    // 8-bit and 16-bit supported (16-bit will be downsampled to 8-bit)
+    // 8-bit and 16-bit unsigned integers supported (16-bit will be downsampled to 8-bit)
     if (desc.bitsPerSample != 8 && desc.bitsPerSample != 16) {
+        return Status::Unsupported;
+    }
+    if (desc.sampleFormat != 1) {
         return Status::Unsupported;
     }
 
@@ -414,6 +421,44 @@ static Status CapabilityGate(const TiffImageDesc& desc) {
     }
 
     return Status::Ok;
+}
+
+static void UndoHorizontalPredictor(uint8_t* rowData, uint32_t width, uint32_t samples,
+                                    uint32_t bytesPerSample, bool isLE) {
+    if (!rowData || width <= 1 || samples == 0) return;
+    const size_t pixelStride = static_cast<size_t>(samples) * bytesPerSample;
+    if (bytesPerSample == 2) {
+        for (uint32_t x = 1; x < width; ++x) {
+            const size_t currBase = static_cast<size_t>(x) * pixelStride;
+            const size_t prevBase = currBase - pixelStride;
+            for (uint32_t c = 0; c < samples; ++c) {
+                const size_t curOff = currBase + static_cast<size_t>(c) * 2u;
+                const size_t prvOff = prevBase + static_cast<size_t>(c) * 2u;
+                const uint16_t prevVal = isLE
+                    ? static_cast<uint16_t>(rowData[prvOff] | (static_cast<uint16_t>(rowData[prvOff + 1]) << 8))
+                    : static_cast<uint16_t>((static_cast<uint16_t>(rowData[prvOff]) << 8) | rowData[prvOff + 1]);
+                const uint16_t currVal = isLE
+                    ? static_cast<uint16_t>(rowData[curOff] | (static_cast<uint16_t>(rowData[curOff + 1]) << 8))
+                    : static_cast<uint16_t>((static_cast<uint16_t>(rowData[curOff]) << 8) | rowData[curOff + 1]);
+                const uint16_t sum = static_cast<uint16_t>(prevVal + currVal);
+                if (isLE) {
+                    rowData[curOff] = static_cast<uint8_t>(sum & 0xFFu);
+                    rowData[curOff + 1] = static_cast<uint8_t>(sum >> 8);
+                } else {
+                    rowData[curOff] = static_cast<uint8_t>(sum >> 8);
+                    rowData[curOff + 1] = static_cast<uint8_t>(sum & 0xFFu);
+                }
+            }
+        }
+    } else {
+        for (uint32_t x = 1; x < width; ++x) {
+            const size_t currBase = static_cast<size_t>(x) * pixelStride;
+            const size_t prevBase = currBase - pixelStride;
+            for (size_t c = 0; c < pixelStride; ++c) {
+                rowData[currBase + c] += rowData[prevBase + c];
+            }
+        }
+    }
 }
 
 HRESULT LoadRegion(const uint8_t* data, size_t size,
@@ -596,13 +641,7 @@ HRESULT LoadRegion(const uint8_t* data, size_t size,
                     uint8_t* mutableData = const_cast<uint8_t*>(tileData);
                     for (uint32_t y = 0; y < desc.tileHeight; ++y) {
                         uint8_t* rowData = mutableData + static_cast<size_t>(y) * tileRowBytes;
-                        for (uint32_t x = 1; x < desc.tileWidth; ++x) {
-                            size_t currBase = static_cast<size_t>(x) * pixelStride;
-                            size_t prevBase = currBase - pixelStride;
-                            for (size_t c = 0; c < pixelStride; ++c) {
-                                rowData[currBase + c] += rowData[prevBase + c];
-                            }
-                        }
+                        UndoHorizontalPredictor(rowData, desc.tileWidth, samples, bytesPerSample, desc.isLE);
                     }
                 }
 
@@ -792,13 +831,7 @@ HRESULT LoadRegion(const uint8_t* data, size_t size,
                     uint8_t* mutableData = const_cast<uint8_t*>(stripData);
                     for (int y = 0; y < unitH; ++y) {
                         uint8_t* rowData = mutableData + static_cast<size_t>(y) * rowBytes;
-                        for (uint32_t x = 1; x < desc.width; ++x) {
-                            size_t currBase = static_cast<size_t>(x) * pixelStride;
-                            size_t prevBase = currBase - pixelStride;
-                            for (size_t c = 0; c < pixelStride; ++c) {
-                                rowData[currBase + c] += rowData[prevBase + c];
-                            }
-                        }
+                        UndoHorizontalPredictor(rowData, desc.width, samples, bytesPerSample, desc.isLE);
                     }
                 }
 
@@ -926,10 +959,40 @@ HRESULT LoadRegion(const uint8_t* data, size_t size,
         result.metadata.iccProfileData.assign(desc.iccProfile.begin(), desc.iccProfile.end());
         result.metadata.HasEmbeddedColorProfile = true;
         result.metadata.colorInfo.hasEmbeddedIcc = true;
-        result.metadata.colorInfo.dataSpace = QuickView::PixelDataSpace::EncodedSdr;
+        result.metadata.colorInfo.nominalBitDepth = 8;
+
+        QuickView::ColorPrimaries cicpPrimaries = QuickView::ColorPrimaries::Unknown;
+        QuickView::TransferFunction cicpTransfer = QuickView::TransferFunction::Unknown;
+        if (QuickView::TryParseIccCicp(desc.iccProfile.data(), desc.iccProfile.size(),
+                                        &cicpPrimaries, &cicpTransfer)) {
+            if (cicpPrimaries != QuickView::ColorPrimaries::Unknown) {
+                result.metadata.colorInfo.primaries = cicpPrimaries;
+                result.metadata.hdrMetadata.primaries = cicpPrimaries;
+            }
+            if (cicpTransfer == QuickView::TransferFunction::PQ ||
+                cicpTransfer == QuickView::TransferFunction::HLG) {
+                result.metadata.colorInfo.dataSpace = QuickView::PixelDataSpace::EncodedHdr;
+                result.metadata.colorInfo.transfer = cicpTransfer;
+                result.metadata.hdrMetadata.isValid = true;
+                result.metadata.hdrMetadata.isHdr = true;
+                result.metadata.hdrMetadata.transfer = cicpTransfer;
+                result.metadata.hdrMetadata.isSceneLinear = false;
+            } else {
+                result.metadata.colorInfo.dataSpace = QuickView::PixelDataSpace::EncodedSdr;
+                result.metadata.colorInfo.transfer =
+                    (cicpTransfer != QuickView::TransferFunction::Unknown)
+                        ? cicpTransfer
+                        : QuickView::TransferFunction::SRGB;
+            }
+        } else {
+            result.metadata.colorInfo.dataSpace = QuickView::PixelDataSpace::EncodedSdr;
+            result.metadata.colorInfo.transfer = QuickView::TransferFunction::SRGB;
+        }
     } else {
         result.metadata.HasEmbeddedColorProfile = false;
         result.metadata.colorInfo.dataSpace = QuickView::PixelDataSpace::EncodedSdr;
+        result.metadata.colorInfo.transfer = QuickView::TransferFunction::SRGB;
+        result.metadata.colorInfo.nominalBitDepth = 8;
     }
 
     return S_OK;

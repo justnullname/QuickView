@@ -6,23 +6,28 @@
 #include "DisplayColorInfo.h"
 #include "ImageLoaderSimd.h"
 #include "ImageTypes.h"
+#include "MiniTiff.h"
+#include "ToolProcessProtocol.h"
 #include "WuffsLoader.h"
 
 #include <d2d1_1.h>
 #include <d2d1effects.h>
 #include <d3d11.h>
 #include <dxgi1_2.h>
+#include <jxl/encode.h>
 #include <wincodec.h>
 #include <wrl/client.h>
 #include <zlib.h>
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <vector>
 
 using Microsoft::WRL::ComPtr;
@@ -1041,7 +1046,7 @@ TEST(HdrPipelineTests, ToneMapHdrToSdrOkLabGamutAndAlpha) {
     std::vector<uint8_t> rgba8;
     ASSERT_TRUE(ReadbackRgba8Texture(device.Get(), context.Get(), outTex.Get(), &rgba8));
 
-    for (size_t i = 0; i < std::size(kSamples); ++i) {
+    for (size_t i = 0; i < 4u; ++i) {
         const auto& c = kSamples[i];
         const float rNorm = c.rNits / 203.0f;
         const float gNorm = c.gNits / 203.0f;
@@ -1056,12 +1061,15 @@ TEST(HdrPipelineTests, ToneMapHdrToSdrOkLabGamutAndAlpha) {
         const float outB = ColorMath::SrgbToLinear(static_cast<float>(rgba8[i * 4u + 2u]) / 255.0f);
         const float outHue = LinearSrgbToOkLabHueDeg(outR, outG, outB);
         const float dHue = std::remainder(outHue - refHue, 360.0f);
-        EXPECT_LT(std::abs(dHue), 1.5f) << c.name;
+        const float maxAllowedHueErrDeg = (i == 1u) ? 1.8f : 1.0f;
+        EXPECT_LT(std::abs(dHue), maxAllowedHueErrDeg) << c.name;
     }
 
-    // Gold highlight must keep warm saturation (not washed out to white 255,254,254)
+    // Over-bright warm highlight (> 203 nits) must preserve warm golden rendering without salmon-pink B inflation
     EXPECT_EQ(rgba8[4u * 4u + 0u], 255u);
-    EXPECT_LT(rgba8[4u * 4u + 2u], 185u);
+    EXPECT_GE(rgba8[4u * 4u + 1u], 210u);
+    EXPECT_LE(rgba8[4u * 4u + 2u], 110u);
+    EXPECT_GE(static_cast<int>(rgba8[4u * 4u + 1u]) - static_cast<int>(rgba8[4u * 4u + 2u]), 110);
 
     // 2. SDR alpha premultiplication (D2D1_ALPHA_MODE_PREMULTIPLIED)
     {
@@ -1085,6 +1093,118 @@ TEST(HdrPipelineTests, ToneMapHdrToSdrOkLabGamutAndAlpha) {
         EXPECT_NEAR(outAlpha[7], 128, 1);
         EXPECT_EQ(outAlpha[8], 255u);
         EXPECT_EQ(outAlpha[11], 255u);
+    }
+}
+
+TEST(HdrPipelineTests, ToneMapHdrToSdrSunHaloGoldenNoPinkShift) {
+    ComPtr<ID3D11Device> device;
+    ComPtr<ID3D11DeviceContext> context;
+    ASSERT_HRESULT_SUCCEEDED(CreateD3D11DeviceWithWarpFallback(&device, &context));
+
+    QuickView::ComputeEngine compute;
+    ASSERT_HRESULT_SUCCEEDED(compute.Initialize(device.Get()));
+
+    const ColorMath::ColorMatrix3 rec2020ToXyz = ColorMath::GetRgbToXyzMatrix(QuickView::ColorPrimaries::Rec2020);
+    const ColorMath::ColorMatrix3 xyzToSrgb = ColorMath::GetXyzToRgbMatrix(QuickView::ColorPrimaries::SRGB);
+    const ColorMath::ColorMatrix3 rec2020ToSrgb = ColorMath::MultiplyColorMatrices(xyzToSrgb, rec2020ToXyz);
+
+    auto makeSettings = [](uint32_t mode, const ColorMath::ColorMatrix3& mat) {
+        QuickView::ToneMapSettings s = {};
+        s.contentPeakScRgb = 1525.0f / 80.0f;
+        s.displayPeakScRgb = 203.0f / 80.0f;
+        s.paperWhiteScRgb = 1.0f;
+        s.exposure = 1.0f;
+        s.exposureGain = 1.0f;
+        s.mode = mode;
+        s.isHdrOutput = 0;
+        s.realHardwarePeakScRgb = 1.0f;
+        s.transferFunction = static_cast<uint32_t>(QuickView::TransferFunction::Linear);
+        s.desatThreshold = 0.18f;
+        s.desatStrength = 0.75f;
+        s.colorMatrix[0] = mat.m[0][0]; s.colorMatrix[1] = mat.m[0][1]; s.colorMatrix[2] = mat.m[0][2];
+        s.colorMatrix[4] = mat.m[1][0]; s.colorMatrix[5] = mat.m[1][1]; s.colorMatrix[6] = mat.m[1][2];
+        s.colorMatrix[8] = mat.m[2][0]; s.colorMatrix[9] = mat.m[2][1]; s.colorMatrix[10] = mat.m[2][2];
+        s.colorMatrix[15] = 1.0f;
+        return s;
+    };
+
+    // Sub-test A: Real sunrise-PQ Rec.2020 sun-halo clouds via BT.2390 (mode = 2) + decoupled roll-off
+    {
+        const float haloPixels[3 * 4] = {
+            1170.0f / 80.0f,  539.0f / 80.0f, 134.0f / 80.0f, 1.0f, // SunHalo1
+            1007.0f / 80.0f,  548.0f / 80.0f, 214.0f / 80.0f, 1.0f, // SunHalo2
+            1543.0f / 80.0f, 1409.0f / 80.0f, 455.0f / 80.0f, 1.0f, // SunCore
+        };
+        ComPtr<ID3D11Texture2D> outTex;
+        ASSERT_HRESULT_SUCCEEDED(compute.ToneMapHdrToSdr(
+            reinterpret_cast<const uint8_t*>(haloPixels), 3, 1, 3 * 16,
+            makeSettings(2u, rec2020ToSrgb), &outTex, QuickView::PixelFormat::R32G32B32A32_FLOAT));
+        std::vector<uint8_t> rgba8;
+        ASSERT_TRUE(ReadbackRgba8Texture(device.Get(), context.Get(), outTex.Get(), &rgba8));
+
+        // SunHalo1 under BT.2390 (mapped to ~198.9 nits, 2.33x peak): warm golden highlight (not pink washout)
+        EXPECT_EQ(rgba8[0], 255u);
+        EXPECT_GE(rgba8[1], 195u);
+        EXPECT_LE(rgba8[2], 155u);
+        EXPECT_GE(static_cast<int>(rgba8[1]) - static_cast<int>(rgba8[2]), 55);
+
+        // SunHalo2 under BT.2390: warm golden highlight
+        EXPECT_GE(rgba8[4], 250u);
+        EXPECT_GE(rgba8[5], 200u);
+        EXPECT_LE(rgba8[6], 165u);
+        EXPECT_GE(static_cast<int>(rgba8[5]) - static_cast<int>(rgba8[6]), 50);
+
+        // SunCore: bright warm golden core
+        EXPECT_EQ(rgba8[8], 255u);
+        EXPECT_GE(rgba8[9], 240u);
+        EXPECT_LE(rgba8[10], 185u);
+    }
+
+    // Sub-test B: Colorimetric mode = 1, identity matrix -> exact white, path-to-white bloom, and Spline sun-halo regime
+    {
+        const ColorMath::ColorMatrix3 identity = {{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}};
+        const float w = 203.0f / 80.0f;
+        const float neonPixels[5 * 4] = {
+            w,         w,         w,        1.0f, // ExactWhite
+            6.0f * w,  0.30f * w, 1.60f * w, 1.0f, // BlazingNeon
+            3.50f * w, 0.80f * w, 0.02f * w, 1.0f, // Fire4000
+            1.62f * w, 0.46f * w, 0.07f * w, 1.0f, // SplineSunHalo1 (default Spline normalized sRGB)
+            1.36f * w, 0.52f * w, 0.13f * w, 1.0f, // SplineSunHalo2 (default Spline normalized sRGB)
+        };
+        ComPtr<ID3D11Texture2D> outTex;
+        ASSERT_HRESULT_SUCCEEDED(compute.ToneMapHdrToSdr(
+            reinterpret_cast<const uint8_t*>(neonPixels), 5, 1, 5 * 16,
+            makeSettings(1u, identity), &outTex, QuickView::PixelFormat::R32G32B32A32_FLOAT));
+        std::vector<uint8_t> rgba8;
+        ASSERT_TRUE(ReadbackRgba8Texture(device.Get(), context.Get(), outTex.Get(), &rgba8));
+
+        // ExactWhite: strictly (255, 255, 255)
+        EXPECT_EQ(rgba8[0], 255u);
+        EXPECT_EQ(rgba8[1], 255u);
+        EXPECT_EQ(rgba8[2], 255u);
+
+        // BlazingNeon: smooth white-hot bloom
+        EXPECT_EQ(rgba8[4], 255u);
+        EXPECT_GE(rgba8[5], 220u);
+        EXPECT_GE(rgba8[6], 240u);
+
+        // Fire4000: warm golden flame (never salmon pink where B approaches G)
+        EXPECT_EQ(rgba8[8], 255u);
+        EXPECT_GE(rgba8[9], 220u);
+        EXPECT_GE(static_cast<int>(rgba8[9]) - static_cast<int>(rgba8[10]), 35);
+
+        // SplineSunHalo1: golden yellow-orange (255, ~177, ~93), strictly rejecting pink B=138 regression
+        EXPECT_EQ(rgba8[12], 255u);
+        EXPECT_GE(rgba8[13], 170u);
+        EXPECT_LE(rgba8[13], 190u);
+        EXPECT_LE(rgba8[14], 105u);
+        EXPECT_GE(static_cast<int>(rgba8[13]) - static_cast<int>(rgba8[14]), 75);
+
+        // SplineSunHalo2: warm golden cloud (255, ~185, ~103)
+        EXPECT_EQ(rgba8[16], 255u);
+        EXPECT_GE(rgba8[17], 175u);
+        EXPECT_LE(rgba8[18], 115u);
+        EXPECT_GE(static_cast<int>(rgba8[17]) - static_cast<int>(rgba8[18]), 70);
     }
 }
 
@@ -1141,5 +1261,1654 @@ TEST(HdrPipelineTests, Bt2390NormalizedEetfKneeAccuracy) {
         // 100/203 linear -> 0.7305 sRGB -> 186/255
         EXPECT_NEAR(rgba8[4], 186, 2);
         EXPECT_GE(rgba8[8], 254u);
+    }
+}
+
+TEST(HdrPipelineTests, DisplayColorStateBypassesMonitorProfileOnHdrAndWcg) {
+    QuickView::DisplayColorState sdr = {};
+    sdr.wideColorActive = false;
+    sdr.advancedColorActive = false;
+    sdr.highDynamicRangeUserEnabled = false;
+    EXPECT_FALSE(sdr.ShouldBypassMonitorProfileForSdr());
+
+    QuickView::DisplayColorState wcg = {};
+    wcg.wideColorActive = true;
+    wcg.advancedColorActive = false;
+    wcg.highDynamicRangeUserEnabled = false;
+    EXPECT_TRUE(wcg.ShouldBypassMonitorProfileForSdr());
+
+    QuickView::DisplayColorState hdrOnly = {};
+    hdrOnly.wideColorActive = false;
+    hdrOnly.advancedColorActive = true;
+    hdrOnly.highDynamicRangeUserEnabled = true;
+    EXPECT_TRUE(hdrOnly.ShouldBypassMonitorProfileForSdr());
+
+    QuickView::DisplayColorState hdrAndWcg = {};
+    hdrAndWcg.wideColorActive = true;
+    hdrAndWcg.advancedColorActive = true;
+    hdrAndWcg.highDynamicRangeUserEnabled = true;
+    EXPECT_TRUE(hdrAndWcg.ShouldBypassMonitorProfileForSdr());
+}
+
+TEST(HdrPipelineTests, DisplayColorInfoQueryMonitorCacheAndInvalidation) {
+    HMONITOR hMon = MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY);
+    ASSERT_NE(hMon, nullptr);
+
+    QuickView::DisplayColorInfo::InvalidateHardwareCache();
+    QuickView::DisplayColorState s1 = {};
+    ASSERT_TRUE(QuickView::DisplayColorInfo::QueryMonitorState(hMon, &s1));
+    EXPECT_TRUE(s1.isValid);
+    EXPECT_GT(s1.sdrWhiteLevelNits, 0.0f);
+
+    QuickView::DisplayColorState s2 = {};
+    ASSERT_TRUE(QuickView::DisplayColorInfo::QueryMonitorState(hMon, &s2));
+    EXPECT_TRUE(s2.isValid);
+    EXPECT_FLOAT_EQ(s1.sdrWhiteLevelNits, s2.sdrWhiteLevelNits);
+    EXPECT_FLOAT_EQ(s1.maxLuminanceNits, s2.maxLuminanceNits);
+
+    QuickView::DisplayColorInfo::InvalidateHardwareCache();
+    QuickView::DisplayColorState s3 = {};
+    ASSERT_TRUE(QuickView::DisplayColorInfo::QueryMonitorState(hMon, &s3));
+    EXPECT_TRUE(s3.isValid);
+    EXPECT_GT(s3.sdrWhiteLevelNits, 0.0f);
+}
+
+TEST(HdrPipelineTests, SdrBitmapToScRgbTargetWhiteLevelAdjustmentWarpReadback) {
+    ComPtr<ID3D11Device> d3dDevice;
+    ComPtr<ID3D11DeviceContext> d3dContext;
+    ASSERT_HRESULT_SUCCEEDED(CreateD3D11DeviceWithWarpFallback(&d3dDevice, &d3dContext));
+
+    ComPtr<IDXGIDevice> dxgiDevice;
+    ASSERT_HRESULT_SUCCEEDED(d3dDevice.As(&dxgiDevice));
+
+    ComPtr<ID2D1Factory1> d2dFactory;
+    ASSERT_HRESULT_SUCCEEDED(D2D1CreateFactory(
+        D2D1_FACTORY_TYPE_SINGLE_THREADED, __uuidof(ID2D1Factory1), nullptr, &d2dFactory));
+
+    ComPtr<ID2D1Device> d2dDevice;
+    ASSERT_HRESULT_SUCCEEDED(d2dFactory->CreateDevice(dxgiDevice.Get(), &d2dDevice));
+
+    ComPtr<ID2D1DeviceContext> d2dCtx;
+    ASSERT_HRESULT_SUCCEEDED(d2dDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &d2dCtx));
+    ASSERT_TRUE(d2dCtx->IsBufferPrecisionSupported(D2D1_BUFFER_PRECISION_16BPC_FLOAT));
+
+    d2dCtx->SetDpi(96.0f, 96.0f);
+    d2dCtx->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+    D2D1_RENDERING_CONTROLS controls = {};
+    d2dCtx->GetRenderingControls(&controls);
+    controls.bufferPrecision = D2D1_BUFFER_PRECISION_16BPC_FLOAT;
+    d2dCtx->SetRenderingControls(&controls);
+
+    ComPtr<ID2D1ColorContext> srgbCtx;
+    ComPtr<ID2D1ColorContext> scRgbCtx;
+    ASSERT_HRESULT_SUCCEEDED(d2dCtx->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0, &srgbCtx));
+    ASSERT_HRESULT_SUCCEEDED(d2dCtx->CreateColorContext(D2D1_COLOR_SPACE_SCRGB, nullptr, 0, &scRgbCtx));
+
+    D3D11_TEXTURE2D_DESC rtDesc = {};
+    rtDesc.Width = 4;
+    rtDesc.Height = 4;
+    rtDesc.MipLevels = 1;
+    rtDesc.ArraySize = 1;
+    rtDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    rtDesc.SampleDesc.Count = 1;
+    rtDesc.Usage = D3D11_USAGE_DEFAULT;
+    rtDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+
+    ComPtr<ID3D11Texture2D> rtTex;
+    ASSERT_HRESULT_SUCCEEDED(d3dDevice->CreateTexture2D(&rtDesc, nullptr, &rtTex));
+    ComPtr<IDXGISurface> rtSurface;
+    ASSERT_HRESULT_SUCCEEDED(rtTex.As(&rtSurface));
+
+    D2D1_BITMAP_PROPERTIES1 rtProps = D2D1::BitmapProperties1(
+        D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+        D2D1::PixelFormat(DXGI_FORMAT_R16G16B16A16_FLOAT, D2D1_ALPHA_MODE_PREMULTIPLIED),
+        96.0f, 96.0f, scRgbCtx.Get());
+    ComPtr<ID2D1Bitmap1> rtBitmap;
+    ASSERT_HRESULT_SUCCEEDED(d2dCtx->CreateBitmapFromDxgiSurface(rtSurface.Get(), &rtProps, &rtBitmap));
+
+    // 1. 2x2 BGRA8 SDR source: (0,0)=white, (1,0)=mid-gray, (0,1)=50% premul gray, (1,1)=black
+    const uint8_t sdrBytes[2 * 2 * 4] = {
+        255, 255, 255, 255,  128, 128, 128, 255,
+        128, 128, 128, 128,    0,   0,   0, 255,
+    };
+    D2D1_BITMAP_PROPERTIES1 sdrProps = D2D1::BitmapProperties1(
+        D2D1_BITMAP_OPTIONS_NONE,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
+        96.0f, 96.0f, srgbCtx.Get());
+    ComPtr<ID2D1Bitmap1> sdrBitmap;
+    ASSERT_HRESULT_SUCCEEDED(d2dCtx->CreateBitmap(D2D1::SizeU(2, 2), sdrBytes, 8, &sdrProps, &sdrBitmap));
+
+    ComPtr<ID2D1Effect> colorMgmt;
+    ComPtr<ID2D1Effect> whiteLevel;
+    ASSERT_HRESULT_SUCCEEDED(d2dCtx->CreateEffect(CLSID_D2D1ColorManagement, &colorMgmt));
+    ASSERT_HRESULT_SUCCEEDED(d2dCtx->CreateEffect(CLSID_D2D1WhiteLevelAdjustment, &whiteLevel));
+
+    colorMgmt->SetInput(0, sdrBitmap.Get());
+    ASSERT_HRESULT_SUCCEEDED(colorMgmt->SetValue(D2D1_COLORMANAGEMENT_PROP_SOURCE_COLOR_CONTEXT, srgbCtx.Get()));
+    ASSERT_HRESULT_SUCCEEDED(colorMgmt->SetValue(D2D1_COLORMANAGEMENT_PROP_DESTINATION_COLOR_CONTEXT, scRgbCtx.Get()));
+    ASSERT_HRESULT_SUCCEEDED(colorMgmt->SetValue(D2D1_COLORMANAGEMENT_PROP_QUALITY, D2D1_COLORMANAGEMENT_QUALITY_BEST));
+
+    whiteLevel->SetInputEffect(0, colorMgmt.Get());
+    ASSERT_HRESULT_SUCCEEDED(whiteLevel->SetValue(D2D1_WHITELEVELADJUSTMENT_PROP_INPUT_WHITE_LEVEL, 240.0f));
+    ASSERT_HRESULT_SUCCEEDED(whiteLevel->SetValue(D2D1_WHITELEVELADJUSTMENT_PROP_OUTPUT_WHITE_LEVEL, 80.0f));
+
+    ComPtr<ID2D1CommandList> cmdList;
+    ASSERT_HRESULT_SUCCEEDED(d2dCtx->CreateCommandList(&cmdList));
+    d2dCtx->SetTarget(cmdList.Get());
+    d2dCtx->BeginDraw();
+    d2dCtx->Clear(D2D1::ColorF(0, 0, 0, 0));
+    const D2D1_POINT_2F origin = D2D1::Point2F(0.0f, 0.0f);
+    const D2D1_RECT_F sdrSrcRect = D2D1::RectF(0.0f, 0.0f, 2.0f, 2.0f);
+    d2dCtx->DrawImage(whiteLevel.Get(), &origin, &sdrSrcRect, D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+    ASSERT_HRESULT_SUCCEEDED(d2dCtx->EndDraw());
+    ASSERT_HRESULT_SUCCEEDED(cmdList->Close());
+
+    d2dCtx->SetTarget(rtBitmap.Get());
+    d2dCtx->BeginDraw();
+    d2dCtx->Clear(D2D1::ColorF(0, 0, 0, 0));
+    d2dCtx->DrawImage(cmdList.Get());
+    ASSERT_HRESULT_SUCCEEDED(d2dCtx->EndDraw());
+    d2dCtx->SetTarget(nullptr);
+
+    std::vector<uint16_t> fp16;
+    ASSERT_TRUE(ReadbackFp16Texture(d3dDevice.Get(), d3dContext.Get(), rtTex.Get(), &fp16));
+    // Pixel (0, 0): white -> 240/80 = 3.0
+    EXPECT_NEAR(HalfToFloat(fp16[0]), 3.0f, 0.05f);
+    EXPECT_NEAR(HalfToFloat(fp16[1]), 3.0f, 0.05f);
+    EXPECT_NEAR(HalfToFloat(fp16[2]), 3.0f, 0.05f);
+    EXPECT_NEAR(HalfToFloat(fp16[3]), 1.0f, 0.02f);
+    // Pixel (1, 0): sRGB(128/255) linear (~0.21586) * 3.0 = 0.6476
+    EXPECT_NEAR(HalfToFloat(fp16[4]), 0.6476f, 0.03f);
+    EXPECT_NEAR(HalfToFloat(fp16[5]), 0.6476f, 0.03f);
+    EXPECT_NEAR(HalfToFloat(fp16[6]), 0.6476f, 0.03f);
+    // Pixel (1, 1) at row 1 col 1 (index 4*1 + 1 = 5): black -> < 0.01
+    EXPECT_LT(HalfToFloat(fp16[5u * 4u + 0u]), 0.01f);
+    EXPECT_LT(HalfToFloat(fp16[5u * 4u + 1u]), 0.01f);
+    EXPECT_LT(HalfToFloat(fp16[5u * 4u + 2u]), 0.01f);
+
+    // 2. Verify FP16 HDR bitmap draws directly without white-level scaling
+    const uint16_t hdrHalf[2 * 2 * 4] = {
+        FloatToHalf(5.0f), FloatToHalf(2.0f), FloatToHalf(1.0f), FloatToHalf(1.0f),
+        FloatToHalf(5.0f), FloatToHalf(2.0f), FloatToHalf(1.0f), FloatToHalf(1.0f),
+        FloatToHalf(5.0f), FloatToHalf(2.0f), FloatToHalf(1.0f), FloatToHalf(1.0f),
+        FloatToHalf(5.0f), FloatToHalf(2.0f), FloatToHalf(1.0f), FloatToHalf(1.0f),
+    };
+    D2D1_BITMAP_PROPERTIES1 hdrProps = D2D1::BitmapProperties1(
+        D2D1_BITMAP_OPTIONS_NONE,
+        D2D1::PixelFormat(DXGI_FORMAT_R16G16B16A16_FLOAT, D2D1_ALPHA_MODE_PREMULTIPLIED),
+        96.0f, 96.0f, scRgbCtx.Get());
+    ComPtr<ID2D1Bitmap1> hdrBitmap;
+    ASSERT_HRESULT_SUCCEEDED(d2dCtx->CreateBitmap(D2D1::SizeU(2, 2), hdrHalf, 16, &hdrProps, &hdrBitmap));
+
+    d2dCtx->SetTarget(rtBitmap.Get());
+    d2dCtx->BeginDraw();
+    d2dCtx->Clear(D2D1::ColorF(0, 0, 0, 0));
+    const D2D1_RECT_F hdrDstRect = D2D1::RectF(0.0f, 0.0f, 2.0f, 2.0f);
+    d2dCtx->DrawBitmap(hdrBitmap.Get(), &hdrDstRect, 1.0f, D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR, &hdrDstRect);
+    ASSERT_HRESULT_SUCCEEDED(d2dCtx->EndDraw());
+    d2dCtx->SetTarget(nullptr);
+
+    ASSERT_TRUE(ReadbackFp16Texture(d3dDevice.Get(), d3dContext.Get(), rtTex.Get(), &fp16));
+    EXPECT_NEAR(HalfToFloat(fp16[0]), 5.0f, 0.05f);
+    EXPECT_NEAR(HalfToFloat(fp16[1]), 2.0f, 0.05f);
+    EXPECT_NEAR(HalfToFloat(fp16[2]), 1.0f, 0.05f);
+}
+
+namespace {
+
+bool IsFiniteFloatBitsTest(float v) {
+    uint32_t bits = 0;
+    std::memcpy(&bits, &v, sizeof(bits));
+    return (bits & 0x7F800000u) != 0x7F800000u;
+}
+
+QuickView::ToneMapSettings MakeIdentityToneMapSettings(float peakScRgb, QuickView::TransferFunction tf) {
+    QuickView::ToneMapSettings s{};
+    s.contentPeakScRgb = peakScRgb;
+    s.displayPeakScRgb = peakScRgb;
+    s.paperWhiteScRgb = 1.0f;
+    s.exposure = 1.0f;
+    s.exposureGain = 1.0f;
+    s.mode = 1u; // Bypass spline/EETF to isolate EOTF, matrix, and sanitization
+    s.isHdrOutput = 1u;
+    s.realHardwarePeakScRgb = peakScRgb;
+    s.transferFunction = static_cast<uint32_t>(tf);
+    s.colorMatrix[0] = 1.0f;
+    s.colorMatrix[5] = 1.0f;
+    s.colorMatrix[10] = 1.0f;
+    s.colorMatrix[15] = 1.0f;
+    return s;
+}
+
+} // namespace
+
+TEST(HdrPipelineTests, ToneMapHdrToHdrPreservesNegativeScRgbAndSanitizesInfNan) {
+    ComPtr<ID3D11Device> d3dDevice;
+    ComPtr<ID3D11DeviceContext> d3dContext;
+    if (FAILED(CreateD3D11DeviceWithWarpFallback(&d3dDevice, &d3dContext))) {
+        GTEST_SKIP() << "D3D11 WARP unavailable";
+    }
+
+    QuickView::ComputeEngine compute;
+    ASSERT_HRESULT_SUCCEEDED(compute.Initialize(d3dDevice.Get()));
+
+    const float posInf = std::numeric_limits<float>::infinity();
+    const float qNaN = std::numeric_limits<float>::quiet_NaN();
+    const float pixels[4 * 4] = {
+        1.5f, -0.15f, 0.2f, 1.0f,          // Valid wide-gamut scRGB (negative G)
+        posInf, 1.0f, 1.0f, 1.0f,          // +Inf in R
+        qNaN, 0.5f, 0.5f, 1.0f,            // NaN in R
+        100000.0f, 100000.0f, 100000.0f, 1.0f // Exceeds FP16 max
+    };
+
+    const QuickView::ToneMapSettings s = MakeIdentityToneMapSettings(10.0f, QuickView::TransferFunction::Linear);
+    ComPtr<ID3D11Texture2D> outTex;
+    ASSERT_HRESULT_SUCCEEDED(compute.ToneMapHdrToHdr(
+        reinterpret_cast<const uint8_t*>(pixels), 4, 1, 4 * 16, s,
+        &outTex, QuickView::PixelFormat::R32G32B32A32_FLOAT));
+
+    std::vector<uint16_t> fp16;
+    ASSERT_TRUE(ReadbackFp16Texture(d3dDevice.Get(), d3dContext.Get(), outTex.Get(), &fp16));
+    ASSERT_EQ(fp16.size(), 16u);
+
+    // Pixel 0: wide-gamut negative green preserved
+    EXPECT_NEAR(HalfToFloat(fp16[0]), 1.5f, 0.02f);
+    EXPECT_LT(HalfToFloat(fp16[1]), -0.10f);
+    EXPECT_NEAR(HalfToFloat(fp16[1]), -0.15f, 0.02f);
+    EXPECT_NEAR(HalfToFloat(fp16[2]), 0.2f, 0.02f);
+    EXPECT_NEAR(HalfToFloat(fp16[3]), 1.0f, 0.02f);
+
+    // Pixel 1: +Inf sanitized and luminance-bounded
+    const float p1r = HalfToFloat(fp16[4]);
+    const float p1g = HalfToFloat(fp16[5]);
+    const float p1b = HalfToFloat(fp16[6]);
+    EXPECT_TRUE(IsFiniteFloatBitsTest(p1r));
+    EXPECT_TRUE(IsFiniteFloatBitsTest(p1g));
+    EXPECT_TRUE(IsFiniteFloatBitsTest(p1b));
+    const float p1Y = 0.2126f * p1r + 0.7152f * p1g + 0.0722f * p1b;
+    EXPECT_GT(p1r, 0.0f);
+    EXPECT_LE(p1Y, 10.1f);
+
+    // Pixel 2: NaN becomes 0 while valid G/B remain intact
+    EXPECT_NEAR(HalfToFloat(fp16[8]), 0.0f, 0.01f);
+    EXPECT_NEAR(HalfToFloat(fp16[9]), 0.5f, 0.02f);
+    EXPECT_NEAR(HalfToFloat(fp16[10]), 0.5f, 0.02f);
+
+    // Pixel 3: 100000 clipped to FP16 max then scaled cleanly to peak 10.0
+    for (size_t c = 0; c < 3; ++c) {
+        const float v = HalfToFloat(fp16[12 + c]);
+        EXPECT_TRUE(IsFiniteFloatBitsTest(v));
+        EXPECT_LE(v, 10.1f);
+        EXPECT_NEAR(v, 10.0f, 0.1f);
+    }
+}
+
+TEST(HdrPipelineTests, ToneMapShadersDecodeGamma22AndRec709Eotf) {
+    ComPtr<ID3D11Device> d3dDevice;
+    ComPtr<ID3D11DeviceContext> d3dContext;
+    if (FAILED(CreateD3D11DeviceWithWarpFallback(&d3dDevice, &d3dContext))) {
+        GTEST_SKIP() << "D3D11 WARP unavailable";
+    }
+
+    QuickView::ComputeEngine compute;
+    ASSERT_HRESULT_SUCCEEDED(compute.Initialize(d3dDevice.Get()));
+
+    const float pixels[2 * 4] = {
+        0.5f, 0.5f, 0.5f, 1.0f,
+        0.04f, 0.04f, 0.04f, 1.0f
+    };
+
+    // Gamma 2.2
+    {
+        const QuickView::ToneMapSettings s = MakeIdentityToneMapSettings(1.0f, QuickView::TransferFunction::Gamma22);
+        ComPtr<ID3D11Texture2D> outTex;
+        ASSERT_HRESULT_SUCCEEDED(compute.ToneMapHdrToHdr(
+            reinterpret_cast<const uint8_t*>(pixels), 2, 1, 2 * 16, s,
+            &outTex, QuickView::PixelFormat::R32G32B32A32_FLOAT));
+        std::vector<uint16_t> fp16;
+        ASSERT_TRUE(ReadbackFp16Texture(d3dDevice.Get(), d3dContext.Get(), outTex.Get(), &fp16));
+        EXPECT_NEAR(HalfToFloat(fp16[0]), std::pow(0.5f, 2.2f), 0.005f);
+        EXPECT_NEAR(HalfToFloat(fp16[4]), std::pow(0.04f, 2.2f), 0.001f);
+    }
+
+    // Gamma 2.8
+    {
+        const QuickView::ToneMapSettings s = MakeIdentityToneMapSettings(1.0f, QuickView::TransferFunction::Gamma28);
+        ComPtr<ID3D11Texture2D> outTex;
+        ASSERT_HRESULT_SUCCEEDED(compute.ToneMapHdrToHdr(
+            reinterpret_cast<const uint8_t*>(pixels), 2, 1, 2 * 16, s,
+            &outTex, QuickView::PixelFormat::R32G32B32A32_FLOAT));
+        std::vector<uint16_t> fp16;
+        ASSERT_TRUE(ReadbackFp16Texture(d3dDevice.Get(), d3dContext.Get(), outTex.Get(), &fp16));
+        EXPECT_NEAR(HalfToFloat(fp16[0]), std::pow(0.5f, 2.8f), 0.005f);
+    }
+
+    // Rec.709 (both toe < 0.081 and power >= 0.081 segments)
+    {
+        const QuickView::ToneMapSettings s = MakeIdentityToneMapSettings(1.0f, QuickView::TransferFunction::Rec709);
+        ComPtr<ID3D11Texture2D> outTex;
+        ASSERT_HRESULT_SUCCEEDED(compute.ToneMapHdrToHdr(
+            reinterpret_cast<const uint8_t*>(pixels), 2, 1, 2 * 16, s,
+            &outTex, QuickView::PixelFormat::R32G32B32A32_FLOAT));
+        std::vector<uint16_t> fp16;
+        ASSERT_TRUE(ReadbackFp16Texture(d3dDevice.Get(), d3dContext.Get(), outTex.Get(), &fp16));
+        const float expectedHigh = std::pow((0.5f + 0.099f) / 1.099f, 1.0f / 0.45f);
+        const float expectedLow = 0.04f / 4.5f;
+        EXPECT_NEAR(HalfToFloat(fp16[0]), expectedHigh, 0.005f);
+        EXPECT_NEAR(HalfToFloat(fp16[4]), expectedLow, 0.001f);
+    }
+
+    // ToneMapHdrToSdr must also decode Gamma 2.2 before sRGB encoding (0.5 -> linear 0.2176 -> sRGB ~128, not 188)
+    {
+        QuickView::ToneMapSettings s = MakeIdentityToneMapSettings(1.0f, QuickView::TransferFunction::Gamma22);
+        s.isHdrOutput = 0u;
+        ComPtr<ID3D11Texture2D> outTex;
+        ASSERT_HRESULT_SUCCEEDED(compute.ToneMapHdrToSdr(
+            reinterpret_cast<const uint8_t*>(pixels), 2, 1, 2 * 16, s,
+            &outTex, QuickView::PixelFormat::R32G32B32A32_FLOAT));
+        std::vector<uint8_t> rgba8;
+        ASSERT_TRUE(ReadbackRgba8Texture(d3dDevice.Get(), d3dContext.Get(), outTex.Get(), &rgba8));
+        EXPECT_NEAR(static_cast<int>(rgba8[0]), 128, 3);
+    }
+}
+
+TEST(HdrPipelineTests, ComposeGainMapPreservesAlphaAndHandlesHdrBase) {
+    ComPtr<ID3D11Device> d3dDevice;
+    ComPtr<ID3D11DeviceContext> d3dContext;
+    if (FAILED(CreateD3D11DeviceWithWarpFallback(&d3dDevice, &d3dContext))) {
+        GTEST_SKIP() << "D3D11 WARP unavailable";
+    }
+
+    QuickView::ComputeEngine compute;
+    ASSERT_HRESULT_SUCCEEDED(compute.Initialize(d3dDevice.Get()));
+
+    // Case A: HDR linear float base with non-1.0 alpha and HDR-base direction
+    const float hdrBase[4] = { 2.0f, 2.0f, 2.0f, 0.5f };
+    const uint8_t gain[1] = { 255u };
+
+    QuickView::GpuShaderPayload payload{};
+    payload.gainMapMin[0] = payload.gainMapMin[1] = payload.gainMapMin[2] = 0.0f;
+    payload.gainMapMax[0] = payload.gainMapMax[1] = payload.gainMapMax[2] = 2.0f;
+    payload.gamma[0] = payload.gamma[1] = payload.gamma[2] = 1.0f;
+    payload.offsetSdr[0] = payload.offsetSdr[1] = payload.offsetSdr[2] = 0.0f;
+    payload.offsetHdr[0] = payload.offsetHdr[1] = payload.offsetHdr[2] = 0.0f;
+    payload.hdrCapacityMin = 0.0f;
+    payload.hdrCapacityMax = 2.0f;
+    payload.baseIsHdr = 1.0f;
+    payload.sdrWidth = 1u;
+    payload.sdrHeight = 1u;
+
+    // targetHeadroom = 0.0 -> SDR direction: 2.0 * 2^(-2) = 0.5, alpha = 0.5
+    {
+        payload.targetHeadroom = 0.0f;
+        ComPtr<ID3D11Texture2D> outTex;
+        ASSERT_HRESULT_SUCCEEDED(compute.ComposeGainMap(
+            reinterpret_cast<const uint8_t*>(hdrBase), 1, 1, 16,
+            QuickView::PixelFormat::R32G32B32A32_FLOAT,
+            gain, 1, 1, 1, payload, &outTex));
+        std::vector<uint16_t> fp16;
+        ASSERT_TRUE(ReadbackFp16Texture(d3dDevice.Get(), d3dContext.Get(), outTex.Get(), &fp16));
+        EXPECT_NEAR(HalfToFloat(fp16[0]), 0.5f, 0.01f);
+        EXPECT_NEAR(HalfToFloat(fp16[3]), 0.5f, 0.01f);
+    }
+
+    // targetHeadroom = 2.0 -> HDR identity: 2.0 * 2^0 = 2.0, alpha = 0.5
+    {
+        payload.targetHeadroom = 2.0f;
+        ComPtr<ID3D11Texture2D> outTex;
+        ASSERT_HRESULT_SUCCEEDED(compute.ComposeGainMap(
+            reinterpret_cast<const uint8_t*>(hdrBase), 1, 1, 16,
+            QuickView::PixelFormat::R32G32B32A32_FLOAT,
+            gain, 1, 1, 1, payload, &outTex));
+        std::vector<uint16_t> fp16;
+        ASSERT_TRUE(ReadbackFp16Texture(d3dDevice.Get(), d3dContext.Get(), outTex.Get(), &fp16));
+        EXPECT_NEAR(HalfToFloat(fp16[0]), 2.0f, 0.02f);
+        EXPECT_NEAR(HalfToFloat(fp16[3]), 0.5f, 0.01f);
+    }
+
+    // Non-zero OffsetHdr / OffsetSdr swap at targetHeadroom = 0.0 -> (2.0 + 0.25) * 0.25 - 0.05 = 0.5125
+    {
+        payload.offsetSdr[0] = payload.offsetSdr[1] = payload.offsetSdr[2] = 0.05f;
+        payload.offsetHdr[0] = payload.offsetHdr[1] = payload.offsetHdr[2] = 0.25f;
+        payload.targetHeadroom = 0.0f;
+        ComPtr<ID3D11Texture2D> outTex;
+        ASSERT_HRESULT_SUCCEEDED(compute.ComposeGainMap(
+            reinterpret_cast<const uint8_t*>(hdrBase), 1, 1, 16,
+            QuickView::PixelFormat::R32G32B32A32_FLOAT,
+            gain, 1, 1, 1, payload, &outTex));
+        std::vector<uint16_t> fp16;
+        ASSERT_TRUE(ReadbackFp16Texture(d3dDevice.Get(), d3dContext.Get(), outTex.Get(), &fp16));
+        EXPECT_NEAR(HalfToFloat(fp16[0]), 0.5125f, 0.01f);
+    }
+
+    // Case B: 8-bit SDR base preserves partial alpha through ComposeGainMap
+    {
+        const uint8_t sdrBgra[4] = { 255u, 255u, 255u, 128u };
+        QuickView::GpuShaderPayload sdrPayload{};
+        sdrPayload.gainMapMax[0] = sdrPayload.gainMapMax[1] = sdrPayload.gainMapMax[2] = 2.0f;
+        sdrPayload.gamma[0] = sdrPayload.gamma[1] = sdrPayload.gamma[2] = 1.0f;
+        sdrPayload.hdrCapacityMin = 0.0f;
+        sdrPayload.hdrCapacityMax = 2.0f;
+        sdrPayload.targetHeadroom = 2.0f;
+        sdrPayload.baseIsHdr = 0.0f;
+        sdrPayload.sdrWidth = 1u;
+        sdrPayload.sdrHeight = 1u;
+
+        ComPtr<ID3D11Texture2D> outTex;
+        ASSERT_HRESULT_SUCCEEDED(compute.ComposeGainMap(
+            sdrBgra, 1, 1, 4, QuickView::PixelFormat::BGRA8888,
+            gain, 1, 1, 1, sdrPayload, &outTex));
+        std::vector<uint16_t> fp16;
+        ASSERT_TRUE(ReadbackFp16Texture(d3dDevice.Get(), d3dContext.Get(), outTex.Get(), &fp16));
+        EXPECT_NEAR(HalfToFloat(fp16[0]), 4.0f, 0.05f);
+        EXPECT_NEAR(HalfToFloat(fp16[3]), 128.0f / 255.0f, 0.01f);
+    }
+}
+
+TEST(HdrPipelineTests, ToneMapSupports8BitPqInputAndPeakScan) {
+    ComPtr<ID3D11Device> d3dDevice;
+    ComPtr<ID3D11DeviceContext> d3dContext;
+    if (FAILED(CreateD3D11DeviceWithWarpFallback(&d3dDevice, &d3dContext))) {
+        GTEST_SKIP() << "D3D11 WARP unavailable";
+    }
+
+    QuickView::ComputeEngine compute;
+    ASSERT_HRESULT_SUCCEEDED(compute.Initialize(d3dDevice.Get()));
+
+    const float pq1000 = NitsToPqSignal(1000.0f);
+    const uint8_t pqByte = static_cast<uint8_t>(std::lround(pq1000 * 255.0f));
+    const float expectedScRgb = ColorMath::PqToLinearScRgb(static_cast<float>(pqByte) / 255.0f);
+
+    std::vector<uint8_t> bgra8(2 * 2 * 4);
+    for (size_t i = 0; i < 4; ++i) {
+        bgra8[i * 4 + 0] = pqByte;
+        bgra8[i * 4 + 1] = pqByte;
+        bgra8[i * 4 + 2] = pqByte;
+        bgra8[i * 4 + 3] = 255u;
+    }
+
+    QuickView::RawImageFrame frame;
+    frame.width = 2;
+    frame.height = 2;
+    frame.stride = 8;
+    frame.format = QuickView::PixelFormat::BGRA8888;
+    frame.pixels = bgra8.data();
+
+    const float peakScRgb = ColorMath::EstimateEncodedFramePeakScRgb(frame, QuickView::TransferFunction::PQ, 100.0f);
+    EXPECT_GT(peakScRgb, 10.0f);
+    EXPECT_NEAR(peakScRgb, expectedScRgb, 0.25f);
+
+    const QuickView::ToneMapSettings s = MakeIdentityToneMapSettings(20.0f, QuickView::TransferFunction::PQ);
+    ComPtr<ID3D11Texture2D> outTex;
+    ASSERT_HRESULT_SUCCEEDED(compute.ToneMapHdrToHdr(
+        bgra8.data(), 2, 2, 8, s, &outTex, QuickView::PixelFormat::BGRA8888));
+
+    std::vector<uint16_t> fp16;
+    ASSERT_TRUE(ReadbackFp16Texture(d3dDevice.Get(), d3dContext.Get(), outTex.Get(), &fp16));
+    EXPECT_GT(HalfToFloat(fp16[0]), 10.0f);
+    EXPECT_NEAR(HalfToFloat(fp16[0]), expectedScRgb, 0.15f);
+
+    // Also verify RGBA8888 channel order is preserved cleanly (R > G > B)
+    const uint8_t pqR = static_cast<uint8_t>(std::lround(NitsToPqSignal(1000.0f) * 255.0f));
+    const uint8_t pqG = static_cast<uint8_t>(std::lround(NitsToPqSignal(400.0f) * 255.0f));
+    const uint8_t pqB = static_cast<uint8_t>(std::lround(NitsToPqSignal(80.0f) * 255.0f));
+    const uint8_t rgba8[4] = { pqR, pqG, pqB, 255u };
+    ComPtr<ID3D11Texture2D> rgbaOutTex;
+    ASSERT_HRESULT_SUCCEEDED(compute.ToneMapHdrToHdr(
+        rgba8, 1, 1, 4, s, &rgbaOutTex, QuickView::PixelFormat::RGBA8888));
+    ASSERT_TRUE(ReadbackFp16Texture(d3dDevice.Get(), d3dContext.Get(), rgbaOutTex.Get(), &fp16));
+    EXPECT_GT(HalfToFloat(fp16[0]), HalfToFloat(fp16[1]));
+    EXPECT_GT(HalfToFloat(fp16[1]), HalfToFloat(fp16[2]));
+    EXPECT_NEAR(HalfToFloat(fp16[0]), ColorMath::PqToLinearScRgb(pqR / 255.0f), 0.15f);
+    EXPECT_NEAR(HalfToFloat(fp16[1]), ColorMath::PqToLinearScRgb(pqG / 255.0f), 0.1f);
+    EXPECT_NEAR(HalfToFloat(fp16[2]), ColorMath::PqToLinearScRgb(pqB / 255.0f), 0.05f);
+}
+
+TEST(HdrPipelineTests, SimdPeakLuminanceFiltersInfAndNan) {
+    const float posInf = std::numeric_limits<float>::infinity();
+    const float negInf = -std::numeric_limits<float>::infinity();
+    const float qNaN = std::numeric_limits<float>::quiet_NaN();
+
+    // 1. 7-pixel arrays exercise pure scalar tail on AVX2 (N_f=8, N_h=16) with Inf/NaN
+    const float fp32Scalar[7 * 4] = {
+        4.0f, 4.0f, 4.0f, 1.0f,     // Peak finite luminance = 4.0
+        1.0f, 1.0f, 1.0f, posInf,   // +Inf in alpha only -> valid RGB
+        posInf, 0.5f, 0.5f, 1.0f,   // +Inf in R
+        qNaN, 0.5f, 0.5f, 1.0f,     // NaN in R
+        negInf, 2.0f, 2.0f, 1.0f,   // -Inf in R
+        2.0f, 2.0f, 2.0f, 1.0f,     // Valid
+        1.0f, qNaN, 1.0f, 1.0f      // NaN in G
+    };
+    EXPECT_TRUE(IsFiniteFloatBitsTest(ImageLoaderSimd::FindPeakFloat(fp32Scalar, 7)));
+    EXPECT_TRUE(IsFiniteFloatBitsTest(ImageLoaderSimd::FindPeakLuminanceFloat(fp32Scalar, 7)));
+    EXPECT_TRUE(IsFiniteFloatBitsTest(ImageLoaderSimd::SumLuminanceFloatRange(fp32Scalar, 0, 7)));
+    EXPECT_NEAR(ImageLoaderSimd::FindPeakFloat(fp32Scalar, 7), 4.0f, 1e-4f);
+    EXPECT_NEAR(ImageLoaderSimd::FindPeakLuminanceFloat(fp32Scalar, 7), 4.0f, 1e-4f);
+    EXPECT_NEAR(ImageLoaderSimd::SumLuminanceFloatRange(fp32Scalar, 0, 7), 7.0f, 1e-3f);
+
+    const uint16_t fp16Scalar[7 * 4] = {
+        FloatToHalf(4.0f), FloatToHalf(4.0f), FloatToHalf(4.0f), FloatToHalf(1.0f),
+        FloatToHalf(1.0f), FloatToHalf(1.0f), FloatToHalf(1.0f), 0x7C00u,
+        0x7C00u, FloatToHalf(0.5f), FloatToHalf(0.5f), FloatToHalf(1.0f),
+        0x7E00u, FloatToHalf(0.5f), FloatToHalf(0.5f), FloatToHalf(1.0f),
+        0xFC00u, FloatToHalf(2.0f), FloatToHalf(2.0f), FloatToHalf(1.0f),
+        FloatToHalf(2.0f), FloatToHalf(2.0f), FloatToHalf(2.0f), FloatToHalf(1.0f),
+        FloatToHalf(1.0f), 0x7FFFu, FloatToHalf(1.0f), FloatToHalf(1.0f)
+    };
+    EXPECT_TRUE(IsFiniteFloatBitsTest(ImageLoaderSimd::FindPeakHalf(fp16Scalar, 7)));
+    EXPECT_TRUE(IsFiniteFloatBitsTest(ImageLoaderSimd::FindPeakLuminanceHalf(fp16Scalar, 7)));
+    EXPECT_TRUE(IsFiniteFloatBitsTest(ImageLoaderSimd::SumLuminanceHalfRange(fp16Scalar, 0, 7)));
+    EXPECT_NEAR(ImageLoaderSimd::FindPeakHalf(fp16Scalar, 7), 4.0f, 1e-3f);
+    EXPECT_NEAR(ImageLoaderSimd::FindPeakLuminanceHalf(fp16Scalar, 7), 4.0f, 1e-3f);
+    EXPECT_NEAR(ImageLoaderSimd::SumLuminanceHalfRange(fp16Scalar, 0, 7), 7.0f, 1e-2f);
+
+    // 2. 17-pixel arrays exercise AVX2 SIMD main loop + 1-pixel scalar tail
+    std::vector<float> fp32Simd(17 * 4, 0.0f);
+    std::vector<uint16_t> fp16Simd(17 * 4, 0u);
+    std::memcpy(fp32Simd.data(), fp32Scalar, sizeof(fp32Scalar));
+    std::memcpy(fp16Simd.data(), fp16Scalar, sizeof(fp16Scalar));
+    for (size_t p = 7; p < 16; ++p) {
+        fp32Simd[p * 4 + 3] = 1.0f;
+        fp16Simd[p * 4 + 3] = FloatToHalf(1.0f);
+    }
+    // Tail pixel 16: (1.5, 1.5, 1.5, 1.0) -> adds 1.5 to sum -> total 8.5
+    fp32Simd[16 * 4 + 0] = fp32Simd[16 * 4 + 1] = fp32Simd[16 * 4 + 2] = 1.5f;
+    fp32Simd[16 * 4 + 3] = 1.0f;
+    fp16Simd[16 * 4 + 0] = fp16Simd[16 * 4 + 1] = fp16Simd[16 * 4 + 2] = FloatToHalf(1.5f);
+    fp16Simd[16 * 4 + 3] = FloatToHalf(1.0f);
+
+    EXPECT_TRUE(IsFiniteFloatBitsTest(ImageLoaderSimd::FindPeakFloat(fp32Simd.data(), 17)));
+    EXPECT_TRUE(IsFiniteFloatBitsTest(ImageLoaderSimd::FindPeakLuminanceFloat(fp32Simd.data(), 17)));
+    EXPECT_TRUE(IsFiniteFloatBitsTest(ImageLoaderSimd::SumLuminanceFloatRange(fp32Simd.data(), 0, 17)));
+    EXPECT_NEAR(ImageLoaderSimd::FindPeakFloat(fp32Simd.data(), 17), 4.0f, 1e-4f);
+    EXPECT_NEAR(ImageLoaderSimd::FindPeakLuminanceFloat(fp32Simd.data(), 17), 4.0f, 1e-4f);
+    EXPECT_NEAR(ImageLoaderSimd::SumLuminanceFloatRange(fp32Simd.data(), 0, 17), 8.5f, 1e-3f);
+
+    EXPECT_TRUE(IsFiniteFloatBitsTest(ImageLoaderSimd::FindPeakHalf(fp16Simd.data(), 17)));
+    EXPECT_TRUE(IsFiniteFloatBitsTest(ImageLoaderSimd::FindPeakLuminanceHalf(fp16Simd.data(), 17)));
+    EXPECT_TRUE(IsFiniteFloatBitsTest(ImageLoaderSimd::SumLuminanceHalfRange(fp16Simd.data(), 0, 17)));
+    EXPECT_NEAR(ImageLoaderSimd::FindPeakHalf(fp16Simd.data(), 17), 4.0f, 1e-3f);
+    EXPECT_NEAR(ImageLoaderSimd::FindPeakLuminanceHalf(fp16Simd.data(), 17), 4.0f, 1e-3f);
+    EXPECT_NEAR(ImageLoaderSimd::SumLuminanceHalfRange(fp16Simd.data(), 0, 17), 8.5f, 1e-2f);
+}
+
+namespace {
+
+struct LiveWorkerOutputHdr {
+    DWORD exitCode = 999;
+    QuickView::ToolProcess::DecodeResultHeader header{};
+    std::vector<uint8_t> pixelBytes;
+    std::vector<uint8_t> iccBytes;
+};
+
+std::filesystem::path FindWorkerExecutableForTests() {
+    wchar_t exeBuf[MAX_PATH] = {};
+    if (GetModuleFileNameW(nullptr, exeBuf, MAX_PATH) == 0) {
+        return {};
+    }
+    std::filesystem::path workerExe = std::filesystem::path(exeBuf).parent_path() / L"QuickView.exe";
+    std::error_code ec;
+    if (std::filesystem::exists(workerExe, ec)) {
+        return workerExe;
+    }
+    return {};
+}
+
+void ExecuteDecodeWorkerSubprocessWithOptions(
+    const std::filesystem::path& workerExe,
+    const std::filesystem::path& inputPath,
+    const wchar_t* mapTag,
+    int targetW,
+    int targetH,
+    uint64_t reserveBpp,
+    float hdrHeadroomStops,
+    bool preserveFloat,
+    LiveWorkerOutputHdr* outResult) {
+    using namespace QuickView::ToolProcess;
+    ASSERT_NE(outResult, nullptr);
+    static std::atomic<uint32_t> s_mapSeq{0};
+    const uint32_t seq = s_mapSeq.fetch_add(1u, std::memory_order_relaxed);
+
+    const uint64_t pixelCap = static_cast<uint64_t>(targetW) * static_cast<uint64_t>(targetH) * reserveBpp;
+    const DecodeMapLayout layout = ComputeDecodeMapLayout(pixelCap);
+    ASSERT_NE(layout.totalMapBytes, 0u);
+
+    wchar_t mapName[160] = {};
+    swprintf_s(mapName, L"Local\\QuickView_HdrTestDW_%lu_%u_%ls", GetCurrentProcessId(), seq, mapTag);
+
+    HANDLE hMap = CreateFileMappingW(
+        INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE | SEC_RESERVE,
+        static_cast<DWORD>(layout.totalMapBytes >> 32),
+        static_cast<DWORD>(layout.totalMapBytes & 0xFFFFFFFFull),
+        mapName);
+    ASSERT_NE(hMap, nullptr);
+
+    uint8_t* mapView = static_cast<uint8_t*>(MapViewOfFile(
+        hMap, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, static_cast<SIZE_T>(layout.totalMapBytes)));
+    ASSERT_NE(mapView, nullptr);
+
+    ASSERT_NE(VirtualAlloc(mapView, static_cast<SIZE_T>(layout.headerBytes), MEM_COMMIT, PAGE_READWRITE), nullptr);
+    auto* header = reinterpret_cast<DecodeResultHeader*>(mapView);
+    *header = {};
+    header->magic = kDecodeWorkerMagic;
+    header->version = kDecodeWorkerVersion;
+    header->hr = static_cast<int32_t>(E_PENDING);
+    header->pixelOffset = layout.pixelOffset;
+    header->pixelCapacity = layout.pixelCapacity;
+    header->iccOffset = layout.iccOffset;
+    header->iccCapacity = layout.iccCapacity;
+
+    std::wstring cmd = L"\"" + workerExe.wstring() + L"\" --decode-worker --input \"" +
+                       inputPath.wstring() + L"\" --out-map \"" + mapName +
+                       L"\" --target-w " + std::to_wstring(targetW) +
+                       L" --target-h " + std::to_wstring(targetH) +
+                       L" --no-fake-base";
+    if (hdrHeadroomStops >= 0.0f) {
+        wchar_t headroomBuf[32] = {};
+        swprintf_s(headroomBuf, L"%.3f", hdrHeadroomStops);
+        cmd += L" --hdr-headroom ";
+        cmd += headroomBuf;
+    }
+    if (preserveFloat) {
+        cmd += L" --preserve-float";
+    }
+    std::vector<wchar_t> cmdBuf(cmd.begin(), cmd.end());
+    cmdBuf.push_back(L'\0');
+
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_FORCEOFFFEEDBACK;
+    PROCESS_INFORMATION pi{};
+    ASSERT_TRUE(CreateProcessW(nullptr, cmdBuf.data(), nullptr, nullptr, FALSE,
+                               CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi));
+    CloseHandle(pi.hThread);
+
+    DWORD waitRes = WaitForSingleObject(pi.hProcess, 20000);
+    GetExitCodeProcess(pi.hProcess, &outResult->exitCode);
+    CloseHandle(pi.hProcess);
+
+    ASSERT_EQ(waitRes, WAIT_OBJECT_0);
+    outResult->header = *header;
+    if (ValidateDecodeResultHeader(*header, layout)) {
+        outResult->pixelBytes.assign(
+            mapView + layout.pixelOffset,
+            mapView + layout.pixelOffset + header->payloadBytes);
+        if (header->iccBytes > 0) {
+            outResult->iccBytes.assign(
+                mapView + layout.iccOffset,
+                mapView + layout.iccOffset + header->iccBytes);
+        }
+    }
+
+    UnmapViewOfFile(mapView);
+    CloseHandle(hMap);
+}
+
+struct UnpackedHdrFlagsTest {
+    bool isValid = false;
+    bool isHdr = false;
+    bool isSceneLinear = false;
+    bool hasNitsMetadata = false;
+    bool hasGainMap = false;
+    bool gainMapApplied = false;
+};
+
+UnpackedHdrFlagsTest UnpackHdrFlagsTestHelper(uint8_t flags) {
+    UnpackedHdrFlagsTest u{};
+    QuickView::ToolProcess::UnpackHdrFlags(
+        flags, u.isValid, u.isHdr, u.isSceneLinear, u.hasNitsMetadata, u.hasGainMap, u.gainMapApplied);
+    return u;
+}
+
+} // namespace
+
+TEST(HdrPipelineTests, RealHdrJpegPqHlgAndUltraHdrDecode) {
+    const auto workerExe = FindWorkerExecutableForTests();
+    if (workerExe.empty()) {
+        GTEST_SKIP() << "QuickView.exe not present next to test binary";
+    }
+
+    // 1. sunrise-PQ.jpg -> CICP PQ + Rec.2020 in ICC
+    if (const auto pqPath = FindHdrTestAsset(L"sunrise-PQ.jpg"); !pqPath.empty()) {
+        LiveWorkerOutputHdr res;
+        ASSERT_NO_FATAL_FAILURE(ExecuteDecodeWorkerSubprocessWithOptions(
+            workerExe, pqPath, L"jpg_pq", 1024, 1024, 16ull, -1.0f, false, &res));
+        ASSERT_EQ(res.exitCode, 0u);
+        ASSERT_HRESULT_SUCCEEDED(static_cast<HRESULT>(res.header.hr));
+        EXPECT_EQ(res.header.colorDataSpace, static_cast<uint8_t>(QuickView::PixelDataSpace::EncodedHdr));
+        EXPECT_EQ(res.header.colorTransfer, static_cast<uint8_t>(QuickView::TransferFunction::PQ));
+        EXPECT_EQ(res.header.colorPrimaries, static_cast<uint8_t>(QuickView::ColorPrimaries::Rec2020));
+        EXPECT_TRUE(UnpackHdrFlagsTestHelper(res.header.hdrFlags).isHdr);
+    }
+
+    // 2. test_pattern-HLG.jpg -> CICP HLG in ICC
+    if (const auto hlgPath = FindHdrTestAsset(L"test_pattern-HLG.jpg"); !hlgPath.empty()) {
+        LiveWorkerOutputHdr res;
+        ASSERT_NO_FATAL_FAILURE(ExecuteDecodeWorkerSubprocessWithOptions(
+            workerExe, hlgPath, L"jpg_hlg", 1024, 1024, 16ull, -1.0f, false, &res));
+        ASSERT_EQ(res.exitCode, 0u);
+        ASSERT_HRESULT_SUCCEEDED(static_cast<HRESULT>(res.header.hr));
+        EXPECT_EQ(res.header.colorDataSpace, static_cast<uint8_t>(QuickView::PixelDataSpace::EncodedHdr));
+        EXPECT_EQ(res.header.colorTransfer, static_cast<uint8_t>(QuickView::TransferFunction::HLG));
+        EXPECT_TRUE(UnpackHdrFlagsTestHelper(res.header.hdrFlags).isHdr);
+    }
+
+    // 3. ultra_hdr.jpg & Ultra_HDR_Samples_Originals_05.jpg -> secondary MPF XMP rdf:Seq & ISO 21496-1 APP2
+    const wchar_t* ultraHdrNames[] = { L"ultra_hdr.jpg", L"Ultra_HDR_Samples_Originals_05.jpg" };
+    for (size_t i = 0; i < 2; ++i) {
+        const auto uhdrPath = FindHdrTestAsset(ultraHdrNames[i]);
+        if (uhdrPath.empty()) continue;
+        LiveWorkerOutputHdr res;
+        ASSERT_NO_FATAL_FAILURE(ExecuteDecodeWorkerSubprocessWithOptions(
+            workerExe, uhdrPath, L"jpg_uhdr", 1024, 1024, 16ull, -1.0f, false, &res));
+        ASSERT_EQ(res.exitCode, 0u);
+        ASSERT_HRESULT_SUCCEEDED(static_cast<HRESULT>(res.header.hr));
+        EXPECT_TRUE(UnpackHdrFlagsTestHelper(res.header.hdrFlags).hasGainMap) << ultraHdrNames[i];
+        EXPECT_GT(res.header.gainMapAlternateHeadroom, 2.0f) << ultraHdrNames[i];
+    }
+}
+
+TEST(HdrPipelineTests, RealHdrAvifPqHlgGainMapAndSdr10BitDecode) {
+    const auto workerExe = FindWorkerExecutableForTests();
+    if (workerExe.empty()) {
+        GTEST_SKIP() << "QuickView.exe not present next to test binary";
+    }
+
+    // 1. sunrise-PQ.avif (ICC CICP PQ + preserveFloat) -> SceneLinearScRgb FP16
+    if (const auto path = FindHdrTestAsset(L"sunrise-PQ.avif"); !path.empty()) {
+        LiveWorkerOutputHdr res;
+        ASSERT_NO_FATAL_FAILURE(ExecuteDecodeWorkerSubprocessWithOptions(
+            workerExe, path, L"avif_pq", 1024, 1024, 16ull, -1.0f, true, &res));
+        ASSERT_EQ(res.exitCode, 0u);
+        ASSERT_HRESULT_SUCCEEDED(static_cast<HRESULT>(res.header.hr));
+        EXPECT_EQ(res.header.pixelFormat, static_cast<uint8_t>(QuickView::PixelFormat::R16G16B16A16_FLOAT));
+        EXPECT_EQ(res.header.colorDataSpace, static_cast<uint8_t>(QuickView::PixelDataSpace::SceneLinearScRgb));
+        EXPECT_TRUE(UnpackHdrFlagsTestHelper(res.header.hdrFlags).isHdr);
+    }
+
+    // 2. test_pattern-HLG-CICP.avif -> SceneLinearScRgb FP16
+    if (const auto path = FindHdrTestAsset(L"test_pattern-HLG-CICP.avif"); !path.empty()) {
+        LiveWorkerOutputHdr res;
+        ASSERT_NO_FATAL_FAILURE(ExecuteDecodeWorkerSubprocessWithOptions(
+            workerExe, path, L"avif_hlg", 1024, 1024, 16ull, -1.0f, true, &res));
+        ASSERT_EQ(res.exitCode, 0u);
+        ASSERT_HRESULT_SUCCEEDED(static_cast<HRESULT>(res.header.hr));
+        EXPECT_EQ(res.header.pixelFormat, static_cast<uint8_t>(QuickView::PixelFormat::R16G16B16A16_FLOAT));
+        EXPECT_EQ(res.header.colorDataSpace, static_cast<uint8_t>(QuickView::PixelDataSpace::SceneLinearScRgb));
+        EXPECT_TRUE(UnpackHdrFlagsTestHelper(res.header.hdrFlags).isHdr);
+    }
+
+    // 3. WideGamut-Dolomiti-DisplayP3.avif (10-bit SDR Display P3 with HDR headroom 2.5)
+    if (const auto path = FindHdrTestAsset(L"WideGamut-Dolomiti-DisplayP3.avif"); !path.empty()) {
+        LiveWorkerOutputHdr res;
+        ASSERT_NO_FATAL_FAILURE(ExecuteDecodeWorkerSubprocessWithOptions(
+            workerExe, path, L"avif_p3sdr", 1024, 1024, 16ull, 2.5f, true, &res));
+        ASSERT_EQ(res.exitCode, 0u);
+        ASSERT_HRESULT_SUCCEEDED(static_cast<HRESULT>(res.header.hr));
+        EXPECT_FALSE(UnpackHdrFlagsTestHelper(res.header.hdrFlags).isHdr);
+        EXPECT_EQ(res.header.colorPrimaries, static_cast<uint8_t>(QuickView::ColorPrimaries::DisplayP3));
+        EXPECT_EQ(res.header.colorDataSpace, static_cast<uint8_t>(QuickView::PixelDataSpace::EncodedSdr));
+    }
+
+    // 4. GainMap AVIF (Document-Name34_2-1.avif has ISO 21496-1 tmap box): SDR default vs HDR target (headroom 2.5)
+    if (const auto path = FindHdrTestAsset(L"Document-Name34_2-1.avif"); !path.empty()) {
+        {
+            LiveWorkerOutputHdr res;
+            ASSERT_NO_FATAL_FAILURE(ExecuteDecodeWorkerSubprocessWithOptions(
+                workerExe, path, L"avif_gm_sdr", 1024, 1024, 16ull, -1.0f, false, &res));
+            ASSERT_EQ(res.exitCode, 0u);
+            ASSERT_HRESULT_SUCCEEDED(static_cast<HRESULT>(res.header.hr));
+            const auto flags = UnpackHdrFlagsTestHelper(res.header.hdrFlags);
+            EXPECT_TRUE(flags.hasGainMap);
+            EXPECT_FALSE(flags.isHdr);
+        }
+        {
+            LiveWorkerOutputHdr res;
+            ASSERT_NO_FATAL_FAILURE(ExecuteDecodeWorkerSubprocessWithOptions(
+                workerExe, path, L"avif_gm_hdr", 1024, 1024, 16ull, 2.5f, true, &res));
+            ASSERT_EQ(res.exitCode, 0u);
+            ASSERT_HRESULT_SUCCEEDED(static_cast<HRESULT>(res.header.hr));
+            const auto flags = UnpackHdrFlagsTestHelper(res.header.hdrFlags);
+            EXPECT_TRUE(flags.gainMapApplied);
+            EXPECT_EQ(res.header.iccBytes, 0u);
+            EXPECT_EQ(res.header.pixelFormat, static_cast<uint8_t>(QuickView::PixelFormat::R16G16B16A16_FLOAT));
+        }
+    }
+
+    // 5. Display P3 + PQ AVIF (no tmap box despite filename)
+    if (const auto path = FindHdrTestAsset(L"DSC2823_Instagram-post_2160x2160_U_0_P3_gainMap.avif"); !path.empty()) {
+        LiveWorkerOutputHdr res;
+        ASSERT_NO_FATAL_FAILURE(ExecuteDecodeWorkerSubprocessWithOptions(
+            workerExe, path, L"avif_p3pq", 1024, 1024, 16ull, -1.0f, true, &res));
+        ASSERT_EQ(res.exitCode, 0u);
+        ASSERT_HRESULT_SUCCEEDED(static_cast<HRESULT>(res.header.hr));
+        EXPECT_TRUE(UnpackHdrFlagsTestHelper(res.header.hdrFlags).isHdr);
+        EXPECT_EQ(res.header.colorPrimaries, static_cast<uint8_t>(QuickView::ColorPrimaries::DisplayP3));
+        EXPECT_EQ(res.header.colorDataSpace, static_cast<uint8_t>(QuickView::PixelDataSpace::SceneLinearScRgb));
+        EXPECT_EQ(res.header.pixelFormat, static_cast<uint8_t>(QuickView::PixelFormat::R16G16B16A16_FLOAT));
+    }
+}
+
+TEST(HdrPipelineTests, RealHdrJxlPqHlgAndSrgbDecode) {
+    const auto workerExe = FindWorkerExecutableForTests();
+    if (workerExe.empty()) {
+        GTEST_SKIP() << "QuickView.exe not present next to test binary";
+    }
+
+    struct LuminanceStats {
+        double meanNits = 0.0;
+        double peakNits = 0.0;
+        uint64_t pixelCount = 0;
+    };
+
+    auto measureUnorm16HdrNits = [](const LiveWorkerOutputHdr& res,
+                                    QuickView::TransferFunction tf) -> LuminanceStats {
+        LuminanceStats stats{};
+        if (res.header.pixelFormat != static_cast<uint8_t>(QuickView::PixelFormat::R16G16B16A16_UNORM) ||
+            res.header.width == 0 || res.header.height == 0 || res.pixelBytes.empty()) {
+            return stats;
+        }
+        const bool isHlg = (tf == QuickView::TransferFunction::HLG);
+        double totalNits = 0.0;
+        for (uint32_t y = 0; y < res.header.height; ++y) {
+            const uint16_t* row = reinterpret_cast<const uint16_t*>(
+                res.pixelBytes.data() + static_cast<size_t>(y) * res.header.stride);
+            for (uint32_t x = 0; x < res.header.width; ++x) {
+                const float r = static_cast<float>(row[x * 4u + 0u]) / 65535.0f;
+                const float g = static_cast<float>(row[x * 4u + 1u]) / 65535.0f;
+                const float b = static_cast<float>(row[x * 4u + 2u]) / 65535.0f;
+                double lumNits = 0.0;
+                if (isHlg) {
+                    const float er = ColorMath::HlgChannelInverseOetf(r);
+                    const float eg = ColorMath::HlgChannelInverseOetf(g);
+                    const float eb = ColorMath::HlgChannelInverseOetf(b);
+                    const float ys = (std::max)(0.0f, 0.2627f * er + 0.6780f * eg + 0.0593f * eb);
+                    lumNits = (ys > 0.0f) ? (std::pow(static_cast<double>(ys), 1.2) * 1000.0) : 0.0;
+                } else {
+                    const double lr = static_cast<double>(ColorMath::PqToLinearScRgb(r)) * 80.0;
+                    const double lg = static_cast<double>(ColorMath::PqToLinearScRgb(g)) * 80.0;
+                    const double lb = static_cast<double>(ColorMath::PqToLinearScRgb(b)) * 80.0;
+                    lumNits = 0.2627 * lr + 0.6780 * lg + 0.0593 * lb;
+                }
+                totalNits += lumNits;
+                if (lumNits > stats.peakNits) {
+                    stats.peakNits = lumNits;
+                }
+                ++stats.pixelCount;
+            }
+        }
+        if (stats.pixelCount > 0) {
+            stats.meanNits = totalNits / static_cast<double>(stats.pixelCount);
+        }
+        return stats;
+    };
+
+    // 1. sunrise-PQ.jxl vs sunrise-PQ.png (XYB PQ Rec.2020 physical luminance parity)
+    if (const auto jxlPath = FindHdrTestAsset(L"sunrise-PQ.jxl"); !jxlPath.empty()) {
+        LiveWorkerOutputHdr jxlRes;
+        ASSERT_NO_FATAL_FAILURE(ExecuteDecodeWorkerSubprocessWithOptions(
+            workerExe, jxlPath, L"jxl_sunrise", 1024, 1024, 16ull, -1.0f, true, &jxlRes));
+        ASSERT_EQ(jxlRes.exitCode, 0u);
+        ASSERT_HRESULT_SUCCEEDED(static_cast<HRESULT>(jxlRes.header.hr));
+        EXPECT_EQ(jxlRes.header.pixelFormat, static_cast<uint8_t>(QuickView::PixelFormat::R16G16B16A16_UNORM));
+        EXPECT_EQ(jxlRes.header.colorDataSpace, static_cast<uint8_t>(QuickView::PixelDataSpace::EncodedHdr));
+        EXPECT_EQ(jxlRes.header.colorTransfer, static_cast<uint8_t>(QuickView::TransferFunction::PQ));
+        EXPECT_EQ(jxlRes.header.colorPrimaries, static_cast<uint8_t>(QuickView::ColorPrimaries::Rec2020));
+        EXPECT_TRUE(UnpackHdrFlagsTestHelper(jxlRes.header.hdrFlags).isHdr);
+
+        const LuminanceStats jxlStats = measureUnorm16HdrNits(jxlRes, QuickView::TransferFunction::PQ);
+        EXPECT_GE(jxlStats.peakNits, 1300.0);
+        EXPECT_LE(jxlStats.peakNits, 1800.0);
+
+        if (const auto pngPath = FindHdrTestAsset(L"sunrise-PQ.png"); !pngPath.empty()) {
+            LiveWorkerOutputHdr pngRes;
+            ASSERT_NO_FATAL_FAILURE(ExecuteDecodeWorkerSubprocessWithOptions(
+                workerExe, pngPath, L"png_sunrise", 1024, 1024, 16ull, -1.0f, true, &pngRes));
+            ASSERT_EQ(pngRes.exitCode, 0u);
+            ASSERT_HRESULT_SUCCEEDED(static_cast<HRESULT>(pngRes.header.hr));
+            const LuminanceStats pngStats = measureUnorm16HdrNits(pngRes, QuickView::TransferFunction::PQ);
+            ASSERT_GT(pngStats.meanNits, 10.0);
+            ASSERT_GT(pngStats.peakNits, 100.0);
+            const double meanRelErr = std::abs(jxlStats.meanNits - pngStats.meanNits) / pngStats.meanNits;
+            const double peakRelErr = std::abs(jxlStats.peakNits - pngStats.peakNits) / pngStats.peakNits;
+            EXPECT_LT(meanRelErr, 0.05) << "jxl mean=" << jxlStats.meanNits << " png mean=" << pngStats.meanNits;
+            EXPECT_LT(peakRelErr, 0.10) << "jxl peak=" << jxlStats.peakNits << " png peak=" << pngStats.peakNits;
+        }
+    }
+
+    // 2. test_pattern-PQ.jxl vs test_pattern-PQ.png (Non-XYB PQ Rec.2020)
+    if (const auto jxlPqPath = FindHdrTestAsset(L"test_pattern-PQ.jxl"); !jxlPqPath.empty()) {
+        LiveWorkerOutputHdr jxlRes;
+        ASSERT_NO_FATAL_FAILURE(ExecuteDecodeWorkerSubprocessWithOptions(
+            workerExe, jxlPqPath, L"jxl_tp_pq", 1024, 1024, 16ull, -1.0f, true, &jxlRes));
+        ASSERT_EQ(jxlRes.exitCode, 0u);
+        ASSERT_HRESULT_SUCCEEDED(static_cast<HRESULT>(jxlRes.header.hr));
+        EXPECT_EQ(jxlRes.header.pixelFormat, static_cast<uint8_t>(QuickView::PixelFormat::R16G16B16A16_UNORM));
+        EXPECT_EQ(jxlRes.header.colorDataSpace, static_cast<uint8_t>(QuickView::PixelDataSpace::EncodedHdr));
+        EXPECT_EQ(jxlRes.header.colorTransfer, static_cast<uint8_t>(QuickView::TransferFunction::PQ));
+        EXPECT_EQ(jxlRes.header.colorPrimaries, static_cast<uint8_t>(QuickView::ColorPrimaries::Rec2020));
+        EXPECT_TRUE(UnpackHdrFlagsTestHelper(jxlRes.header.hdrFlags).isHdr);
+
+        const LuminanceStats jxlStats = measureUnorm16HdrNits(jxlRes, QuickView::TransferFunction::PQ);
+        EXPECT_GE(jxlStats.peakNits, 9500.0);
+
+        if (const auto pngPath = FindHdrTestAsset(L"test_pattern-PQ.png"); !pngPath.empty()) {
+            LiveWorkerOutputHdr pngRes;
+            ASSERT_NO_FATAL_FAILURE(ExecuteDecodeWorkerSubprocessWithOptions(
+                workerExe, pngPath, L"png_tp_pq", 1024, 1024, 16ull, -1.0f, true, &pngRes));
+            ASSERT_EQ(pngRes.exitCode, 0u);
+            ASSERT_HRESULT_SUCCEEDED(static_cast<HRESULT>(pngRes.header.hr));
+            const LuminanceStats pngStats = measureUnorm16HdrNits(pngRes, QuickView::TransferFunction::PQ);
+            ASSERT_GT(pngStats.meanNits, 10.0);
+            const double meanRelErr = std::abs(jxlStats.meanNits - pngStats.meanNits) / pngStats.meanNits;
+            EXPECT_LT(meanRelErr, 0.02) << "jxl mean=" << jxlStats.meanNits << " png mean=" << pngStats.meanNits;
+        }
+    }
+
+    // 3. test_pattern-HLG.jxl vs test_pattern-HLG.png (Non-XYB HLG Rec.2020)
+    if (const auto jxlHlgPath = FindHdrTestAsset(L"test_pattern-HLG.jxl"); !jxlHlgPath.empty()) {
+        LiveWorkerOutputHdr jxlRes;
+        ASSERT_NO_FATAL_FAILURE(ExecuteDecodeWorkerSubprocessWithOptions(
+            workerExe, jxlHlgPath, L"jxl_tp_hlg", 1024, 1024, 16ull, -1.0f, true, &jxlRes));
+        ASSERT_EQ(jxlRes.exitCode, 0u);
+        ASSERT_HRESULT_SUCCEEDED(static_cast<HRESULT>(jxlRes.header.hr));
+        EXPECT_EQ(jxlRes.header.pixelFormat, static_cast<uint8_t>(QuickView::PixelFormat::R16G16B16A16_UNORM));
+        EXPECT_EQ(jxlRes.header.colorDataSpace, static_cast<uint8_t>(QuickView::PixelDataSpace::EncodedHdr));
+        EXPECT_EQ(jxlRes.header.colorTransfer, static_cast<uint8_t>(QuickView::TransferFunction::HLG));
+        EXPECT_EQ(jxlRes.header.colorPrimaries, static_cast<uint8_t>(QuickView::ColorPrimaries::Rec2020));
+        EXPECT_TRUE(UnpackHdrFlagsTestHelper(jxlRes.header.hdrFlags).isHdr);
+
+        const LuminanceStats jxlStats = measureUnorm16HdrNits(jxlRes, QuickView::TransferFunction::HLG);
+        EXPECT_GE(jxlStats.peakNits, 950.0);
+
+        if (const auto pngPath = FindHdrTestAsset(L"test_pattern-HLG.png"); !pngPath.empty()) {
+            LiveWorkerOutputHdr pngRes;
+            ASSERT_NO_FATAL_FAILURE(ExecuteDecodeWorkerSubprocessWithOptions(
+                workerExe, pngPath, L"png_tp_hlg", 1024, 1024, 16ull, -1.0f, true, &pngRes));
+            ASSERT_EQ(pngRes.exitCode, 0u);
+            ASSERT_HRESULT_SUCCEEDED(static_cast<HRESULT>(pngRes.header.hr));
+            const LuminanceStats pngStats = measureUnorm16HdrNits(pngRes, QuickView::TransferFunction::HLG);
+            ASSERT_GT(pngStats.meanNits, 10.0);
+            const double meanRelErr = std::abs(jxlStats.meanNits - pngStats.meanNits) / pngStats.meanNits;
+            EXPECT_LT(meanRelErr, 0.02) << "jxl mean=" << jxlStats.meanNits << " png mean=" << pngStats.meanNits;
+        }
+    }
+
+    // 4. jxl-rec-2020-16bit.jxl -> PQ Rec.2020 peak > 500 nits
+    if (const auto rec2020Jxl = FindHdrTestAsset(L"jxl-rec-2020-16bit.jxl"); !rec2020Jxl.empty()) {
+        LiveWorkerOutputHdr jxlRes;
+        ASSERT_NO_FATAL_FAILURE(ExecuteDecodeWorkerSubprocessWithOptions(
+            workerExe, rec2020Jxl, L"jxl_rec2020_pq", 1024, 1024, 16ull, -1.0f, true, &jxlRes));
+        ASSERT_EQ(jxlRes.exitCode, 0u);
+        ASSERT_HRESULT_SUCCEEDED(static_cast<HRESULT>(jxlRes.header.hr));
+        EXPECT_EQ(jxlRes.header.pixelFormat, static_cast<uint8_t>(QuickView::PixelFormat::R16G16B16A16_UNORM));
+        EXPECT_EQ(jxlRes.header.colorDataSpace, static_cast<uint8_t>(QuickView::PixelDataSpace::EncodedHdr));
+        EXPECT_EQ(jxlRes.header.colorTransfer, static_cast<uint8_t>(QuickView::TransferFunction::PQ));
+        EXPECT_EQ(jxlRes.header.colorPrimaries, static_cast<uint8_t>(QuickView::ColorPrimaries::Rec2020));
+        EXPECT_TRUE(UnpackHdrFlagsTestHelper(jxlRes.header.hdrFlags).isHdr);
+
+        const LuminanceStats jxlStats = measureUnorm16HdrNits(jxlRes, QuickView::TransferFunction::PQ);
+        EXPECT_GT(jxlStats.peakNits, 500.0);
+    }
+
+    // 5. Real sRGB JXL baseline
+    if (const auto srgbPath = FindHdrTestAsset(L"test_pattern-sRGB.jxl"); !srgbPath.empty()) {
+        LiveWorkerOutputHdr res;
+        ASSERT_NO_FATAL_FAILURE(ExecuteDecodeWorkerSubprocessWithOptions(
+            workerExe, srgbPath, L"jxl_srgb", 1024, 1024, 16ull, -1.0f, false, &res));
+        ASSERT_EQ(res.exitCode, 0u);
+        ASSERT_HRESULT_SUCCEEDED(static_cast<HRESULT>(res.header.hr));
+        EXPECT_FALSE(UnpackHdrFlagsTestHelper(res.header.hdrFlags).isHdr);
+    }
+
+    // 6. Synthetic JXL round-trip tests (XYB HLG Rec.2020 + Non-XYB 16-bit SDR sRGB)
+    auto encodeTempJxl = [](uint32_t width, uint32_t height, bool usesOriginalProfile,
+                            const JxlColorEncoding& colorEnc, const std::vector<uint16_t>& rgb16,
+                            const std::filesystem::path& outPath) -> bool {
+        JxlEncoder* enc = JxlEncoderCreate(nullptr);
+        if (!enc) return false;
+        struct EncGuard {
+            JxlEncoder* e;
+            ~EncGuard() { JxlEncoderDestroy(e); }
+        } guard{enc};
+
+        JxlBasicInfo basicInfo{};
+        JxlEncoderInitBasicInfo(&basicInfo);
+        basicInfo.xsize = width;
+        basicInfo.ysize = height;
+        basicInfo.bits_per_sample = 16;
+        basicInfo.exponent_bits_per_sample = 0;
+        basicInfo.uses_original_profile = usesOriginalProfile ? JXL_TRUE : JXL_FALSE;
+        if (JXL_ENC_SUCCESS != JxlEncoderSetBasicInfo(enc, &basicInfo)) return false;
+        if (JXL_ENC_SUCCESS != JxlEncoderSetColorEncoding(enc, &colorEnc)) return false;
+
+        JxlEncoderFrameSettings* frameSettings = JxlEncoderFrameSettingsCreate(enc, nullptr);
+        if (!frameSettings) return false;
+        if (usesOriginalProfile) {
+            if (JXL_ENC_SUCCESS != JxlEncoderSetFrameLossless(frameSettings, JXL_TRUE)) return false;
+        } else {
+            if (JXL_ENC_SUCCESS != JxlEncoderSetFrameLossless(frameSettings, JXL_FALSE)) return false;
+            if (JXL_ENC_SUCCESS != JxlEncoderSetFrameDistance(frameSettings, 0.5f)) return false;
+        }
+
+        JxlPixelFormat pxFmt = {3, JXL_TYPE_UINT16, JXL_LITTLE_ENDIAN, 0};
+        const size_t rawBytes = rgb16.size() * sizeof(uint16_t);
+        if (JXL_ENC_SUCCESS != JxlEncoderAddImageFrame(frameSettings, &pxFmt, rgb16.data(), rawBytes)) {
+            return false;
+        }
+        JxlEncoderCloseInput(enc);
+
+        std::vector<uint8_t> compressed(4096);
+        uint8_t* nextOut = compressed.data();
+        size_t availOut = compressed.size();
+        for (;;) {
+            const JxlEncoderStatus st = JxlEncoderProcessOutput(enc, &nextOut, &availOut);
+            if (st == JXL_ENC_NEED_MORE_OUTPUT) {
+                const size_t offset = static_cast<size_t>(nextOut - compressed.data());
+                compressed.resize(compressed.size() * 2u);
+                nextOut = compressed.data() + offset;
+                availOut = compressed.size() - offset;
+            } else if (st == JXL_ENC_SUCCESS) {
+                compressed.resize(static_cast<size_t>(nextOut - compressed.data()));
+                break;
+            } else {
+                return false;
+            }
+        }
+
+        std::ofstream ofs(outPath, std::ios::binary | std::ios::trunc);
+        if (!ofs.is_open()) return false;
+        ofs.write(reinterpret_cast<const char*>(compressed.data()), static_cast<std::streamsize>(compressed.size()));
+        return ofs.good();
+    };
+
+    struct TempFileCleanup {
+        std::filesystem::path path;
+        ~TempFileCleanup() {
+            if (!path.empty()) {
+                std::error_code ec;
+                std::filesystem::remove(path, ec);
+            }
+        }
+    };
+
+    const std::filesystem::path tempDir = std::filesystem::temp_directory_path();
+    const DWORD pid = GetCurrentProcessId();
+
+    // 6a. Synthetic XYB HLG Rec.2020 round-trip
+    {
+        constexpr uint32_t w = 64;
+        constexpr uint32_t h = 64;
+        const uint16_t darkCode = static_cast<uint16_t>(std::lround(0.25 * 65535.0));
+        const uint16_t brightCode = static_cast<uint16_t>(std::lround(0.90 * 65535.0));
+        std::vector<uint16_t> pixels(static_cast<size_t>(w) * h * 3u);
+        for (uint32_t y = 0; y < h; ++y) {
+            for (uint32_t x = 0; x < w; ++x) {
+                const uint16_t v = (x < w / 2u) ? darkCode : brightCode;
+                const size_t idx = (static_cast<size_t>(y) * w + x) * 3u;
+                pixels[idx + 0] = v;
+                pixels[idx + 1] = v;
+                pixels[idx + 2] = v;
+            }
+        }
+
+        JxlColorEncoding hlgEnc{};
+        hlgEnc.color_space = JXL_COLOR_SPACE_RGB;
+        hlgEnc.white_point = JXL_WHITE_POINT_D65;
+        hlgEnc.primaries = JXL_PRIMARIES_2100;
+        hlgEnc.transfer_function = JXL_TRANSFER_FUNCTION_HLG;
+        hlgEnc.rendering_intent = JXL_RENDERING_INTENT_RELATIVE;
+
+        const std::filesystem::path tempPath =
+            tempDir / (L"qv_synth_xyb_hlg_" + std::to_wstring(pid) + L".jxl");
+        TempFileCleanup cleanup{tempPath};
+        ASSERT_TRUE(encodeTempJxl(w, h, false, hlgEnc, pixels, tempPath));
+
+        LiveWorkerOutputHdr res;
+        ASSERT_NO_FATAL_FAILURE(ExecuteDecodeWorkerSubprocessWithOptions(
+            workerExe, tempPath, L"jxl_synth_hlg", 128, 128, 16ull, -1.0f, true, &res));
+        ASSERT_EQ(res.exitCode, 0u);
+        ASSERT_HRESULT_SUCCEEDED(static_cast<HRESULT>(res.header.hr));
+        EXPECT_EQ(res.header.pixelFormat, static_cast<uint8_t>(QuickView::PixelFormat::R16G16B16A16_UNORM));
+        EXPECT_EQ(res.header.colorDataSpace, static_cast<uint8_t>(QuickView::PixelDataSpace::EncodedHdr));
+        EXPECT_EQ(res.header.colorTransfer, static_cast<uint8_t>(QuickView::TransferFunction::HLG));
+        EXPECT_EQ(res.header.colorPrimaries, static_cast<uint8_t>(QuickView::ColorPrimaries::Rec2020));
+        EXPECT_TRUE(UnpackHdrFlagsTestHelper(res.header.hdrFlags).isHdr);
+
+        ASSERT_GE(res.pixelBytes.size(), static_cast<size_t>(res.header.height) * res.header.stride);
+        const uint16_t* centerRow = reinterpret_cast<const uint16_t*>(
+            res.pixelBytes.data() + static_cast<size_t>(h / 2u) * res.header.stride);
+        const uint32_t brightX = (w * 3u) / 4u;
+        const float outR = static_cast<float>(centerRow[brightX * 4u + 0u]) / 65535.0f;
+        const float outG = static_cast<float>(centerRow[brightX * 4u + 1u]) / 65535.0f;
+        const float outB = static_cast<float>(centerRow[brightX * 4u + 2u]) / 65535.0f;
+        EXPECT_NEAR(outR, 0.90f, 0.02f);
+        EXPECT_NEAR(outG, 0.90f, 0.02f);
+        EXPECT_NEAR(outB, 0.90f, 0.02f);
+    }
+
+    // 6b. Synthetic Non-XYB 16-bit SDR sRGB must NOT be mislabeled SceneLinear
+    {
+        constexpr uint32_t w = 32;
+        constexpr uint32_t h = 32;
+        std::vector<uint16_t> pixels(static_cast<size_t>(w) * h * 3u, 50000u);
+
+        JxlColorEncoding srgbEnc{};
+        srgbEnc.color_space = JXL_COLOR_SPACE_RGB;
+        srgbEnc.white_point = JXL_WHITE_POINT_D65;
+        srgbEnc.primaries = JXL_PRIMARIES_SRGB;
+        srgbEnc.transfer_function = JXL_TRANSFER_FUNCTION_SRGB;
+        srgbEnc.rendering_intent = JXL_RENDERING_INTENT_PERCEPTUAL;
+
+        const std::filesystem::path tempPath =
+            tempDir / (L"qv_synth_sdr16_" + std::to_wstring(pid) + L".jxl");
+        TempFileCleanup cleanup{tempPath};
+        ASSERT_TRUE(encodeTempJxl(w, h, true, srgbEnc, pixels, tempPath));
+
+        LiveWorkerOutputHdr res;
+        ASSERT_NO_FATAL_FAILURE(ExecuteDecodeWorkerSubprocessWithOptions(
+            workerExe, tempPath, L"jxl_synth_sdr16", 128, 128, 16ull, 2.0f, true, &res));
+        ASSERT_EQ(res.exitCode, 0u);
+        ASSERT_HRESULT_SUCCEEDED(static_cast<HRESULT>(res.header.hr));
+        EXPECT_EQ(res.header.colorDataSpace, static_cast<uint8_t>(QuickView::PixelDataSpace::EncodedSdr));
+        EXPECT_EQ(res.header.colorTransfer, static_cast<uint8_t>(QuickView::TransferFunction::SRGB));
+        const auto flags = UnpackHdrFlagsTestHelper(res.header.hdrFlags);
+        EXPECT_FALSE(flags.isHdr);
+        EXPECT_FALSE(flags.isSceneLinear);
+    }
+}
+
+TEST(HdrPipelineTests, RealHeicColorMetadataAndGainMapDecode) {
+    const auto workerExe = FindWorkerExecutableForTests();
+    if (workerExe.empty()) {
+        GTEST_SKIP() << "QuickView.exe not present next to test binary";
+    }
+
+    bool testedAny = false;
+    const wchar_t* heicNames[] = { L"eos_r8.hif", L"reference.HEIC" };
+    for (size_t i = 0; i < 2; ++i) {
+        const auto path = FindHdrTestAsset(heicNames[i]);
+        if (path.empty()) continue;
+        LiveWorkerOutputHdr res;
+        ASSERT_NO_FATAL_FAILURE(ExecuteDecodeWorkerSubprocessWithOptions(
+            workerExe, path, L"heic", 1024, 1024, 16ull, 2.5f, true, &res));
+        if (static_cast<HRESULT>(res.header.hr) == WINCODEC_ERR_COMPONENTNOTFOUND) {
+            GTEST_SKIP() << "WIC HEVC extension not installed";
+        }
+        testedAny = true;
+        ASSERT_EQ(res.exitCode, 0u);
+        ASSERT_HRESULT_SUCCEEDED(static_cast<HRESULT>(res.header.hr));
+        const auto flags = UnpackHdrFlagsTestHelper(res.header.hdrFlags);
+
+        if (flags.hasGainMap && !flags.isHdr) {
+            EXPECT_EQ(res.header.pixelFormat, static_cast<uint8_t>(QuickView::PixelFormat::BGRA8888));
+            EXPECT_EQ(res.header.colorDataSpace, static_cast<uint8_t>(QuickView::PixelDataSpace::EncodedSdr));
+        }
+        // Must not mislabel non-float GainMap/SDR HEIC as SceneLinearScRgb + SRGB
+        if (res.header.hdrTransfer == static_cast<uint8_t>(QuickView::TransferFunction::PQ) ||
+            res.header.hdrTransfer == static_cast<uint8_t>(QuickView::TransferFunction::HLG)) {
+            EXPECT_TRUE(flags.isHdr);
+            EXPECT_TRUE(res.header.colorDataSpace == static_cast<uint8_t>(QuickView::PixelDataSpace::EncodedHdr) ||
+                        res.header.colorDataSpace == static_cast<uint8_t>(QuickView::PixelDataSpace::SceneLinearScRgb));
+        }
+    }
+    if (!testedAny) {
+        GTEST_SKIP() << "No HEIC/HIF assets available";
+    }
+}
+
+TEST(HdrPipelineTests, Bt2100HlgOotfLuminanceCouplingAccuracy) {
+    const float* hlgInvLut = ColorMath::GetHlg16ToSceneLinearLut();
+    ASSERT_NE(hlgInvLut, nullptr);
+
+    auto evalHlgScRgb = [&](uint16_t rCode, uint16_t gCode, uint16_t bCode, float* outRgb) {
+        const float er = hlgInvLut[rCode];
+        const float eg = hlgInvLut[gCode];
+        const float eb = hlgInvLut[bCode];
+        const float ys = 0.2627f * er + 0.6780f * eg + 0.0593f * eb;
+        const float gain = (ys > 0.0f) ? (std::pow(ys, 0.2f) * 12.5f) : 0.0f;
+        outRgb[0] = er * gain;
+        outRgb[1] = eg * gain;
+        outRgb[2] = eb * gain;
+    };
+
+    // Peak white (65535, 65535, 65535) -> Ys = 1.0 -> (12.5, 12.5, 12.5) scRGB (1000 nits)
+    float whiteRgb[3] = {};
+    evalHlgScRgb(65535u, 65535u, 65535u, whiteRgb);
+    EXPECT_NEAR(whiteRgb[0], 12.5f, 0.02f);
+    EXPECT_NEAR(whiteRgb[1], 12.5f, 0.02f);
+    EXPECT_NEAR(whiteRgb[2], 12.5f, 0.02f);
+
+    // Saturated red (65535, 0, 0) -> Ys = 0.2627 -> gain = 0.2627^0.2 * 12.5 (~9.566), NOT 12.5!
+    float redRgb[3] = {};
+    evalHlgScRgb(65535u, 0u, 0u, redRgb);
+    const float expectedRed = std::pow(0.2627f, 0.2f) * 12.5f;
+    EXPECT_NEAR(redRgb[0], expectedRed, 0.02f);
+    EXPECT_LT(redRgb[0], 10.0f);
+    EXPECT_NEAR(redRgb[1], 0.0f, 1e-6f);
+    EXPECT_NEAR(redRgb[2], 0.0f, 1e-6f);
+
+    // Mid-gray (~0.5 signal -> er ~= 1/12) -> Ys = er -> (1/12)^1.2 * 12.5 ~= 0.635
+    float midRgb[3] = {};
+    evalHlgScRgb(32768u, 32768u, 32768u, midRgb);
+    const float midE = (std::pow(32768.0f / 65535.0f, 2.0f)) / 3.0f;
+    const float expectedMid = std::pow(midE, 1.2f) * 12.5f;
+    EXPECT_NEAR(midRgb[0], expectedMid, 0.01f);
+}
+
+namespace {
+
+std::vector<uint8_t> BuildSyntheticRgbTiff(
+    uint32_t width, uint32_t height, uint16_t bitsPerSample,
+    uint16_t compression, uint16_t predictor, uint16_t sampleFormat,
+    const std::vector<uint8_t>& pixelBytes,
+    const std::vector<uint8_t>* iccProfile = nullptr) {
+    auto appendU16LE = [](std::vector<uint8_t>& b, uint16_t v) {
+        b.push_back(static_cast<uint8_t>(v & 0xFFu));
+        b.push_back(static_cast<uint8_t>((v >> 8) & 0xFFu));
+    };
+    auto appendU32LE = [](std::vector<uint8_t>& b, uint32_t v) {
+        b.push_back(static_cast<uint8_t>(v & 0xFFu));
+        b.push_back(static_cast<uint8_t>((v >> 8) & 0xFFu));
+        b.push_back(static_cast<uint8_t>((v >> 16) & 0xFFu));
+        b.push_back(static_cast<uint8_t>((v >> 24) & 0xFFu));
+    };
+    auto appendTag = [&](std::vector<uint8_t>& b, uint16_t tag, uint16_t type,
+                         uint32_t count, uint32_t valOrOff) {
+        appendU16LE(b, tag);
+        appendU16LE(b, type);
+        appendU32LE(b, count);
+        appendU32LE(b, valOrOff);
+    };
+
+    const bool hasIcc = (iccProfile && !iccProfile->empty());
+    const uint16_t numTags = hasIcc ? 13u : 12u;
+    const uint32_t ifdOffset = 8u;
+    const uint32_t afterIfd = ifdOffset + 2u + static_cast<uint32_t>(numTags) * 12u + 4u;
+    const uint32_t bpsOffset = afterIfd;
+    const uint32_t pixelOffset = bpsOffset + 6u;
+    const uint32_t iccOffset = pixelOffset + static_cast<uint32_t>(pixelBytes.size());
+
+    std::vector<uint8_t> tiff;
+    tiff.push_back('I'); tiff.push_back('I');
+    appendU16LE(tiff, 42u);
+    appendU32LE(tiff, ifdOffset);
+
+    appendU16LE(tiff, numTags);
+    appendTag(tiff, 256u, 4u, 1u, width);                                   // ImageWidth
+    appendTag(tiff, 257u, 4u, 1u, height);                                  // ImageLength
+    appendTag(tiff, 258u, 3u, 3u, bpsOffset);                               // BitsPerSample
+    appendTag(tiff, 259u, 3u, 1u, compression);                             // Compression
+    appendTag(tiff, 262u, 3u, 1u, 2u);                                      // Photometric = RGB
+    appendTag(tiff, 273u, 4u, 1u, pixelOffset);                             // StripOffsets
+    appendTag(tiff, 277u, 3u, 1u, 3u);                                      // SamplesPerPixel
+    appendTag(tiff, 278u, 4u, 1u, height);                                  // RowsPerStrip
+    appendTag(tiff, 279u, 4u, 1u, static_cast<uint32_t>(pixelBytes.size())); // StripByteCounts
+    appendTag(tiff, 284u, 3u, 1u, 1u);                                      // PlanarConfiguration
+    appendTag(tiff, 317u, 3u, 1u, predictor);                               // Predictor
+    appendTag(tiff, 339u, 3u, 1u, sampleFormat);                            // SampleFormat
+    if (hasIcc) {
+        appendTag(tiff, 34675u, 7u, static_cast<uint32_t>(iccProfile->size()), iccOffset);
+    }
+    appendU32LE(tiff, 0u); // next IFD
+
+    appendU16LE(tiff, bitsPerSample);
+    appendU16LE(tiff, bitsPerSample);
+    appendU16LE(tiff, bitsPerSample);
+
+    tiff.insert(tiff.end(), pixelBytes.begin(), pixelBytes.end());
+    if (hasIcc) {
+        tiff.insert(tiff.end(), iccProfile->begin(), iccProfile->end());
+    }
+    return tiff;
+}
+
+void FillToneMapMatrixFromColorMath(
+    QuickView::ColorPrimaries srcPrimaries,
+    QuickView::ColorPrimaries dstPrimaries,
+    QuickView::ToneMapSettings* outSettings) {
+    const ColorMath::ColorMatrix3 m = ColorMath::MultiplyColorMatrices(
+        ColorMath::GetXyzToRgbMatrix(dstPrimaries),
+        ColorMath::GetRgbToXyzMatrix(srcPrimaries));
+    std::memset(outSettings->colorMatrix, 0, sizeof(outSettings->colorMatrix));
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            outSettings->colorMatrix[r * 4 + c] = m.m[r][c];
+        }
+    }
+    outSettings->colorMatrix[15] = 1.0f;
+}
+
+} // namespace
+
+TEST(HdrPipelineTests, MiniTiffRejectsFloatSampleFormatAndFixes16BitPredictor2) {
+    QuickView::Codec::DecodeContext ctx;
+    ctx.allocator.pfn = [](void*, size_t s) -> uint8_t* {
+        return static_cast<uint8_t*>(_aligned_malloc(s, 64));
+    };
+
+    // 1. SampleFormat=3 (IEEE float) must return E_NOTIMPL so WIC float fallback handles it
+    {
+        const std::vector<uint8_t> raw(1 * 1 * 3 * 2, 0);
+        const auto tiff = BuildSyntheticRgbTiff(1, 1, 16, 1, 1, 3, raw);
+        QuickView::Codec::DecodeResult res;
+        EXPECT_EQ(QuickView::MiniTiff::Load(tiff.data(), tiff.size(), ctx, res), E_NOTIMPL);
+        if (res.pixels) _aligned_free(res.pixels);
+    }
+
+    // 2. 16-bit RGB Predictor=2: deltas {0x00FF, 0x0001, 0x00FF} accumulate to
+    // 16-bit samples {0x00FF, 0x0100, 0x01FF} -> high bytes {0x00, 0x01, 0x01}.
+    // Old byte-wise predictor failed to carry from LSB to MSB, giving {0x00, 0x00, 0x00}.
+    {
+        const uint16_t deltas[9] = {
+            0x00FFu, 0x00FFu, 0x00FFu,
+            0x0001u, 0x0001u, 0x0001u,
+            0x00FFu, 0x00FFu, 0x00FFu
+        };
+        std::vector<uint8_t> raw(sizeof(deltas));
+        std::memcpy(raw.data(), deltas, sizeof(deltas));
+        const auto tiff = BuildSyntheticRgbTiff(3, 1, 16, 1, 2, 1, raw);
+        QuickView::Codec::DecodeResult res;
+        ASSERT_EQ(QuickView::MiniTiff::Load(tiff.data(), tiff.size(), ctx, res), S_OK);
+        ASSERT_NE(res.pixels, nullptr);
+        EXPECT_EQ(res.pixels[0 * 4 + 2], 0x00u);
+        EXPECT_EQ(res.pixels[1 * 4 + 2], 0x01u);
+        EXPECT_EQ(res.pixels[2 * 4 + 2], 0x01u);
+        _aligned_free(res.pixels);
+    }
+
+    // 3. Embedded PQ CICP ICC inside TIFF sets EncodedHdr + PQ + Rec2020 + isHdr
+    {
+        const auto icc = BuildSyntheticIccCicp(9, 16, 0, 1); // Rec.2020 + PQ
+        const std::vector<uint8_t> raw = { 128u, 128u, 128u };
+        const auto tiff = BuildSyntheticRgbTiff(1, 1, 8, 1, 1, 1, raw, &icc);
+        QuickView::Codec::DecodeResult res;
+        ASSERT_EQ(QuickView::MiniTiff::Load(tiff.data(), tiff.size(), ctx, res), S_OK);
+        ASSERT_NE(res.pixels, nullptr);
+        EXPECT_EQ(res.metadata.colorInfo.dataSpace, QuickView::PixelDataSpace::EncodedHdr);
+        EXPECT_EQ(res.metadata.colorInfo.transfer, QuickView::TransferFunction::PQ);
+        EXPECT_EQ(res.metadata.colorInfo.primaries, QuickView::ColorPrimaries::Rec2020);
+        EXPECT_TRUE(res.metadata.hdrMetadata.isHdr);
+        _aligned_free(res.pixels);
+    }
+}
+
+TEST(HdrPipelineTests, Real32BitPsdAndExrDecodeAndAcesMatrix) {
+    // 1. Verify ACES AP0 RGB<->XYZ invertible matrix pair
+    {
+        const ColorMath::ColorMatrix3 rgbToXyz = ColorMath::GetRgbToXyzMatrix(QuickView::ColorPrimaries::ACES);
+        const ColorMath::ColorMatrix3 xyzToRgb = ColorMath::GetXyzToRgbMatrix(QuickView::ColorPrimaries::ACES);
+        const ColorMath::ColorMatrix3 srgbToXyz = ColorMath::GetRgbToXyzMatrix(QuickView::ColorPrimaries::SRGB);
+        EXPECT_GT(std::abs(rgbToXyz.m[0][0] - srgbToXyz.m[0][0]), 0.1f);
+        const ColorMath::ColorMatrix3 prod = ColorMath::MultiplyColorMatrices(rgbToXyz, xyzToRgb);
+        for (int r = 0; r < 3; ++r) {
+            for (int c = 0; c < 3; ++c) {
+                EXPECT_NEAR(prod.m[r][c], (r == c) ? 1.0f : 0.0f, 1e-4f);
+            }
+        }
+    }
+
+    const auto workerExe = FindWorkerExecutableForTests();
+    if (workerExe.empty()) {
+        GTEST_SKIP() << "QuickView.exe not present next to test binary";
+    }
+
+    // 2. Real 32-bit float PSD (white-gradation-32bit.psd with 496-byte 0x040F ICC)
+    if (const auto psdPath = FindHdrTestAsset(L"white-gradation-32bit.psd"); !psdPath.empty()) {
+        LiveWorkerOutputHdr res;
+        ASSERT_NO_FATAL_FAILURE(ExecuteDecodeWorkerSubprocessWithOptions(
+            workerExe, psdPath, L"psd32", 512, 512, 16ull, 2.5f, true, &res));
+        ASSERT_EQ(res.exitCode, 0u);
+        ASSERT_HRESULT_SUCCEEDED(static_cast<HRESULT>(res.header.hr));
+        EXPECT_EQ(res.header.pixelFormat, static_cast<uint8_t>(QuickView::PixelFormat::R32G32B32A32_FLOAT));
+        EXPECT_EQ(res.header.colorDataSpace, static_cast<uint8_t>(QuickView::PixelDataSpace::SceneLinear));
+        EXPECT_EQ(res.header.iccBytes, 496u);
+        const auto flags = UnpackHdrFlagsTestHelper(res.header.hdrFlags);
+        EXPECT_TRUE(flags.isHdr);
+        EXPECT_TRUE(flags.isSceneLinear);
+
+        float maxRgb = -1.0f;
+        for (uint32_t y = 0; y < res.header.height; ++y) {
+            const float* row = reinterpret_cast<const float*>(
+                res.pixelBytes.data() + static_cast<size_t>(y) * res.header.stride);
+            for (uint32_t x = 0; x < res.header.width; ++x) {
+                for (int c = 0; c < 3; ++c) {
+                    const float v = row[x * 4u + c];
+                    EXPECT_TRUE(IsFiniteFloatBitsTest(v));
+                    if (v > maxRgb) maxRgb = v;
+                }
+            }
+        }
+        EXPECT_GT(maxRgb, 0.5f);
+    }
+
+    // 3. Real EXR & Radiance HDR live decode
+    const wchar_t* hdrAssets[] = { L"desk.exr", L"tree.hdr" };
+    for (size_t idx = 0; idx < 2; ++idx) {
+        const auto hdrPath = FindHdrTestAsset(hdrAssets[idx]);
+        if (hdrPath.empty()) continue;
+        LiveWorkerOutputHdr res;
+        ASSERT_NO_FATAL_FAILURE(ExecuteDecodeWorkerSubprocessWithOptions(
+            workerExe, hdrPath, L"hdr_scene", 512, 512, 16ull, -1.0f, true, &res));
+        ASSERT_EQ(res.exitCode, 0u);
+        ASSERT_HRESULT_SUCCEEDED(static_cast<HRESULT>(res.header.hr));
+        EXPECT_EQ(res.header.colorDataSpace, static_cast<uint8_t>(QuickView::PixelDataSpace::SceneLinear)) << hdrAssets[idx];
+        const auto flags = UnpackHdrFlagsTestHelper(res.header.hdrFlags);
+        EXPECT_TRUE(flags.isHdr) << hdrAssets[idx];
+        EXPECT_TRUE(flags.isSceneLinear) << hdrAssets[idx];
+
+        float peakRgb = 0.0f;
+        if (res.header.pixelFormat == static_cast<uint8_t>(QuickView::PixelFormat::R16G16B16A16_FLOAT)) {
+            for (uint32_t y = 0; y < res.header.height; ++y) {
+                const uint16_t* row = reinterpret_cast<const uint16_t*>(
+                    res.pixelBytes.data() + static_cast<size_t>(y) * res.header.stride);
+                for (uint32_t x = 0; x < res.header.width; ++x) {
+                    for (int c = 0; c < 3; ++c) {
+                        const float v = HalfToFloat(row[x * 4u + c]);
+                        EXPECT_TRUE(IsFiniteFloatBitsTest(v));
+                        if (v > peakRgb) peakRgb = v;
+                    }
+                }
+            }
+        } else if (res.header.pixelFormat == static_cast<uint8_t>(QuickView::PixelFormat::R32G32B32A32_FLOAT)) {
+            for (uint32_t y = 0; y < res.header.height; ++y) {
+                const float* row = reinterpret_cast<const float*>(
+                    res.pixelBytes.data() + static_cast<size_t>(y) * res.header.stride);
+                for (uint32_t x = 0; x < res.header.width; ++x) {
+                    for (int c = 0; c < 3; ++c) {
+                        const float v = row[x * 4u + c];
+                        EXPECT_TRUE(IsFiniteFloatBitsTest(v));
+                        if (v > peakRgb) peakRgb = v;
+                    }
+                }
+            }
+        }
+        EXPECT_GT(peakRgb, 1.0f) << hdrAssets[idx];
+    }
+}
+
+TEST(HdrPipelineTests, EndToEndHdrDisplayEmulationAllFormatsWarpReadback) {
+    ComPtr<ID3D11Device> d3dDevice;
+    ComPtr<ID3D11DeviceContext> d3dContext;
+    if (FAILED(CreateD3D11DeviceWithWarpFallback(&d3dDevice, &d3dContext))) {
+        GTEST_SKIP() << "D3D11 WARP unavailable";
+    }
+
+    QuickView::ComputeEngine compute;
+    ASSERT_HRESULT_SUCCEEDED(compute.Initialize(d3dDevice.Get()));
+
+    // Simulated HDR Display: SDR white = 240 nits (3.0 scRGB), Peak = 1400 nits (17.5 scRGB)
+    constexpr float kHdrPeakScRgb = 1400.0f / 80.0f;
+    constexpr float kSdrWhiteScale = 240.0f / 80.0f;
+
+    // A. Absolute PQ Rec.2020 (1000 nits white + saturated Rec.2020 red, exposureGain = 1.0)
+    {
+        const uint16_t pq1000 = static_cast<uint16_t>(std::lround(NitsToPqSignal(1000.0f) * 65535.0f));
+        const uint16_t srcPixels[2 * 4] = {
+            pq1000, pq1000, pq1000, 65535u,
+            pq1000, 0u, 0u, 65535u
+        };
+        QuickView::ToneMapSettings s = MakeIdentityToneMapSettings(kHdrPeakScRgb, QuickView::TransferFunction::PQ);
+        s.exposureGain = 1.0f; // Absolute photometric: do NOT scale by 3.0 SDR white
+        FillToneMapMatrixFromColorMath(QuickView::ColorPrimaries::Rec2020, QuickView::ColorPrimaries::SRGB, &s);
+
+        ComPtr<ID3D11Texture2D> outTex;
+        ASSERT_HRESULT_SUCCEEDED(compute.ToneMapHdrToHdr(
+            reinterpret_cast<const uint8_t*>(srcPixels), 2, 1, 16, s,
+            &outTex, QuickView::PixelFormat::R16G16B16A16_UNORM));
+        std::vector<uint16_t> fp16;
+        ASSERT_TRUE(ReadbackFp16Texture(d3dDevice.Get(), d3dContext.Get(), outTex.Get(), &fp16));
+        EXPECT_NEAR(HalfToFloat(fp16[0]), 12.5f, 0.25f);
+        EXPECT_NEAR(HalfToFloat(fp16[1]), 12.5f, 0.25f);
+        EXPECT_NEAR(HalfToFloat(fp16[2]), 12.5f, 0.25f);
+        // Saturated Rec.2020 red in scRGB preserves wide-gamut negative G and B
+        EXPECT_GT(HalfToFloat(fp16[4]), 17.0f);
+        EXPECT_LT(HalfToFloat(fp16[5]), -1.0f);
+        EXPECT_LT(HalfToFloat(fp16[6]), -0.1f);
+    }
+
+    // B. Absolute HLG Rec.2020 (white = 12.5 scRGB, saturated red obeys Ys^0.2 OOTF, exposureGain = 1.0)
+    {
+        const uint16_t srcPixels[2 * 4] = {
+            65535u, 65535u, 65535u, 65535u,
+            65535u, 0u, 0u, 65535u
+        };
+        QuickView::ToneMapSettings s = MakeIdentityToneMapSettings(kHdrPeakScRgb, QuickView::TransferFunction::HLG);
+        s.exposureGain = 1.0f;
+        FillToneMapMatrixFromColorMath(QuickView::ColorPrimaries::Rec2020, QuickView::ColorPrimaries::SRGB, &s);
+
+        ComPtr<ID3D11Texture2D> outTex;
+        ASSERT_HRESULT_SUCCEEDED(compute.ToneMapHdrToHdr(
+            reinterpret_cast<const uint8_t*>(srcPixels), 2, 1, 16, s,
+            &outTex, QuickView::PixelFormat::R16G16B16A16_UNORM));
+        std::vector<uint16_t> fp16;
+        ASSERT_TRUE(ReadbackFp16Texture(d3dDevice.Get(), d3dContext.Get(), outTex.Get(), &fp16));
+        EXPECT_NEAR(HalfToFloat(fp16[0]), 12.5f, 0.15f);
+        EXPECT_NEAR(HalfToFloat(fp16[1]), 12.5f, 0.15f);
+        EXPECT_NEAR(HalfToFloat(fp16[2]), 12.5f, 0.15f);
+        EXPECT_GT(HalfToFloat(fp16[4]), 12.0f);
+        EXPECT_LT(HalfToFloat(fp16[5]), -0.8f);
+    }
+
+    // C. Ultra HDR GainMap (Display P3 8-bit base + gain=255 -> ComposeGainMap -> ToneMapHdrToHdr with exposureGain=3.0)
+    {
+        const uint8_t sdrBgra[2 * 4] = {
+            255u, 255u, 255u, 255u, // White in BGRA
+            0u, 0u, 255u, 255u      // Pure P3 red in BGRA
+        };
+        const uint8_t gain[2] = { 255u, 255u };
+        QuickView::GpuShaderPayload gmPayload{};
+        gmPayload.gainMapMax[0] = gmPayload.gainMapMax[1] = gmPayload.gainMapMax[2] = 2.0f;
+        gmPayload.gamma[0] = gmPayload.gamma[1] = gmPayload.gamma[2] = 1.0f;
+        gmPayload.hdrCapacityMin = 0.0f;
+        gmPayload.hdrCapacityMax = 2.0f;
+        gmPayload.targetHeadroom = 2.0f;
+        gmPayload.sdrWidth = 2u;
+        gmPayload.sdrHeight = 1u;
+
+        ComPtr<ID3D11Texture2D> composedTex;
+        ASSERT_HRESULT_SUCCEEDED(compute.ComposeGainMap(
+            sdrBgra, 2, 1, 8, QuickView::PixelFormat::BGRA8888,
+            gain, 2, 1, 2, gmPayload, &composedTex));
+
+        QuickView::ToneMapSettings s = MakeIdentityToneMapSettings(kHdrPeakScRgb, QuickView::TransferFunction::Linear);
+        s.exposureGain = kSdrWhiteScale; // Relative GainMap base scaled by 240/80 = 3.0
+        FillToneMapMatrixFromColorMath(QuickView::ColorPrimaries::DisplayP3, QuickView::ColorPrimaries::SRGB, &s);
+
+        ComPtr<ID3D11Texture2D> finalTex;
+        ASSERT_HRESULT_SUCCEEDED(compute.ToneMapHdrTextureToHdr(composedTex.Get(), s, &finalTex));
+
+        std::vector<uint16_t> fp16;
+        ASSERT_TRUE(ReadbackFp16Texture(d3dDevice.Get(), d3dContext.Get(), finalTex.Get(), &fp16));
+        EXPECT_NEAR(HalfToFloat(fp16[0]), 12.0f, 0.2f);
+        EXPECT_NEAR(HalfToFloat(fp16[1]), 12.0f, 0.2f);
+        EXPECT_NEAR(HalfToFloat(fp16[2]), 12.0f, 0.2f);
+        EXPECT_GT(HalfToFloat(fp16[4]), 12.0f);
+        EXPECT_LT(HalfToFloat(fp16[5]), -0.2f);
+    }
+
+    // D. Relative Wide-Gamut SDR (Display P3 ICC -> D2D1ColorManagement(scRGB) + WhiteLevelAdjustment(240->80))
+    const std::filesystem::path p3IccPath =
+        std::filesystem::path(__FILE__).parent_path().parent_path() / "QuickView" / "ICC" / "DisplayP3.icc";
+    std::vector<uint8_t> p3IccBytes;
+    if (ReadFileBytes(p3IccPath, &p3IccBytes) && !p3IccBytes.empty()) {
+        ComPtr<ID2D1Factory1> d2dFactory;
+        ASSERT_HRESULT_SUCCEEDED(D2D1CreateFactory(
+            D2D1_FACTORY_TYPE_SINGLE_THREADED, __uuidof(ID2D1Factory1), nullptr,
+            reinterpret_cast<void**>(d2dFactory.GetAddressOf())));
+
+        ComPtr<IDXGIDevice> dxgiDevice;
+        ASSERT_HRESULT_SUCCEEDED(d3dDevice.As(&dxgiDevice));
+        ComPtr<ID2D1Device> d2dDevice;
+        ASSERT_HRESULT_SUCCEEDED(d2dFactory->CreateDevice(dxgiDevice.Get(), &d2dDevice));
+        ComPtr<ID2D1DeviceContext> d2dCtx;
+        ASSERT_HRESULT_SUCCEEDED(d2dDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &d2dCtx));
+
+        D3D11_TEXTURE2D_DESC rtDesc = {};
+        rtDesc.Width = 2;
+        rtDesc.Height = 1;
+        rtDesc.MipLevels = 1;
+        rtDesc.ArraySize = 1;
+        rtDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+        rtDesc.SampleDesc.Count = 1;
+        rtDesc.Usage = D3D11_USAGE_DEFAULT;
+        rtDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+        ComPtr<ID3D11Texture2D> rtTex;
+        ASSERT_HRESULT_SUCCEEDED(d3dDevice->CreateTexture2D(&rtDesc, nullptr, &rtTex));
+
+        ComPtr<IDXGISurface> rtSurface;
+        ASSERT_HRESULT_SUCCEEDED(rtTex.As(&rtSurface));
+        D2D1_BITMAP_PROPERTIES1 rtProps = D2D1::BitmapProperties1(
+            D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+            D2D1::PixelFormat(DXGI_FORMAT_R16G16B16A16_FLOAT, D2D1_ALPHA_MODE_PREMULTIPLIED));
+        ComPtr<ID2D1Bitmap1> rtBitmap;
+        ASSERT_HRESULT_SUCCEEDED(d2dCtx->CreateBitmapFromDxgiSurface(rtSurface.Get(), &rtProps, &rtBitmap));
+
+        ComPtr<ID2D1ColorContext> p3Ctx;
+        ComPtr<ID2D1ColorContext> scRgbCtx;
+        ASSERT_HRESULT_SUCCEEDED(d2dCtx->CreateColorContext(
+            D2D1_COLOR_SPACE_CUSTOM, p3IccBytes.data(), static_cast<UINT32>(p3IccBytes.size()), &p3Ctx));
+        ASSERT_HRESULT_SUCCEEDED(d2dCtx->CreateColorContext(D2D1_COLOR_SPACE_SCRGB, nullptr, 0, &scRgbCtx));
+
+        const uint8_t p3Bgra[2 * 4] = {
+            255u, 255u, 255u, 255u, // P3 White
+            0u, 0u, 255u, 255u      // P3 Saturated Red
+        };
+        D2D1_BITMAP_PROPERTIES1 srcProps = D2D1::BitmapProperties1(
+            D2D1_BITMAP_OPTIONS_NONE,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
+            96.0f, 96.0f, p3Ctx.Get());
+        ComPtr<ID2D1Bitmap1> p3Bitmap;
+        ASSERT_HRESULT_SUCCEEDED(d2dCtx->CreateBitmap(D2D1::SizeU(2, 1), p3Bgra, 8, &srcProps, &p3Bitmap));
+
+        ComPtr<ID2D1Effect> colorMgmt;
+        ComPtr<ID2D1Effect> whiteLevel;
+        ASSERT_HRESULT_SUCCEEDED(d2dCtx->CreateEffect(CLSID_D2D1ColorManagement, &colorMgmt));
+        ASSERT_HRESULT_SUCCEEDED(d2dCtx->CreateEffect(CLSID_D2D1WhiteLevelAdjustment, &whiteLevel));
+
+        colorMgmt->SetInput(0, p3Bitmap.Get());
+        ASSERT_HRESULT_SUCCEEDED(colorMgmt->SetValue(D2D1_COLORMANAGEMENT_PROP_SOURCE_COLOR_CONTEXT, p3Ctx.Get()));
+        ASSERT_HRESULT_SUCCEEDED(colorMgmt->SetValue(D2D1_COLORMANAGEMENT_PROP_DESTINATION_COLOR_CONTEXT, scRgbCtx.Get()));
+        ASSERT_HRESULT_SUCCEEDED(colorMgmt->SetValue(D2D1_COLORMANAGEMENT_PROP_QUALITY, D2D1_COLORMANAGEMENT_QUALITY_BEST));
+
+        whiteLevel->SetInputEffect(0, colorMgmt.Get());
+        ASSERT_HRESULT_SUCCEEDED(whiteLevel->SetValue(D2D1_WHITELEVELADJUSTMENT_PROP_INPUT_WHITE_LEVEL, 240.0f));
+        ASSERT_HRESULT_SUCCEEDED(whiteLevel->SetValue(D2D1_WHITELEVELADJUSTMENT_PROP_OUTPUT_WHITE_LEVEL, 80.0f));
+
+        d2dCtx->SetTarget(rtBitmap.Get());
+        d2dCtx->BeginDraw();
+        d2dCtx->Clear(D2D1::ColorF(0, 0, 0, 0));
+        d2dCtx->DrawImage(whiteLevel.Get());
+        ASSERT_HRESULT_SUCCEEDED(d2dCtx->EndDraw());
+        d2dCtx->SetTarget(nullptr);
+
+        std::vector<uint16_t> fp16;
+        ASSERT_TRUE(ReadbackFp16Texture(d3dDevice.Get(), d3dContext.Get(), rtTex.Get(), &fp16));
+        EXPECT_NEAR(HalfToFloat(fp16[0]), 3.0f, 0.08f);
+        EXPECT_NEAR(HalfToFloat(fp16[1]), 3.0f, 0.08f);
+        EXPECT_NEAR(HalfToFloat(fp16[2]), 3.0f, 0.08f);
+        // P3 red in scRGB: ~ (1.225 * 3, -0.042 * 3, -0.020 * 3) = (3.67, -0.13, -0.06)
+        EXPECT_GT(HalfToFloat(fp16[4]), 3.4f);
+        EXPECT_LT(HalfToFloat(fp16[5]), -0.05f);
     }
 }

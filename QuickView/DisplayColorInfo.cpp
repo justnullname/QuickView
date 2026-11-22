@@ -12,6 +12,8 @@ extern AppConfig g_config;
 
 static constexpr const char* CURRENT_MODULE = "DisplayColorInfo";
 
+#include <array>
+#include <mutex>
 #include <vector>
 #include <windows.graphics.display.interop.h>
 #include <windows.graphics.display.h>
@@ -143,12 +145,27 @@ float QueryIccPeakLuminance(const std::wstring& gdiDeviceName) {
 
 } // namespace
     
-static float s_cachedHardwarePeakNits = -1.0f;
-static float s_cachedSdrWhiteLevel = -1.0f;
+namespace {
+
+struct MonitorLuminanceCacheEntry {
+    HMONITOR monitor = nullptr;
+    float maxLuminanceNits = -1.0f;
+    float sdrWhiteLevelNits = 80.0f;
+    bool populated = false;
+};
+
+constexpr size_t kMaxCachedMonitors = 16;
+std::mutex s_monitorCacheMutex;
+std::array<MonitorLuminanceCacheEntry, kMaxCachedMonitors> s_monitorCache{};
+size_t s_monitorCacheCount = 0;
+size_t s_monitorCacheNextOverwrite = 0;
+
+} // namespace
 
 void DisplayColorInfo::InvalidateHardwareCache() {
-    s_cachedHardwarePeakNits = -1.0f;
-    s_cachedSdrWhiteLevel = -1.0f;
+    std::lock_guard<std::mutex> lock(s_monitorCacheMutex);
+    s_monitorCacheCount = 0;
+    s_monitorCacheNextOverwrite = 0;
 }
 
 float DisplayColorState::GetEffectivePeakNits(float peakNitsOverride) const {
@@ -208,8 +225,12 @@ bool DisplayColorInfo::Refresh(HWND hwnd, bool forceHdrSimulation) {
 
     const bool changed =
         m_state.monitor != nextState.monitor ||
+        m_state.isValid != nextState.isValid ||
         m_state.advancedColorActive != nextState.advancedColorActive ||
         m_state.advancedColorSupported != nextState.advancedColorSupported ||
+        m_state.wideColorActive != nextState.wideColorActive ||
+        m_state.highDynamicRangeUserEnabled != nextState.highDynamicRangeUserEnabled ||
+        m_state.wideColorUserEnabled != nextState.wideColorUserEnabled ||
         m_state.colorSpace != nextState.colorSpace ||
         std::abs(m_state.redPrimary[0] - nextState.redPrimary[0]) > 0.0001f ||
         std::abs(m_state.redPrimary[1] - nextState.redPrimary[1]) > 0.0001f ||
@@ -357,10 +378,15 @@ bool DisplayColorInfo::QueryForMonitor(HMONITOR monitor, DisplayColorState* stat
             // [Logging] Capture Level 3 detection (Raw DXGI/EDID)
             float dxgiPeak = stateOut->maxLuminanceNits;
 
-            if (s_cachedHardwarePeakNits > 0.0f) {
-                stateOut->maxLuminanceNits = s_cachedHardwarePeakNits;
-                stateOut->sdrWhiteLevelNits = s_cachedSdrWhiteLevel;
-                return true;
+            {
+                std::lock_guard<std::mutex> lock(s_monitorCacheMutex);
+                for (size_t i = 0; i < s_monitorCacheCount; ++i) {
+                    if (s_monitorCache[i].monitor == monitor && s_monitorCache[i].populated) {
+                        stateOut->maxLuminanceNits = s_monitorCache[i].maxLuminanceNits;
+                        stateOut->sdrWhiteLevelNits = s_monitorCache[i].sdrWhiteLevelNits;
+                        return true;
+                    }
+                }
             }
 
             // Get accurate Peak Luminance and SDR white via a multi-tier fallback pipeline.
@@ -396,9 +422,31 @@ bool DisplayColorInfo::QueryForMonitor(HMONITOR monitor, DisplayColorState* stat
             } else {
                 stateOut->sdrWhiteLevelNits = QuerySdrWhiteLevelNits(stateOut->gdiDeviceName);
             }
-            
-            s_cachedHardwarePeakNits = stateOut->maxLuminanceNits;
-            s_cachedSdrWhiteLevel = stateOut->sdrWhiteLevelNits;
+
+            {
+                std::lock_guard<std::mutex> lock(s_monitorCacheMutex);
+                size_t targetIdx = s_monitorCacheCount;
+                for (size_t i = 0; i < s_monitorCacheCount; ++i) {
+                    if (s_monitorCache[i].monitor == monitor) {
+                        targetIdx = i;
+                        break;
+                    }
+                }
+                if (targetIdx == s_monitorCacheCount) {
+                    if (s_monitorCacheCount < kMaxCachedMonitors) {
+                        ++s_monitorCacheCount;
+                    } else {
+                        targetIdx = s_monitorCacheNextOverwrite;
+                        s_monitorCacheNextOverwrite = (s_monitorCacheNextOverwrite + 1) % kMaxCachedMonitors;
+                    }
+                }
+                s_monitorCache[targetIdx] = {
+                    monitor,
+                    stateOut->maxLuminanceNits,
+                    stateOut->sdrWhiteLevelNits,
+                    true
+                };
+            }
 
             return true;
         }

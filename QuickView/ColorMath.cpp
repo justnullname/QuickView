@@ -115,6 +115,10 @@ ColorMatrix3 GetRgbToXyzMatrix(QuickView::ColorPrimaries primaries) {
         return {{{0.797760f, 0.135185f, 0.031349f},
                  {0.288071f, 0.711844f, 0.000085f},
                  {0.000000f, 0.000000f, 0.825210f}}};
+    case QuickView::ColorPrimaries::ACES:
+        return {{{0.938327f, -0.004436f, 0.016579f},
+                 {0.337391f, 0.729515f, -0.066906f},
+                 {0.001171f, -0.003700f, 1.091360f}}};
     case QuickView::ColorPrimaries::SRGB:
     case QuickView::ColorPrimaries::Unknown:
     default:
@@ -142,6 +146,10 @@ ColorMatrix3 GetXyzToRgbMatrix(QuickView::ColorPrimaries primaries) {
         return {{{1.345943f, -0.255608f, -0.051111f},
                  {-0.544599f, 1.508168f, 0.020536f},
                  {0.000000f, 0.000000f, 1.211812f}}};
+    case QuickView::ColorPrimaries::ACES:
+        return {{{1.063449f, 0.006387f, -0.015764f},
+                 {-0.492089f, 1.368245f, 0.091356f},
+                 {-0.002809f, 0.004632f, 0.916615f}}};
     case QuickView::ColorPrimaries::SRGB:
     case QuickView::ColorPrimaries::Unknown:
     default:
@@ -325,6 +333,12 @@ inline float HalfBitsToFloat(uint16_t h) noexcept {
     return f;
 }
 
+inline bool IsFiniteFloatBits(float v) noexcept {
+    uint32_t bits = 0;
+    std::memcpy(&bits, &v, sizeof(bits));
+    return (bits & 0x7F800000u) != 0x7F800000u;
+}
+
 template <typename LumFn>
 float ScanLinearLuminancePeak(const QuickView::RawImageFrame& frame, float peakPercentile, LumFn&& pixelLum) {
     if (peakPercentile < 100.0f) {
@@ -334,7 +348,7 @@ float ScanLinearLuminancePeak(const QuickView::RawImageFrame& frame, float peakP
             const uint8_t* row = frame.pixels + static_cast<size_t>(y) * frame.stride;
             for (int x = 0; x < frame.width; ++x) {
                 const float lum = pixelLum(row, x);
-                if (!std::isfinite(lum) || lum < 0.0f) continue;
+                if (!IsFiniteFloatBits(lum) || lum < 0.0f) continue;
                 uint32_t bits = 0;
                 std::memcpy(&bits, &lum, sizeof(bits));
                 if (bits <= 0x7FFFFFFFu) {
@@ -368,7 +382,7 @@ float ScanLinearLuminancePeak(const QuickView::RawImageFrame& frame, float peakP
         const uint8_t* row = frame.pixels + static_cast<size_t>(y) * frame.stride;
         for (int x = 0; x < frame.width; ++x) {
             const float lum = pixelLum(row, x);
-            if (std::isfinite(lum) && lum > maxLum) {
+            if (IsFiniteFloatBits(lum) && lum > maxLum) {
                 maxLum = lum;
             }
         }
@@ -383,7 +397,7 @@ float ScanLinearLuminanceAverage(const QuickView::RawImageFrame& frame, LumFn&& 
         const uint8_t* row = frame.pixels + static_cast<size_t>(y) * frame.stride;
         for (int x = 0; x < frame.width; ++x) {
             const float lum = pixelLum(row, x);
-            if (std::isfinite(lum) && lum > 0.0f) {
+            if (IsFiniteFloatBits(lum) && lum > 0.0f) {
                 totalLum += static_cast<double>(lum);
             }
         }
@@ -410,6 +424,40 @@ float DispatchLinearLuminanceScan(
     ScanFn&& scan) {
     const bool isPq = (transfer == QuickView::TransferFunction::PQ);
     const bool isHlg = (transfer == QuickView::TransferFunction::HLG);
+
+    if (frame.format == QuickView::PixelFormat::BGRA8888 ||
+        frame.format == QuickView::PixelFormat::BGRX8888 ||
+        frame.format == QuickView::PixelFormat::RGBA8888) {
+        const bool isBgra = (frame.format != QuickView::PixelFormat::RGBA8888);
+        const int c0 = isBgra ? 2 : 0;
+        const int c2 = isBgra ? 0 : 2;
+        if (isPq) {
+            const float* lut = GetPq16ToLinearScRgbLut();
+            return scan([lut, c0, c2](const uint8_t* row, int x) {
+                const uint8_t* p = row + static_cast<size_t>(x) * 4u;
+                return ComputeBt2020Luminance(
+                    lut[static_cast<size_t>(p[c0]) * 257u],
+                    lut[static_cast<size_t>(p[1]) * 257u],
+                    lut[static_cast<size_t>(p[c2]) * 257u]);
+            });
+        }
+        if (isHlg) {
+            const float* lut = GetHlg16ToSceneLinearLut();
+            return scan([lut, c0, c2](const uint8_t* row, int x) {
+                const uint8_t* p = row + static_cast<size_t>(x) * 4u;
+                return HlgOotfScRgb(
+                    lut[static_cast<size_t>(p[c0]) * 257u],
+                    lut[static_cast<size_t>(p[1]) * 257u],
+                    lut[static_cast<size_t>(p[c2]) * 257u]);
+            });
+        }
+        constexpr float kInv255 = 1.0f / 255.0f;
+        return scan([c0, c2](const uint8_t* row, int x) {
+            const uint8_t* p = row + static_cast<size_t>(x) * 4u;
+            return ComputeBt2020Luminance(
+                p[c0] * kInv255, p[1] * kInv255, p[c2] * kInv255);
+        });
+    }
 
     if (frame.format == QuickView::PixelFormat::R16G16B16A16_UNORM) {
         if (isPq) {
@@ -455,9 +503,9 @@ float DispatchLinearLuminanceScan(
         return scan([](const uint8_t* row, int x) {
             const auto* p = reinterpret_cast<const uint16_t*>(row) + static_cast<size_t>(x) * 4u;
             return ComputeBt2020Luminance(
-                (std::max)(0.0f, HalfBitsToFloat(p[0])),
-                (std::max)(0.0f, HalfBitsToFloat(p[1])),
-                (std::max)(0.0f, HalfBitsToFloat(p[2])));
+                HalfBitsToFloat(p[0]),
+                HalfBitsToFloat(p[1]),
+                HalfBitsToFloat(p[2]));
         });
     }
 
@@ -482,10 +530,7 @@ float DispatchLinearLuminanceScan(
         }
         return scan([](const uint8_t* row, int x) {
             const auto* p = reinterpret_cast<const float*>(row) + static_cast<size_t>(x) * 4u;
-            return ComputeBt2020Luminance(
-                (std::max)(0.0f, p[0]),
-                (std::max)(0.0f, p[1]),
-                (std::max)(0.0f, p[2]));
+            return ComputeBt2020Luminance(p[0], p[1], p[2]);
         });
     }
 
@@ -500,7 +545,7 @@ float PqToLinearScRgb(float v) {
     constexpr float kC1 = 3424.0f / 4096.0f;
     constexpr float kC2 = (2413.0f / 4096.0f) * 32.0f;
     constexpr float kC3 = (2392.0f / 4096.0f) * 32.0f;
-    if (!std::isfinite(v)) return 0.0f;
+    if (!IsFiniteFloatBits(v)) return 0.0f;
     v = std::clamp(v, 0.0f, 1.0f);
     if (v <= 0.0f) return 0.0f;
     const float vp = std::pow(v, 1.0f / kM2);
@@ -515,7 +560,7 @@ float LinearScRgbToPq(float l) {
     constexpr float kC1 = 3424.0f / 4096.0f;
     constexpr float kC2 = (2413.0f / 4096.0f) * 32.0f;
     constexpr float kC3 = (2392.0f / 4096.0f) * 32.0f;
-    if (!std::isfinite(l) || l <= 0.0f) return 0.0f;
+    if (!IsFiniteFloatBits(l) || l <= 0.0f) return 0.0f;
     const float norm = (std::min)(l / 125.0f, 1.0f);
     const float lp = std::pow(norm, kM1);
     return std::pow((kC1 + kC2 * lp) / (1.0f + kC3 * lp), kM2);
@@ -525,7 +570,7 @@ float HlgChannelInverseOetf(float v) {
     constexpr float kA = 0.17883277f;
     constexpr float kB = 0.28466892f;
     constexpr float kC = 0.55991073f;
-    if (!std::isfinite(v)) return 0.0f;
+    if (!IsFiniteFloatBits(v)) return 0.0f;
     v = std::clamp(v, 0.0f, 1.0f);
     if (v <= 0.5f) {
         return (v * v) / 3.0f;

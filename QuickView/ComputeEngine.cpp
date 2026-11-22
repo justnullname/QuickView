@@ -439,6 +439,28 @@ HRESULT ComputeEngine::DispatchGamutMaskLut(
     return S_OK;
 }
 
+namespace {
+
+DXGI_FORMAT ToDxgiToneMapSrcFormat(PixelFormat fmt) noexcept {
+    switch (fmt) {
+    case PixelFormat::BGRA8888:
+        return DXGI_FORMAT_B8G8R8A8_UNORM;
+    case PixelFormat::BGRX8888:
+        return DXGI_FORMAT_B8G8R8X8_UNORM;
+    case PixelFormat::RGBA8888:
+        return DXGI_FORMAT_R8G8B8A8_UNORM;
+    case PixelFormat::R16G16B16A16_UNORM:
+        return DXGI_FORMAT_R16G16B16A16_UNORM;
+    case PixelFormat::R16G16B16A16_FLOAT:
+        return DXGI_FORMAT_R16G16B16A16_FLOAT;
+    case PixelFormat::R32G32B32A32_FLOAT:
+    default:
+        return DXGI_FORMAT_R32G32B32A32_FLOAT;
+    }
+}
+
+} // namespace
+
 HRESULT ComputeEngine::ToneMapHdrToSdr(const uint8_t* srcPixels, int width, int height, int stride, const ToneMapSettings& settings, ID3D11Texture2D** outTexture, PixelFormat srcFormat) {
     if (!m_valid || !srcPixels || width <= 0 || height <= 0 || !outTexture) return E_INVALIDARG;
     std::lock_guard<std::recursive_mutex> ctxLock(ContextMutex());
@@ -448,8 +470,7 @@ HRESULT ComputeEngine::ToneMapHdrToSdr(const uint8_t* srcPixels, int width, int 
     srcDesc.Height = static_cast<UINT>(height);
     srcDesc.MipLevels = 1;
     srcDesc.ArraySize = 1;
-    srcDesc.Format = srcFormat == PixelFormat::R16G16B16A16_UNORM ? DXGI_FORMAT_R16G16B16A16_UNORM : 
-                     (srcFormat == PixelFormat::R16G16B16A16_FLOAT ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R32G32B32A32_FLOAT);
+    srcDesc.Format = ToDxgiToneMapSrcFormat(srcFormat);
     srcDesc.SampleDesc.Count = 1;
     srcDesc.Usage = D3D11_USAGE_IMMUTABLE;
     srcDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
@@ -534,8 +555,7 @@ HRESULT ComputeEngine::ToneMapHdrToHdr(const uint8_t* srcPixels, int width, int 
     srcDesc.Height = static_cast<UINT>(height);
     srcDesc.MipLevels = 1;
     srcDesc.ArraySize = 1;
-    srcDesc.Format = srcFormat == PixelFormat::R16G16B16A16_UNORM ? DXGI_FORMAT_R16G16B16A16_UNORM : 
-                     (srcFormat == PixelFormat::R16G16B16A16_FLOAT ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R32G32B32A32_FLOAT);
+    srcDesc.Format = ToDxgiToneMapSrcFormat(srcFormat);
     srcDesc.SampleDesc.Count = 1;
     srcDesc.Usage = D3D11_USAGE_IMMUTABLE;
     srcDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
@@ -769,7 +789,7 @@ HRESULT ComputeEngine::ComposeGainMap(
     sdrDesc.Height = (UINT)sdrH;
     sdrDesc.MipLevels = 1;
     sdrDesc.ArraySize = 1;
-    sdrDesc.Format = (sdrFormat == PixelFormat::R32G32B32A32_FLOAT) ? DXGI_FORMAT_R32G32B32A32_FLOAT : DXGI_FORMAT_B8G8R8A8_UNORM;
+    sdrDesc.Format = ToDxgiToneMapSrcFormat(sdrFormat);
     sdrDesc.SampleDesc.Count = 1;
     sdrDesc.Usage = D3D11_USAGE_IMMUTABLE;
     sdrDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
@@ -859,8 +879,11 @@ HRESULT QuickView::ComputeEngine::ComposeGainMap(
     D3D11_MAPPED_SUBRESOURCE mapped = {};
     if (SUCCEEDED(m_d3dContext->Map(m_gainMapConstantBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
         GpuShaderPayload safePayload = payload;
-        // The shader expects _pad6 to indicate if the source is float (1) or 8-bit (0)
-        safePayload._pad6 = (sdrDesc.Format == DXGI_FORMAT_R32G32B32A32_FLOAT) ? 1 : 0;
+        // The shader expects _pad6 (BaseIsLinear) to indicate linear float base (1) vs sRGB encoded base (0).
+        safePayload._pad6 = (sdrDesc.Format == DXGI_FORMAT_R32G32B32A32_FLOAT ||
+                             sdrDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT)
+                                ? 1
+                                : 0;
         memcpy(mapped.pData, &safePayload, sizeof(GpuShaderPayload));
         m_d3dContext->Unmap(m_gainMapConstantBuffer.Get(), 0);
     }

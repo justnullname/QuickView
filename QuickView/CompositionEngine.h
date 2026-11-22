@@ -138,7 +138,7 @@ public:
     UINT GetWidth() const { return m_width; }
     UINT GetHeight() const { return m_height; }
     bool IsAdvancedColor() const { return m_isAdvancedColor; }
-    void SetAdvancedColorEnabled(bool enabled) { m_allowAdvancedColor = enabled; }
+    bool SetAdvancedColorEnabled(bool enabled);
     const QuickView::DisplayColorState& GetDisplayColorState() const { return m_displayColorInfo.GetState(); }
     bool RefreshDisplayColorState(bool forceHdrSimulation = false);
     

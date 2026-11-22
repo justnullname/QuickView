@@ -154,7 +154,14 @@ void ImageEngine::CancelHeavyForSlot(PaneSlot targetSlot) {
 }
 
 void ImageEngine::SetTargetHdrHeadroomStops(float stops) {
-    m_targetHdrHeadroomStops.store(stops, std::memory_order_relaxed);
+    const float prevStops = m_targetHdrHeadroomStops.exchange(stops, std::memory_order_acq_rel);
+    const bool prevHdr = (prevStops > 0.01f);
+    const bool nextHdr = (stops > 0.01f);
+    const bool prevForcedOff = (prevStops == 0.0f);
+    const bool nextForcedOff = (stops == 0.0f);
+    if (prevHdr != nextHdr || prevForcedOff != nextForcedOff) {
+        InvalidateAllCache();
+    }
     if (m_heavyPool) {
         m_heavyPool->SetTargetHdrHeadroomStops(stops);
     }
@@ -1972,6 +1979,13 @@ void ImageEngine::InvalidateCache(const std::wstring& path) {
     if (m_mmf && (path.empty() || _wcsicmp(m_currentNavPath.c_str(), path.c_str()) == 0)) {
         m_mmf.reset();
     }
+}
+
+void ImageEngine::InvalidateAllCache() {
+    std::lock_guard lock(m_cacheMutex);
+    m_cache.clear();
+    m_lruOrder.clear();
+    m_currentCacheBytes = 0;
 }
 
 bool ImageEngine::IsTitanModeEnabled() const {

@@ -119,6 +119,7 @@ public:
 
     // [Fix] Invalidate specific cache entry (e.g. after Edit/Save)
     void InvalidateCache(const std::wstring& path);
+    void InvalidateAllCache();
 
     // [v9.0] Force Refresh Signal (Atomic One-Shot)
     void SetForceRefresh(bool force) { m_forceRefresh = force; }

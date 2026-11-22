@@ -18,7 +18,7 @@ extern OSDState g_osd;
 
 extern CompareView GetRightCompareView();
 extern int GetEffectiveExifOrientation(int orientation, const EditState& state);
-extern void DrawResourceIntoViewport(ID2D1DeviceContext* ctx, const ImageResource& res, int exifOrientation, const CompareView& view, const D2D1_RECT_F& viewport);
+extern void DrawResourceIntoViewport(ID2D1DeviceContext* ctx, const ImageResource& res, int exifOrientation, const CompareView& view, const D2D1_RECT_F& viewport, DXGI_FORMAT targetSurfaceFormat = DXGI_FORMAT_B8G8R8A8_UNORM, float targetSdrWhiteNits = 80.0f);
 extern FireAndForget LoadImageAsync(HWND hwnd, std::wstring path, bool showOSD = true, QuickView::BrowseDirection dir = QuickView::BrowseDirection::IDLE);
 extern void RequestRepaint(QuickView::PaintLayer layer);
 extern float ClampCompareRatio(float ratio);
@@ -388,6 +388,12 @@ bool CompareController::RenderComposite(HWND hwnd) {
         }
     }
 
+    const float rawSdrWhite = g_compEngine->GetDisplayColorState().sdrWhiteLevelNits;
+    const float sdrWhiteNits = (rawSdrWhite > 0.0f) ? rawSdrWhite : 80.0f;
+    const float uiWhite = (compareSurfaceFormat == DXGI_FORMAT_R16G16B16A16_FLOAT)
+        ? (std::max)(1.0f, sdrWhiteNits / 80.0f)
+        : 1.0f;
+
     const bool compareAlpha = GetPaneContext(PaneSlot::Primary).metadata.hasAlpha || GetPaneContext(PaneSlot::Left).metadata.hasAlpha;
     ID2D1DeviceContext* ctx = g_compEngine->BeginPendingUpdate(winW, winH, false, 0, 0, false, compareSurfaceFormat, compareAlpha);
     if (!ctx) return false;
@@ -420,8 +426,8 @@ bool CompareController::RenderComposite(HWND hwnd) {
         ComPtr<ID2D1SolidColorBrush> borderBrush;
         ComPtr<ID2D1SolidColorBrush> arrowBrush;
         if (FAILED(ctx->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.50f * opacity), &bgBrush))) return;
-        if (FAILED(ctx->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.85f * opacity), &borderBrush))) return;
-        if (FAILED(ctx->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f * opacity), &arrowBrush))) return;
+        if (FAILED(ctx->CreateSolidColorBrush(D2D1::ColorF(uiWhite, uiWhite, uiWhite, 0.85f * opacity), &borderBrush))) return;
+        if (FAILED(ctx->CreateSolidColorBrush(D2D1::ColorF(uiWhite, uiWhite, uiWhite, 0.95f * opacity), &arrowBrush))) return;
 
         D2D1_ELLIPSE ellipse = D2D1::Ellipse(D2D1::Point2F(splitX, centerY), radius, radius);
         ctx->FillEllipse(ellipse, bgBrush.Get());
@@ -455,16 +461,16 @@ bool CompareController::RenderComposite(HWND hwnd) {
 
         ctx->PushAxisAlignedClip(leftClip, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         int leftExif = GetEffectiveExifOrientation(GetPaneContext(PaneSlot::Left).view.ExifOrientation, GetPaneContext(PaneSlot::Left).editState);
-        DrawResourceIntoViewport(ctx, GetPaneContext(PaneSlot::Left).resource, leftExif, GetPaneContext(PaneSlot::Left).view, full);
+        DrawResourceIntoViewport(ctx, GetPaneContext(PaneSlot::Left).resource, leftExif, GetPaneContext(PaneSlot::Left).view, full, compareSurfaceFormat, sdrWhiteNits);
         ctx->PopAxisAlignedClip();
 
         ctx->PushAxisAlignedClip(rightClip, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         int rightExif = GetEffectiveExifOrientation(GetPaneContext(PaneSlot::Primary).view.ExifOrientation, GetPaneContext(PaneSlot::Primary).editState);
-        DrawResourceIntoViewport(ctx, GetPaneContext(PaneSlot::Primary).resource, rightExif, rightView, full);
+        DrawResourceIntoViewport(ctx, GetPaneContext(PaneSlot::Primary).resource, rightExif, rightView, full, compareSurfaceFormat, sdrWhiteNits);
         ctx->PopAxisAlignedClip();
 
         ComPtr<ID2D1SolidColorBrush> dividerBrush;
-        ctx->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.85f), &dividerBrush);
+        ctx->CreateSolidColorBrush(D2D1::ColorF(uiWhite, uiWhite, uiWhite, 0.85f), &dividerBrush);
         if (dividerBrush) {
             ctx->DrawLine(D2D1::Point2F(splitX, 0.0f), D2D1::Point2F(splitX, (float)winH), dividerBrush.Get(), 2.0f);
         }
@@ -475,11 +481,11 @@ bool CompareController::RenderComposite(HWND hwnd) {
         const D2D1_RECT_F rightVp = D2D1::RectF(splitX, 0.0f, (float)winW, (float)winH);
         int leftExif = GetEffectiveExifOrientation(GetPaneContext(PaneSlot::Left).view.ExifOrientation, GetPaneContext(PaneSlot::Left).editState);
         int rightExif = GetEffectiveExifOrientation(GetPaneContext(PaneSlot::Primary).view.ExifOrientation, GetPaneContext(PaneSlot::Primary).editState);
-        DrawResourceIntoViewport(ctx, GetPaneContext(PaneSlot::Left).resource, leftExif, GetPaneContext(PaneSlot::Left).view, leftVp);
-        DrawResourceIntoViewport(ctx, GetPaneContext(PaneSlot::Primary).resource, rightExif, rightView, rightVp);
+        DrawResourceIntoViewport(ctx, GetPaneContext(PaneSlot::Left).resource, leftExif, GetPaneContext(PaneSlot::Left).view, leftVp, compareSurfaceFormat, sdrWhiteNits);
+        DrawResourceIntoViewport(ctx, GetPaneContext(PaneSlot::Primary).resource, rightExif, rightView, rightVp, compareSurfaceFormat, sdrWhiteNits);
 
         ComPtr<ID2D1SolidColorBrush> dividerBrush;
-        ctx->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.35f), &dividerBrush);
+        ctx->CreateSolidColorBrush(D2D1::ColorF(uiWhite, uiWhite, uiWhite, 0.35f), &dividerBrush);
         if (dividerBrush) {
             ctx->DrawLine(D2D1::Point2F(splitX, 0.0f), D2D1::Point2F(splitX, (float)winH), dividerBrush.Get(), 1.0f);
         }

@@ -1873,7 +1873,9 @@ void DrawResourceIntoViewport(ID2D1DeviceContext* ctx,
                                      const ImageResource& res,
                                      int exifOrientation,
                                      const CompareView& view,
-                                     const D2D1_RECT_F& viewport) {
+                                     const D2D1_RECT_F& viewport,
+                                     DXGI_FORMAT targetSurfaceFormat = DXGI_FORMAT_B8G8R8A8_UNORM,
+                                     float targetSdrWhiteNits = 80.0f) {
     if (!ctx || !res) return;
 
     const float vpW = viewport.right - viewport.left;
@@ -1947,13 +1949,56 @@ void DrawResourceIntoViewport(ID2D1DeviceContext* ctx,
 
         D2D1_INTERPOLATION_MODE interpMode = GetOptimalD2DInterpolationMode(totalScale, imgW, imgH);
 
+        // Scale SDR 8-bit bitmaps by sdrWhiteLevel / 80 nits when composited onto an FP16 scRGB surface.
+        ComPtr<ID2D1Effect> sdrToScRgbEffect;
+        const DXGI_FORMAT bmpFmt = res.bitmap->GetPixelFormat().format;
+        const bool needsSdrToScRgbBoost =
+            (targetSurfaceFormat == DXGI_FORMAT_R16G16B16A16_FLOAT) &&
+            (bmpFmt == DXGI_FORMAT_B8G8R8A8_UNORM || bmpFmt == DXGI_FORMAT_R8G8B8A8_UNORM);
+        if (needsSdrToScRgbBoost) {
+            ComPtr<ID2D1ColorContext> srcCtx;
+            ComPtr<ID2D1ColorContext> dstCtx;
+            ComPtr<ID2D1Effect> colorMgmt;
+            ComPtr<ID2D1Effect> whiteLevel;
+            if (SUCCEEDED(ctx->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0, &srcCtx)) &&
+                SUCCEEDED(ctx->CreateColorContext(D2D1_COLOR_SPACE_SCRGB, nullptr, 0, &dstCtx)) &&
+                SUCCEEDED(ctx->CreateEffect(CLSID_D2D1ColorManagement, &colorMgmt)) &&
+                SUCCEEDED(ctx->CreateEffect(CLSID_D2D1WhiteLevelAdjustment, &whiteLevel))) {
+                const D2D1_COLORMANAGEMENT_QUALITY quality =
+                    ctx->IsBufferPrecisionSupported(D2D1_BUFFER_PRECISION_16BPC_FLOAT)
+                        ? D2D1_COLORMANAGEMENT_QUALITY_BEST
+                        : D2D1_COLORMANAGEMENT_QUALITY_NORMAL;
+                colorMgmt->SetInput(0, res.bitmap.Get());
+                colorMgmt->SetValue(D2D1_COLORMANAGEMENT_PROP_SOURCE_COLOR_CONTEXT, srcCtx.Get());
+                colorMgmt->SetValue(D2D1_COLORMANAGEMENT_PROP_DESTINATION_COLOR_CONTEXT, dstCtx.Get());
+                colorMgmt->SetValue(D2D1_COLORMANAGEMENT_PROP_QUALITY, quality);
+
+                const float safeWhite = (targetSdrWhiteNits > 0.0f) ? targetSdrWhiteNits : 80.0f;
+                whiteLevel->SetInputEffect(0, colorMgmt.Get());
+                whiteLevel->SetValue(D2D1_WHITELEVELADJUSTMENT_PROP_INPUT_WHITE_LEVEL, safeWhite);
+                whiteLevel->SetValue(D2D1_WHITELEVELADJUSTMENT_PROP_OUTPUT_WHITE_LEVEL, 80.0f);
+                sdrToScRgbEffect = std::move(whiteLevel);
+            }
+        }
+
         if (!rotated) {
             const float drawW = imgW * totalScale;
             const float drawH = imgH * totalScale;
             const float x = centerX - drawW * 0.5f;
             const float y = centerY - drawH * 0.5f;
-            D2D1_RECT_F dest = D2D1::RectF(x, y, x + drawW, y + drawH);
-            ctx->DrawBitmap(res.bitmap.Get(), &dest, 1.0f, interpMode, &srcRect);
+            if (sdrToScRgbEffect) {
+                const float srcW = (std::max)(1.0f, srcRect.right - srcRect.left);
+                const float srcH = (std::max)(1.0f, srcRect.bottom - srcRect.top);
+                ctx->SetTransform(
+                    D2D1::Matrix3x2F::Scale(drawW / srcW, drawH / srcH) *
+                    D2D1::Matrix3x2F::Translation(x, y));
+                const D2D1_POINT_2F origin = D2D1::Point2F(0.0f, 0.0f);
+                ctx->DrawImage(sdrToScRgbEffect.Get(), &origin, &srcRect, interpMode);
+                ctx->SetTransform(oldTransform);
+            } else {
+                D2D1_RECT_F dest = D2D1::RectF(x, y, x + drawW, y + drawH);
+                ctx->DrawBitmap(res.bitmap.Get(), &dest, 1.0f, interpMode, &srcRect);
+            }
         } else {
             const float rawCenterX = (srcRect.left + srcRect.right) * 0.5f;
             const float rawCenterY = (srcRect.top + srcRect.bottom) * 0.5f;
@@ -1972,8 +2017,13 @@ void DrawResourceIntoViewport(ID2D1DeviceContext* ctx,
             m = m * D2D1::Matrix3x2F::Scale(totalScale * invBmpScale, totalScale * invBmpScale);
             m = m * D2D1::Matrix3x2F::Translation(centerX, centerY);
             ctx->SetTransform(m);
-            // Draw srcRect mapped into raw coordinates centered at (rawCenterX, rawCenterY)
-            ctx->DrawBitmap(res.bitmap.Get(), &srcRect, 1.0f, interpMode, &srcRect);
+            if (sdrToScRgbEffect) {
+                const D2D1_POINT_2F destOffset = D2D1::Point2F(srcRect.left, srcRect.top);
+                ctx->DrawImage(sdrToScRgbEffect.Get(), &destOffset, &srcRect, interpMode);
+            } else {
+                // Draw srcRect mapped into raw coordinates centered at (rawCenterX, rawCenterY)
+                ctx->DrawBitmap(res.bitmap.Get(), &srcRect, 1.0f, interpMode, &srcRect);
+            }
             ctx->SetTransform(oldTransform);
         }
     }
@@ -3442,8 +3492,10 @@ static inline void NotifyBorderGlowInteraction(HWND hwnd) {
 static void RefreshDisplayColorPipeline(HWND hwnd, bool requestFullRepaint) {
     if (!g_compEngine) return;
 
-    const bool changed = g_compEngine->RefreshDisplayColorState(g_runtime.ForceHdrSimulation);
-    g_compEngine->SetAdvancedColorEnabled(g_config.IsAdvancedColorEnabled(g_compEngine->GetDisplayColorState().advancedColorSupported));
+    const bool displayChanged = g_compEngine->RefreshDisplayColorState(g_runtime.ForceHdrSimulation);
+    const bool allowChanged = g_compEngine->SetAdvancedColorEnabled(
+        g_config.IsAdvancedColorEnabled(g_compEngine->GetDisplayColorState().advancedColorActive));
+    const bool changed = displayChanged || allowChanged;
     const float rawHeadroom = GetCurrentDisplayHdrHeadroomStops();
     const float displayHdrHeadroomStops = (g_config.AdvancedColorMode != 0) ?
         (g_compEngine->IsAdvancedColor() ? (rawHeadroom < 0.1f ? -1.0f : rawHeadroom) : -1.0f) : 0.0f;
@@ -6947,6 +6999,23 @@ void AdjustWindowToImage(HWND hwnd) {
     }
 }
 
+static bool ShouldMeasureFramePeakNits(const QuickView::RawImageFrame& frame) {
+    if (!frame.pixels) return false;
+    if (frame.format == QuickView::PixelFormat::R32G32B32A32_FLOAT ||
+        frame.format == QuickView::PixelFormat::R16G16B16A16_FLOAT) {
+        return true;
+    }
+    if (frame.format == QuickView::PixelFormat::R16G16B16A16_UNORM) {
+        const auto tf = (frame.colorInfo.transfer != QuickView::TransferFunction::Unknown)
+            ? frame.colorInfo.transfer
+            : frame.hdrMetadata.transfer;
+        return frame.hdrMetadata.isHdr ||
+               tf == QuickView::TransferFunction::PQ ||
+               tf == QuickView::TransferFunction::HLG;
+    }
+    return false;
+}
+
 // [v10.1] Refresh Current Image Display (Direct GPU Re-upload from cache)
 // Used for instant settings updates like Tone Mapping, CMS toggle, etc.
 void RefreshImageDisplay(HWND hwnd) {
@@ -6959,10 +7028,7 @@ void RefreshImageDisplay(HWND hwnd) {
         auto frame = g_pImageEngine->GetCachedImage(GetPaneContext(PaneSlot::Primary).path);
         if (frame && frame->IsValid()) {
             if (GetPaneContext(PaneSlot::Primary).metadata.MeasuredPeakNits < 0.0f &&
-                frame->pixels &&
-                (frame->format == QuickView::PixelFormat::R32G32B32A32_FLOAT ||
-                 frame->format == QuickView::PixelFormat::R16G16B16A16_FLOAT ||
-                 frame->format == QuickView::PixelFormat::R16G16B16A16_UNORM)) {
+                ShouldMeasureFramePeakNits(*frame)) {
                 GetPaneContext(PaneSlot::Primary).metadata.MeasuredPeakNits = g_renderEngine->EstimateFramePeakScRgb(*frame) * 80.0f;
             }
             ComPtr<ID2D1Bitmap> bitmap;
@@ -6971,6 +7037,13 @@ void RefreshImageDisplay(HWND hwnd) {
             rightOpts.effectiveCmsMode = g_runtime.GetEffectiveCmsMode(g_config.ColorManagement);
             rightOpts.enableSoftProofing = g_runtime.EnableSoftProofing;
             rightOpts.softProofProfilePath = g_runtime.SoftProofProfilePath;
+            if (IsCompareModeActive()) {
+                QuickView::DisplayColorState rightPaneState = {};
+                if (GetDisplayColorStateForPane(hwnd, ComparePane::Right, &rightPaneState)) {
+                    rightOpts.hasDisplayStateOverride = true;
+                    rightOpts.displayStateOverride = rightPaneState;
+                }
+            }
 
             if (SUCCEEDED(g_renderEngine->UploadRawFrameToGPU(*frame, &bitmap, &rightOpts))) {
                 GetPaneContext(PaneSlot::Primary).resource.bitmap = bitmap;
@@ -6991,10 +7064,7 @@ void RefreshImageDisplay(HWND hwnd) {
         auto leftFrame = g_pImageEngine->GetCachedImage(GetPaneContext(PaneSlot::Left).path);
         if (leftFrame && leftFrame->IsValid()) {
             if (GetPaneContext(PaneSlot::Left).metadata.MeasuredPeakNits < 0.0f &&
-                leftFrame->pixels &&
-                (leftFrame->format == QuickView::PixelFormat::R32G32B32A32_FLOAT ||
-                 leftFrame->format == QuickView::PixelFormat::R16G16B16A16_FLOAT ||
-                 leftFrame->format == QuickView::PixelFormat::R16G16B16A16_UNORM)) {
+                ShouldMeasureFramePeakNits(*leftFrame)) {
                 GetPaneContext(PaneSlot::Left).metadata.MeasuredPeakNits = g_renderEngine->EstimateFramePeakScRgb(*leftFrame) * 80.0f;
             }
             ComPtr<ID2D1Bitmap> leftBitmap;
@@ -7004,6 +7074,13 @@ void RefreshImageDisplay(HWND hwnd) {
             leftOpts.effectiveCmsMode = (leftCmsModeOverride != -1) ? leftCmsModeOverride : (g_config.ColorManagement ? 1 : 0);
             leftOpts.enableSoftProofing = GetPaneContext(PaneSlot::Left).EnableSoftProofing;
             leftOpts.softProofProfilePath = GetPaneContext(PaneSlot::Left).SoftProofProfilePath;
+            {
+                QuickView::DisplayColorState leftPaneState = {};
+                if (GetDisplayColorStateForPane(hwnd, ComparePane::Left, &leftPaneState)) {
+                    leftOpts.hasDisplayStateOverride = true;
+                    leftOpts.displayStateOverride = leftPaneState;
+                }
+            }
 
             if (SUCCEEDED(g_renderEngine->UploadRawFrameToGPU(*leftFrame, &leftBitmap, &leftOpts))) {
                 GetPaneContext(PaneSlot::Left).resource.bitmap = leftBitmap;
@@ -7642,6 +7719,8 @@ void RefreshHdrOverrideSettings(HWND hwnd) {
   // Sync display color state (in simulation mode, Refresh() reads the latest
   // g_config.HdrPeakNitsOverride and updates maxLuminanceNits accordingly).
   g_compEngine->RefreshDisplayColorState(g_runtime.ForceHdrSimulation);
+  g_compEngine->SetAdvancedColorEnabled(
+      g_config.IsAdvancedColorEnabled(g_compEngine->GetDisplayColorState().advancedColorActive));
 
   // Propagate updated state to the rendering engine so that
   // BuildToneMapSettings and gain map targetHeadroom calculations use the fresh
@@ -8412,12 +8491,25 @@ static int RunDecodeWorker(int argc, LPWSTR* argv) {
     // [Fix JXL Titan] Parse --full-decode flag for FullDecodeAndCacheLOD path
     bool fullDecode = false;
     bool noFakeBase = false;
+    bool preserveFloat = false;
+    float hdrHeadroom = -1.0f;
     for (int i = 1; i < argc; ++i) {
         if (argv[i] && _wcsicmp(argv[i], L"--full-decode") == 0) {
             fullDecode = true;
         } else if (argv[i] && _wcsicmp(argv[i], L"--no-fake-base") == 0) {
             noFakeBase = true;
+        } else if (argv[i] && _wcsicmp(argv[i], L"--preserve-float") == 0) {
+            preserveFloat = true;
+        } else if (argv[i] && _wcsicmp(argv[i], L"--hdr-headroom") == 0 && i + 1 < argc && argv[i + 1]) {
+            wchar_t* endPtr = nullptr;
+            const float parsed = wcstof(argv[++i], &endPtr);
+            if (endPtr && endPtr != argv[i]) {
+                hdrHeadroom = parsed;
+            }
         }
+    }
+    if (hdrHeadroom > 0.01f) {
+        preserveFloat = true;
     }
 
     if (!TryReadArgValue(argc, argv, L"--input", &inputPath) ||
@@ -8487,7 +8579,7 @@ static int RunDecodeWorker(int argc, LPWSTR* argv) {
             // [Fix] Base layer: Use LoadToFrame (returns 1:8 DC preview or 1x1 Fake Base instantly for massive JXL)
             // If --no-fake-base is specified (e.g. for LOD requests), it guarantees real decoding is not bypassed.
             // DO NOT pass a restricted QuantumArena here, as format fallbacks may need full-resolution heap memory before scaling.
-            hr = loader.LoadToFrame(inputPath.c_str(), &rawFrame, nullptr, targetW, targetH, &loaderName, {}, &meta, !noFakeBase, false, -1.0f, QuickView::ColorPrimaries::SRGB, nullptr, false);
+            hr = loader.LoadToFrame(inputPath.c_str(), &rawFrame, nullptr, targetW, targetH, &loaderName, {}, &meta, !noFakeBase, false, hdrHeadroom, QuickView::ColorPrimaries::SRGB, nullptr, preserveFloat);
         }
         if (FAILED(hr) || !rawFrame.IsValid()) {
             // [HEIC] Signal parent if HEVC component is missing
@@ -9002,33 +9094,26 @@ static bool CreateSvgDocumentFromMemory(ID2D1DeviceContext* ctxBase, const uint8
 
 static HRESULT UploadFrameForSlot(HWND hwnd, PaneSlot slot, const QuickView::RawImageFrame& frame, ID2D1Bitmap** outBitmap, QuickView::DisplayColorState* outUsedState) {
     if (!g_renderEngine || !outBitmap) return E_POINTER;
+    CRenderEngine::RenderPipelineOptions opts;
     QuickView::DisplayColorState uploadState = {};
     const ComparePane cmpPane = (slot == PaneSlot::Left) ? ComparePane::Left : ComparePane::Right;
-    const bool hasPaneDisplayState = IsCompareModeActive() && GetDisplayColorStateForPane(hwnd, cmpPane, &uploadState);
-    const QuickView::DisplayColorState restoreState =
-        g_compEngine ? g_compEngine->GetDisplayColorState() : g_renderEngine->GetDisplayColorState();
-    if (hasPaneDisplayState) {
-        g_renderEngine->SetDisplayColorState(uploadState);
+    if (IsCompareModeActive() && GetDisplayColorStateForPane(hwnd, cmpPane, &uploadState)) {
+        opts.hasDisplayStateOverride = true;
+        opts.displayStateOverride = uploadState;
         if (outUsedState) *outUsedState = uploadState;
     }
 
-    HRESULT hr = E_FAIL;
     if (slot == PaneSlot::Left && IsCompareModeActive()) {
-        CRenderEngine::RenderPipelineOptions leftOpts;
-        leftOpts.hasOverrides = true;
+        opts.hasOverrides = true;
         const auto& leftPane = GetPaneContext(PaneSlot::Left);
-        leftOpts.effectiveCmsMode = (leftPane.CmsModeOverride != -1) ? leftPane.CmsModeOverride : (g_config.ColorManagement ? 1 : 0);
-        leftOpts.enableSoftProofing = leftPane.EnableSoftProofing;
-        leftOpts.softProofProfilePath = leftPane.SoftProofProfilePath;
-        hr = g_renderEngine->UploadRawFrameToGPU(frame, outBitmap, &leftOpts);
-    } else {
-        hr = g_renderEngine->UploadRawFrameToGPU(frame, outBitmap);
+        opts.effectiveCmsMode = (leftPane.CmsModeOverride != -1) ? leftPane.CmsModeOverride : (g_config.ColorManagement ? 1 : 0);
+        opts.enableSoftProofing = leftPane.EnableSoftProofing;
+        opts.softProofProfilePath = leftPane.SoftProofProfilePath;
     }
 
-    if (hasPaneDisplayState) {
-        g_renderEngine->SetDisplayColorState(restoreState);
-    }
-    return hr;
+    const CRenderEngine::RenderPipelineOptions* optsPtr =
+        (opts.hasOverrides || opts.hasDisplayStateOverride) ? &opts : nullptr;
+    return g_renderEngine->UploadRawFrameToGPU(frame, outBitmap, optsPtr);
 }
 
 void SyncAnimationPlaybackTimers(HWND hwnd) {
@@ -12526,6 +12611,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     case WM_DISPLAYCHANGE: {
         // [CMS] System/Monitor profile changed
         QuickView::DisplayColorInfo::InvalidateHardwareCache();
+        if (g_renderEngine) {
+            g_renderEngine->InvalidateMonitorColorProfile();
+        }
         RefreshDisplayColorPipeline(hwnd, true);
         RefreshToolbarSafeLayout(hwnd);
         SyncToolbarHoverFromCursor(hwnd);
@@ -12545,6 +12633,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             (lParam != 0) && (wcscmp(reinterpret_cast<LPCWSTR>(lParam), L"ImmersiveColorSet") == 0);
         if (isImmersiveColorSet && (g_config.ThemeMode == 0 || g_config.AccentMode == 0 || g_config.WindowBorderAccentMode == 0)) {
             QuickView::DisplayColorInfo::InvalidateHardwareCache();
+            RefreshDisplayColorPipeline(hwnd, false);
             QuickView::UI::Theme::RefreshThemePalette(g_config);
             ApplyWindowTheme(hwnd);
             RequestRepaint(PaintLayer::All);
@@ -12558,6 +12647,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     }
     case WM_THEMECHANGED: {
         QuickView::DisplayColorInfo::InvalidateHardwareCache();
+        RefreshDisplayColorPipeline(hwnd, false);
         if (g_config.ThemeMode == 0 || g_config.AccentMode == 0 || g_config.WindowBorderAccentMode == 0) {
             QuickView::UI::Theme::RefreshThemePalette(g_config);
             ApplyWindowTheme(hwnd);
@@ -13946,6 +14036,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                      pNewRect->right - pNewRect->left,
                      pNewRect->bottom - pNewRect->top,
                      SWP_NOZORDER | SWP_NOACTIVATE);
+        RefreshDisplayColorPipeline(hwnd, false);
         // Ensure toolbar layout & hover state stay synced even if pixel size didn't change (no WM_SIZE).
         RefreshToolbarSafeLayout(hwnd);
         SyncToolbarHoverFromCursor(hwnd);
@@ -17830,20 +17921,17 @@ void ProcessEngineEvents(HWND hwnd) {
                      }
                 } else {
                     // === Bitmap Path ===
+                    CRenderEngine::RenderPipelineOptions paneOpts;
                     QuickView::DisplayColorState uploadState = {};
-                    const bool usePaneDisplayState =
-                        IsCompareModeActive() &&
-                        GetDisplayColorStateForPane(hwnd, ComparePane::Right, &uploadState);
-                    const QuickView::DisplayColorState restoreState =
-                        g_compEngine ? g_compEngine->GetDisplayColorState() : g_renderEngine->GetDisplayColorState();
-                    if (usePaneDisplayState) {
-                        g_renderEngine->SetDisplayColorState(uploadState);
+                    if (IsCompareModeActive() &&
+                        GetDisplayColorStateForPane(hwnd, ComparePane::Right, &uploadState)) {
+                        paneOpts.hasDisplayStateOverride = true;
+                        paneOpts.displayStateOverride = uploadState;
                         gamutAnalysisDisplayState = uploadState;
                     }
-                    hr = g_renderEngine->UploadRawFrameToGPU(*evt.rawFrame, &bitmap);
-                    if (usePaneDisplayState) {
-                        g_renderEngine->SetDisplayColorState(restoreState);
-                    }
+                    hr = g_renderEngine->UploadRawFrameToGPU(
+                        *evt.rawFrame, &bitmap,
+                        paneOpts.hasDisplayStateOverride ? &paneOpts : nullptr);
                     if (FAILED(hr)) {
                         wchar_t buf[128]; swprintf_s(buf, L"[Main] Upload Failed: HR=0x%X\n", hr);
                     } else {
@@ -17888,20 +17976,8 @@ void ProcessEngineEvents(HWND hwnd) {
                 finalMetadata.OwnerImageId = evt.imageId;
                 
                 // [v10.0] Measured Peak Scan (SIMD) - Only for HDR float or HDR PQ/HLG frames
-                if (evt.rawFrame && evt.rawFrame->pixels) {
-                    const auto tf = (evt.rawFrame->colorInfo.transfer != QuickView::TransferFunction::Unknown)
-                        ? evt.rawFrame->colorInfo.transfer
-                        : evt.rawFrame->hdrMetadata.transfer;
-                    const bool isHdrUnorm =
-                        (evt.rawFrame->format == QuickView::PixelFormat::R16G16B16A16_UNORM) &&
-                        (evt.rawFrame->hdrMetadata.isHdr ||
-                         tf == QuickView::TransferFunction::PQ ||
-                         tf == QuickView::TransferFunction::HLG);
-                    if (evt.rawFrame->format == QuickView::PixelFormat::R32G32B32A32_FLOAT ||
-                        evt.rawFrame->format == QuickView::PixelFormat::R16G16B16A16_FLOAT ||
-                        isHdrUnorm) {
-                        finalMetadata.MeasuredPeakNits = g_renderEngine->EstimateFramePeakScRgb(*evt.rawFrame) * 80.0f;
-                    }
+                if (evt.rawFrame && ShouldMeasureFramePeakNits(*evt.rawFrame)) {
+                    finalMetadata.MeasuredPeakNits = g_renderEngine->EstimateFramePeakScRgb(*evt.rawFrame) * 80.0f;
                 }
                 
                 // [Fix] For SVG frames, explicitly set Format and dimensions
