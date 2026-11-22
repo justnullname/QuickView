@@ -772,7 +772,20 @@ static constexpr char kBlob_EN[] =
     /* Settings_Label_StoreUpdatesManaged */ "Managed by Microsoft Store\0"
     /* Settings_Action_OpenStore */ "Open Store\0"
     /* Settings_Status_AssocLegend */ "Green dot = System Default · Highlighted = Selected / Open With\0"
-    /* Context_OpenWithQuickView */ "Open with QuickView\0";
+    /* Context_OpenWithQuickView */ "Open with QuickView\0"
+    /* Settings_Header_ViewPan */ "View Pan\0"
+    /* Settings_Info_ViewPanBinding */ "Bind “View Pan Mode” to a drag gesture under Mouse Gestures. Hold and drag toward a direction and the view keeps panning that way at a speed set by the drag distance; release the button to stop.\0"
+    /* Settings_Label_ViewPanSnap8 */ "8-Direction Pan (Snap)\0"
+    /* Settings_Tooltip_ViewPanSnap8 */ "Snaps the drag direction to the nearest 45°, which makes vertical and horizontal panning easy. Turn off for free-direction panning.\0"
+    /* Settings_Label_ViewPanSpeed */ "Pan Speed\0"
+    /* Settings_Tooltip_ViewPanSpeed */ "Multiplies the maximum continuous pan speed (default 2.0x; drag further for faster panning).\0"
+    /* Settings_Label_ViewPanDeadzone */ "Pan Deadzone\0"
+    /* Settings_Tooltip_ViewPanDeadzone */ "Movement below this distance counts as a click, so the context menu or middle-click action still works.\0"
+    /* Settings_Label_ViewPanSmoothing */ "Pan Smoothing\0"
+    /* Settings_Tooltip_ViewPanSmoothing */ "Eases the pan speed in and out while you drag. Higher values respond faster, lower values feel softer.\0"
+    /* Settings_Label_ViewPanEdgeScroll */ "Edge Auto-Scroll\0"
+    /* Settings_Tooltip_ViewPanEdgeScroll */ "Keeps panning while the cursor is held near a window edge.\0"
+    /* Settings_Label_ViewPanEdgeThreshold */ "Edge Trigger Zone\0";
 static constexpr char kBlob_CN[] =
     /* CurrentLocale */ "zh-cn\0"
     /* OSD_NoImage */ "没有加载图片\0"
@@ -1535,7 +1548,20 @@ static constexpr char kBlob_CN[] =
     /* Settings_Label_StoreUpdatesManaged */ "由 Microsoft Store 管理更新\0"
     /* Settings_Action_OpenStore */ "打开商店\0"
     /* Settings_Status_AssocLegend */ "绿点 = 已设系统默认 · 高亮 = 已勾选 / 打开方式\0"
-    /* Context_OpenWithQuickView */ "使用 QuickView 打开\0";
+    /* Context_OpenWithQuickView */ "使用 QuickView 打开\0"
+    /* Settings_Header_ViewPan */ "视图平移\0"
+    /* Settings_Info_ViewPanBinding */ "在「鼠标手势」中把「视图平移模式」绑定到拖拽手势。按住并朝某个方向拖动，视图会按拖动距离决定的速度持续朝该方向平移；松开按键即停止。\0"
+    /* Settings_Label_ViewPanSnap8 */ "8 方向平移（吸附）\0"
+    /* Settings_Tooltip_ViewPanSnap8 */ "将拖拽方向吸附到最近的 45°，便于精确地上下、左右平移。关闭后为任意方向平移。\0"
+    /* Settings_Label_ViewPanSpeed */ "平移速度\0"
+    /* Settings_Tooltip_ViewPanSpeed */ "持续平移的最大速度倍率（默认 2.0x；拖得越远平移越快）。\0"
+    /* Settings_Label_ViewPanDeadzone */ "平移死区\0"
+    /* Settings_Tooltip_ViewPanDeadzone */ "小于该距离的移动会被视为单击，因此右键菜单或中键动作仍可正常触发。\0"
+    /* Settings_Label_ViewPanSmoothing */ "平移平滑度\0"
+    /* Settings_Tooltip_ViewPanSmoothing */ "调节拖动时平移速度的加减速。数值越高响应越快，越低越柔和。\0"
+    /* Settings_Label_ViewPanEdgeScroll */ "边缘自动滚动\0"
+    /* Settings_Tooltip_ViewPanEdgeScroll */ "光标按住靠近窗口边缘时会持续平移。\0"
+    /* Settings_Label_ViewPanEdgeThreshold */ "边缘触发宽度\0";
 static constexpr char kBlob_TW[] =
     /* CurrentLocale */ "zh-tw\0"
     /* OSD_NoImage */ "沒有載入圖片\0"
@@ -2298,7 +2324,20 @@ static constexpr char kBlob_TW[] =
     /* Settings_Label_StoreUpdatesManaged */ "由 Microsoft Store 管理更新\0"
     /* Settings_Action_OpenStore */ "開啟商店\0"
     /* Settings_Status_AssocLegend */ "綠點 = 已設系統預設 · 高亮 = 已勾選 / 開啟方式\0"
-    /* Context_OpenWithQuickView */ "使用 QuickView 開啟\0";
+    /* Context_OpenWithQuickView */ "使用 QuickView 開啟\0"
+    /* Settings_Header_ViewPan */ "檢視平移\0"
+    /* Settings_Info_ViewPanBinding */ "在「滑鼠手勢」中將「視圖平移模式」綁定到拖曳手勢。按住並朝某個方向拖曳，視圖會依拖曳距離決定的速度持續朝該方向平移；放開按鍵即停止。\0"
+    /* Settings_Label_ViewPanSnap8 */ "8 方向平移（吸附）\0"
+    /* Settings_Tooltip_ViewPanSnap8 */ "將拖曳方向吸附至最近的 45°，便於精確地上下、左右平移。關閉後為任意方向平移。\0"
+    /* Settings_Label_ViewPanSpeed */ "平移速度\0"
+    /* Settings_Tooltip_ViewPanSpeed */ "持續平移的最大速度倍率（預設 2.0x；拖得越遠平移越快）。\0"
+    /* Settings_Label_ViewPanDeadzone */ "平移死區\0"
+    /* Settings_Tooltip_ViewPanDeadzone */ "小於該距離的移動會視為點選，因此右鍵菜單或中鍵動作仍可正常觸發。\0"
+    /* Settings_Label_ViewPanSmoothing */ "平移平滑度\0"
+    /* Settings_Tooltip_ViewPanSmoothing */ "調節拖曳時平移速度的加減速。數值越高反應越快，越低越柔和。\0"
+    /* Settings_Label_ViewPanEdgeScroll */ "邊緣自動滾動\0"
+    /* Settings_Tooltip_ViewPanEdgeScroll */ "游標按住靠近視窗邊緣時會持續平移。\0"
+    /* Settings_Label_ViewPanEdgeThreshold */ "邊緣觸發寬度\0";
 static constexpr char kBlob_JA[] =
     /* CurrentLocale */ "ja-jp\0"
     /* OSD_NoImage */ "画像が読み込まれていません\0"
@@ -3061,7 +3100,20 @@ static constexpr char kBlob_JA[] =
     /* Settings_Label_StoreUpdatesManaged */ "Microsoft Store で管理\0"
     /* Settings_Action_OpenStore */ "ストアを開く\0"
     /* Settings_Status_AssocLegend */ "緑の点 = システム既定 · ハイライト = 選択済み / プログラムから開く\0"
-    /* Context_OpenWithQuickView */ "QuickView で開く\0";
+    /* Context_OpenWithQuickView */ "QuickView で開く\0"
+    /* Settings_Header_ViewPan */ "ビューパン\0"
+    /* Settings_Info_ViewPanBinding */ "「マウスジェスチャー」で「ビューパンモード」をドラッグ操作に割り当てます。ドラッグした方向へ、距離に応じた速度でビューが移動し続け、ボタンを離すと停止します。\0"
+    /* Settings_Label_ViewPanSnap8 */ "8 方向パン（スナップ）\0"
+    /* Settings_Tooltip_ViewPanSnap8 */ "ドラッグ方向を最も近い 45° にスナップし、上下左右のパンを容易にします。オフにすると自由な方向にパンできます。\0"
+    /* Settings_Label_ViewPanSpeed */ "パン速度\0"
+    /* Settings_Tooltip_ViewPanSpeed */ "連続パンの最大速度の倍率（既定 2.0x。遠くへドラッグするほど速くなります）。\0"
+    /* Settings_Label_ViewPanDeadzone */ "パンのデッドゾーン\0"
+    /* Settings_Tooltip_ViewPanDeadzone */ "この距離未満の移動はクリックとして扱われるため、コンテキストメニューや中クリックの動作もそのまま利用できます。\0"
+    /* Settings_Label_ViewPanSmoothing */ "パンの滑らかさ\0"
+    /* Settings_Tooltip_ViewPanSmoothing */ "ドラッグ中のパン速度の立ち上がりを滑らかにします。値が大きいほど反応が速く、小さいほど柔らかくなります。\0"
+    /* Settings_Label_ViewPanEdgeScroll */ "端の自動スクロール\0"
+    /* Settings_Tooltip_ViewPanEdgeScroll */ "カーソルをウィンドウの端付近で押さえている間、パンが継続します。\0"
+    /* Settings_Label_ViewPanEdgeThreshold */ "端のトリガー範囲\0";
 static constexpr char kBlob_RU[] =
     /* CurrentLocale */ "ru-ru\0"
     /* OSD_NoImage */ "Изображение не загружено\0"
@@ -3824,7 +3876,20 @@ static constexpr char kBlob_RU[] =
     /* Settings_Label_StoreUpdatesManaged */ "Обновляется через Microsoft Store\0"
     /* Settings_Action_OpenStore */ "Открыть Store\0"
     /* Settings_Status_AssocLegend */ "Зеленая точка = по умолчанию · Выделено = выбрано / Открыть с помощью\0"
-    /* Context_OpenWithQuickView */ "Открыть в QuickView\0";
+    /* Context_OpenWithQuickView */ "Открыть в QuickView\0"
+    /* Settings_Header_ViewPan */ "Панорамирование вида\0"
+    /* Settings_Info_ViewPanBinding */ "Назначьте «Режим панорамирования вида» жесту перетаскивания в разделе «Жесты мыши». Потяните в нужную сторону — вид будет непрерывно панорамироваться туда со скоростью, зависящей от расстояния; отпустите кнопку, чтобы остановиться.\0"
+    /* Settings_Label_ViewPanSnap8 */ "Панорамирование в 8 направлениях (привязка)\0"
+    /* Settings_Tooltip_ViewPanSnap8 */ "Привязывает направление перетаскивания к ближайшим 45°, что упрощает вертикальное и горизонтальное панорамирование. Отключите для свободного направления.\0"
+    /* Settings_Label_ViewPanSpeed */ "Скорость панорамирования\0"
+    /* Settings_Tooltip_ViewPanSpeed */ "Множитель максимальной скорости непрерывного панорамирования (по умолчанию 2.0x; дальше тянете — быстрее).\0"
+    /* Settings_Label_ViewPanDeadzone */ "Мёртвая зона панорамирования\0"
+    /* Settings_Tooltip_ViewPanDeadzone */ "Перемещение меньше этого расстояния считается щелчком, поэтому контекстное меню или действие средней кнопки продолжит работать.\0"
+    /* Settings_Label_ViewPanSmoothing */ "Плавность панорамирования\0"
+    /* Settings_Tooltip_ViewPanSmoothing */ "Сглаживает разгон и торможение панорамирования при перетаскивании. Больше — отзывчивее, меньше — мягче.\0"
+    /* Settings_Label_ViewPanEdgeScroll */ "Автопрокрутка у краёв\0"
+    /* Settings_Tooltip_ViewPanEdgeScroll */ "Продолжает панорамировать, пока курсор удерживается у края окна.\0"
+    /* Settings_Label_ViewPanEdgeThreshold */ "Зона срабатывания у края\0";
 static constexpr char kBlob_DE[] =
     /* CurrentLocale */ "de-de\0"
     /* OSD_NoImage */ "Kein Bild geladen\0"
@@ -4587,7 +4652,20 @@ static constexpr char kBlob_DE[] =
     /* Settings_Label_StoreUpdatesManaged */ "Über Microsoft Store verwaltet\0"
     /* Settings_Action_OpenStore */ "Store öffnen\0"
     /* Settings_Status_AssocLegend */ "Grüner Punkt = Systemstandard · Hervorgehoben = Ausgewählt / Öffnen mit\0"
-    /* Context_OpenWithQuickView */ "Mit QuickView öffnen\0";
+    /* Context_OpenWithQuickView */ "Mit QuickView öffnen\0"
+    /* Settings_Header_ViewPan */ "Ansicht schwenken\0"
+    /* Settings_Info_ViewPanBinding */ "Weisen Sie „Ansichtsschwenk-Modus“ unter „Mausgesten“ einer Ziehgeste zu. In eine Richtung ziehen: Die Ansicht schwenkt mit ziehweitenabhängiger Geschwindigkeit weiter; zum Stoppen die Taste loslassen.\0"
+    /* Settings_Label_ViewPanSnap8 */ "8-Richtungs-Schwenken (Einrasten)\0"
+    /* Settings_Tooltip_ViewPanSnap8 */ "Rastet die Ziehrichtung auf die nächsten 45° ein, was vertikales und horizontales Schwenken erleichtert. Für freies Schwenken ausschalten.\0"
+    /* Settings_Label_ViewPanSpeed */ "Schwenkgeschwindigkeit\0"
+    /* Settings_Tooltip_ViewPanSpeed */ "Multipliziert die maximale Geschwindigkeit des fortlaufenden Schwenkens (Standard 2.0x; weiter ziehen = schneller).\0"
+    /* Settings_Label_ViewPanDeadzone */ "Schwenk-Totzone\0"
+    /* Settings_Tooltip_ViewPanDeadzone */ "Bewegungen unterhalb dieser Distanz gelten als Klick, sodass das Kontextmenü oder die Mittelklick-Aktion weiterhin funktioniert.\0"
+    /* Settings_Label_ViewPanSmoothing */ "Schwenk-Glättung\0"
+    /* Settings_Tooltip_ViewPanSmoothing */ "Glättet das Anfahren und Abbremsen der Schwenkgeschwindigkeit beim Ziehen. Höher = direkter, niedriger = weicher.\0"
+    /* Settings_Label_ViewPanEdgeScroll */ "Automatisches Randscrollen\0"
+    /* Settings_Tooltip_ViewPanEdgeScroll */ "Schwenkt weiter, solange der Mauszeiger nahe einem Fensterrand gehalten wird.\0"
+    /* Settings_Label_ViewPanEdgeThreshold */ "Rand-Triggerzone\0";
 static constexpr char kBlob_ES[] =
     /* CurrentLocale */ "es-es\0"
     /* OSD_NoImage */ "No hay imagen cargada\0"
@@ -5350,7 +5428,20 @@ static constexpr char kBlob_ES[] =
     /* Settings_Label_StoreUpdatesManaged */ "Gestionado por Microsoft Store\0"
     /* Settings_Action_OpenStore */ "Abrir tienda\0"
     /* Settings_Status_AssocLegend */ "Punto verde = Predeterminado · Resaltado = Seleccionado / Abrir con\0"
-    /* Context_OpenWithQuickView */ "Abrir con QuickView\0";
+    /* Context_OpenWithQuickView */ "Abrir con QuickView\0"
+    /* Settings_Header_ViewPan */ "Panorámica de vista\0"
+    /* Settings_Info_ViewPanBinding */ "Asigna «Modo panorámica de vista» a un gesto de arrastre en «Gestos de ratón». Mantén y arrastra en una dirección para desplazar la vista de forma continua a una velocidad según la distancia; suelta para detenerte.\0"
+    /* Settings_Label_ViewPanSnap8 */ "Panorámica en 8 direcciones (ajuste)\0"
+    /* Settings_Tooltip_ViewPanSnap8 */ "Ajusta la dirección del arrastre a los 45° más cercanos, lo que facilita la panorámica vertical y horizontal. Desactívalo para panorámica en cualquier dirección.\0"
+    /* Settings_Label_ViewPanSpeed */ "Velocidad de panorámica\0"
+    /* Settings_Tooltip_ViewPanSpeed */ "Multiplica la velocidad máxima de la panorámica continua (predeterminado 2.0x; cuanto más arrastres, más rápido).\0"
+    /* Settings_Label_ViewPanDeadzone */ "Zona muerta de panorámica\0"
+    /* Settings_Tooltip_ViewPanDeadzone */ "El movimiento por debajo de esta distancia se cuenta como clic, por lo que el menú contextual o la acción del clic central siguen funcionando.\0"
+    /* Settings_Label_ViewPanSmoothing */ "Suavizado de panorámica\0"
+    /* Settings_Tooltip_ViewPanSmoothing */ "Suaviza la aceleración y frenado de la panorámica al arrastrar. Valores altos responden antes; bajos, más suave.\0"
+    /* Settings_Label_ViewPanEdgeScroll */ "Desplazamiento automático en bordes\0"
+    /* Settings_Tooltip_ViewPanEdgeScroll */ "Sigue desplazando mientras el cursor se mantiene cerca del borde de la ventana.\0"
+    /* Settings_Label_ViewPanEdgeThreshold */ "Zona de activación del borde\0";
 static constexpr char kBlob_FR[] =
     /* CurrentLocale */ "fr-fr\0"
     /* OSD_NoImage */ "No image loaded\0"
@@ -6113,11 +6204,24 @@ static constexpr char kBlob_FR[] =
     /* Settings_Label_StoreUpdatesManaged */ "Géré par Microsoft Store\0"
     /* Settings_Action_OpenStore */ "Ouvrir le Store\0"
     /* Settings_Status_AssocLegend */ "Point vert = Par défaut · Surligné = Sélectionné / Ouvrir avec\0"
-    /* Context_OpenWithQuickView */ "Ouvrir avec QuickView\0";
+    /* Context_OpenWithQuickView */ "Ouvrir avec QuickView\0"
+    /* Settings_Header_ViewPan */ "Pan de la vue\0"
+    /* Settings_Info_ViewPanBinding */ "Attribuez « Mode pan de la vue » à un geste de glisser dans « Gestes de la souris ». Maintenez et glissez dans une direction pour déplacer la vue en continu à une vitesse selon la distance ; relâchez pour arrêter.\0"
+    /* Settings_Label_ViewPanSnap8 */ "Pan 8 directions (alignement)\0"
+    /* Settings_Tooltip_ViewPanSnap8 */ "Aligne la direction du glisser sur les 45° les plus proches, ce qui facilite le pan vertical et horizontal. Désactivez pour un pan libre.\0"
+    /* Settings_Label_ViewPanSpeed */ "Vitesse du pan\0"
+    /* Settings_Tooltip_ViewPanSpeed */ "Multiplie la vitesse maximale du pan continu (2.0x par défaut ; plus vous glissez loin, plus c'est rapide).\0"
+    /* Settings_Label_ViewPanDeadzone */ "Zone morte du pan\0"
+    /* Settings_Tooltip_ViewPanDeadzone */ "Un déplacement inférieur à cette distance est compté comme un clic, de sorte que le menu contextuel ou l'action du clic du milieu fonctionne toujours.\0"
+    /* Settings_Label_ViewPanSmoothing */ "Lissage du pan\0"
+    /* Settings_Tooltip_ViewPanSmoothing */ "Adoucit l'accélération et le freinage du pan pendant le glisser. Plus élevé = plus réactif, plus bas = plus doux.\0"
+    /* Settings_Label_ViewPanEdgeScroll */ "Défilement auto sur les bords\0"
+    /* Settings_Tooltip_ViewPanEdgeScroll */ "Continue le pan tant que le curseur est maintenu près d'un bord de la fenêtre.\0"
+    /* Settings_Label_ViewPanEdgeThreshold */ "Zone de déclenchement du bord\0";
 
 struct PackedLangBlob {
     const char* data;
-    int bytes; // excludes trailing compiler NUL (includes all 759 string NUL terminators)
+    int bytes; // excludes trailing compiler NUL (includes all 775 string NUL terminators)
 };
 
 static constexpr PackedLangBlob kLangBlobs[8] = {
@@ -6169,7 +6273,7 @@ void SetLanguage(Language lang) {
 
     static int s_loadedIdx = -1;
     if (s_loadedIdx != idx) {
-        constexpr int kArenaCapacity = 32768; // Max language (Spanish) uses 26,172 UTF-16 code units
+        constexpr int kArenaCapacity = 40960; // Max language (Spanish) uses 28,062 UTF-16 code units
         static wchar_t s_arena[kArenaCapacity];
         const auto& blob = kLangBlobs[idx];
         const int written = MultiByteToWideChar(CP_UTF8, 0, blob.data, blob.bytes, s_arena, kArenaCapacity);
@@ -6607,6 +6711,9 @@ std::wstring GetMouseActionTargetName(::MouseActionTarget action) {
     }
     case MouseActionTarget::PanImage: {
         return PickLang({ L"Pan Image", L"平移图片", L"平移圖片", L"画像をパン", L"Панорамирование", L"Bild verschieben", L"Desplazar imagen", L"Déplacer l'image" });
+    }
+    case MouseActionTarget::ViewPan: {
+        return PickLang({ L"View Pan Mode", L"视图平移模式", L"視圖平移模式", L"ビューパンモード", L"Режим панорамирования вида", L"Ansichtsschwenk-Modus", L"Modo panorámica de vista", L"Mode pan de la vue" });
     }
     case MouseActionTarget::Zoom: {
         return PickLang({ L"Zoom", L"缩放", L"縮放", L"ズーム", L"Масштаб", L"Zoom", L"Zoom", L"Zoom" });

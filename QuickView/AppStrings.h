@@ -884,6 +884,21 @@ namespace AppStrings {
         const wchar_t* Settings_Status_AssocLegend = nullptr;
         const wchar_t* Context_OpenWithQuickView = nullptr;
 
+        // --- View Pan ---
+        const wchar_t* Settings_Header_ViewPan = nullptr;
+        const wchar_t* Settings_Info_ViewPanBinding = nullptr;
+        const wchar_t* Settings_Label_ViewPanSnap8 = nullptr;
+        const wchar_t* Settings_Tooltip_ViewPanSnap8 = nullptr;
+        const wchar_t* Settings_Label_ViewPanSpeed = nullptr;
+        const wchar_t* Settings_Tooltip_ViewPanSpeed = nullptr;
+        const wchar_t* Settings_Label_ViewPanDeadzone = nullptr;
+        const wchar_t* Settings_Tooltip_ViewPanDeadzone = nullptr;
+        const wchar_t* Settings_Label_ViewPanSmoothing = nullptr;
+        const wchar_t* Settings_Tooltip_ViewPanSmoothing = nullptr;
+        const wchar_t* Settings_Label_ViewPanEdgeScroll = nullptr;
+        const wchar_t* Settings_Tooltip_ViewPanEdgeScroll = nullptr;
+        const wchar_t* Settings_Label_ViewPanEdgeThreshold = nullptr;
+
     };
 
     inline Strings g{};

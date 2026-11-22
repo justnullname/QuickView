@@ -3299,7 +3299,81 @@ void SettingsOverlay::BuildControlTab(SettingsTab& tabControl) {
         AddSimpleToggle(tabControl, AppStrings::g.Settings_Label_EdgeNavClick, &g_config.EdgeNavClick);
         AddSimpleToggle(tabControl, AppStrings::g.Settings_Label_DisableEdgeNavInCompare, &g_config.DisableEdgeNavInCompare);
         tabControl.items.push_back({ AppStrings::g.Settings_Label_NavIndicator, OptionType::Segment, nullptr, nullptr, BindEnum(&g_config.NavIndicator), nullptr, 0, 0, {AppStrings::g.Settings_Option_Arrow, AppStrings::g.Settings_Option_Cursor} });
-     
+
+        SettingsItem headerViewPan = { AppStrings::g.Settings_Header_ViewPan, OptionType::Header };
+        headerViewPan.tooltipText = AppStrings::g.Settings_Info_ViewPanBinding;
+        tabControl.items.push_back(std::move(headerViewPan));
+
+        SettingsItem itemViewPanSnap8 = { AppStrings::g.Settings_Label_ViewPanSnap8, OptionType::Toggle, &g_config.ViewPanSnap8 };
+        itemViewPanSnap8.tooltipText = AppStrings::g.Settings_Tooltip_ViewPanSnap8;
+        tabControl.items.push_back(std::move(itemViewPanSnap8));
+
+        SettingsItem itemViewPanSpeed = { AppStrings::g.Settings_Label_ViewPanSpeed, OptionType::Slider, nullptr, &g_config.ViewPanSpeed };
+        itemViewPanSpeed.tooltipText = AppStrings::g.Settings_Tooltip_ViewPanSpeed;
+        itemViewPanSpeed.minVal = 0.25f;
+        itemViewPanSpeed.maxVal = 6.0f;
+        itemViewPanSpeed.step = 0.05f;
+        itemViewPanSpeed.displayFormat = L"%.2fx";
+        tabControl.items.push_back(std::move(itemViewPanSpeed));
+
+        // Pan Deadzone: config is an int, so drive the slider through a float mirror.
+        static float s_viewPanDeadzone = 0.0f;
+        s_viewPanDeadzone = (float)g_config.ViewPanDeadzone;
+        SettingsItem itemViewPanDeadzone = { AppStrings::g.Settings_Label_ViewPanDeadzone, OptionType::Slider, nullptr, &s_viewPanDeadzone };
+        itemViewPanDeadzone.tooltipText = AppStrings::g.Settings_Tooltip_ViewPanDeadzone;
+        itemViewPanDeadzone.minVal = 0.0f;
+        itemViewPanDeadzone.maxVal = 10.0f;
+        itemViewPanDeadzone.step = 1.0f;
+        itemViewPanDeadzone.displayFormat = L"%.0f px";
+        itemViewPanDeadzone.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, SettingsItem* item) {
+            if (item && item->pFloatVal) {
+                g_config.ViewPanDeadzone = static_cast<int>(std::lround(*item->pFloatVal));
+            }
+        };
+        itemViewPanDeadzone.onChange = []([[maybe_unused]] SettingsOverlay* overlay, SettingsItem* item) {
+            if (item && item->pFloatVal) {
+                g_config.ViewPanDeadzone = static_cast<int>(std::lround(*item->pFloatVal));
+            }
+            SaveConfig();
+        };
+        tabControl.items.push_back(std::move(itemViewPanDeadzone));
+
+        SettingsItem itemViewPanSmoothing = { AppStrings::g.Settings_Label_ViewPanSmoothing, OptionType::Slider, nullptr, &g_config.ViewPanSmoothing };
+        itemViewPanSmoothing.tooltipText = AppStrings::g.Settings_Tooltip_ViewPanSmoothing;
+        itemViewPanSmoothing.minVal = 2.0f;
+        itemViewPanSmoothing.maxVal = 20.0f;
+        itemViewPanSmoothing.step = 0.5f;
+        itemViewPanSmoothing.displayFormat = L"%.1f";
+        tabControl.items.push_back(std::move(itemViewPanSmoothing));
+
+        SettingsItem itemViewPanEdgeScroll = { AppStrings::g.Settings_Label_ViewPanEdgeScroll, OptionType::Toggle, &g_config.ViewPanEdgeScroll };
+        itemViewPanEdgeScroll.tooltipText = AppStrings::g.Settings_Tooltip_ViewPanEdgeScroll;
+        itemViewPanEdgeScroll.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+            if (overlay) overlay->BuildMenu();
+        };
+        tabControl.items.push_back(std::move(itemViewPanEdgeScroll));
+
+        // Edge Trigger Zone: config is an int, so drive the slider through a float mirror.
+        static float s_viewPanEdgeThreshold = 0.0f;
+        s_viewPanEdgeThreshold = (float)g_config.ViewPanEdgeThreshold;
+        SettingsItem itemViewPanEdgeThreshold = { AppStrings::g.Settings_Label_ViewPanEdgeThreshold, OptionType::Slider, nullptr, &s_viewPanEdgeThreshold };
+        itemViewPanEdgeThreshold.minVal = 10.0f;
+        itemViewPanEdgeThreshold.maxVal = 50.0f;
+        itemViewPanEdgeThreshold.step = 1.0f;
+        itemViewPanEdgeThreshold.displayFormat = L"%.0f px";
+        itemViewPanEdgeThreshold.isDisabled = !g_config.ViewPanEdgeScroll;
+        itemViewPanEdgeThreshold.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, SettingsItem* item) {
+            if (item && item->pFloatVal) {
+                g_config.ViewPanEdgeThreshold = static_cast<int>(std::lround(*item->pFloatVal));
+            }
+        };
+        itemViewPanEdgeThreshold.onChange = []([[maybe_unused]] SettingsOverlay* overlay, SettingsItem* item) {
+            if (item && item->pFloatVal) {
+                g_config.ViewPanEdgeThreshold = static_cast<int>(std::lround(*item->pFloatVal));
+            }
+            SaveConfig();
+        };
+        tabControl.items.push_back(std::move(itemViewPanEdgeThreshold));
         // Gallery Trigger Mode
         {
             AddHeader(tabControl, AppStrings::g.Settings_Header_GalleryTrigger);
@@ -6422,6 +6496,40 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                 D2D1_RECT_F headerRect = D2D1::RectF(contentX, contentY + 10.0f * s, contentX + contentW, contentY + 40.0f * s);
                 m_textFormatHeader->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
                 pRT->DrawText(item.label.c_str(), (UINT32)item.label.length(), m_textFormatHeader.Get(), headerRect, m_brushText.Get());
+
+                // Optional section info icon: hovering it shows item.tooltipText
+                // through the shared tooltip renderer.
+                if (item.tooltipText != nullptr && item.tooltipText[0] != L'\0') {
+                    float headerTextW = 100.0f * s;
+                    if (m_dwriteFactory && m_textFormatHeader) {
+                        ComPtr<IDWriteTextLayout> headerLayout;
+                        if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(
+                                item.label.c_str(), (UINT32)item.label.length(), m_textFormatHeader.Get(),
+                                contentW, headerTextH, &headerLayout)) && headerLayout) {
+                            DWRITE_TEXT_METRICS metrics = {};
+                            if (SUCCEEDED(headerLayout->GetMetrics(&metrics))) {
+                                headerTextW = ceilf(metrics.widthIncludingTrailingWhitespace);
+                            }
+                        }
+                    }
+                    float tipIconSize = 24.0f * s;
+                    float tipIconX = contentX + headerTextW + 10.0f * s;
+                    float tipIconY = contentY + 10.0f * s + (headerTextH - tipIconSize) * 0.5f;
+                    item.tooltipIconRect = D2D1::RectF(tipIconX, tipIconY, tipIconX + tipIconSize, tipIconY + tipIconSize);
+
+                    const bool tipHovered = (&item == m_pHoverTooltipItem);
+                    ComPtr<ID2D1SolidColorBrush> tipBrush = tipHovered ? m_brushText : m_brushTextDim;
+                    D2D1_RECT_F tipRect = item.tooltipIconRect;
+                    const float tiw = tipRect.right - tipRect.left;
+                    const float tih = tipRect.bottom - tipRect.top;
+                    const float tiside = (std::min)(tiw, tih) * 0.66f;
+                    const float ticx = (tipRect.left + tipRect.right) * 0.5f;
+                    const float ticy = (tipRect.top + tipRect.bottom) * 0.5f;
+                    tipRect = D2D1::RectF(ticx - tiside * 0.5f, ticy - tiside * 0.5f, ticx + tiside * 0.5f, ticy + tiside * 0.5f);
+                    QuickView::UI::GeekIconRenderer::DrawVectorIcon(pRT, *Icons::Info, tipRect, tipBrush.Get());
+                } else {
+                    item.tooltipIconRect = {};
+                }
 
                 if (item.isNewOption) {
                     // Measure header text width

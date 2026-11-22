@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### ✨ Features & UX
+- **View Pan (RTS-style drag scroll)**: Bind **View Pan Mode** to any drag gesture under *Mouse Gestures* (for example Middle Drag, or Right Drag in place of the right-drag zoom). Hold and drag toward a direction and the view keeps panning that way at a speed set by the drag distance, until the button is released — with optional 45° (8-direction) snapping, smart edge auto-scroll and configurable speed (default 2.0x, up to 6.0x), smoothing and deadzone. A click without dragging still performs that button's normal click action. Tune it under *Settings → Controls → Behavior → View Pan* (the binding hint is behind the section's ⓘ tooltip).
+  - **Default change (only user-visible behaviour change)**: the stock **Middle Drag** gesture now runs **View Pan Mode** instead of the legacy positional Pan Image (judged more native). Middle click still exits; users who customised their mouse gestures or loaded a preset keep their bindings. Reset-to-default/fresh profiles get the new middle-drag behaviour.
+
 ## [6.31.0.0] - Faster TIFF, Built-in Print Preview, Windows 11 Look & Smarter Controls
 **Release Date**: 2026-08-14
 

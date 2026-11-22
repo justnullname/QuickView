@@ -97,8 +97,8 @@ TEST(MouseGestureTest, DefaultPresetRulesMatchQuickViewSignature) {
     // QuickView signature: None + LeftDrag -> WindowDrag
     EXPECT_EQ(config.GetMouseGestureAction(0, MouseTrigger::LeftDrag), MouseActionTarget::WindowDrag);
 
-    // QuickView signature: None + MiddleDrag -> PanImage
-    EXPECT_EQ(config.GetMouseGestureAction(0, MouseTrigger::MiddleDrag), MouseActionTarget::PanImage);
+    // Default: None + MiddleDrag -> ViewPan (RTS-style continuous panning)
+    EXPECT_EQ(config.GetMouseGestureAction(0, MouseTrigger::MiddleDrag), MouseActionTarget::ViewPan);
 
     // QuickView signature: None + MiddleClick -> ExitApp
     EXPECT_EQ(config.GetMouseGestureAction(0, MouseTrigger::MiddleClick), MouseActionTarget::ExitApp);

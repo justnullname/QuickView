@@ -40,6 +40,7 @@ static UINT GetSvgSurfaceSizeLimit();
 #include "ToolProcessProtocol.h"
 #include "ProcessRouter.h"
 #include "InputController.h"  // Quantum Stream: Warp Mode
+#include "ViewPanController.h" // RTS-style seamless panning
 #include "LosslessTransform.h"
 #include "EditState.h"
 #include "ThemePalette.h"
@@ -777,6 +778,7 @@ static constexpr UINT_PTR IDT_SVG_RERENDER = 44; // [SVG Lossless] Timer for laz
 static constexpr UINT_PTR IDT_INTERACTION = 1001; // Interaction debounce for HQ redraw/surface upgrade
 
 static constexpr UINT_PTR IDT_SMOOTH_ZOOM = 1003; // Drive transform-only smooth zoom animation
+static constexpr UINT_PTR IDT_VIEWPAN = 1007; // View Pan continuous-pan / edge auto-scroll frame clock
 static constexpr UINT_PTR BORDER_GLOW_TIMER_ID = 3005; // Pan/zoom edge vignette glow fade timer
 
 
@@ -5425,6 +5427,12 @@ void FlushConfigSnapshotToDiskLocked(
     sec.AddBool(L"RightButtonDragZoom", cfg.RightButtonDragZoom);
     sec.AddFloat(L"WheelZoomSpeed", cfg.WheelZoomSpeed);
     sec.AddFloat(L"RightDragZoomSpeed", cfg.RightDragZoomSpeed);
+    sec.AddBool(L"ViewPanSnap8", cfg.ViewPanSnap8);
+    sec.AddFloat(L"ViewPanSpeed", cfg.ViewPanSpeed);
+    sec.AddInt(L"ViewPanDeadzone", cfg.ViewPanDeadzone);
+    sec.AddFloat(L"ViewPanSmoothing", cfg.ViewPanSmoothing);
+    sec.AddBool(L"ViewPanEdgeScroll", cfg.ViewPanEdgeScroll);
+    sec.AddInt(L"ViewPanEdgeThreshold", cfg.ViewPanEdgeThreshold);
     sec.AddFloat(L"PanStepNormal", cfg.PanStepNormal);
     sec.AddFloat(L"PanStepFast", cfg.PanStepFast);
     sec.AddInt(L"LeftDragAction", (int)cfg.LeftDragAction);
@@ -5768,6 +5776,8 @@ void LoadConfig() {
         { L"Controls", L"InvertXButton",                      &AppConfig::InvertXButton,                      false },
         { L"Controls", L"MouseAnchoredWindowZoom",            &AppConfig::MouseAnchoredWindowZoom,            false },
         { L"Controls", L"RightButtonDragZoom",                &AppConfig::RightButtonDragZoom,                true },
+        { L"Controls", L"ViewPanSnap8",                       &AppConfig::ViewPanSnap8,                       true },
+        { L"Controls", L"ViewPanEdgeScroll",                  &AppConfig::ViewPanEdgeScroll,                  true },
         { L"Controls", L"EdgeNavClick",                       &AppConfig::EdgeNavClick,                       true },
         { L"Controls", L"GalleryKeepVisibleOnThumbnailClick", &AppConfig::GalleryKeepVisibleOnThumbnailClick, false },
         { L"Controls", L"GalleryExpandOnClickOnly",           &AppConfig::GalleryExpandOnClickOnly,           true },
@@ -5824,6 +5834,8 @@ void LoadConfig() {
         { L"Controls", L"ThumbWheelMode",               &AppConfig::ThumbWheelMode,               0,    0,    1,    true  },
         { L"Controls", L"DoubleClickMode",              &AppConfig::DoubleClickMode,              0,    0,    3,    true  },
         { L"Controls", L"GalleryTriggerMode",           &AppConfig::GalleryTriggerMode,           1,    1,    0,    false },
+        { L"Controls", L"ViewPanDeadzone",              &AppConfig::ViewPanDeadzone,              4,    10,   0,    false },
+        { L"Controls", L"ViewPanEdgeThreshold",         &AppConfig::ViewPanEdgeThreshold,         30,   50,   10,   false },
         { L"Controls", L"GalleryThumbnailSize",         &AppConfig::GalleryThumbnailSize,         0,    0,    300,  false },
         { L"Controls", L"LoupeShape",                   &AppConfig::LoupeShape,                   0,    0,    2,    false },
         { L"Controls", L"InfoPanelScale",               &AppConfig::InfoPanelScale,               0,    0,    5,    false },
@@ -5890,6 +5902,8 @@ void LoadConfig() {
         { L"Controls", L"SrAutoTriggerMaxSourceMp",   &AppConfig::SrAutoTriggerMaxSourceMp,   L"1.00",  0.1f,  16.0f },
         { L"Controls", L"WheelZoomSpeed",             &AppConfig::WheelZoomSpeed,             L"10.0",  5.0f,  50.0f },
         { L"Controls", L"RightDragZoomSpeed",         &AppConfig::RightDragZoomSpeed,         L"1.0",   0.1f,  3.0f },
+        { L"Controls", L"ViewPanSpeed",               &AppConfig::ViewPanSpeed,               L"2.0",   0.25f, 6.0f },
+        { L"Controls", L"ViewPanSmoothing",           &AppConfig::ViewPanSmoothing,           L"8.0",   2.0f,  20.0f },
         { L"Controls", L"PanStepNormal",              &AppConfig::PanStepNormal,              L"20.0",  1.0f,  600.0f },
         { L"Controls", L"PanStepFast",                &AppConfig::PanStepFast,                L"100.0", 10.0f, 1000.0f },
         { L"Controls", L"GalleryTriggerAreaHeight",   &AppConfig::GalleryTriggerAreaHeight,   L"20.0",  5.0f,  100.0f },
@@ -6022,8 +6036,14 @@ void LoadConfig() {
             if (a == MouseAction::WindowDrag) return MouseActionTarget::WindowDrag;
             return MouseActionTarget::None;
         };
+        // The legacy "middle drag = Pan Image" default becomes the more native
+        // RTS-style View Pan Mode; explicitly customised legacy modes still map.
+        const MouseActionTarget legacyMiddleDrag =
+            (g_config.MiddleDragAction == MouseAction::PanImage)
+                ? MouseActionTarget::ViewPan
+                : mapLegacyDrag(g_config.MiddleDragAction);
         g_config.SetMouseGesture(0, 0, MouseTrigger::LeftDrag, mapLegacyDrag(g_config.LeftDragAction));
-        g_config.SetMouseGesture(0, 0, MouseTrigger::MiddleDrag, mapLegacyDrag(g_config.MiddleDragAction));
+        g_config.SetMouseGesture(0, 0, MouseTrigger::MiddleDrag, legacyMiddleDrag);
         if (g_config.WheelActionMode == 1) {
             g_config.SetMouseGesture(0, 0, MouseTrigger::VerticalWheel, MouseActionTarget::Navigate);
         }
@@ -12375,6 +12395,288 @@ struct WindowMinimizeGuard {
 };
 static WindowMinimizeGuard s_windowMinimizeGuard;
 
+// ============================================================================
+// View Pan - RTS-style seamless panning host integration
+// ============================================================================
+// The controller (ViewPanController.h) owns the input FSM, direction snapping,
+// continuous velocity pan and smart edge scrolling. This host layer maps its abstract viewport
+// deltas onto QuickView's ViewState.PanX/PanY and drives DirectComposition plus
+// the Titan tile scheduler through the existing render path.
+// ============================================================================
+static QuickView::ViewPanController g_viewPanController;
+static bool g_viewPanTimerActive = false;
+static bool g_viewPanInitialized = false;
+// Pane that owned the gesture when it started (compare mode re-targets the
+// active pane on hover, which must not move a live pan mid-gesture).
+static ComparePane g_viewPanComparePane = ComparePane::Right;
+
+static void ViewPan_ApplyOffset(float dx, float dy) {
+    if (!g_mainHwnd || (dx == 0.0f && dy == 0.0f)) return;
+
+    // RTS drag semantics (StarCraft II style): the controller reports a VIEW
+    // displacement, while ViewState.PanX/PanY is the image/content offset. The
+    // content moves opposite to the view, so negate before applying: dragging
+    // toward a direction pans the view toward that direction.
+    const float contentDx = -dx;
+    const float contentDy = -dy;
+
+    auto& app = AppContext::GetInstance();
+    if (IsCompareModeActive() && app.CompareCtrl) {
+        auto& primary = GetPaneContext(PaneSlot::Primary);
+        auto& leftPane = GetPaneContext(PaneSlot::Left);
+        if (g_viewPanComparePane == ComparePane::Left && leftPane.valid) {
+            leftPane.view.PanX += contentDx;
+            leftPane.view.PanY += contentDy;
+            if (app.Compare.syncPan) {
+                primary.view.PanX += contentDx;
+                primary.view.PanY += contentDy;
+            }
+        } else {
+            primary.view.PanX += contentDx;
+            primary.view.PanY += contentDy;
+            if (app.Compare.syncPan && leftPane.valid) {
+                leftPane.view.PanX += contentDx;
+                leftPane.view.PanY += contentDy;
+            }
+        }
+        MarkCompareDirty();
+        RequestRepaint(PaintLayer::Image | PaintLayer::Static);
+        return;
+    }
+
+    auto& view = GetPaneContext(PaneSlot::Primary).view;
+    view.PanX += contentDx;
+    view.PanY += contentDy;
+
+    // Route through the normal present path: SyncDCompState updates the DComp
+    // transform and clamps to the image bounds; the following repaint makes
+    // OnPaint() re-evaluate the visible rect, which feeds TileManager and
+    // triggers async Titan tile decoding for the newly exposed region.
+    RECT rc{};
+    GetClientRect(g_mainHwnd, &rc);
+    SyncDCompState(g_mainHwnd, static_cast<float>(rc.right), static_cast<float>(rc.bottom));
+    NotifyBorderGlowInteraction(g_mainHwnd);
+    if (UseSvgViewportRendering(GetPaneContext(PaneSlot::Primary).resource)) {
+        RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic | PaintLayer::Static);
+    } else {
+        RequestRepaint(PaintLayer::Dynamic | PaintLayer::Static);
+    }
+}
+
+// The continuous pan keeps new content streaming in; when it stops, ask for one
+// high-quality repaint so the final frame is not left in interaction quality.
+static bool g_viewPanMarkedDragging = false;
+static void ViewPan_OnStateChanged(QuickView::ViewPanState state) {
+    auto& view = GetPaneContext(PaneSlot::Primary).view;
+    switch (state) {
+    case QuickView::ViewPanState::Pending:
+        view.IsInteracting = true;
+        break;
+    case QuickView::ViewPanState::Panning:
+        view.IsInteracting = true;
+        // Mirror the legacy drag flag so smooth-zoom / overlay math switches to
+        // the live view state instead of an in-flight zoom animation.
+        view.IsDragging = true;
+        g_viewPanMarkedDragging = true;
+        g_currentCursor = LoadCursor(nullptr, IDC_SIZEALL);
+        SetCursor(g_currentCursor);
+        break;
+    case QuickView::ViewPanState::Idle:
+        if (g_viewPanMarkedDragging) {
+            view.IsDragging = false;
+            g_viewPanMarkedDragging = false;
+        }
+        if (view.IsInteracting) {
+            view.IsInteracting = false;
+            if (GetPaneContext(PaneSlot::Primary).resource) {
+                RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic);
+            }
+        }
+        g_currentCursor = LoadCursor(nullptr, IDC_ARROW);
+        break;
+    }
+}
+
+static void ViewPan_SyncConfig() {
+    QuickView::ViewPanConfig cfg;
+    cfg.snap8 = g_config.ViewPanSnap8;
+    cfg.speed = (g_config.ViewPanSpeed > 0.05f) ? g_config.ViewPanSpeed : 2.0f;
+    cfg.deadzone = std::clamp(g_config.ViewPanDeadzone, 0, 10);
+    cfg.smoothing = std::clamp(g_config.ViewPanSmoothing, 1.0f, 30.0f);
+    cfg.edgeScroll = g_config.ViewPanEdgeScroll;
+    cfg.edgeThreshold = std::clamp(g_config.ViewPanEdgeThreshold, 0, 200);
+    g_viewPanController.SetConfig(cfg);
+}
+
+static void ViewPan_EnsureInitialized() {
+    if (g_viewPanInitialized) return;
+    g_viewPanInitialized = true;
+    g_viewPanController.SetPanCallback(ViewPan_ApplyOffset);
+    g_viewPanController.SetStateCallback(ViewPan_OnStateChanged);
+}
+
+static void ViewPan_StopTimer(HWND hwnd) {
+    if (!g_viewPanTimerActive) return;
+    KillTimer(hwnd, IDT_VIEWPAN);
+    g_viewPanTimerActive = false;
+}
+
+static void ViewPan_SyncTimer(HWND hwnd) {
+    const bool needsTick = g_viewPanController.NeedsTick();
+    if (needsTick && !g_viewPanTimerActive) {
+        SetTimer(hwnd, IDT_VIEWPAN, 8, nullptr);
+        g_viewPanTimerActive = true;
+    } else if (!needsTick && g_viewPanTimerActive) {
+        ViewPan_StopTimer(hwnd);
+    }
+}
+
+static void ViewPan_Abort(HWND hwnd) {
+    g_viewPanController.Cancel();
+    if (GetCapture() == hwnd) ReleaseCapture();
+    ViewPan_StopTimer(hwnd);
+}
+
+// True when the press must not start a View Pan (UI surfaces, overlays, no image).
+static bool ViewPan_ShouldBlockStart(HWND hwnd, int x, int y) {
+    if (!GetPaneContext(PaneSlot::Primary).resource) return true; // welcome / no image
+    if (g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible()) return true;
+    auto& app = AppContext::GetInstance();
+    if (app.DialogCtrl && (app.DialogCtrl->IsActive() || app.Dialog.IsVisible)) return true;
+    if (QuickView::PrintPreviewUI::GetInstance().IsVisible() ||
+        QuickView::ExportPanel::GetInstance().IsVisible()) return true;
+    if (QuickView::UI::AiActionOverlay::Instance().IsVisible()) return true;
+    if (IsMouseOverUI(hwnd, x, y)) return true;
+    return false;
+}
+
+// Maps a button-down message to the VK of the button that was pressed.
+static std::optional<UINT> ViewPan_ButtonFromDownMessage(UINT message, WPARAM wParam) {
+    switch (message) {
+    case WM_LBUTTONDOWN: return VK_LBUTTON;
+    case WM_MBUTTONDOWN: return VK_MBUTTON;
+    case WM_RBUTTONDOWN: return VK_RBUTTON;
+    case WM_XBUTTONDOWN:
+        return GET_XBUTTON_WPARAM(wParam) == XBUTTON1 ? VK_XBUTTON1 : VK_XBUTTON2;
+    default:
+        return std::nullopt;
+    }
+}
+
+// Drag trigger played by a physical button (used for the gesture lookup).
+static std::optional<MouseTrigger> ViewPan_DragTriggerForButton(UINT buttonVk) {
+    switch (buttonVk) {
+    case VK_LBUTTON: return MouseTrigger::LeftDrag;
+    case VK_MBUTTON: return MouseTrigger::MiddleDrag;
+    case VK_RBUTTON: return MouseTrigger::RightDrag;
+    case VK_XBUTTON1: return MouseTrigger::XButton1Drag;
+    case VK_XBUTTON2: return MouseTrigger::XButton2Drag;
+    default: return std::nullopt;
+    }
+}
+
+static uint8_t ViewPan_HoldMaskForButton(UINT buttonVk) {
+    switch (buttonVk) {
+    case VK_LBUTTON: return MouseModMask::HoldLeft;
+    case VK_MBUTTON: return MouseModMask::HoldMiddle;
+    case VK_RBUTTON: return MouseModMask::HoldRight;
+    case VK_XBUTTON1: return MouseModMask::HoldX1;
+    case VK_XBUTTON2: return MouseModMask::HoldX2;
+    default: return 0;
+    }
+}
+
+static bool ViewPan_IsButtonUpMessage(UINT message, WPARAM wParam, UINT buttonVk) {
+    switch (message) {
+    case WM_LBUTTONUP: return buttonVk == VK_LBUTTON;
+    case WM_MBUTTONUP: return buttonVk == VK_MBUTTON;
+    case WM_RBUTTONUP: return buttonVk == VK_RBUTTON;
+    case WM_XBUTTONUP:
+        return buttonVk == (GET_XBUTTON_WPARAM(wParam) == XBUTTON1 ? VK_XBUTTON1 : VK_XBUTTON2);
+    default:
+        return false;
+    }
+}
+
+// True when the drag gesture bound to this physical button is View Pan Mode.
+static bool ViewPan_IsViewPanGesture(UINT buttonVk) {
+    const std::optional<MouseTrigger> trigger = ViewPan_DragTriggerForButton(buttonVk);
+    if (!trigger) return false;
+    const uint8_t mods = GetCurrentMouseModifiers(static_cast<uint16_t>(buttonVk));
+    return g_config.GetMouseGestureAction(mods, *trigger) == MouseActionTarget::ViewPan;
+}
+
+// Mirrors the legacy button-down bookkeeping that the View Pan hook bypasses, so
+// a later gesture / Hold-modifier path cannot inherit stale state.
+static void ViewPan_SeedLegacyButtonState(UINT buttonVk, POINT pt) {
+    g_mouseHoldConsumedMask &= ~ViewPan_HoldMaskForButton(buttonVk);
+    auto& view = GetPaneContext(PaneSlot::Primary).view;
+    if (buttonVk == VK_RBUTTON) {
+        view.IsRightButtonDown = false;
+        view.IsRightButtonDragZoom = false;
+    }
+    view.LastMousePos = pt;
+    view.DragStartPos = pt;
+    view.DragStartTime = GetTickCount();
+}
+
+static std::optional<LRESULT> ViewPan_HandleMessage(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
+    ViewPan_EnsureInitialized();
+
+    // Opening an overlay / dialog, activating the loupe or losing activation
+    // mid-gesture aborts the pan immediately (some of these consume the button
+    // release before it can reach the controller, so we must not rely on the up).
+    const bool loupeActive = AppContext::GetInstance().Loupe.active;
+    if (g_viewPanController.IsActive() &&
+        (loupeActive || g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible() ||
+         AppContext::GetInstance().Dialog.IsVisible ||
+         (message == WM_ACTIVATE && LOWORD(wParam) == WA_INACTIVE))) {
+        ViewPan_Abort(hwnd);
+        return std::nullopt;
+    }
+
+    ViewPan_SyncConfig();
+
+    // 1. A button-down whose drag gesture is bound to View Pan starts the gesture
+    //    here, taking priority over the legacy drag handling for that button.
+    if (const std::optional<UINT> buttonOpt = ViewPan_ButtonFromDownMessage(message, wParam)) {
+        const UINT buttonVk = *buttonOpt;
+        const int x = static_cast<int>(static_cast<short>(LOWORD(lParam)));
+        const int y = static_cast<int>(static_cast<short>(HIWORD(lParam)));
+        if (ViewPan_IsViewPanGesture(buttonVk) && !ViewPan_ShouldBlockStart(hwnd, x, y)) {
+            const POINT pt{ x, y };
+            ViewPan_SeedLegacyButtonState(buttonVk, pt);
+            // Compare mode: pin the pane chosen at press time for the whole gesture.
+            if (IsCompareModeActive() && AppContext::GetInstance().CompareCtrl) {
+                g_viewPanComparePane = AppContext::GetInstance().CompareCtrl->HitTest(hwnd, pt);
+            }
+            g_viewPanController.BeginGesture(hwnd, buttonVk, pt);
+            ViewPan_SyncTimer(hwnd);
+            return LRESULT(0);
+        }
+    }
+
+    // 2. Route moves / releases / cancellations to the live gesture.
+    //    A press released before the deadzone is handed back to the legacy click
+    //    path; move the click anchor to the release point so a raised deadzone
+    //    cannot swallow the button's click action (context menu etc.).
+    const UINT pendingButton =
+        (g_viewPanController.GetState() == QuickView::ViewPanState::Pending)
+            ? g_viewPanController.GetGestureButton()
+            : 0;
+    std::optional<LRESULT> result = g_viewPanController.HandleMouseMessage(message, wParam, lParam, hwnd);
+    if (!result.has_value() && pendingButton != 0 &&
+        ViewPan_IsButtonUpMessage(message, wParam, pendingButton)) {
+        const int x = static_cast<int>(static_cast<short>(LOWORD(lParam)));
+        const int y = static_cast<int>(static_cast<short>(HIWORD(lParam)));
+        auto& view = GetPaneContext(PaneSlot::Primary).view;
+        view.LastMousePos = POINT{ x, y };
+        view.DragStartPos = POINT{ x, y };
+    }
+    ViewPan_SyncTimer(hwnd);
+    return result;
+}
+
 LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
     // [Loupe] While the loupe is active, intercept clicks, but honour button release if loupe was mouse-triggered
     if (AppContext::GetInstance().Loupe.active) {
@@ -12423,6 +12725,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         }
     }
 
+    // [View Pan] Runs before the legacy gesture switch: a button whose drag
+    // gesture is bound to "View Pan Mode" (under Mouse Gestures) is owned by the
+    // View Pan state machine; all other gestures are untouched.
+    if (auto viewPanResult = ViewPan_HandleMessage(hwnd, message, wParam, lParam)) {
+        return *viewPanResult;
+    }
+
     if (message == WM_SETCURSOR) {
         // [Loupe] Cursor appearance while the loupe is active
         if (AppContext::GetInstance().Loupe.active && LOWORD(lParam) == HTCLIENT) {
@@ -12431,6 +12740,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             } else {
                 SetCursor(nullptr);
             }
+            return TRUE;
+        }
+
+        // [View Pan] Grab cursor while actively panning or gliding.
+        const QuickView::ViewPanState viewPanState = g_viewPanController.GetState();
+        if (LOWORD(lParam) == HTCLIENT &&
+            viewPanState == QuickView::ViewPanState::Panning) {
+            SetCursor(LoadCursor(nullptr, IDC_SIZEALL));
             return TRUE;
         }
 
@@ -13639,6 +13956,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 }
             }
             RequestRepaint(PaintLayer::Image);  // [v4.1] Trigger HQ interpolation redraw
+        }
+
+        // [View Pan] Continuous-pan + smart edge auto-scroll clock. The pan
+        // callback requests the repaint, so only stop conditions are handled here.
+        if (wParam == IDT_VIEWPAN) {
+            ViewPan_EnsureInitialized();
+            ViewPan_SyncConfig();
+            g_viewPanController.Tick(hwnd);
+            if (!g_viewPanController.NeedsTick()) {
+                ViewPan_StopTimer(hwnd);
+            }
+            return 0;
         }
 
         if (wParam == IDT_SMOOTH_ZOOM) {
@@ -21697,6 +22026,11 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
         // Press-and-hold magnifier: activate on key-down (this dispatch); the
         // matching key-up in WndProc hides it. Auto-repeat re-enters here and is
         // idempotent. Fires if current zoom percent is below the target LoupeZoom.
+        // [View Pan] The active loupe swallows button messages (including the
+        // release), so terminate a live pan before it can strand the FSM.
+        if (g_viewPanController.IsActive()) {
+            ViewPan_Abort(hwnd);
+        }
         if (g_config.LoupeEnabled && GetPaneContext(PaneSlot::Primary).resource
             && GetCurrentZoomPercent() < (int)std::round(g_config.LoupeZoom * 100.0f)
             && !AppContext::GetInstance().Loupe.active) {
