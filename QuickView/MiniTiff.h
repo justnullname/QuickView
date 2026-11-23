@@ -43,6 +43,13 @@ HRESULT LoadRegion(const uint8_t* data, size_t size,
                    QuickView::Codec::DecodeResult& result,
                    int cropX, int cropY, int cropW, int cropH);
 
+// Direct decode full image into a caller-owned BGRA8 buffer (e.g. MasterBackingStore MMF view).
+// Uses exact dstStride (if 0, width * 4 packed) and skips redundant zero-fill on full overwrite.
+HRESULT LoadDirectToBuffer(const uint8_t* data, size_t size,
+                           uint8_t* dstPixels, size_t dstCapacity, int dstStride,
+                           QuickView::SimplePredicate checkCancel,
+                           QuickView::Codec::DecodeResult& result);
+
 // Internal helper for Phase 3 CMYK to BGRA conversion
 void ConvertCmykToBgra(const uint8_t* src, uint8_t* dst, int width, int samples);
 

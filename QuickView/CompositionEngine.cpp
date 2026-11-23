@@ -204,7 +204,7 @@ HRESULT CompositionEngine::UpdateVirtualTiles(QuickView::TileManager* tileManage
     // Note: User interacts with m_imageA/B. Smart Dispatch sets 'isTitan'.
     ImageLayer* pLayer = (m_activeLayerIndex == 0) ? &m_imageA : &m_imageB;
 
-    if (!pLayer->isTitan) return S_FALSE; 
+    if (!pLayer->isTitan) return S_OK; 
     
     // [Fix17d] Process Eviction Queue for VRAM Trim
     auto evicted = tileManager->PopEvictedTiles();
@@ -536,6 +536,21 @@ HRESULT CompositionEngine::Initialize(HWND hwnd, ID3D11Device* d3dDevice, ID2D1D
     hr = m_d2dDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &m_pendingContext);
     if (FAILED(hr)) return hr;
 
+    // Probe runtime D2D + DComp single-surface axis cap (16384 on FL11+, fallback 8192)
+    m_maxStandardSurfaceSize = QuickView::kDefaultStandardAxisLimit;
+    if (m_pendingContext && m_device) {
+        const UINT32 d2dMaxDim = m_pendingContext->GetMaximumBitmapSize();
+        if (d2dMaxDim >= QuickView::kMaxProbeStandardAxisLimit) {
+            ComPtr<IDCompositionSurface> probeSurface;
+            HRESULT hrProbe = m_device->CreateSurface(
+                QuickView::kMaxProbeStandardAxisLimit, 1,
+                DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_IGNORE, &probeSurface);
+            if (SUCCEEDED(hrProbe) && probeSurface) {
+                m_maxStandardSurfaceSize = QuickView::kMaxProbeStandardAxisLimit;
+            }
+        }
+    }
+
     // Cache scRGB color context
     hr = m_pendingContext->CreateColorContext(D2D1_COLOR_SPACE_SCRGB, nullptr, 0, &m_scRgbContext);
     if (FAILED(hr)) {
@@ -630,7 +645,7 @@ ID2D1DeviceContext* CompositionEngine::BeginPendingUpdate(UINT width, UINT heigh
     ImageLayer& layer = (pendingIndex == 0) ? m_imageA : m_imageB;
 
     const DXGI_FORMAT resolvedFormat = ResolveImageSurfaceFormat(surfaceFormatOverride == DXGI_FORMAT_UNKNOWN ? m_surfaceFormat : surfaceFormatOverride);
-    const bool useTitan = isTitan || (!allowOversizedStandard && (width > 8192 || height > 8192));
+    const bool useTitan = isTitan || (!allowOversizedStandard && (width > m_maxStandardSurfaceSize || height > m_maxStandardSurfaceSize));
 
     // Reuse existing standard DComp surface when dimensions, format, and alpha mode match
     // (critical for animated playback to avoid per-frame surface reallocation).

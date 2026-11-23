@@ -47,8 +47,11 @@ typedef unsigned long uLongf;
 #endif
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
+#include <limits>
 #include <malloc.h>
+#include <memory>
 #include <vector>
 #include <thread>
 #include <shared_mutex>
@@ -118,7 +121,7 @@ namespace WuffsLoader {
             status = (expr); \
             if (wuffs_base__status__is_ok(&status)) break; \
             if (status.repr == wuffs_base__suspension__short_read && !src.meta.closed) { \
-                 size_t next = std::min(size, src.meta.wi + 1048576); \
+                 size_t next = std::min(size, src.meta.wi + 16777216); \
                  src.meta.wi = next; \
                  src.meta.closed = (next == size); \
                  continue; \
@@ -128,119 +131,147 @@ namespace WuffsLoader {
     } while(0)
 
 // ------------------------------------------------------------
-// PNG Decoder
+// PNG Decoder (zlib-ng streaming + Highway SIMD fast path, Wuffs fallback)
 // ------------------------------------------------------------
-static bool DecodePNG_Impl(const uint8_t* data, size_t size, 
-               uint32_t* outWidth, uint32_t* outHeight,
-               BufferSink& outSink,
-               CancelPredicate checkCancel,
-               WuffsImageInfo* pInfo,
-               bool force8BitBgra) {
-    if (!data || size == 0) return false;
+struct PngPreScanInfo {
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint8_t bitDepth = 0;
+    uint8_t colorType = 0;
+    uint8_t compression = 0;
+    uint8_t filter = 0;
+    uint8_t interlace = 0;
+    bool hasIhdr = false;
+    bool hasTrns = false;
+    bool hasActl = false;
+    size_t firstIdatOffset = 0;
+};
 
-    // [CMS/HDR] Pre-scan PNG critical chunks, extract bit depth / iCCP / cICP / sRGB / cLLi / mDCv.
+static inline uint32_t ReadU32BE_Png(const uint8_t* ptr) noexcept {
+    return (static_cast<uint32_t>(ptr[0]) << 24) |
+           (static_cast<uint32_t>(ptr[1]) << 16) |
+           (static_cast<uint32_t>(ptr[2]) << 8) |
+           static_cast<uint32_t>(ptr[3]);
+}
+
+static PngPreScanInfo PreScanPngHeaderChunks(const uint8_t* data, size_t size,
+                                             WuffsImageInfo* pInfo) {
+    PngPreScanInfo scan;
     static constexpr uint8_t kPngSignature[8] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
-    auto readU32BE = [](const uint8_t* ptr) -> uint32_t {
-        return (static_cast<uint32_t>(ptr[0]) << 24) |
-               (static_cast<uint32_t>(ptr[1]) << 16) |
-               (static_cast<uint32_t>(ptr[2]) << 8) |
-               static_cast<uint32_t>(ptr[3]);
-    };
+    if (size < 8 || std::memcmp(data, kPngSignature, 8) != 0) {
+        return scan;
+    }
 
-    if (pInfo && size >= 8 && std::memcmp(data, kPngSignature, 8) == 0) {
-        const uint8_t* p = data;
-        size_t offset = 8; // skip PNG signature
-        bool hasTopLevelCicp = false;
-        bool hasIccCicp = false;
-        bool hasSrgbChunk = false;
-        QuickView::ColorPrimaries iccPrimaries = QuickView::ColorPrimaries::Unknown;
-        QuickView::TransferFunction iccTransfer = QuickView::TransferFunction::Unknown;
+    size_t offset = 8; // skip PNG signature
+    bool hasTopLevelCicp = false;
+    bool hasIccCicp = false;
+    bool hasSrgbChunk = false;
+    QuickView::ColorPrimaries iccPrimaries = QuickView::ColorPrimaries::Unknown;
+    QuickView::TransferFunction iccTransfer = QuickView::TransferFunction::Unknown;
 
-        while (offset + 12 <= size) {
-            const uint32_t chunk_len = readU32BE(p + offset);
-            const uint32_t chunk_type = readU32BE(p + offset + 4);
-            if (static_cast<size_t>(chunk_len) > size - offset - 12) {
-                break;
-            }
-            const uint8_t* payload = p + offset + 8;
-
-            if (chunk_type == 0x49484452 && chunk_len >= 13) { // IHDR
-                pInfo->bitDepth = payload[8];
-            } else if (chunk_type == 0x63494350 && chunk_len >= 4) { // cICP
-                const uint8_t primaries = payload[0];
-                const uint8_t transfer = payload[1];
-                const uint8_t matrix = payload[2];
-                if (matrix == 0) {
-                    QuickView::ColorPrimaries cicpPrim = QuickView::ColorPrimaries::Unknown;
-                    QuickView::TransferFunction cicpTransfer = QuickView::TransferFunction::Unknown;
-                    QuickView::MapCicpCodes(primaries, transfer, &cicpPrim, &cicpTransfer);
-                    if (cicpPrim != QuickView::ColorPrimaries::Unknown ||
-                        cicpTransfer != QuickView::TransferFunction::Unknown) {
-                        hasTopLevelCicp = true;
-                        if (cicpPrim != QuickView::ColorPrimaries::Unknown) {
-                            pInfo->primaries = cicpPrim;
-                        }
-                        if (cicpTransfer != QuickView::TransferFunction::Unknown) {
-                            pInfo->transfer = cicpTransfer;
-                        }
-                    }
-                }
-            } else if (chunk_type == 0x73524742 && chunk_len >= 1) { // sRGB
-                hasSrgbChunk = true;
-            } else if (chunk_type == 0x69434350 && pInfo->iccProfile.empty()) { // iCCP
-                // iCCP format: Name(1-79B) + Null(1B) + CompressionFlag(1B=0) + zlib_data
-                size_t null_idx = 0;
-                while (null_idx < 80 && null_idx < chunk_len && payload[null_idx] != 0) null_idx++;
-                if (chunk_len >= 2 && null_idx + 2 <= chunk_len && payload[null_idx] == 0 && payload[null_idx + 1] == 0) {
-                    const uint8_t* zlib_data = payload + null_idx + 2;
-                    size_t zlib_len = static_cast<size_t>(chunk_len) - (null_idx + 2);
-
-                    uLongf destLen = 1048576; // Start with 1MB for ICC
-                    pInfo->iccProfile.resize(destLen);
-                    int ret = uncompress(pInfo->iccProfile.data(), &destLen, zlib_data, static_cast<uLong>(zlib_len));
-                    if (ret == Z_OK) {
-                        pInfo->iccProfile.resize(destLen);
-                    } else if (ret == Z_BUF_ERROR) {
-                        destLen = 1048576 * 4; // 4MB
-                        pInfo->iccProfile.resize(destLen);
-                        ret = uncompress(pInfo->iccProfile.data(), &destLen, zlib_data, static_cast<uLong>(zlib_len));
-                        if (ret == Z_OK) pInfo->iccProfile.resize(destLen);
-                        else pInfo->iccProfile.clear();
-                    } else {
-                        pInfo->iccProfile.clear();
-                    }
-
-                    if (!pInfo->iccProfile.empty()) {
-                        if (QuickView::TryParseIccCicp(pInfo->iccProfile.data(),
-                                                       pInfo->iccProfile.size(),
-                                                       &iccPrimaries,
-                                                       &iccTransfer)) {
-                            hasIccCicp = true;
-                        }
-                    }
-                }
-            } else if (chunk_type == 0x634C4C69 && chunk_len >= 8) { // cLLi
-                const uint32_t maxCllScaled = readU32BE(payload);
-                const uint32_t maxFallScaled = readU32BE(payload + 4);
-                pInfo->maxCLLNits = static_cast<float>(maxCllScaled) / 10000.0f;
-                pInfo->maxFALLNits = static_cast<float>(maxFallScaled) / 10000.0f;
-                if (pInfo->maxCLLNits > 0.0f || pInfo->maxFALLNits > 0.0f) {
-                    pInfo->hasNitsMetadata = true;
-                }
-            } else if (chunk_type == 0x6D444376 && chunk_len >= 24) { // mDCv
-                const uint32_t maxLumScaled = readU32BE(payload + 16);
-                const uint32_t minLumScaled = readU32BE(payload + 20);
-                pInfo->masteringMaxNits = static_cast<float>(maxLumScaled) / 10000.0f;
-                pInfo->masteringMinNits = static_cast<float>(minLumScaled) / 10000.0f;
-                if (pInfo->masteringMaxNits > 0.0f || pInfo->masteringMinNits > 0.0f) {
-                    pInfo->hasNitsMetadata = true;
-                }
-            } else if (chunk_type == 0x49444154 || chunk_type == 0x49454E44) { // IDAT, IEND
-                break;
-            }
-            offset += 12 + static_cast<size_t>(chunk_len);
+    while (offset + 12 <= size) {
+        const uint32_t chunk_len = ReadU32BE_Png(data + offset);
+        const uint32_t chunk_type = ReadU32BE_Png(data + offset + 4);
+        if (static_cast<size_t>(chunk_len) > size - offset - 12) {
+            break;
         }
+        const uint8_t* payload = data + offset + 8;
 
+        if (chunk_type == 0x49484452 && chunk_len >= 13) { // IHDR
+            scan.width = ReadU32BE_Png(payload);
+            scan.height = ReadU32BE_Png(payload + 4);
+            scan.bitDepth = payload[8];
+            scan.colorType = payload[9];
+            scan.compression = payload[10];
+            scan.filter = payload[11];
+            scan.interlace = payload[12];
+            scan.hasIhdr = true;
+            if (pInfo) {
+                pInfo->bitDepth = payload[8];
+            }
+        } else if (chunk_type == 0x74524E53) { // tRNS
+            scan.hasTrns = true;
+        } else if (chunk_type == 0x6163544C) { // acTL
+            scan.hasActl = true;
+        } else if (pInfo && chunk_type == 0x63494350 && chunk_len >= 4) { // cICP
+            const uint8_t primaries = payload[0];
+            const uint8_t transfer = payload[1];
+            const uint8_t matrix = payload[2];
+            if (matrix == 0) {
+                QuickView::ColorPrimaries cicpPrim = QuickView::ColorPrimaries::Unknown;
+                QuickView::TransferFunction cicpTransfer = QuickView::TransferFunction::Unknown;
+                QuickView::MapCicpCodes(primaries, transfer, &cicpPrim, &cicpTransfer);
+                if (cicpPrim != QuickView::ColorPrimaries::Unknown ||
+                    cicpTransfer != QuickView::TransferFunction::Unknown) {
+                    hasTopLevelCicp = true;
+                    if (cicpPrim != QuickView::ColorPrimaries::Unknown) {
+                        pInfo->primaries = cicpPrim;
+                    }
+                    if (cicpTransfer != QuickView::TransferFunction::Unknown) {
+                        pInfo->transfer = cicpTransfer;
+                    }
+                }
+            }
+        } else if (pInfo && chunk_type == 0x73524742 && chunk_len >= 1) { // sRGB
+            hasSrgbChunk = true;
+        } else if (pInfo && chunk_type == 0x69434350 && pInfo->iccProfile.empty()) { // iCCP
+            // iCCP format: Name(1-79B) + Null(1B) + CompressionFlag(1B=0) + zlib_data
+            size_t null_idx = 0;
+            while (null_idx < 80 && null_idx < chunk_len && payload[null_idx] != 0) null_idx++;
+            if (chunk_len >= 2 && null_idx + 2 <= chunk_len && payload[null_idx] == 0 && payload[null_idx + 1] == 0) {
+                const uint8_t* zlib_data = payload + null_idx + 2;
+                size_t zlib_len = static_cast<size_t>(chunk_len) - (null_idx + 2);
+
+                uLongf destLen = 1048576; // Start with 1MB for ICC
+                pInfo->iccProfile.resize(destLen);
+                int ret = uncompress(pInfo->iccProfile.data(), &destLen, zlib_data, static_cast<uLong>(zlib_len));
+                if (ret == Z_OK) {
+                    pInfo->iccProfile.resize(destLen);
+                } else if (ret == Z_BUF_ERROR) {
+                    destLen = 1048576 * 4; // 4MB
+                    pInfo->iccProfile.resize(destLen);
+                    ret = uncompress(pInfo->iccProfile.data(), &destLen, zlib_data, static_cast<uLong>(zlib_len));
+                    if (ret == Z_OK) pInfo->iccProfile.resize(destLen);
+                    else pInfo->iccProfile.clear();
+                } else {
+                    pInfo->iccProfile.clear();
+                }
+
+                if (!pInfo->iccProfile.empty()) {
+                    if (QuickView::TryParseIccCicp(pInfo->iccProfile.data(),
+                                                   pInfo->iccProfile.size(),
+                                                   &iccPrimaries,
+                                                   &iccTransfer)) {
+                        hasIccCicp = true;
+                    }
+                }
+            }
+        } else if (pInfo && chunk_type == 0x634C4C69 && chunk_len >= 8) { // cLLi
+            const uint32_t maxCllScaled = ReadU32BE_Png(payload);
+            const uint32_t maxFallScaled = ReadU32BE_Png(payload + 4);
+            pInfo->maxCLLNits = static_cast<float>(maxCllScaled) / 10000.0f;
+            pInfo->maxFALLNits = static_cast<float>(maxFallScaled) / 10000.0f;
+            if (pInfo->maxCLLNits > 0.0f || pInfo->maxFALLNits > 0.0f) {
+                pInfo->hasNitsMetadata = true;
+            }
+        } else if (pInfo && chunk_type == 0x6D444376 && chunk_len >= 24) { // mDCv
+            const uint32_t maxLumScaled = ReadU32BE_Png(payload + 16);
+            const uint32_t minLumScaled = ReadU32BE_Png(payload + 20);
+            pInfo->masteringMaxNits = static_cast<float>(maxLumScaled) / 10000.0f;
+            pInfo->masteringMinNits = static_cast<float>(minLumScaled) / 10000.0f;
+            if (pInfo->masteringMaxNits > 0.0f || pInfo->masteringMinNits > 0.0f) {
+                pInfo->hasNitsMetadata = true;
+            }
+        } else if (chunk_type == 0x49444154) { // IDAT
+            scan.firstIdatOffset = offset;
+            break;
+        } else if (chunk_type == 0x49454E44) { // IEND
+            break;
+        }
+        offset += 12 + static_cast<size_t>(chunk_len);
+    }
+
+    if (pInfo) {
         // Priority: top-level PNG cICP > ICC cicp > sRGB chunk
         if (hasIccCicp) {
             if (pInfo->primaries == QuickView::ColorPrimaries::Unknown &&
@@ -261,17 +292,467 @@ static bool DecodePNG_Impl(const uint8_t* data, size_t size,
             }
         }
     }
+    return scan;
+}
+
+static inline uint16_t ReadU16BE_Png(const uint8_t* p) noexcept {
+    return static_cast<uint16_t>((static_cast<uint16_t>(p[0]) << 8) | static_cast<uint16_t>(p[1]));
+}
+
+static void ConvertPngRowToTarget(const uint8_t* src, uint8_t* dst, uint32_t width,
+                                  uint8_t colorType, uint8_t bitDepth, bool output16Bit) {
+    if (output16Bit) {
+        // Output matches Wuffs + SwizzleBGRA16ToRGBA16: non-premultiplied RGBA16 little-endian
+        uint16_t* dst16 = reinterpret_cast<uint16_t*>(dst);
+        if (colorType == 2) { // RGB16 BE -> RGBA16 LE
+            for (uint32_t x = 0; x < width; ++x) {
+                const uint8_t* s = src + static_cast<size_t>(x) * 6;
+                uint16_t* d = dst16 + static_cast<size_t>(x) * 4;
+                d[0] = ReadU16BE_Png(s + 0);
+                d[1] = ReadU16BE_Png(s + 2);
+                d[2] = ReadU16BE_Png(s + 4);
+                d[3] = 0xFFFFu;
+            }
+        } else if (colorType == 6) { // RGBA16 BE -> RGBA16 LE
+            for (uint32_t x = 0; x < width; ++x) {
+                const uint8_t* s = src + static_cast<size_t>(x) * 8;
+                uint16_t* d = dst16 + static_cast<size_t>(x) * 4;
+                d[0] = ReadU16BE_Png(s + 0);
+                d[1] = ReadU16BE_Png(s + 2);
+                d[2] = ReadU16BE_Png(s + 4);
+                d[3] = ReadU16BE_Png(s + 6);
+            }
+        } else if (colorType == 0) { // Gray16 BE -> RGBA16 LE
+            for (uint32_t x = 0; x < width; ++x) {
+                const uint16_t g = ReadU16BE_Png(src + static_cast<size_t>(x) * 2);
+                uint16_t* d = dst16 + static_cast<size_t>(x) * 4;
+                d[0] = g;
+                d[1] = g;
+                d[2] = g;
+                d[3] = 0xFFFFu;
+            }
+        } else { // colorType == 4: GrayAlpha16 BE -> RGBA16 LE
+            for (uint32_t x = 0; x < width; ++x) {
+                const uint8_t* s = src + static_cast<size_t>(x) * 4;
+                const uint16_t g = ReadU16BE_Png(s + 0);
+                const uint16_t a = ReadU16BE_Png(s + 2);
+                uint16_t* d = dst16 + static_cast<size_t>(x) * 4;
+                d[0] = g;
+                d[1] = g;
+                d[2] = g;
+                d[3] = a;
+            }
+        }
+        return;
+    }
+
+    // Output matches Wuffs BGRA_PREMUL (BGRA8888 premultiplied)
+    if (colorType == 2) {
+        if (bitDepth == 16) {
+            ImageLoaderSimd::ConvertRGB16ToBGRARow(src, dst, static_cast<int>(width), false);
+        } else {
+            ImageLoaderSimd::ConvertRGBToBGRA(src, dst, static_cast<int>(width), 1, static_cast<int>(width) * 4);
+        }
+    } else if (colorType == 6) {
+        if (bitDepth == 8) {
+            std::memcpy(dst, src, static_cast<size_t>(width) * 4);
+            ImageLoaderSimd::SwizzleRGBAToBGRA(dst, static_cast<size_t>(width));
+        } else {
+            for (uint32_t x = 0; x < width; ++x) {
+                const uint8_t* s = src + static_cast<size_t>(x) * 8;
+                const uint32_t r16 = ReadU16BE_Png(s + 0);
+                const uint32_t g16 = ReadU16BE_Png(s + 2);
+                const uint32_t b16 = ReadU16BE_Png(s + 4);
+                const uint32_t a16 = ReadU16BE_Png(s + 6);
+                uint8_t* d = dst + static_cast<size_t>(x) * 4;
+                d[0] = static_cast<uint8_t>(((b16 * a16) / 0xFFFFu) >> 8);
+                d[1] = static_cast<uint8_t>(((g16 * a16) / 0xFFFFu) >> 8);
+                d[2] = static_cast<uint8_t>(((r16 * a16) / 0xFFFFu) >> 8);
+                d[3] = static_cast<uint8_t>(a16 >> 8);
+            }
+        }
+    } else if (colorType == 0) {
+        if (bitDepth == 8) {
+            for (uint32_t x = 0; x < width; ++x) {
+                const uint8_t g = src[x];
+                uint8_t* d = dst + static_cast<size_t>(x) * 4;
+                d[0] = g; d[1] = g; d[2] = g; d[3] = 255;
+            }
+        } else {
+            for (uint32_t x = 0; x < width; ++x) {
+                const uint8_t g = src[static_cast<size_t>(x) * 2];
+                uint8_t* d = dst + static_cast<size_t>(x) * 4;
+                d[0] = g; d[1] = g; d[2] = g; d[3] = 255;
+            }
+        }
+    } else { // colorType == 4 (GrayAlpha)
+        if (bitDepth == 8) {
+            for (uint32_t x = 0; x < width; ++x) {
+                const uint32_t g = src[static_cast<size_t>(x) * 2 + 0];
+                const uint32_t a = src[static_cast<size_t>(x) * 2 + 1];
+                const uint8_t gp = static_cast<uint8_t>((g * a + 127u) / 255u);
+                uint8_t* d = dst + static_cast<size_t>(x) * 4;
+                d[0] = gp; d[1] = gp; d[2] = gp; d[3] = static_cast<uint8_t>(a);
+            }
+        } else {
+            for (uint32_t x = 0; x < width; ++x) {
+                const uint8_t* s = src + static_cast<size_t>(x) * 4;
+                const uint32_t g16 = ReadU16BE_Png(s + 0);
+                const uint32_t a16 = ReadU16BE_Png(s + 2);
+                const uint8_t gp = static_cast<uint8_t>(((g16 * a16) / 0xFFFFu) >> 8);
+                uint8_t* d = dst + static_cast<size_t>(x) * 4;
+                d[0] = gp; d[1] = gp; d[2] = gp; d[3] = static_cast<uint8_t>(a16 >> 8);
+            }
+        }
+    }
+}
+
+static bool FeedNextIdatChunk(const uint8_t* data, size_t size,
+                                size_t& curOffset, uint32_t& curChunkLen, z_stream& strm) noexcept {
+    curOffset += 12 + static_cast<size_t>(curChunkLen);
+    curChunkLen = 0;
+    while (curOffset + 12 <= size) {
+        const uint32_t len = ReadU32BE_Png(data + curOffset);
+        const uint32_t type = ReadU32BE_Png(data + curOffset + 4);
+        if (static_cast<size_t>(len) > size - curOffset - 12 || type != 0x49444154) {
+            return false;
+        }
+        if (len > 0) {
+            curChunkLen = len;
+            strm.next_in = const_cast<Bytef*>(data + curOffset + 8);
+            strm.avail_in = static_cast<uInt>(curChunkLen);
+            return true;
+        }
+        curOffset += 12;
+    }
+    return false;
+}
+
+static bool DecodePngSingleThreadRows(
+    const uint8_t* data, size_t size, const PngPreScanInfo& scan,
+    uint8_t* outPtr, size_t rowBytes, size_t lineBytes, int bpp,
+    size_t dstRowBytes, bool output16Bit, CancelPredicate checkCancel,
+    size_t& curOffset, uint32_t& curChunkLen, z_stream& strm, bool& outCancelled) {
+    // Allocate two uninitialized rolling scanline buffers (~rowBytes each, zero memset overhead).
+    std::unique_ptr<uint8_t[]> rowBufA(new uint8_t[lineBytes]);
+    std::unique_ptr<uint8_t[]> rowBufB(new uint8_t[lineBytes]);
+    uint8_t* currLine = rowBufA.get();
+    uint8_t* prevLine = rowBufB.get();
+
+    size_t rowFill = 0;
+    uint32_t y = 0;
+    while (y < scan.height) {
+        if (strm.avail_in == 0 && !FeedNextIdatChunk(data, size, curOffset, curChunkLen, strm)) {
+            return false;
+        }
+
+        const size_t rem = lineBytes - rowFill;
+        strm.next_out = currLine + rowFill;
+        strm.avail_out = static_cast<uInt>((std::min)(rem, static_cast<size_t>(0x7FFFFFFFu)));
+
+        const int ret = inflate(&strm, Z_NO_FLUSH);
+        rowFill = static_cast<size_t>(strm.next_out - currLine);
+
+        if (rowFill == lineBytes) {
+            const uint8_t filterType = currLine[0];
+            if (filterType > 4) return false;
+            if ((y & 63u) == 0u && checkCancel && checkCancel()) {
+                outCancelled = true;
+                return false;
+            }
+
+            ImageLoaderSimd::PngUnfilterRow(
+                filterType, currLine + 1, (y > 0) ? (prevLine + 1) : nullptr, rowBytes, bpp);
+            ConvertPngRowToTarget(currLine + 1, outPtr + static_cast<size_t>(y) * dstRowBytes,
+                                  scan.width, scan.colorType, scan.bitDepth, output16Bit);
+
+            std::swap(currLine, prevLine);
+            rowFill = 0;
+            ++y;
+        }
+
+        if (ret == Z_STREAM_END) break;
+        if (ret != Z_OK && !(ret == Z_BUF_ERROR && strm.avail_in == 0)) return false;
+    }
+    return y == scan.height;
+}
+
+// Dual-thread lock-free SPSC ring pipeline: main thread feeds large contiguous avail_out chunks
+// to zlib-ng inflate while a consumer thread performs SIMD unfilter + pixel conversion in parallel.
+static bool DecodePngPipelinedRing(
+    const uint8_t* data, size_t size, const PngPreScanInfo& scan,
+    uint8_t* outPtr, size_t rowBytes, size_t lineBytes, int bpp,
+    size_t dstRowBytes, bool output16Bit, CancelPredicate checkCancel,
+    size_t& curOffset, uint32_t& curChunkLen, z_stream& strm, bool& outCancelled) {
+    uint64_t ringRows = 64;
+    while (ringRows > 8 && ringRows * static_cast<uint64_t>(lineBytes) > 16ULL * 1024ULL * 1024ULL) {
+        ringRows >>= 1;
+    }
+    const uint64_t mask = ringRows - 1u;
+    std::unique_ptr<uint8_t[]> ringBuf(new uint8_t[static_cast<size_t>(ringRows) * lineBytes]);
+
+    constexpr uint64_t kPipelineStop = (std::numeric_limits<uint64_t>::max)();
+    std::atomic<uint64_t> producedAtomic{0};
+    std::atomic<uint64_t> consumedAtomic{0};
+    std::atomic<bool> failed{false};
+
+    std::thread consumer([&]() {
+        uint64_t y = 0;
+        while (y < scan.height) {
+            const uint64_t avail = producedAtomic.load(std::memory_order_acquire);
+            if (avail == kPipelineStop || failed.load(std::memory_order_acquire)) break;
+            if (y >= avail) {
+                producedAtomic.wait(avail, std::memory_order_acquire);
+                continue;
+            }
+
+            const uint64_t batchEnd = (std::min)(avail, static_cast<uint64_t>(scan.height));
+            for (; y < batchEnd; ++y) {
+                if (failed.load(std::memory_order_relaxed)) break;
+                uint8_t* curr = ringBuf.get() + static_cast<size_t>(y & mask) * lineBytes;
+                const uint8_t* prev = (y > 0)
+                    ? (ringBuf.get() + static_cast<size_t>((y - 1u) & mask) * lineBytes + 1u)
+                    : nullptr;
+                const uint8_t filterType = curr[0];
+                if (filterType > 4) {
+                    failed.store(true, std::memory_order_release);
+                    consumedAtomic.store(kPipelineStop, std::memory_order_release);
+                    consumedAtomic.notify_one();
+                    return;
+                }
+                ImageLoaderSimd::PngUnfilterRow(filterType, curr + 1u, prev, rowBytes, bpp);
+                ConvertPngRowToTarget(curr + 1u, outPtr + static_cast<size_t>(y) * dstRowBytes,
+                                      scan.width, scan.colorType, scan.bitDepth, output16Bit);
+            }
+            consumedAtomic.store(y, std::memory_order_release);
+            consumedAtomic.notify_one();
+        }
+    });
+
+    uint64_t produced = 0;
+    uint64_t lastPublished = 0;
+    size_t partialBytes = 0;
+    bool streamOk = true;
+
+    while (produced < scan.height) {
+        if (checkCancel && checkCancel()) {
+            outCancelled = true;
+            streamOk = false;
+            break;
+        }
+
+        const uint64_t c = consumedAtomic.load(std::memory_order_acquire);
+        if (c == kPipelineStop || failed.load(std::memory_order_acquire)) {
+            streamOk = false;
+            break;
+        }
+
+        // Leave 1 slot safety gap so consumer can still read slot[(c - 1) & mask] as prevRow.
+        const uint64_t maxRowLimit = (std::min)(
+            static_cast<uint64_t>(scan.height), c + (ringRows - 1u));
+        if (produced >= maxRowLimit) {
+            if (produced > lastPublished) {
+                producedAtomic.store(produced, std::memory_order_release);
+                producedAtomic.notify_one();
+                lastPublished = produced;
+            }
+            consumedAtomic.wait(c, std::memory_order_acquire);
+            continue;
+        }
+
+        if (strm.avail_in == 0 && !FeedNextIdatChunk(data, size, curOffset, curChunkLen, strm)) {
+            streamOk = false;
+            break;
+        }
+
+        const uint64_t maxContigRows = (std::min)(
+            ringRows - (produced & mask), maxRowLimit - produced);
+        const uint64_t burstRows = (std::min)(maxContigRows, uint64_t{16});
+        const size_t availBytes = static_cast<size_t>(burstRows) * lineBytes - partialBytes;
+        uint8_t* writeStart = ringBuf.get() + static_cast<size_t>(produced & mask) * lineBytes + partialBytes;
+
+        strm.next_out = writeStart;
+        strm.avail_out = static_cast<uInt>((std::min)(availBytes, static_cast<size_t>(0x7FFFFFFFu)));
+
+        const int ret = inflate(&strm, Z_NO_FLUSH);
+        const size_t inflatedBytes = static_cast<size_t>(strm.next_out - writeStart);
+        const size_t totalBytes = partialBytes + inflatedBytes;
+        const uint64_t completedNewRows = totalBytes / lineBytes;
+        partialBytes = totalBytes % lineBytes;
+        produced += completedNewRows;
+
+        if (produced > lastPublished &&
+            (produced - lastPublished >= 8 || produced == scan.height ||
+             ret == Z_STREAM_END || produced >= maxRowLimit)) {
+            producedAtomic.store(produced, std::memory_order_release);
+            producedAtomic.notify_one();
+            lastPublished = produced;
+        }
+
+        if (ret == Z_STREAM_END) break;
+        if (ret != Z_OK && !(ret == Z_BUF_ERROR && strm.avail_in == 0)) {
+            streamOk = false;
+            break;
+        }
+    }
+
+    if (!streamOk || produced != scan.height) {
+        failed.store(true, std::memory_order_release);
+        producedAtomic.store(kPipelineStop, std::memory_order_release);
+        producedAtomic.notify_one();
+        streamOk = false;
+    } else if (produced > lastPublished) {
+        producedAtomic.store(produced, std::memory_order_release);
+        producedAtomic.notify_one();
+    }
+
+    if (consumer.joinable()) consumer.join();
+    if (failed.load(std::memory_order_acquire)) streamOk = false;
+    return streamOk;
+}
+
+// Streams non-interlaced 8/16-bit PNG via zlib-ng Raw Inflate (-15) and rolling row buffers,
+// eliminating full-frame workbuf commits while invoking Highway SIMD unfilter + pixel conversion.
+static bool TryDecodePngStreamingZlibNg(
+    const uint8_t* data, size_t size, const PngPreScanInfo& scan,
+    BufferSink& outSink, CancelPredicate checkCancel, WuffsImageInfo* pInfo, bool force8BitBgra,
+    uint8_t*& inOutAllocatedPtr, size_t& inOutAllocatedBytes, bool& outCancelled) {
+    outCancelled = false;
+    if (!scan.hasIhdr || scan.width == 0 || scan.height == 0 ||
+        scan.compression != 0 || scan.filter != 0 || scan.interlace != 0 ||
+        scan.hasTrns || scan.hasActl || scan.firstIdatOffset == 0) {
+        return false;
+    }
+    if (scan.bitDepth != 8 && scan.bitDepth != 16) return false;
+
+    int channels = 0;
+    switch (scan.colorType) {
+    case 0: channels = 1; break;
+    case 2: channels = 3; break;
+    case 4: channels = 2; break;
+    case 6: channels = 4; break;
+    default: return false; // Palette (colorType == 3) falls back to Wuffs
+    }
+
+    const int bpp = channels * (scan.bitDepth / 8);
+    if (static_cast<uint64_t>(scan.width) * static_cast<uint64_t>(bpp) > (std::numeric_limits<size_t>::max)() - 1u) {
+        return false;
+    }
+    const size_t rowBytes = static_cast<size_t>(scan.width) * static_cast<size_t>(bpp);
+    const size_t lineBytes = rowBytes + 1u;
+
+    const bool output16Bit = (pInfo != nullptr && scan.bitDepth == 16 && !force8BitBgra);
+    const size_t outBpp = output16Bit ? 8u : 4u;
+    const size_t pixelCount = static_cast<size_t>(scan.width) * static_cast<size_t>(scan.height);
+    if (pixelCount / scan.width != scan.height ||
+        pixelCount > (std::numeric_limits<size_t>::max)() / outBpp) {
+        return false;
+    }
+    const size_t pixelSize = pixelCount * outBpp;
+
+    // Locate first non-empty IDAT chunk and validate 2-byte RFC 1950 zlib header for raw inflate.
+    size_t curOffset = scan.firstIdatOffset;
+    uint32_t curChunkLen = 0;
+    while (curOffset + 12 <= size) {
+        const uint32_t len = ReadU32BE_Png(data + curOffset);
+        const uint32_t type = ReadU32BE_Png(data + curOffset + 4);
+        if (static_cast<size_t>(len) > size - curOffset - 12 || type != 0x49444154) {
+            return false;
+        }
+        if (len > 0) {
+            curChunkLen = len;
+            break;
+        }
+        curOffset += 12;
+    }
+    if (curChunkLen < 2) return false;
+
+    const uint8_t* firstPayload = data + curOffset + 8;
+    const uint8_t cmf = firstPayload[0];
+    const uint8_t flg = firstPayload[1];
+    if ((cmf & 0x0F) != 8 || (cmf >> 4) > 7 ||
+        ((((static_cast<uint32_t>(cmf) << 8) | static_cast<uint32_t>(flg)) % 31u) != 0u) ||
+        (flg & 0x20) != 0) {
+        return false; // Invalid header or preset dictionary -> fallback to Wuffs
+    }
+
+    if (checkCancel && checkCancel()) {
+        outCancelled = true;
+        return false;
+    }
+
+    uint8_t* outPtr = outSink.Allocate(pixelSize);
+    if (!outPtr) {
+        outCancelled = true; // Do not retry Wuffs when destination allocation fails
+        return false;
+    }
+    inOutAllocatedPtr = outPtr;
+    inOutAllocatedBytes = pixelSize;
+
+    z_stream strm = {};
+    if (inflateInit2(&strm, -15) != Z_OK) {
+        return false;
+    }
+
+    strm.next_in = const_cast<Bytef*>(firstPayload + 2);
+    strm.avail_in = static_cast<uInt>(curChunkLen - 2);
+
+    const size_t dstRowBytes = static_cast<size_t>(scan.width) * outBpp;
+    const uint64_t totalScanlineBytes = static_cast<uint64_t>(lineBytes) * static_cast<uint64_t>(scan.height);
+    const bool usePipelinedRing = (scan.height >= 256 && totalScanlineBytes >= 16ULL * 1024ULL * 1024ULL);
+
+    const bool streamOk = usePipelinedRing
+        ? DecodePngPipelinedRing(data, size, scan, outPtr, rowBytes, lineBytes, bpp,
+                                 dstRowBytes, output16Bit, checkCancel, curOffset, curChunkLen, strm, outCancelled)
+        : DecodePngSingleThreadRows(data, size, scan, outPtr, rowBytes, lineBytes, bpp,
+                                    dstRowBytes, output16Bit, checkCancel, curOffset, curChunkLen, strm, outCancelled);
+
+    inflateEnd(&strm);
+    if (!streamOk) {
+        return false;
+    }
+
+    if (pInfo) {
+        pInfo->hasAlpha = (scan.colorType == 4 || scan.colorType == 6);
+        if (pInfo->bitDepth <= 0) pInfo->bitDepth = 8;
+    }
+    return true;
+}
+
+static bool DecodePNG_Impl(const uint8_t* data, size_t size, 
+               uint32_t* outWidth, uint32_t* outHeight,
+               BufferSink& outSink,
+               CancelPredicate checkCancel,
+               WuffsImageInfo* pInfo,
+               bool force8BitBgra) {
+    if (!data || size == 0) return false;
+
+    const PngPreScanInfo scan = PreScanPngHeaderChunks(data, size, pInfo);
+    uint8_t* preallocatedPtr = nullptr;
+    size_t preallocatedBytes = 0;
+    bool cancelled = false;
+
+    if (TryDecodePngStreamingZlibNg(data, size, scan, outSink, checkCancel, pInfo,
+                                    force8BitBgra, preallocatedPtr, preallocatedBytes, cancelled)) {
+        *outWidth = scan.width;
+        *outHeight = scan.height;
+        return true;
+    }
+    if (cancelled) {
+        return false;
+    }
 
     wuffs_png__decoder dec;
     wuffs_base__status status = wuffs_png__decoder__initialize(
         &dec, sizeof(dec), WUFFS_VERSION,
         WUFFS_INITIALIZE__LEAVE_INTERNAL_BUFFERS_UNINITIALIZED);
     if (!wuffs_base__status__is_ok(&status)) return false;
+    wuffs_png__decoder__set_quirk(&dec, WUFFS_BASE__QUIRK_IGNORE_CHECKSUM, 1);
 
     wuffs_base__io_buffer src = {};
     src.data.ptr = const_cast<uint8_t*>(data);
     src.data.len = size;
-    src.meta.wi = std::min(size, (size_t)1048576); 
+    src.meta.wi = std::min(size, (size_t)16777216); 
     src.meta.ri = 0;
     src.meta.closed = (src.meta.wi == size);
 
@@ -298,7 +779,10 @@ static bool DecodePNG_Impl(const uint8_t* data, size_t size,
     wuffs_base__pixel_config__set(&ic.pixcfg, targetFmt, WUFFS_BASE__PIXEL_SUBSAMPLING__NONE, width, height);
 
     size_t pixelSize = (size_t)width * height * bpp;
-    uint8_t* outPtr = outSink.Allocate(pixelSize);
+    // Reuse preallocated buffer when falling back from fast path to prevent duplicate CapturingAlloc calls.
+    uint8_t* outPtr = (preallocatedPtr && preallocatedBytes == pixelSize)
+                          ? preallocatedPtr
+                          : outSink.Allocate(pixelSize);
     if (!outPtr) return false;
 
     wuffs_base__pixel_buffer pb;
@@ -772,6 +1256,7 @@ public:
             &m_pngDec, sizeof(m_pngDec), WUFFS_VERSION,
             WUFFS_INITIALIZE__LEAVE_INTERNAL_BUFFERS_UNINITIALIZED);
         if (wuffs_base__status__is_ok(&status)) {
+          wuffs_png__decoder__set_quirk(&m_pngDec, WUFFS_BASE__QUIRK_IGNORE_CHECKSUM, 1);
           status = DecodeConfigWithShortRead(false, m_gifDec, m_pngDec, m_ic, m_src);
           if (wuffs_base__status__is_ok(&status)) {
             const uint32_t apng_frames =
@@ -1098,6 +1583,7 @@ private:
         } else if (m_isPng) {
             status = wuffs_png__decoder__initialize(&bgPngDec, sizeof(bgPngDec), WUFFS_VERSION, WUFFS_INITIALIZE__LEAVE_INTERNAL_BUFFERS_UNINITIALIZED);
             if (!wuffs_base__status__is_ok(&status)) return;
+            wuffs_png__decoder__set_quirk(&bgPngDec, WUFFS_BASE__QUIRK_IGNORE_CHECKSUM, 1);
             status = DecodeConfigWithShortRead(false, bgGifDec, bgPngDec, ic, bgSrc);
             if (!wuffs_base__status__is_ok(&status)) return;
         } else {

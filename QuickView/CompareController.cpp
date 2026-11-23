@@ -260,7 +260,8 @@ FireAndForget CompareController::LoadImageIntoLeftSlot([[maybe_unused]] HWND hwn
     // Set left pane state to decoding/loading
     g_isLeftPaneDecoding = true;
     RequestRepaint(QuickView::PaintLayer::Dynamic);
-    SetTimer(hwnd, 995, 16, nullptr); // Start UI Heartbeat timer for animating progress bar
+    extern void SyncDecodeProgressTimer(HWND hwnd);
+    SyncDecodeProgressTimer(hwnd);
 
     uintmax_t fileSize = 0;
     std::wstring archivePath;
@@ -785,11 +786,16 @@ void CompareController::ExitMode(HWND hwnd) {
 
     auto& primaryPane = GetPaneContext(PaneSlot::Primary);
     if (primaryPane.resource) {
-        const uint64_t primaryPixels =
-            static_cast<uint64_t>(primaryPane.metadata.Width) *
-            static_cast<uint64_t>(primaryPane.metadata.Height);
+        std::wstring fmtUpper = primaryPane.metadata.Format;
+        std::transform(fmtUpper.begin(), fmtUpper.end(), fmtUpper.begin(), ::toupper);
+        const uint32_t maxStandardAxis = g_imageEngine
+            ? g_imageEngine->GetMaxStandardSurfaceSize()
+            : QuickView::kDefaultStandardAxisLimit;
         const bool isTitanPrimary =
-            (primaryPane.metadata.Width > 8192 || primaryPane.metadata.Height > 8192 || primaryPixels > 50000000ull);
+            primaryPane.metadata.Width > 0 && primaryPane.metadata.Height > 0 &&
+            QuickView::IsTitanSupportedFormat(fmtUpper) &&
+            QuickView::ShouldTriggerTitanByDimensions(
+                primaryPane.metadata.Width, primaryPane.metadata.Height, maxStandardAxis);
         if ((isTitanPrimary && !primaryPane.path.empty() &&
              (!g_imageEngine || !g_imageEngine->IsTitanModeEnabled() || g_imageEngine->GetCurrentNavPath() != primaryPane.path)) ||
             (primaryPane.resource.isWebView && !primaryPane.path.empty())) {

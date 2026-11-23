@@ -46,6 +46,36 @@ bool IsCopyOnlyLoaderName(const std::wstring& loaderName) {
            loaderName.contains(L"RAM Copy") ||
            loaderName.contains(L"MMF Copy");
 }
+
+bool HasPngActlChunkBeforeIdat(const uint8_t* data, size_t size) noexcept {
+    if (!data || size < 33) return false; // 8B PNG signature + minimal 25B IHDR chunk
+    static constexpr uint8_t kPngSig[8] = { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
+    if (memcmp(data, kPngSig, 8) != 0) return false;
+
+    auto readU32BE = [](const uint8_t* p) -> uint32_t {
+        return (static_cast<uint32_t>(p[0]) << 24) |
+               (static_cast<uint32_t>(p[1]) << 16) |
+               (static_cast<uint32_t>(p[2]) << 8) |
+               static_cast<uint32_t>(p[3]);
+    };
+
+    size_t offset = 8;
+    while (offset + 12 <= size) {
+        const uint32_t chunkLen = readU32BE(data + offset);
+        const uint32_t chunkType = readU32BE(data + offset + 4);
+        if (chunkType == 0x6163544Cu) { // acTL
+            return true;
+        }
+        if (chunkType == 0x49444154u || chunkType == 0x49454E44u) { // IDAT or IEND
+            return false;
+        }
+        if (static_cast<size_t>(chunkLen) > size - offset - 12) {
+            return false;
+        }
+        offset += 12 + static_cast<size_t>(chunkLen);
+    }
+    return false;
+}
 }
 
 // ============================================================================
@@ -212,8 +242,9 @@ void HeavyLanePool::ResetBenchState() {
 
     // [Fix] Safely stop warmup thread and retire associated backing store under mutex protection
     StopMasterWarmup();
+    PurgeDeferredJobs(false, PaneSlot::Primary, false, 0);
 
-    m_isProgressiveJPEG = false;
+    m_isProgressiveJPEG.store(false, std::memory_order_relaxed);
     m_isProgressiveJXL = false;
     m_lodCacheFailCount.store(0); // [B4] Reset fail counter on new image
 
@@ -440,23 +471,27 @@ void HeavyLanePool::UpdateConcurrency(int decodeMs, std::chrono::steady_clock::t
 }
 
 void HeavyLanePool::Flush() {
-    std::lock_guard lock(m_poolMutex);
-    
-    // [Fix] Fix Leaked Active Count
-    // We must count how many tile jobs are being discarded
-    int discardedTiles = 0;
-    for (const auto& job : m_pendingJobs) {
-        if (job.type == JobType::Tile) discardedTiles++;
+    {
+        std::lock_guard lock(m_poolMutex);
+
+        // [Fix] Fix Leaked Active Count
+        // We must count how many tile jobs are being discarded
+        int discardedTiles = 0;
+        for (const auto& job : m_pendingJobs) {
+            if (job.type == JobType::Tile) discardedTiles++;
+        }
+        if (discardedTiles > 0) {
+            m_activeTileJobs.fetch_sub(discardedTiles);
+        }
+
+        m_pendingJobs.clear(); // O(1) with vector
+        m_inFlightTiles.clear(); // [Dedup] Reset in-flight tracking
+        // Increment generation to invalidate any in-flight jobs that haven't started processing
+        m_generationID.fetch_add(1);
+        // We don't need to notify workers; existing workers will wake up, check GenID, and skip.
     }
-    if (discardedTiles > 0) {
-        m_activeTileJobs.fetch_sub(discardedTiles);
-    }
-    
-    m_pendingJobs.clear(); // O(1) with vector
-    m_inFlightTiles.clear(); // [Dedup] Reset in-flight tracking
-    // Increment generation to invalidate any in-flight jobs that haven't started processing
-    m_generationID.fetch_add(1); 
-    // We don't need to notify workers; existing workers will wake up, check GenID, and skip.
+
+    PurgeDeferredJobs(false, PaneSlot::Primary, false, 0);
 }
 
 HeavyLanePool::~HeavyLanePool() {
@@ -538,6 +573,21 @@ void HeavyLanePool::Submit(const std::wstring& path, ImageID imageId, std::share
     if (targetSlot == PaneSlot::Primary &&
         m_isTitanMode.load(std::memory_order_relaxed) &&
         imageId == m_activeTitanImageId.load(std::memory_order_relaxed)) {
+        // Probe JPEG progressive mode up front (<0.05ms header parse, zero disk I/O)
+        // so ShouldWarmupMasterBacking() can distinguish Baseline vs Progressive JPEG.
+        const auto activeFmt = (titanFmt != QuickView::TitanFormat::Unknown)
+            ? titanFmt : m_titanFormat.load(std::memory_order_relaxed);
+        if (activeFmt == QuickView::TitanFormat::JPEG && mmf && mmf->IsValid()) {
+            bool isProg = false;
+            tjhandle probe = tj3Init(TJINIT_DECOMPRESS);
+            if (probe) {
+                if (tj3DecompressHeader(probe, mmf->data(), mmf->size()) == 0) {
+                    isProg = (tj3Get(probe, TJPARAM_PROGRESSIVE) == 1);
+                }
+                tj3Destroy(probe);
+            }
+            m_isProgressiveJPEG.store(isProg, std::memory_order_release);
+        }
         EnsureMasterWarmup(path, imageId, mmf, targetSlot, generationId);
     }
 
@@ -624,10 +674,10 @@ void HeavyLanePool::SubmitFullDecode(const std::wstring& path, ImageID imageId, 
 void HeavyLanePool::SubmitTile(const std::wstring& path, ImageID imageId, std::shared_ptr<QuickView::MappedFile> mmf, TileCoord coord, RegionRequest region, int priority) {
     std::lock_guard lock(m_poolMutex);
     
-    // [Dedup] Check if tile is already in-flight
+    // [Dedup] Check if tile is already in-flight for the current image and generation
+    const uint32_t currentGen = m_generationID.load();
     uint64_t tileHash = MakeTileHash(coord.col, coord.row, coord.lod);
-    const auto [_, inserted] = m_inFlightTiles.insert(tileHash);
-    if (!inserted) {
+    if (!TryInsertInFlightTileLocked(tileHash, imageId, currentGen)) {
         return; // Already queued or running
     }
 
@@ -641,7 +691,7 @@ void HeavyLanePool::SubmitTile(const std::wstring& path, ImageID imageId, std::s
     job.tileCoord = coord;
     job.region = region;
     job.priority = priority; 
-    job.genID = m_generationID.load(); // [Smart Pull]
+    job.genID = currentGen; // [Smart Pull]
     
     m_pendingJobs.push_back(job);
     std::push_heap(m_pendingJobs.begin(), m_pendingJobs.end());
@@ -663,9 +713,9 @@ void HeavyLanePool::SubmitPriorityTileBatch(const std::wstring& path, ImageID im
     m_pendingJobs.reserve(m_pendingJobs.size() + batch.size());
     m_inFlightTiles.reserve(m_inFlightTiles.size() + batch.size());
     for (const auto& item : batch) {
-        // [Dedup] Skip if this tile is already queued or being decoded
+        // [Dedup] Skip if this tile is already queued or being decoded for this image & generation
         uint64_t tileHash = MakeTileHash(item.coord.col, item.coord.row, item.coord.lod);
-        if (!m_inFlightTiles.insert(tileHash).second) {
+        if (!TryInsertInFlightTileLocked(tileHash, imageId, currentGen)) {
             continue; // Already in-flight, skip duplicate
         }
         
@@ -709,7 +759,7 @@ void HeavyLanePool::SubmitTileBatch(const std::wstring& path, ImageID imageId, s
 
     for (const auto& item : batch) {
         uint64_t tileHash = MakeTileHash(item.first.col, item.first.row, item.first.lod);
-        if (!m_inFlightTiles.insert(tileHash).second) {
+        if (!TryInsertInFlightTileLocked(tileHash, imageId, currentGen)) {
             continue;
         }
 
@@ -754,8 +804,8 @@ void HeavyLanePool::CancelOthers(ImageID currentId, PaneSlot targetSlot) {
             if (it->targetSlot == targetSlot && it->imageId != currentId) {
                 if (it->type == JobType::Tile) {
                     removedTiles++;
-                    // [Dedup] Remove from in-flight set
-                    m_inFlightTiles.erase(MakeTileHash(it->tileCoord.col, it->tileCoord.row, it->tileCoord.lod));
+                    // [Dedup] Remove from in-flight map only if tag matches this job
+                    EraseInFlightTileLocked(MakeTileHash(it->tileCoord.col, it->tileCoord.row, it->tileCoord.lod), it->imageId, it->genID);
                 }
                 it = m_pendingJobs.erase(it);
                 m_cancelCount++;
@@ -778,6 +828,8 @@ void HeavyLanePool::CancelOthers(ImageID currentId, PaneSlot targetSlot) {
         }
     }
 
+    PurgeDeferredJobs(true, targetSlot, true, currentId);
+
     // 3. Immediately abort any master warmup belonging to the old primary image
     if (targetSlot == PaneSlot::Primary &&
         m_masterWarmupRunning.load(std::memory_order_relaxed) &&
@@ -795,7 +847,7 @@ void HeavyLanePool::CancelSlot(PaneSlot targetSlot) {
             if (it->targetSlot == targetSlot) {
                 if (it->type == JobType::Tile) {
                     removedTiles++;
-                    m_inFlightTiles.erase(MakeTileHash(it->tileCoord.col, it->tileCoord.row, it->tileCoord.lod));
+                    EraseInFlightTileLocked(MakeTileHash(it->tileCoord.col, it->tileCoord.row, it->tileCoord.lod), it->imageId, it->genID);
                 }
                 it = m_pendingJobs.erase(it);
                 m_cancelCount++;
@@ -813,6 +865,7 @@ void HeavyLanePool::CancelSlot(PaneSlot targetSlot) {
             }
         }
     }
+    PurgeDeferredJobs(true, targetSlot, false, 0);
     if (targetSlot == PaneSlot::Primary) {
         StopMasterWarmup();
     }
@@ -838,6 +891,7 @@ void HeavyLanePool::CancelAll() {
         }
     }
 
+    PurgeDeferredJobs(false, PaneSlot::Primary, false, 0);
     StopMasterWarmup();
 }
 
@@ -845,33 +899,81 @@ void HeavyLanePool::CancelAll() {
 // Worker Loop
 // ============================================================================
 
-void HeavyLanePool::ResumeDeferredJobs(ImageID imageId, int lod) {
+void HeavyLanePool::FinishLODCacheBuildAndResume(ImageID imageId, bool succeeded, bool countFailure) {
     std::vector<JobInfo> toResume;
+    std::vector<JobInfo> staleJobs;
+    {
+        // Hold m_deferredMutex while clearing m_lodCacheBuilding and draining m_deferredTileJobs
+        // so deferring workers double-checking m_lodCacheBuilding under m_deferredMutex never lose a wakeup.
+        std::lock_guard lock(m_deferredMutex);
+        m_lodCacheBuilding.store(false, std::memory_order_release);
+        if (!succeeded && countFailure) {
+            m_lodCacheFailCount.fetch_add(1, std::memory_order_relaxed);
+        }
+        for (auto& job : m_deferredTileJobs) {
+            if (job.imageId == imageId) {
+                toResume.push_back(std::move(job));
+            } else {
+                staleJobs.push_back(std::move(job));
+            }
+        }
+        m_deferredTileJobs.clear();
+    }
+
+    {
+        // Brief lock ensures any waiter checking m_lodCacheBuilding under m_lodCacheMutex has entered wait_for.
+        std::lock_guard condLock(m_lodCacheMutex);
+    }
+    m_lodCacheCond.notify_all();
+
+    if (!toResume.empty() || !staleJobs.empty()) {
+        std::lock_guard lock(m_poolMutex);
+        for (const auto& stale : staleJobs) {
+            if (stale.type == JobType::Tile) {
+                EraseInFlightTileLocked(MakeTileHash(stale.tileCoord.col, stale.tileCoord.row, stale.tileCoord.lod), stale.imageId, stale.genID);
+            }
+        }
+        if (!toResume.empty()) {
+            const int resumeCount = static_cast<int>(toResume.size());
+            for (auto& job : toResume) {
+                m_pendingJobs.push_back(std::move(job));
+            }
+            std::make_heap(m_pendingJobs.begin(), m_pendingJobs.end());
+            TryExpand();
+            m_activeTileJobs.fetch_add(resumeCount);
+            m_poolCv.notify_all();
+
+            QV_LOG("Pool_ResumeDeferred",
+                TraceLoggingUInt64(static_cast<uint64_t>(resumeCount), "Count"),
+                TraceLoggingUInt64(imageId, "ImageID"));
+        }
+    }
+}
+
+void HeavyLanePool::PurgeDeferredJobs(bool filterBySlot, PaneSlot targetSlot, bool keepMatchingImageId, ImageID keepImageId) {
+    std::vector<JobInfo> dropped;
     {
         std::lock_guard lock(m_deferredMutex);
         auto it = m_deferredTileJobs.begin();
         while (it != m_deferredTileJobs.end()) {
-            if (it->imageId == imageId && it->tileCoord.lod == lod) {
-                toResume.push_back(std::move(*it));
+            const bool slotMatches = !filterBySlot || (it->targetSlot == targetSlot);
+            const bool idMatchesDrop = !keepMatchingImageId || (it->imageId != keepImageId);
+            if (slotMatches && idMatchesDrop) {
+                dropped.push_back(std::move(*it));
                 it = m_deferredTileJobs.erase(it);
             } else {
                 ++it;
             }
         }
     }
-    if (!toResume.empty()) {
+
+    if (!dropped.empty()) {
         std::lock_guard lock(m_poolMutex);
-        for (auto& job : toResume) {
-            m_pendingJobs.push_back(std::move(job));
+        for (const auto& job : dropped) {
+            if (job.type == JobType::Tile) {
+                EraseInFlightTileLocked(MakeTileHash(job.tileCoord.col, job.tileCoord.row, job.tileCoord.lod), job.imageId, job.genID);
+            }
         }
-        std::make_heap(m_pendingJobs.begin(), m_pendingJobs.end());
-        TryExpand();
-        m_activeTileJobs.fetch_add((int)toResume.size());
-        m_poolCv.notify_all();
-        
-        QV_LOG("Pool_ResumeDeferred",
-            TraceLoggingUInt64((uint64_t)toResume.size(), "Count"),
-            TraceLoggingInt32(lod, "LOD"));
     }
 }
 
@@ -927,7 +1029,7 @@ void HeavyLanePool::WorkerLoop(int workerId, std::stop_token st) {
                 if (job.type == JobType::Tile) {
                     m_activeTileJobs.fetch_sub(1);
                     // [Dedup] Already under m_poolMutex
-                    m_inFlightTiles.erase(MakeTileHash(job.tileCoord.col, job.tileCoord.row, job.tileCoord.lod));
+                    EraseInFlightTileLocked(MakeTileHash(job.tileCoord.col, job.tileCoord.row, job.tileCoord.lod), job.imageId, job.genID);
                 }
                 continue;
             }
@@ -957,7 +1059,7 @@ void HeavyLanePool::WorkerLoop(int workerId, std::stop_token st) {
                      if (layer->GetState(job.tileCoord.col, job.tileCoord.row) == QuickView::TileStateCode::Empty) {
                          m_busyCount.fetch_sub(1);
                          m_activeTileJobs.fetch_sub(1);
-                         { std::lock_guard dlock(m_poolMutex); m_inFlightTiles.erase(MakeTileHash(job.tileCoord.col, job.tileCoord.row, job.tileCoord.lod)); }
+                         { std::lock_guard dlock(m_poolMutex); EraseInFlightTileLocked(MakeTileHash(job.tileCoord.col, job.tileCoord.row, job.tileCoord.lod), job.imageId, job.genID); }
                          self.state = WorkerState::STANDBY;
                          continue;
                      }
@@ -971,7 +1073,7 @@ void HeavyLanePool::WorkerLoop(int workerId, std::stop_token st) {
                      
                      m_busyCount.fetch_sub(1);
                      m_activeTileJobs.fetch_sub(1); 
-                     { std::lock_guard dlock(m_poolMutex); m_inFlightTiles.erase(MakeTileHash(job.tileCoord.col, job.tileCoord.row, job.tileCoord.lod)); }
+                     { std::lock_guard dlock(m_poolMutex); EraseInFlightTileLocked(MakeTileHash(job.tileCoord.col, job.tileCoord.row, job.tileCoord.lod), job.imageId, job.genID); }
                      self.state = WorkerState::STANDBY;
                      continue;
                  }
@@ -1010,7 +1112,7 @@ void HeavyLanePool::WorkerLoop(int workerId, std::stop_token st) {
         if (!stillValid) {
             m_busyCount.fetch_sub(1);
             m_activeTileJobs.fetch_sub(1); 
-            { std::lock_guard dlock(m_poolMutex); m_inFlightTiles.erase(MakeTileHash(job.tileCoord.col, job.tileCoord.row, job.tileCoord.lod)); }
+            { std::lock_guard dlock(m_poolMutex); EraseInFlightTileLocked(MakeTileHash(job.tileCoord.col, job.tileCoord.row, job.tileCoord.lod), job.imageId, job.genID); }
             self.state = WorkerState::STANDBY;
             continue;
         }
@@ -1237,6 +1339,8 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
     struct TileJobGuard {
         HeavyLanePool* pool;
         QuickView::TileCoord coord;
+        ImageID imageId;
+        uint32_t genId;
         bool isTile;
         bool deferred = false; // [Phase 4.1] E_PENDING flag
         ~TileJobGuard() {
@@ -1244,11 +1348,11 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                 pool->m_activeTileJobs.fetch_sub(1);
                 if (!deferred) {
                     std::lock_guard dlock(pool->m_poolMutex);
-                    pool->m_inFlightTiles.erase(MakeTileHash(coord.col, coord.row, coord.lod));
+                    pool->EraseInFlightTileLocked(MakeTileHash(coord.col, coord.row, coord.lod), imageId, genId);
                 }
             }
         }
-    } guard{ this, job.tileCoord, job.type == JobType::Tile };
+    } guard{ this, job.tileCoord, job.imageId, job.genID, job.type == JobType::Tile };
 
     if (job.path.empty()) {
         if (job.type == JobType::Tile) {
@@ -1313,20 +1417,7 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                    int effSrcW = (job.srcW > 0) ? job.srcW : m_titanSrcW;
                    int effSrcH = (job.srcH > 0) ? job.srcH : m_titanSrcH;
                    if (effSrcW > 0 && effSrcH > 0) {
-                       float srcRatio = (float)effSrcW / (float)effSrcH;
-                       float screenRatio = (float)screenW / (float)screenH;
-                       
-                       if (srcRatio > screenRatio) {
-                           targetW = screenW;
-                           targetH = (int)(screenW / srcRatio);
-                       } else {
-                           targetH = screenH;
-                           targetW = (int)(screenH * srcRatio);
-                       }
-                       
-                       // SIMD Alignment (8-pixel boundary)
-                       targetW = (targetW + 7) & ~7;
-                       targetH = (targetH + 7) & ~7;
+                       QuickView::ComputeTitanBaseLayerSize(effSrcW, effSrcH, screenW, screenH, targetW, targetH);
                    }
                }
 
@@ -1343,8 +1434,11 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                       animDecoder = CreateWebPAnimator();
                   else if (sz >= 6 && (memcmp(d, "GIF87a", 6) == 0 || memcmp(d, "GIF89a", 6) == 0))
                       animDecoder = CreateWuffsAnimator();
-                  else if (sz >= 8 && d[0] == 0x89 && d[1] == 'P' && d[2] == 'N' && d[3] == 'G')
-                      animDecoder = CreateWuffsAnimator();
+                  else if (sz >= 8 && d[0] == 0x89 && d[1] == 'P' && d[2] == 'N' && d[3] == 'G') {
+                      if (HasPngActlChunkBeforeIdat(d, sz)) {
+                          animDecoder = CreateWuffsAnimator();
+                      }
+                  }
                   else if (sz >= 2 && d[0] == 0xFF && d[1] == 0x0A)
                       animDecoder = CreateJxlAnimator(); // JXL naked codestream
                   else if (sz >= 12 && d[0] == 0 && d[1] == 0 && d[2] == 0 && d[3] == 0x0C &&
@@ -1422,7 +1516,7 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                         if (AcquireMasterBackingView(job.imageId, &masterView, &mW, &mH, &mS, masterLock, &masterColorMeta)) {
                             size_t dstStride = (size_t)targetW * 4;
                             size_t dstSize = dstStride * targetH;
-                            uint8_t* dstBuf = (uint8_t*)_aligned_malloc(dstSize, 32);
+                            uint8_t* dstBuf = (uint8_t*)_aligned_malloc(dstSize, 64);
                             
                             if (dstBuf) {
                                 ImageLoaderSimd::ResizeBilinear(masterView, mW, mH, mS,
@@ -1560,7 +1654,7 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                        } else {
                            RecordBaselineSample(outPixels, (double)benchMs, srcWidth, srcHeight, isProgressiveJPEG);
                        }
-                       m_isProgressiveJPEG = isProgressiveJPEG; // [P14] Cache for LOD decode
+                       m_isProgressiveJPEG.store(isProgressiveJPEG, std::memory_order_release); // [P14] Cache for LOD decode
                        
                        // [JXL] Check if base layer is a true progressive DC preview.
                        // Do not treat "Fake Base Prog" as native-region capable.
@@ -1627,7 +1721,7 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                     const bool isJpeg = (titanFmt == QuickView::TitanFormat::JPEG);
                     const bool isWebp = (titanFmt == QuickView::TitanFormat::WEBP);
                     const bool isJxl = (titanFmt == QuickView::TitanFormat::JXL);
-                    const bool isProgressiveJpeg = isJpeg && m_isProgressiveJPEG;
+                    const bool isProgressiveJpeg = isJpeg && m_isProgressiveJPEG.load(std::memory_order_acquire);
                     const bool hasNativeRegionDecoder =
                         (isJpeg && !isProgressiveJpeg) ||
                         isWebp ||
@@ -1642,10 +1736,15 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                         isSingleDecodeMandatory = true;
                     }
 
+                    const bool hasMasterBacking =
+                        HasMasterBackingForImage(job.imageId) ||
+                        (m_masterWarmupRunning.load(std::memory_order_acquire) &&
+                         m_masterWarmupImageId.load(std::memory_order_acquire) == job.imageId);
                     const bool webpSingleDecode = ShouldUseSingleDecodeForWebP(job.tileCoord.lod);
                     const bool jpegProgressiveSingleDecode =
                         isProgressiveJpeg && ShouldUseSingleDecode(job.tileCoord.lod);
                     bool wantsSingleDecode =
+                        hasMasterBacking ||
                         isSingleDecodeMandatory ||
                         webpSingleDecode ||
                         jpegProgressiveSingleDecode ||
@@ -1690,17 +1789,51 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                     // we MUST NOT let ShouldUseSingleDecode hijack the pipeline and force an 8.6 second 
                     // single-core full decode stall! We bypass caching and go straight to High-Concurrency Region Decoding.
                     if (preferSingleDecode) {
-                        hr = FullDecodeAndCacheLOD(self, job, rawFrame, loaderName, cancelPred);
-                        if (SUCCEEDED(hr)) goto tile_decode_done;
-                        
-                        // [Phase 4.1] Cache is building. Defer to pending queue without cancelling!
-                        if (hr == E_PENDING) {
-                            std::lock_guard lock(m_deferredMutex);
-                            m_deferredTileJobs.push_back(job);
-                            guard.deferred = true; 
-                            return; // Return silently, remain "Loading" in UI
-                        }
+                        for (;;) {
+                            if (cancelPred()) {
+                                hr = E_ABORT;
+                                goto tile_decode_done;
+                            }
+                            if (m_lodCacheFailCount.load() >= kMaxLODCacheRetries) {
+                                hr = E_FAIL;
+                                break;
+                            }
 
+                            hr = FullDecodeAndCacheLOD(self, job, rawFrame, loaderName, cancelPred);
+                            if (SUCCEEDED(hr)) goto tile_decode_done;
+
+                            // [Phase 4.1] Cache is building: serialize under m_deferredMutex and double-check
+                            // m_lodCacheBuilding to avoid lost wakeup if the builder just finished.
+                            if (hr == E_PENDING) {
+                                bool deferredNow = false;
+                                {
+                                    std::lock_guard lock(m_deferredMutex);
+                                    if (m_lodCacheBuilding.load(std::memory_order_acquire)) {
+                                        m_deferredTileJobs.push_back(job);
+                                        deferredNow = true;
+                                    }
+                                }
+                                if (deferredNow) {
+                                    guard.deferred = true;
+                                    return; // Return silently, guaranteed wakeup in FinishLODCacheBuildAndResume
+                                }
+                                LODCache retrySnap;
+                                {
+                                    std::lock_guard lock(m_lodCacheMutex);
+                                    if (m_lodCache.pixels && m_lodCache.lod == job.tileCoord.lod
+                                        && m_lodCache.imageId == job.imageId) {
+                                        retrySnap = m_lodCache;
+                                    }
+                                }
+                                if (retrySnap.pixels) {
+                                    hr = SliceTileFromLODCache(retrySnap, job, rawFrame, loaderName);
+                                    if (SUCCEEDED(hr)) goto tile_decode_done;
+                                }
+                                continue;
+                            }
+                            break;
+                        }
+                        
                         const HRESULT kBusy = HRESULT_FROM_WIN32(ERROR_BUSY);
                         if (!isSingleDecodeMandatory && canFallbackToROI &&
                             hr != kBusy && hr != E_ABORT) {
@@ -2146,24 +2279,11 @@ void HeavyLanePool::WaitForTileJobs() {
 }
 
 bool HeavyLanePool::ShouldWarmupMasterBacking() const {
-    if (m_titanSrcW <= 0 || m_titanSrcH <= 0) return false;
-    if (m_titanSrcW < 8000 && m_titanSrcH < 8000) return false;
-
-    // [Tier 2: Medium-Large] If the unpacked image is < 1.5 GB, ALWAYS use Direct-to-MMF full decode.
-    // This entirely bypasses DecodeWorker for images up to ~384 MP, removing IPC and double-decode overhead.
-    size_t unpackedBytes = (size_t)m_titanSrcW * (size_t)m_titanSrcH * 4ULL;
-    if (unpackedBytes <= 1536ULL * 1024ULL * 1024ULL) {
-        return true;
-    }
-
-    // [Tier 3: Ultra-Large] > 1.5 GB
-    // For formats lacking native scaling/region decode, we STILL must do a full decode to MMF
-    // to prevent DecodeWorker from doing repeated OOM full-decodes.
-    const auto fmt = m_titanFormat.load();
-    return (fmt == QuickView::TitanFormat::PNG ||
-            fmt == QuickView::TitanFormat::TIFF ||
-            fmt == QuickView::TitanFormat::AVIF ||
-            fmt == QuickView::TitanFormat::JXL);
+    return QuickView::ShouldWarmupMasterBackingForTitan(
+        m_titanSrcW,
+        m_titanSrcH,
+        m_titanFormat.load(std::memory_order_acquire),
+        m_isProgressiveJPEG.load(std::memory_order_acquire));
 }
 
 void HeavyLanePool::StopMasterWarmupLocked() {
@@ -2245,8 +2365,7 @@ void HeavyLanePool::EnsureMasterWarmup(const std::wstring& path, ImageID imageId
         // Warmup tasks (especially massive JXL decodes) MUST respect concurrency limits.
         // Without this, rapid scrolling launches N parallel decodes that swamp the system.
         ScopedIOSlot ioSlot(m_ioSemaphore, true /* shouldAcquire */);
-        
-        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+        // Keep normal thread priority because Titan Base Layer synchronously awaits warmup completion.
 
         if (st.stop_requested()) return;
         if (m_generationID.load(std::memory_order_acquire) != warmupGen) return;
@@ -2548,11 +2667,10 @@ void HeavyLanePool::RelinquishToPool(MasterBackingStore store) {
     }
 }
 
-// The fast path is deliberately conservative: a full decoded image also needs
-// decoder scratch, tile output, and the rest of the application.  Below this
-// size Heap has the lowest latency and never writes a temporary image file.
+// The fast path prefers aligned physical RAM when free memory has >= 3x headroom,
+// eliminating sparse temp file NTFS allocation and hot-switch delete IO contention.
 static bool ShouldUseHeapBacking(size_t allocationSize) {
-    constexpr size_t kHeapFastPathLimit = 512ULL * 1024 * 1024;
+    constexpr size_t kHeapFastPathLimit = QuickView::kDefaultMasterWarmupLimit;
     if (allocationSize == 0 || allocationSize > kHeapFastPathLimit) return false;
 
     MEMORYSTATUSEX ms{};
@@ -2735,6 +2853,12 @@ bool HeavyLanePool::AcquireMasterBackingView(ImageID imageId, const uint8_t** ou
     return true;
 }
 
+bool HeavyLanePool::HasMasterBackingForImage(ImageID imageId) const {
+    if (imageId == 0) return false;
+    std::lock_guard lock(m_masterBackingMutex);
+    return m_masterBacking.view != nullptr && m_masterBacking.imageId == imageId;
+}
+
 // [Direct-to-MMF] Create an empty MMF backing store of the right size.
 // After this call, m_masterBacking.view is a writable pointer that decoders
 // (libjxl, Wuffs) can write into directly. No pixel data is copied.
@@ -2883,7 +3007,7 @@ bool HeavyLanePool::ShouldUseSingleDecode(int lod) const {
     if (singleFmt == QuickView::TitanFormat::JPEG) {
         // Progressive JPEG: TJ coefficient buffer ~srcPixels * 6
         // Baseline JPEG: ~200 MB working memory
-        decoderOverhead = m_isProgressiveJPEG 
+        decoderOverhead = m_isProgressiveJPEG.load(std::memory_order_acquire)
             ? ((size_t)m_titanSrcW * m_titanSrcH * 6)
             : ((size_t)m_titanSrcW * 96 + 200 * 1024 * 1024);
     } else if (singleFmt == QuickView::TitanFormat::PNG) {
@@ -3312,23 +3436,16 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
     if (!m_lodCacheBuilding.compare_exchange_strong(expected, true)) {
         return E_PENDING; // [Phase 4.1] Another worker is building the cache, trigger defer callback
     }
-    // RAII: reset flag when done (success or failure)
+    // RAII: reset flag and resume deferred jobs atomically when done (success or failure)
     struct BuildGuard {
         HeavyLanePool* pool;
         ImageID imgId;
-        int lodToResume;
-        std::atomic<bool>& flag;
-        std::atomic<int>& failCount;
-        std::condition_variable& cond;
         bool succeeded = false;
         bool countFailure = true;
         ~BuildGuard() {
-            flag.store(false);
-            if (!succeeded && countFailure) failCount.fetch_add(1);
-            cond.notify_all(); // [Fix16] Wake up all waiters immediately
-            pool->ResumeDeferredJobs(imgId, lodToResume);
+            pool->FinishLODCacheBuildAndResume(imgId, succeeded, countFailure);
         }
-    } guard{ this, job.imageId, job.tileCoord.lod, m_lodCacheBuilding, m_lodCacheFailCount, m_lodCacheCond };
+    } guard{ this, job.imageId };
     
     int lod = job.tileCoord.lod;
     float scale = 1.0f / (float)(1 << lod);
@@ -3372,14 +3489,9 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
     QuickView::RawImageFrame fullFrame;
     HRESULT hr = E_FAIL; // [Fix] Explicitly initialize to E_FAIL (prevents undefined behavior in Release-LTO)
     
-    if (m_titanFormat.load() == QuickView::TitanFormat::JPEG) {
-        // JPEG: use TurboJPEG with IDCT scaling (scale parameter is used)
-        hr = CImageLoader::LoadTileFromMemory(
-            job.mmf->data(), job.mmf->size(),
-            fullRegion, scale,
-            &fullFrame, nullptr, 0, 0);
-    } else {
-        // [New] Check if master cache exists for this image
+    const bool isJpeg = (m_titanFormat.load(std::memory_order_acquire) == QuickView::TitanFormat::JPEG);
+    {
+        // Check if master cache exists for this image (shared across all formats including JPEG)
         std::shared_ptr<uint8_t[]> masterPixels;
         const uint8_t* masterPixelsView = nullptr;
         int masterW = 0, masterH = 0, masterStride = 0;
@@ -3534,8 +3646,8 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                 QuickView::PixelColorMetadata warmupColorMeta;
                 std::unique_lock<std::mutex> masterLock;
                 if (AcquireMasterBackingView(job.imageId, &masterView, &mW, &mH, &mS, masterLock, &warmupColorMeta)) {
-                    const int targetW = (m_titanSrcW + (1 << lod) - 1) / (1 << lod);
-                    const int targetH = (m_titanSrcH + (1 << lod) - 1) / (1 << lod);
+                    const int targetW = (mW + (1 << lod) - 1) / (1 << lod);
+                    const int targetH = (mH + (1 << lod) - 1) / (1 << lod);
                     size_t dstStride = (size_t)targetW * 4;
                     size_t dstSize = dstStride * targetH;
                     uint8_t* dstBuf = (uint8_t*)_aligned_malloc(dstSize, 32);
@@ -3574,6 +3686,16 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                 if (SUCCEEDED(hr)) warmupResolved = true;
             }
             
+            if (!warmupResolved && FAILED(hr) && isJpeg) {
+                // JPEG without MasterBackingStore (e.g. >128MB Baseline JPEG or warmup unavailable):
+                // use TurboJPEG with IDCT scaling directly and skip DecodeWorker(LOD) post-processing.
+                if (job.mmf && job.mmf->IsValid()) {
+                    hr = CImageLoader::LoadTileFromMemory(
+                        job.mmf->data(), job.mmf->size(),
+                        fullRegion, scale,
+                        &fullFrame, nullptr, 0, 0);
+                }
+            } else if (!isJpeg) {
             // Fallback: subprocess decode (only if warmup-wait didn't resolve it)
             if (!warmupResolved && FAILED(hr)) {
                 int reqW = m_titanSrcW;
@@ -3762,6 +3884,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                         TraceLoggingInt32(fullFrame.height, "Height"));
                 }
             }
+            } // end !isJpeg non-warmup fallback
         }
     }
 

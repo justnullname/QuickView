@@ -127,6 +127,12 @@ public:
     // [Infinity Engine]
     std::shared_ptr<QuickView::TileManager> GetTileManager() { return m_tileManager; }
     bool IsTitanModeEnabled() const;
+    void SetMaxStandardSurfaceSize(uint32_t maxDim) {
+        m_maxStandardSurfaceSize.store((std::max)(maxDim, QuickView::kDefaultStandardAxisLimit), std::memory_order_relaxed);
+    }
+    uint32_t GetMaxStandardSurfaceSize() const {
+        return m_maxStandardSurfaceSize.load(std::memory_order_relaxed);
+    }
     const std::wstring& GetCurrentNavPath() const { return m_currentNavPath; }
     void UpdateTileViewport(QuickView::RegionRect viewport, float scale, int imageW, int imageH, float basePreviewRatio, float velocityX = 0, float velocityY = 0);
     void InvalidateGpuTiles();
@@ -456,6 +462,7 @@ private:
     
     // [Titan] Padding Control
     std::atomic<bool> m_enablePadding{true};
+    std::atomic<uint32_t> m_maxStandardSurfaceSize{ QuickView::kDefaultStandardAxisLimit };
 
     // [Optimization] Zero-Copy Source
     std::shared_ptr<QuickView::MappedFile> m_mmf;

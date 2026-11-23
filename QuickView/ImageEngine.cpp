@@ -435,20 +435,18 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
 
     // [Titan] Trigger Conditions
     // 1. Format support: JPEG, WebP, PNG, JXL, TIFF, AVIF
-    bool isSupportedFormat = (fmtUpper == L"JPEG" || fmtUpper == L"JPG" || 
-                              fmtUpper == L"WEBP" || fmtUpper == L"PNG" || 
-                              fmtUpper == L"JXL" || fmtUpper == L"TIF" || 
-                              fmtUpper == L"TIFF" || fmtUpper == L"AVIF");
+    const uint32_t maxStandardAxis = m_maxStandardSurfaceSize.load(std::memory_order_relaxed);
+    bool isSupportedFormat = QuickView::IsTitanSupportedFormat(fmtUpper);
 
-    // 2. Size triggers: Any side > 8192 OR Total pixels > 50MP
-    bool sizeTrigger = (info.width > 8192 || info.height > 8192);
-    size_t pixelCount = (size_t)info.width * info.height;
-    bool pixelTrigger = (pixelCount > 50000000);
+    // 2. Size triggers: > 50MP, > maxStandardAxis, or (> 8192 && > 16.77MP surface budget)
+    bool dimTrigger = (info.width > 0 && info.height > 0) &&
+        QuickView::ShouldTriggerTitanByDimensions(
+            static_cast<uint32_t>(info.width), static_cast<uint32_t>(info.height), maxStandardAxis);
     bool unknownDims = (info.width <= 0 || info.height <= 0);
     uintmax_t observedFileSize = (info.fileSize > 0) ? info.fileSize : fileSize;
     bool fallbackFileTrigger = unknownDims && observedFileSize >= (32ull * 1024ull * 1024ull);
 
-    bool enableTitan = (sizeTrigger || pixelTrigger || fallbackFileTrigger) && isSupportedFormat;
+    bool enableTitan = (dimTrigger || fallbackFileTrigger) && isSupportedFormat;
     const bool allowFakeBase = (targetSlot == PaneSlot::Primary) && !m_isCompareMode.load(std::memory_order_relaxed);
     const QuickView::TitanFormat parsedTitanFmt = QuickView::ParseTitanFormat(fmtUpper);
     
@@ -510,17 +508,17 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
     bool useFastLane = m_config.EnableScout;
     bool useHeavy = m_config.EnableHeavy;
     
-    // [Titan] Compliance: Force Heavy Lane for Base Layer
-    // [Titan] Compliance: Force Heavy Lane for Base Layer
+    // [Titan] Compliance: Force Heavy Lane for Base Layer (never overridden by TypeA/isSmall branches)
     if (enableTitan) {
-        useHeavy = true;
-        useFastLane = false; 
-        
-        // [Titan] >200MP images use the same base decode path as other Titan images.
-        // IDCT 1/8 scaling produces ~3-8MP preview (sufficient for 4K screens).
-        // Tiles are triggered by main.cpp OnPaint only when zoom > basePreviewRatio.
-
+        if (info.format == L"JXL" && targetSlot == PaneSlot::Primary) {
+            m_pendingJxlHeavyPath = path;
+            m_pendingJxlHeavyId = imageId;
+            m_pendingJxlHeavySlot = targetSlot;
+            m_pendingJxlHeavyGenerationId = generationId;
+        }
         QV_LOG("Dispatch_Route", TraceLoggingString("Titan HeavyLane", "Action"));
+        m_heavyPool->Submit(path, imageId, primaryMMF, targetSlot, generationId, true, allowFakeBase, info.width, info.height, parsedTitanFmt);
+        return;
     }
     
     // 2. Recursive RAW Check
@@ -1627,15 +1625,13 @@ void ImageEngine::ScheduleJob(int index, QuickView::Priority pri) {
     // so they DON'T consume the same heap cache. We should allow prefetch to MMF!
     std::wstring fmtUpper = info.format;
     std::transform(fmtUpper.begin(), fmtUpper.end(), fmtUpper.begin(), ::toupper);
-    const bool isTitanFormat =
-        (fmtUpper == L"JPEG" || fmtUpper == L"JPG" ||
-         fmtUpper == L"WEBP" || fmtUpper == L"PNG" ||
-         fmtUpper == L"JXL" || fmtUpper == L"TIF" ||
-         fmtUpper == L"TIFF" || fmtUpper == L"AVIF");
+    const uint32_t maxStandardAxis = m_maxStandardSurfaceSize.load(std::memory_order_relaxed);
+    const bool isTitanFormat = QuickView::IsTitanSupportedFormat(fmtUpper);
     const bool isTitanCandidate =
         isTitanFormat &&
-        ((info.width > 8192 || info.height > 8192) ||
-         ((uint64_t)info.width * (uint64_t)info.height > 50000000ULL) ||
+        (((info.width > 0 && info.height > 0) &&
+          QuickView::ShouldTriggerTitanByDimensions(
+              static_cast<uint32_t>(info.width), static_cast<uint32_t>(info.height), maxStandardAxis)) ||
          ((info.width <= 0 || info.height <= 0) && fileSize >= (32ull * 1024ull * 1024ull)));
 
     if (pri != QuickView::Priority::Critical && isTitanCandidate) {

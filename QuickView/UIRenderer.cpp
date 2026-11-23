@@ -1008,7 +1008,13 @@ void UIRenderer::DrawLoupe(ID2D1DeviceContext* dc, HWND hwnd) {
         if (!pane.resource.bitmap) return false;
 
         // Resolve original image dimension (use Metadata if available for large images/Titan)
-        bool isTitan = (pane.metadata.Width > 8192 || pane.metadata.Height > 8192);
+        const uint32_t maxStandardAxis = m_compEngine
+            ? m_compEngine->GetMaxStandardSurfaceSize()
+            : QuickView::kDefaultStandardAxisLimit;
+        bool isTitan = (!compare && m_compEngine && m_compEngine->IsActiveLayerTitan()) ||
+                       (pane.metadata.Width > 0 && pane.metadata.Height > 0 &&
+                        QuickView::ShouldTriggerTitanByDimensions(
+                            pane.metadata.Width, pane.metadata.Height, maxStandardAxis));
         if (isTitan && pane.metadata.Width > 0 && pane.metadata.Height > 0) {
             outRaw = D2D1::SizeF((float)pane.metadata.Width, (float)pane.metadata.Height);
         } else {
@@ -1667,17 +1673,8 @@ void UIRenderer::DrawDecodingStatus(ID2D1DeviceContext* dc, HWND hwnd) {
         alpha = 0.90f;
 
         if (hasTileProgressGap && readyTiles > 0) {
-            progress = (float)readyTiles / (float)totalTiles;
-            if (progress < 0.0f) progress = 0.0f;
-            if (progress > 1.0f) progress = 1.0f;
-            if (m_decodeDisplayedProgress <= 0.0f || progress >= m_decodeDisplayedProgress) {
-                m_decodeDisplayedProgress += (progress - m_decodeDisplayedProgress) * 0.35f;
-            } else {
-                m_decodeDisplayedProgress = progress;
-            }
-            if (m_decodeDisplayedProgress < 0.0f) m_decodeDisplayedProgress = 0.0f;
-            if (m_decodeDisplayedProgress > 1.0f) m_decodeDisplayedProgress = 1.0f;
-            progress = m_decodeDisplayedProgress;
+            progress = std::clamp((float)readyTiles / (float)totalTiles, 0.0f, 1.0f);
+            m_decodeDisplayedProgress = progress;
         } else {
             scanningMode = true;
             m_decodeDisplayedProgress = 0.0f;
@@ -1687,7 +1684,8 @@ void UIRenderer::DrawDecodingStatus(ID2D1DeviceContext* dc, HWND hwnd) {
         if (elapsed >= 500) {
             m_decodeFinishTime = 0;
             m_decodeDisplayedProgress = 0.0f;
-            if (hwnd) ::InvalidateRect(hwnd, nullptr, FALSE);
+            m_decodeLastScanTickMs = 0;
+            m_decodeNeedsAnimTimer = false;
             return;
         }
         finishingMode = true;
@@ -1738,9 +1736,16 @@ void UIRenderer::DrawDecodingStatus(ID2D1DeviceContext* dc, HWND hwnd) {
     }
 
     if (alpha > 0.0f && scanningMode && workBrush) {
-        // Electric-arc flow: one-directional packet with trailing streaks.
-        m_decodeScanPhase += 0.005f; // [Fix] Slower scanning mode (was 0.012f)
-        if (m_decodeScanPhase >= 1.0f) m_decodeScanPhase -= 1.0f;
+        // Electric-arc flow: wall-clock progression independent of paint cadence.
+        const uint64_t nowMs = ::GetTickCount64();
+        if (m_decodeLastScanTickMs == 0 || nowMs <= m_decodeLastScanTickMs) {
+            m_decodeLastScanTickMs = nowMs;
+        } else {
+            const uint64_t dtMs = (std::min<uint64_t>)(nowMs - m_decodeLastScanTickMs, 100ull);
+            m_decodeLastScanTickMs = nowMs;
+            m_decodeScanPhase += static_cast<float>(dtMs) * 0.00055f;
+            if (m_decodeScanPhase >= 1.0f) m_decodeScanPhase -= std::floor(m_decodeScanPhase);
+        }
 
         float packetW = drawW * 0.18f;
         if (packetW < 64.0f) packetW = 64.0f;
@@ -1819,11 +1824,89 @@ void UIRenderer::DrawDecodingStatus(ID2D1DeviceContext* dc, HWND hwnd) {
         }
     }
 
-    // [Fix] Continuously drive animation frame repaints while decoding is active or during 500ms fade-out phase.
-    // Without this, when decoding completes, no background messages arrive, leaving the UI frozen with the progress bar visible.
-    if ((decodingActive || m_decodeFinishTime != 0) && hwnd) {
-        ::InvalidateRect(hwnd, nullptr, FALSE);
+    if (!(alpha > 0.0f && scanningMode)) {
+        m_decodeLastScanTickMs = 0;
     }
+    m_decodeNeedsAnimTimer = (decodingActive && scanningMode) || (m_decodeFinishTime != 0);
+}
+
+RECT UIRenderer::CalculateDecodeProgressDirtyRect(HWND hwnd) const noexcept {
+    if (m_width == 0 || m_height == 0) {
+        return RECT{ 0, 0, 0, 0 };
+    }
+    float padX = 0.0f;
+    float topInset = 0.0f;
+    GetMaximizedWindowPaddings(hwnd, m_isFullscreen, padX, topInset);
+    (void)padX;
+
+    const float drawW = static_cast<float>(m_width);
+    const float drawH = static_cast<float>(m_height);
+    float dpiScale = m_uiScale;
+    if (dpiScale < 1.0f) dpiScale = 1.0f;
+    float resBoost = 1.0f;
+    if (drawW >= 3000.0f || drawH >= 1700.0f) resBoost = 1.18f;
+    if (drawW >= 3800.0f || drawH >= 2100.0f) resBoost = 1.30f;
+    float barThickness = 3.0f * dpiScale * resBoost;
+    if (barThickness < 3.0f) barThickness = 3.0f;
+    if (barThickness > 6.0f) barThickness = 6.0f;
+    const float glowPad = barThickness * 0.45f;
+    const float barY = topInset + 1.0f;
+    const LONG dirtyBottom = (std::min)(
+        static_cast<LONG>(m_height),
+        static_cast<LONG>(std::ceil(barY + barThickness + glowPad + 6.0f)));
+    return RECT{ 0, 0, static_cast<LONG>(m_width), dirtyBottom };
+}
+
+bool UIRenderer::RenderDecodeProgressOnly(HWND hwnd, const ImageEngine::TelemetrySnapshot& telemetry) {
+    m_telemetry = telemetry;
+    if (!m_compEngine || !m_compEngine->IsInitialized() || m_width == 0 || m_height == 0) {
+        return false;
+    }
+
+    const int totalTiles = (m_telemetry.tileCount > 0) ? m_telemetry.tileCount : 0;
+    const int readyTiles = std::clamp(m_telemetry.tilesReady, 0, totalTiles);
+    const bool hasViewportTiles = totalTiles > 0;
+    const bool hasTileProgressGap = hasViewportTiles && (readyTiles < totalTiles);
+    const bool tilePipelineActive = hasViewportTiles || (m_telemetry.activeTileJobs > 0);
+    const bool baseLoading =
+        !tilePipelineActive &&
+        !m_telemetry.baseLayerReady &&
+        (m_telemetry.heavyBusyWorkers > 0);
+    bool decodingActive = hasTileProgressGap || baseLoading || (g_isLoading && !tilePipelineActive) ||
+                          g_isLeftPaneDecoding || m_telemetry.masterWarmupActive;
+    if (!g_isNavigatingToTitan && !hasTileProgressGap && !baseLoading && !g_isLeftPaneDecoding) {
+        decodingActive = false;
+    }
+
+    if (!decodingActive && !m_decodeWasActive && m_decodeFinishTime == 0) {
+        m_decodeNeedsAnimTimer = false;
+        m_decodeLastScanTickMs = 0;
+        return true;
+    }
+
+    const bool canUseLocalDirtyRect =
+        !m_isDynamicDirty &&
+        !m_borderGlowActive &&
+        !m_showDebugHUD &&
+        !g_runtime.ShowCompareInfo &&
+        !AppContext::GetInstance().Loupe.active &&
+        !AppContext::GetInstance().Dialog.IsVisible;
+
+    if (canUseLocalDirtyRect) {
+        const RECT barRect = CalculateDecodeProgressDirtyRect(hwnd);
+        if (barRect.right > barRect.left && barRect.bottom > barRect.top) {
+            ID2D1DeviceContext* dc = m_compEngine->BeginLayerUpdate(UILayer::Dynamic, &barRect);
+            if (dc) {
+                DrawDecodingStatus(dc, hwnd);
+                m_compEngine->EndLayerUpdate(UILayer::Dynamic);
+                m_compEngine->Commit();
+                return true;
+            }
+        }
+    }
+
+    MarkDynamicDirty();
+    return false;
 }
 
 
