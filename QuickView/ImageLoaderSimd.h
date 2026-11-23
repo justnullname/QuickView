@@ -29,6 +29,10 @@ void ConvertRGBToBGRA(const uint8_t* src, uint8_t* dst, int width, int height, i
 /// Convert packed 48-bit RGB16 (3x uint16_t) to 32-bit BGRA8 (alpha=255) in a single SIMD pass.
 void ConvertRGB16ToBGRARow(const uint8_t* src, uint8_t* dst, int width, bool isLittleEndian);
 
+/// Unfilter a single PNG scanline in-place using Highway SIMD (bpp = 1, 2, 3, 4, 6, 8).
+void PngUnfilterRow(uint8_t filterType, uint8_t* curr, const uint8_t* prev,
+                    size_t rowBytes, int bpp);
+
 /// Bilinear resize of BGRA image.
 void ResizeBilinear(const uint8_t* src, int srcW, int srcH, int srcStride,
                     uint8_t* dst, int dstW, int dstH, int dstStride);
