@@ -783,8 +783,8 @@ static constexpr char kBlob_EN[] =
     /* Settings_Tooltip_ViewPanDeadzone */ "Movement below this distance counts as a click, so the context menu or middle-click action still works.\0"
     /* Settings_Label_ViewPanSmoothing */ "Pan Smoothing\0"
     /* Settings_Tooltip_ViewPanSmoothing */ "Eases the pan speed in and out while you drag. Higher values respond faster, lower values feel softer.\0"
-    /* Settings_Label_ViewPanEdgeScroll */ "Edge Auto-Scroll\0"
-    /* Settings_Tooltip_ViewPanEdgeScroll */ "Keeps panning while the cursor is held near a window edge.\0"
+    /* Settings_Label_ViewPanEdgeScroll */ "Edge Auto-Accelerating Scroll\0"
+    /* Settings_Tooltip_ViewPanEdgeScroll */ "Keeps panning while the cursor is held near a window edge; the closer to the edge, the faster the pan.\0"
     /* Settings_Label_ViewPanEdgeThreshold */ "Edge Trigger Zone\0";
 static constexpr char kBlob_CN[] =
     /* CurrentLocale */ "zh-cn\0"
@@ -1559,8 +1559,8 @@ static constexpr char kBlob_CN[] =
     /* Settings_Tooltip_ViewPanDeadzone */ "小于该距离的移动会被视为单击，因此右键菜单或中键动作仍可正常触发。\0"
     /* Settings_Label_ViewPanSmoothing */ "平移平滑度\0"
     /* Settings_Tooltip_ViewPanSmoothing */ "调节拖动时平移速度的加减速。数值越高响应越快，越低越柔和。\0"
-    /* Settings_Label_ViewPanEdgeScroll */ "边缘自动滚动\0"
-    /* Settings_Tooltip_ViewPanEdgeScroll */ "光标按住靠近窗口边缘时会持续平移。\0"
+    /* Settings_Label_ViewPanEdgeScroll */ "边缘自动加速滚动\0"
+    /* Settings_Tooltip_ViewPanEdgeScroll */ "光标按住靠近窗口边缘时会持续平移，越靠近边缘平移越快。\0"
     /* Settings_Label_ViewPanEdgeThreshold */ "边缘触发宽度\0";
 static constexpr char kBlob_TW[] =
     /* CurrentLocale */ "zh-tw\0"
@@ -2335,8 +2335,8 @@ static constexpr char kBlob_TW[] =
     /* Settings_Tooltip_ViewPanDeadzone */ "小於該距離的移動會視為點選，因此右鍵菜單或中鍵動作仍可正常觸發。\0"
     /* Settings_Label_ViewPanSmoothing */ "平移平滑度\0"
     /* Settings_Tooltip_ViewPanSmoothing */ "調節拖曳時平移速度的加減速。數值越高反應越快，越低越柔和。\0"
-    /* Settings_Label_ViewPanEdgeScroll */ "邊緣自動滾動\0"
-    /* Settings_Tooltip_ViewPanEdgeScroll */ "游標按住靠近視窗邊緣時會持續平移。\0"
+    /* Settings_Label_ViewPanEdgeScroll */ "邊緣自動加速滾動\0"
+    /* Settings_Tooltip_ViewPanEdgeScroll */ "游標按住靠近視窗邊緣時會持續平移，越靠近邊緣平移越快。\0"
     /* Settings_Label_ViewPanEdgeThreshold */ "邊緣觸發寬度\0";
 static constexpr char kBlob_JA[] =
     /* CurrentLocale */ "ja-jp\0"
@@ -3111,8 +3111,8 @@ static constexpr char kBlob_JA[] =
     /* Settings_Tooltip_ViewPanDeadzone */ "この距離未満の移動はクリックとして扱われるため、コンテキストメニューや中クリックの動作もそのまま利用できます。\0"
     /* Settings_Label_ViewPanSmoothing */ "パンの滑らかさ\0"
     /* Settings_Tooltip_ViewPanSmoothing */ "ドラッグ中のパン速度の立ち上がりを滑らかにします。値が大きいほど反応が速く、小さいほど柔らかくなります。\0"
-    /* Settings_Label_ViewPanEdgeScroll */ "端の自動スクロール\0"
-    /* Settings_Tooltip_ViewPanEdgeScroll */ "カーソルをウィンドウの端付近で押さえている間、パンが継続します。\0"
+    /* Settings_Label_ViewPanEdgeScroll */ "端の自動加速スクロール\0"
+    /* Settings_Tooltip_ViewPanEdgeScroll */ "カーソルをウィンドウの端付近で押さえている間、パンが継続します。端に近いほど速くなります。\0"
     /* Settings_Label_ViewPanEdgeThreshold */ "端のトリガー範囲\0";
 static constexpr char kBlob_RU[] =
     /* CurrentLocale */ "ru-ru\0"
@@ -3887,8 +3887,8 @@ static constexpr char kBlob_RU[] =
     /* Settings_Tooltip_ViewPanDeadzone */ "Перемещение меньше этого расстояния считается щелчком, поэтому контекстное меню или действие средней кнопки продолжит работать.\0"
     /* Settings_Label_ViewPanSmoothing */ "Плавность панорамирования\0"
     /* Settings_Tooltip_ViewPanSmoothing */ "Сглаживает разгон и торможение панорамирования при перетаскивании. Больше — отзывчивее, меньше — мягче.\0"
-    /* Settings_Label_ViewPanEdgeScroll */ "Автопрокрутка у краёв\0"
-    /* Settings_Tooltip_ViewPanEdgeScroll */ "Продолжает панорамировать, пока курсор удерживается у края окна.\0"
+    /* Settings_Label_ViewPanEdgeScroll */ "Ускоренная автопрокрутка у краёв\0"
+    /* Settings_Tooltip_ViewPanEdgeScroll */ "Продолжает панорамировать, пока курсор удерживается у края окна; чем ближе к краю, тем быстрее.\0"
     /* Settings_Label_ViewPanEdgeThreshold */ "Зона срабатывания у края\0";
 static constexpr char kBlob_DE[] =
     /* CurrentLocale */ "de-de\0"
@@ -4663,8 +4663,8 @@ static constexpr char kBlob_DE[] =
     /* Settings_Tooltip_ViewPanDeadzone */ "Bewegungen unterhalb dieser Distanz gelten als Klick, sodass das Kontextmenü oder die Mittelklick-Aktion weiterhin funktioniert.\0"
     /* Settings_Label_ViewPanSmoothing */ "Schwenk-Glättung\0"
     /* Settings_Tooltip_ViewPanSmoothing */ "Glättet das Anfahren und Abbremsen der Schwenkgeschwindigkeit beim Ziehen. Höher = direkter, niedriger = weicher.\0"
-    /* Settings_Label_ViewPanEdgeScroll */ "Automatisches Randscrollen\0"
-    /* Settings_Tooltip_ViewPanEdgeScroll */ "Schwenkt weiter, solange der Mauszeiger nahe einem Fensterrand gehalten wird.\0"
+    /* Settings_Label_ViewPanEdgeScroll */ "Beschleunigtes automatisches Randscrollen\0"
+    /* Settings_Tooltip_ViewPanEdgeScroll */ "Schwenkt weiter, solange der Mauszeiger nahe einem Fensterrand gehalten wird; je näher am Rand, desto schneller.\0"
     /* Settings_Label_ViewPanEdgeThreshold */ "Rand-Triggerzone\0";
 static constexpr char kBlob_ES[] =
     /* CurrentLocale */ "es-es\0"
@@ -5439,8 +5439,8 @@ static constexpr char kBlob_ES[] =
     /* Settings_Tooltip_ViewPanDeadzone */ "El movimiento por debajo de esta distancia se cuenta como clic, por lo que el menú contextual o la acción del clic central siguen funcionando.\0"
     /* Settings_Label_ViewPanSmoothing */ "Suavizado de panorámica\0"
     /* Settings_Tooltip_ViewPanSmoothing */ "Suaviza la aceleración y frenado de la panorámica al arrastrar. Valores altos responden antes; bajos, más suave.\0"
-    /* Settings_Label_ViewPanEdgeScroll */ "Desplazamiento automático en bordes\0"
-    /* Settings_Tooltip_ViewPanEdgeScroll */ "Sigue desplazando mientras el cursor se mantiene cerca del borde de la ventana.\0"
+    /* Settings_Label_ViewPanEdgeScroll */ "Desplazamiento automático acelerado en bordes\0"
+    /* Settings_Tooltip_ViewPanEdgeScroll */ "Sigue desplazando mientras el cursor se mantiene cerca del borde de la ventana; cuanto más cerca del borde, más rápido.\0"
     /* Settings_Label_ViewPanEdgeThreshold */ "Zona de activación del borde\0";
 static constexpr char kBlob_FR[] =
     /* CurrentLocale */ "fr-fr\0"
@@ -6215,8 +6215,8 @@ static constexpr char kBlob_FR[] =
     /* Settings_Tooltip_ViewPanDeadzone */ "Un déplacement inférieur à cette distance est compté comme un clic, de sorte que le menu contextuel ou l'action du clic du milieu fonctionne toujours.\0"
     /* Settings_Label_ViewPanSmoothing */ "Lissage du pan\0"
     /* Settings_Tooltip_ViewPanSmoothing */ "Adoucit l'accélération et le freinage du pan pendant le glisser. Plus élevé = plus réactif, plus bas = plus doux.\0"
-    /* Settings_Label_ViewPanEdgeScroll */ "Défilement auto sur les bords\0"
-    /* Settings_Tooltip_ViewPanEdgeScroll */ "Continue le pan tant que le curseur est maintenu près d'un bord de la fenêtre.\0"
+    /* Settings_Label_ViewPanEdgeScroll */ "Défilement auto accéléré sur les bords\0"
+    /* Settings_Tooltip_ViewPanEdgeScroll */ "Continue le pan tant que le curseur est maintenu près d'un bord de la fenêtre ; plus le curseur est proche du bord, plus le défilement est rapide.\0"
     /* Settings_Label_ViewPanEdgeThreshold */ "Zone de déclenchement du bord\0";
 
 struct PackedLangBlob {
