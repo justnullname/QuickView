@@ -360,6 +360,230 @@ void ConvertRGB16ToBGRARowImpl(const uint8_t* HWY_RESTRICT src, uint8_t* HWY_RES
 }
 
 // ============================================================================
+// PngUnfilterRow - SIMD PNG scanline reconstruction (Up / Sub / Avg / Paeth)
+// ============================================================================
+template <int kBpp, int kVecBytes>
+HWY_INLINE void StoreBppBytes(const hn::FixedTag<uint8_t, kVecBytes> d8,
+                              hn::Vec<hn::FixedTag<uint8_t, kVecBytes>> v,
+                              uint8_t* dst) {
+    if constexpr (kBpp == kVecBytes) {
+        hn::StoreU(v, d8, dst);
+    } else {
+        uint8_t tmp[8];
+        hn::StoreU(v, d8, tmp);
+        std::memcpy(dst, tmp, static_cast<size_t>(kBpp));
+    }
+}
+
+template <int kBpp, int kVecBytes>
+void PngSubPixelsSimd(uint8_t* HWY_RESTRICT curr, size_t rowBytes) {
+    const hn::FixedTag<uint8_t, kVecBytes> d8;
+    size_t i = static_cast<size_t>(kBpp);
+    if (i + static_cast<size_t>(kVecBytes) <= rowBytes) {
+        auto vLeft = hn::LoadU(d8, curr);
+        for (; i + static_cast<size_t>(kVecBytes) <= rowBytes; i += static_cast<size_t>(kBpp)) {
+            auto vCur = hn::LoadU(d8, curr + i);
+            vLeft = hn::Add(vCur, vLeft);
+            StoreBppBytes<kBpp, kVecBytes>(d8, vLeft, curr + i);
+        }
+    }
+    for (; i < rowBytes; ++i) {
+        curr[i] = static_cast<uint8_t>(curr[i] + curr[i - static_cast<size_t>(kBpp)]);
+    }
+}
+
+template <int kBpp, int kVecBytes>
+void PngAvgPixelsSimd(uint8_t* HWY_RESTRICT curr, const uint8_t* HWY_RESTRICT prev,
+                      size_t rowBytes) {
+    const hn::FixedTag<uint8_t, kVecBytes> d8;
+    const hn::FixedTag<uint16_t, kVecBytes / 2> du16;
+    const auto vMask7F = hn::Set(d8, uint8_t{0x7F});
+
+    const size_t firstEnd = std::min(rowBytes, static_cast<size_t>(kBpp));
+    if (prev) {
+        for (size_t i = 0; i < firstEnd; ++i) {
+            curr[i] = static_cast<uint8_t>(curr[i] + (prev[i] >> 1));
+        }
+    }
+
+    size_t i = static_cast<size_t>(kBpp);
+    if (i + static_cast<size_t>(kVecBytes) <= rowBytes) {
+        auto vLeft = hn::LoadU(d8, curr);
+        if (prev) {
+            for (; i + static_cast<size_t>(kVecBytes) <= rowBytes; i += static_cast<size_t>(kBpp)) {
+                const auto vCur = hn::LoadU(d8, curr + i);
+                const auto vUp = hn::LoadU(d8, prev + i);
+                // Floor average (left + up) >> 1 = (left & up) + ((left ^ up) >> 1)
+                const auto vXorShift = hn::And(
+                    hn::BitCast(d8, hn::ShiftRight<1>(hn::BitCast(du16, hn::Xor(vLeft, vUp)))),
+                    vMask7F);
+                const auto vAvg = hn::Add(hn::And(vLeft, vUp), vXorShift);
+                vLeft = hn::Add(vCur, vAvg);
+                StoreBppBytes<kBpp, kVecBytes>(d8, vLeft, curr + i);
+            }
+        } else {
+            for (; i + static_cast<size_t>(kVecBytes) <= rowBytes; i += static_cast<size_t>(kBpp)) {
+                const auto vCur = hn::LoadU(d8, curr + i);
+                const auto vAvg = hn::And(
+                    hn::BitCast(d8, hn::ShiftRight<1>(hn::BitCast(du16, vLeft))),
+                    vMask7F);
+                vLeft = hn::Add(vCur, vAvg);
+                StoreBppBytes<kBpp, kVecBytes>(d8, vLeft, curr + i);
+            }
+        }
+    }
+    for (; i < rowBytes; ++i) {
+        const uint32_t left = curr[i - static_cast<size_t>(kBpp)];
+        const uint32_t up = prev ? prev[i] : 0u;
+        curr[i] = static_cast<uint8_t>(curr[i] + ((left + up) >> 1));
+    }
+}
+
+template <int kBpp, int kVecBytes>
+void PngPaethPixelsSimd(uint8_t* HWY_RESTRICT curr, const uint8_t* HWY_RESTRICT prev,
+                        size_t rowBytes) {
+    if (!prev) {
+        PngSubPixelsSimd<kBpp, kVecBytes>(curr, rowBytes);
+        return;
+    }
+
+    const size_t firstEnd = std::min(rowBytes, static_cast<size_t>(kBpp));
+    for (size_t i = 0; i < firstEnd; ++i) {
+        curr[i] = static_cast<uint8_t>(curr[i] + prev[i]);
+    }
+
+    const hn::FixedTag<uint8_t, kVecBytes> d8;
+    const hn::FixedTag<int16_t, kVecBytes> di16;
+    size_t i = static_cast<size_t>(kBpp);
+    if (i + static_cast<size_t>(kVecBytes) <= rowBytes) {
+        auto vLeft8 = hn::LoadU(d8, curr);
+        auto vUpLeft8 = hn::LoadU(d8, prev);
+        for (; i + static_cast<size_t>(kVecBytes) <= rowBytes; i += static_cast<size_t>(kBpp)) {
+            const auto vCur8 = hn::LoadU(d8, curr + i);
+            const auto vUp8 = hn::LoadU(d8, prev + i);
+
+            const auto va16 = hn::PromoteTo(di16, vLeft8);
+            const auto vb16 = hn::PromoteTo(di16, vUp8);
+            const auto vc16 = hn::PromoteTo(di16, vUpLeft8);
+
+            const auto da = hn::Sub(vb16, vc16);
+            const auto db = hn::Sub(va16, vc16);
+            const auto pa = hn::Abs(da);
+            const auto pb = hn::Abs(db);
+            const auto pc = hn::Abs(hn::Add(da, db));
+
+            auto vPr16 = hn::IfThenElse(hn::Le(pb, pc), vb16, vc16);
+            const auto maskA = hn::And(hn::Le(pa, pb), hn::Le(pa, pc));
+            vPr16 = hn::IfThenElse(maskA, va16, vPr16);
+
+            // vPr16 is strictly within [0, 255] so DemoteTo is exact; Add wraps mod 256 in u8
+            const auto vPr8 = hn::DemoteTo(d8, vPr16);
+            vLeft8 = hn::Add(vCur8, vPr8);
+            vUpLeft8 = vUp8;
+            StoreBppBytes<kBpp, kVecBytes>(d8, vLeft8, curr + i);
+        }
+    }
+    for (; i < rowBytes; ++i) {
+        const int a = curr[i - static_cast<size_t>(kBpp)];
+        const int b = prev[i];
+        const int c = prev[i - static_cast<size_t>(kBpp)];
+        const int pa = std::abs(b - c);
+        const int pb = std::abs(a - c);
+        const int pc = std::abs((a - c) + (b - c));
+        const int pr = (pa <= pb && pa <= pc) ? a : ((pb <= pc) ? b : c);
+        curr[i] = static_cast<uint8_t>(curr[i] + pr);
+    }
+}
+
+void PngUnfilterRowImpl(uint8_t filterType, uint8_t* HWY_RESTRICT curr,
+                        const uint8_t* HWY_RESTRICT prev, size_t rowBytes, int bpp) {
+    if (!curr || rowBytes == 0 || filterType == 0) return;
+
+    if (filterType == 2) { // Up: full-row SIMD vectorization
+        if (!prev) return;
+        const hn::ScalableTag<uint8_t> d8;
+        const size_t N = hn::Lanes(d8);
+        size_t i = 0;
+        for (; i + N <= rowBytes; i += N) {
+            hn::StoreU(hn::Add(hn::LoadU(d8, curr + i), hn::LoadU(d8, prev + i)), d8, curr + i);
+        }
+        for (; i < rowBytes; ++i) {
+            curr[i] = static_cast<uint8_t>(curr[i] + prev[i]);
+        }
+        return;
+    }
+
+    if (filterType == 1) { // Sub
+        switch (bpp) {
+        case 3: PngSubPixelsSimd<3, 4>(curr, rowBytes); return;
+        case 4: PngSubPixelsSimd<4, 4>(curr, rowBytes); return;
+        case 6: PngSubPixelsSimd<6, 8>(curr, rowBytes); return;
+        case 8: PngSubPixelsSimd<8, 8>(curr, rowBytes); return;
+        default: {
+            const size_t step = static_cast<size_t>(bpp > 0 ? bpp : 1);
+            for (size_t i = step; i < rowBytes; ++i) {
+                curr[i] = static_cast<uint8_t>(curr[i] + curr[i - step]);
+            }
+            return;
+        }
+        }
+    }
+
+    if (filterType == 3) { // Average (must floor (left + up) >> 1)
+        switch (bpp) {
+        case 3: PngAvgPixelsSimd<3, 4>(curr, prev, rowBytes); return;
+        case 4: PngAvgPixelsSimd<4, 4>(curr, prev, rowBytes); return;
+        case 6: PngAvgPixelsSimd<6, 8>(curr, prev, rowBytes); return;
+        case 8: PngAvgPixelsSimd<8, 8>(curr, prev, rowBytes); return;
+        default: {
+            const size_t step = static_cast<size_t>(bpp > 0 ? bpp : 1);
+            const size_t firstEnd = std::min(rowBytes, step);
+            if (prev) {
+                for (size_t i = 0; i < firstEnd; ++i) {
+                    curr[i] = static_cast<uint8_t>(curr[i] + (prev[i] >> 1));
+                }
+            }
+            for (size_t i = step; i < rowBytes; ++i) {
+                const uint32_t left = curr[i - step];
+                const uint32_t up = prev ? prev[i] : 0u;
+                curr[i] = static_cast<uint8_t>(curr[i] + ((left + up) >> 1));
+            }
+            return;
+        }
+        }
+    }
+
+    if (filterType == 4) { // Paeth
+        switch (bpp) {
+        case 3: PngPaethPixelsSimd<3, 4>(curr, prev, rowBytes); return;
+        case 4: PngPaethPixelsSimd<4, 4>(curr, prev, rowBytes); return;
+        case 6: PngPaethPixelsSimd<6, 8>(curr, prev, rowBytes); return;
+        case 8: PngPaethPixelsSimd<8, 8>(curr, prev, rowBytes); return;
+        default: {
+            const size_t step = static_cast<size_t>(bpp > 0 ? bpp : 1);
+            const size_t firstEnd = std::min(rowBytes, step);
+            if (prev) {
+                for (size_t i = 0; i < firstEnd; ++i) {
+                    curr[i] = static_cast<uint8_t>(curr[i] + prev[i]);
+                }
+            }
+            for (size_t i = step; i < rowBytes; ++i) {
+                const int a = curr[i - step];
+                const int b = prev ? prev[i] : 0;
+                const int c = prev ? prev[i - step] : 0;
+                const int pa = std::abs(b - c);
+                const int pb = std::abs(a - c);
+                const int pc = std::abs((a - c) + (b - c));
+                const int pr = (pa <= pb && pa <= pc) ? a : ((pb <= pc) ? b : c);
+                curr[i] = static_cast<uint8_t>(curr[i] + pr);
+            }
+            return;
+        }
+        }
+    }
+}
+
+// ============================================================================
 // FindPeakFloat - scan R32G32B32A32_FLOAT for max RGB component
 // ============================================================================
 inline bool IsFiniteFloatPtr(const float* p) noexcept {
@@ -1628,6 +1852,7 @@ HWY_EXPORT(SwizzleRGBAToBGRAImpl);
 HWY_EXPORT(SwizzleBGRA16ToRGBA16Impl);
 HWY_EXPORT(ConvertRGBToBGRARowImpl);
 HWY_EXPORT(ConvertRGB16ToBGRARowImpl);
+HWY_EXPORT(PngUnfilterRowImpl);
 HWY_EXPORT(ResizeBilinearRowsImpl);
 HWY_EXPORT(Pack16to8Impl);
 HWY_EXPORT(FindPeakFloatImpl);
@@ -1708,6 +1933,11 @@ void ConvertRGBToBGRA(const uint8_t* src, uint8_t* dst, int width, int height, i
 
 void ConvertRGB16ToBGRARow(const uint8_t* src, uint8_t* dst, int width, bool isLittleEndian) {
     HWY_DYNAMIC_DISPATCH(ConvertRGB16ToBGRARowImpl)(src, dst, width, isLittleEndian);
+}
+
+void PngUnfilterRow(uint8_t filterType, uint8_t* curr, const uint8_t* prev,
+                    size_t rowBytes, int bpp) {
+    HWY_DYNAMIC_DISPATCH(PngUnfilterRowImpl)(filterType, curr, prev, rowBytes, bpp);
 }
 
 static void BuildBilinearAxisCoeffs(int srcSize, int dstSize,
