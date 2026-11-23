@@ -309,11 +309,32 @@ private:
     // [Titan] Using Vector + Heap for O(1) Clear and Priority
     std::vector<JobInfo> m_pendingJobs;
 
-    // [Dedup] Track tiles currently in-flight (queued + decoding)
-    // Key = (col << 20 | row << 8 | lod) — uniquely identifies a tile request
-    std::unordered_set<uint64_t> m_inFlightTiles;
+    // [Dedup] Track tiles currently in-flight (queued + decoding), tagged by (imageId, genId)
+    // so stale workers or purges from an older image/generation never erase a newer submission.
+    struct InFlightTileTag {
+        ImageID imageId = 0;
+        uint32_t genId = 0;
+        bool operator==(const InFlightTileTag&) const = default;
+    };
+    std::unordered_map<uint64_t, InFlightTileTag> m_inFlightTiles;
     static uint64_t MakeTileHash(int col, int row, int lod) {
         return ((uint64_t)col << 20) | ((uint64_t)row << 8) | (uint64_t)(lod & 0xFF);
+    }
+    bool TryInsertInFlightTileLocked(uint64_t tileHash, ImageID imageId, uint32_t genId) {
+        auto [it, inserted] = m_inFlightTiles.try_emplace(tileHash, InFlightTileTag{ imageId, genId });
+        if (!inserted) {
+            if (it->second.imageId == imageId && it->second.genId == genId) return false;
+            it->second = InFlightTileTag{ imageId, genId };
+        }
+        return true;
+    }
+    void EraseInFlightTileLocked(uint64_t tileHash, ImageID imageId, uint32_t genId) {
+        auto it = m_inFlightTiles.find(tileHash);
+        if (it != m_inFlightTiles.end() &&
+            it->second.imageId == imageId &&
+            it->second.genId == genId) {
+            m_inFlightTiles.erase(it);
+        }
     }
     
     // Results queue
@@ -375,11 +396,12 @@ private:
     // [Phase 4.1] Deferred queue for preventing Cache Miss storms
     std::vector<JobInfo> m_deferredTileJobs;
     std::mutex m_deferredMutex;
-    void ResumeDeferredJobs(ImageID imageId, int lod);
+    void FinishLODCacheBuildAndResume(ImageID imageId, bool succeeded, bool countFailure);
+    void PurgeDeferredJobs(bool filterBySlot, PaneSlot targetSlot, bool keepMatchingImageId, ImageID keepImageId);
     
     std::atomic<int> m_lodCacheFailCount{0};       // [B4] Count consecutive FullDecode failures (prevent infinite retry)
     static constexpr int kMaxLODCacheRetries = 3;  // Give up after 3 consecutive failures per LOD
-    bool m_isProgressiveJPEG = false; // Detected during baseline decode
+    std::atomic<bool> m_isProgressiveJPEG{ false }; // Detected via header probe in Submit() and baseline decode
     bool m_isProgressiveJXL = false; // [JXL] True if the image has DC/Progressive layers suitable for region decoding
     
     // [Phase 4] Job Object: auto-kill all worker subprocesses on main process exit
@@ -472,7 +494,7 @@ private:
         }
     };
     MasterBackingStore m_masterBacking;
-    std::mutex m_masterBackingMutex;
+    mutable std::mutex m_masterBackingMutex;
     void ResetMasterBackingStore();
     HRESULT BuildMasterBackingStore(const uint8_t* pixels, int width, int height, int stride, ImageID imageId,
                                     const QuickView::PixelColorMetadata* colorMeta = nullptr);
@@ -483,6 +505,7 @@ private:
     bool AcquireMasterBackingView(ImageID imageId, const uint8_t** outPixels, int* outW, int* outH, int* outStride,
                                    std::unique_lock<std::mutex>& outLock,
                                    QuickView::PixelColorMetadata* outColorMeta = nullptr);
+    bool HasMasterBackingForImage(ImageID imageId) const;
 
     // [MMF Pool] Infrastructure
     // At most two exact-size file-backed masters are retained for reuse.  We

@@ -118,7 +118,7 @@ namespace WuffsLoader {
             status = (expr); \
             if (wuffs_base__status__is_ok(&status)) break; \
             if (status.repr == wuffs_base__suspension__short_read && !src.meta.closed) { \
-                 size_t next = std::min(size, src.meta.wi + 1048576); \
+                 size_t next = std::min(size, src.meta.wi + 16777216); \
                  src.meta.wi = next; \
                  src.meta.closed = (next == size); \
                  continue; \
@@ -267,11 +267,12 @@ static bool DecodePNG_Impl(const uint8_t* data, size_t size,
         &dec, sizeof(dec), WUFFS_VERSION,
         WUFFS_INITIALIZE__LEAVE_INTERNAL_BUFFERS_UNINITIALIZED);
     if (!wuffs_base__status__is_ok(&status)) return false;
+    wuffs_png__decoder__set_quirk(&dec, WUFFS_BASE__QUIRK_IGNORE_CHECKSUM, 1);
 
     wuffs_base__io_buffer src = {};
     src.data.ptr = const_cast<uint8_t*>(data);
     src.data.len = size;
-    src.meta.wi = std::min(size, (size_t)1048576); 
+    src.meta.wi = std::min(size, (size_t)16777216); 
     src.meta.ri = 0;
     src.meta.closed = (src.meta.wi == size);
 
@@ -772,6 +773,7 @@ public:
             &m_pngDec, sizeof(m_pngDec), WUFFS_VERSION,
             WUFFS_INITIALIZE__LEAVE_INTERNAL_BUFFERS_UNINITIALIZED);
         if (wuffs_base__status__is_ok(&status)) {
+          wuffs_png__decoder__set_quirk(&m_pngDec, WUFFS_BASE__QUIRK_IGNORE_CHECKSUM, 1);
           status = DecodeConfigWithShortRead(false, m_gifDec, m_pngDec, m_ic, m_src);
           if (wuffs_base__status__is_ok(&status)) {
             const uint32_t apng_frames =
@@ -1098,6 +1100,7 @@ private:
         } else if (m_isPng) {
             status = wuffs_png__decoder__initialize(&bgPngDec, sizeof(bgPngDec), WUFFS_VERSION, WUFFS_INITIALIZE__LEAVE_INTERNAL_BUFFERS_UNINITIALIZED);
             if (!wuffs_base__status__is_ok(&status)) return;
+            wuffs_png__decoder__set_quirk(&bgPngDec, WUFFS_BASE__QUIRK_IGNORE_CHECKSUM, 1);
             status = DecodeConfigWithShortRead(false, bgGifDec, bgPngDec, ic, bgSrc);
             if (!wuffs_base__status__is_ok(&status)) return;
         } else {

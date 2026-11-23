@@ -40,8 +40,11 @@ struct __clangd_preamble_stop_struct {};
 
 #include "ImageLoaderSimd.h"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
+#include <thread>
+#include <vector>
 #include <DirectXPackedVector.h>
 
 // Locally enable peak optimization and Fast Math
@@ -69,6 +72,11 @@ static inline uint8_t LinearToSdr8Scalar(float v) {
     v = (v < 0.0f) ? 0.0f : (v > 1.0f ? 1.0f : v);
     return static_cast<uint8_t>(v * 255.0f + 0.5f);
 }
+
+struct BilinearAxisCoeff {
+    int idx0, idx1;
+    int w0, w1;
+};
 #endif // IMAGE_LOADER_SIMD_SCALARS
 
 HWY_BEFORE_NAMESPACE();
@@ -277,6 +285,77 @@ void ConvertRGBToBGRARowImpl(const uint8_t* rowSrc, uint8_t* rowDst, int width) 
         pxDst[1] = pxSrc[1]; // G
         pxDst[2] = pxSrc[0]; // R
         pxDst[3] = 255;      // A
+    }
+}
+
+// ============================================================================
+// ConvertRGB16ToBGRARow - Fused 48-bit RGB16 -> 32-bit BGRA8 row conversion
+// ============================================================================
+void ConvertRGB16ToBGRARowImpl(const uint8_t* HWY_RESTRICT src, uint8_t* HWY_RESTRICT dst,
+                               int width, bool isLittleEndian) {
+    if (!src || !dst || width <= 0) return;
+
+    const hn::ScalableTag<uint8_t> d8;
+    const hn::Half<decltype(d8)> d8_half;
+    const hn::Rebind<uint16_t, decltype(d8_half)> d16;
+    const size_t n16 = hn::Lanes(d16);
+    const size_t pixelsPerVec = hn::Lanes(d8); // Exact match: 2 * n16
+
+    const auto vA = hn::Set(d8, uint8_t{255});
+    const auto vMaskLow = hn::Set(d16, uint16_t{0x00FFu});
+    size_t x = 0;
+
+    if (isLittleEndian) {
+        for (; x + pixelsPerVec <= static_cast<size_t>(width); x += pixelsPerVec) {
+            const uint8_t* pxSrc = src + x * 6;
+            uint8_t* pxDst = dst + x * 4;
+            hwy::Prefetch(pxSrc + 384);
+            hwy::Prefetch(pxDst + 256);
+
+            hn::Vec<decltype(d16)> rLo, gLo, bLo, rHi, gHi, bHi;
+            hn::LoadInterleaved3(d16, reinterpret_cast<const uint16_t*>(pxSrc), rLo, gLo, bLo);
+            hn::LoadInterleaved3(d16, reinterpret_cast<const uint16_t*>(pxSrc) + n16 * 3, rHi, gHi, bHi);
+
+            auto vR = hn::Combine(d8, hn::DemoteTo(d8_half, hn::ShiftRight<8>(rHi)),
+                                      hn::DemoteTo(d8_half, hn::ShiftRight<8>(rLo)));
+            auto vG = hn::Combine(d8, hn::DemoteTo(d8_half, hn::ShiftRight<8>(gHi)),
+                                      hn::DemoteTo(d8_half, hn::ShiftRight<8>(gLo)));
+            auto vB = hn::Combine(d8, hn::DemoteTo(d8_half, hn::ShiftRight<8>(bHi)),
+                                      hn::DemoteTo(d8_half, hn::ShiftRight<8>(bLo)));
+
+            hn::StoreInterleaved4(vB, vG, vR, vA, d8, pxDst);
+        }
+    } else {
+        for (; x + pixelsPerVec <= static_cast<size_t>(width); x += pixelsPerVec) {
+            const uint8_t* pxSrc = src + x * 6;
+            uint8_t* pxDst = dst + x * 4;
+            hwy::Prefetch(pxSrc + 384);
+            hwy::Prefetch(pxDst + 256);
+
+            hn::Vec<decltype(d16)> rLo, gLo, bLo, rHi, gHi, bHi;
+            hn::LoadInterleaved3(d16, reinterpret_cast<const uint16_t*>(pxSrc), rLo, gLo, bLo);
+            hn::LoadInterleaved3(d16, reinterpret_cast<const uint16_t*>(pxSrc) + n16 * 3, rHi, gHi, bHi);
+
+            // Big-Endian uint16 in LE register: high byte sits in low 8 bits
+            auto vR = hn::Combine(d8, hn::DemoteTo(d8_half, hn::And(rHi, vMaskLow)),
+                                      hn::DemoteTo(d8_half, hn::And(rLo, vMaskLow)));
+            auto vG = hn::Combine(d8, hn::DemoteTo(d8_half, hn::And(gHi, vMaskLow)),
+                                      hn::DemoteTo(d8_half, hn::And(gLo, vMaskLow)));
+            auto vB = hn::Combine(d8, hn::DemoteTo(d8_half, hn::And(bHi, vMaskLow)),
+                                      hn::DemoteTo(d8_half, hn::And(bLo, vMaskLow)));
+
+            hn::StoreInterleaved4(vB, vG, vR, vA, d8, pxDst);
+        }
+    }
+
+    const size_t highByteOffset = isLittleEndian ? 1u : 0u;
+    for (; x < static_cast<size_t>(width); ++x) {
+        const uint8_t* pxSrc = src + x * 6;
+        uint8_t* pxDst = dst + x * 4;
+        pxDst[0] = pxSrc[4 + highByteOffset]; // B
+        pxDst[1] = pxSrc[2 + highByteOffset]; // G
+        pxDst[2] = pxSrc[0 + highByteOffset]; // R
+        pxDst[3] = 255;                       // A
     }
 }
 
@@ -1463,56 +1542,25 @@ void ToneMapClipBatchImpl(const float* src, int srcStride,
 }
 
 // ============================================================================
-// ResizeBilinear - BGRA bilinear interpolation
+// ResizeBilinear - BGRA bilinear interpolation (4-channel SIMD per strip)
 // ============================================================================
-struct AxisCoeff {
-    int idx0, idx1;
-    int w0, w1;
-};
-
-static void BuildAxisCoeffs(int srcSize, int dstSize,
-                            std::vector<AxisCoeff>& out) {
-    out.resize(dstSize);
-    constexpr int kScale = 1 << 11; // 2048
-
-    if (srcSize <= 1 || dstSize <= 1) {
-        for (int i = 0; i < dstSize; ++i) {
-            out[i] = {0, 0, kScale, 0};
-        }
-        return;
-    }
-
-    const double scale = static_cast<double>(srcSize - 1) / static_cast<double>(dstSize - 1);
-    for (int i = 0; i < dstSize; ++i) {
-        const double srcPos = static_cast<double>(i) * scale;
-        int idx0 = static_cast<int>(srcPos);
-        idx0 = std::clamp(idx0, 0, srcSize - 1);
-        const int idx1 = std::min(idx0 + 1, srcSize - 1);
-
-        const double frac = srcPos - static_cast<double>(idx0);
-        int w1 = static_cast<int>(frac * static_cast<double>(kScale) + 0.5);
-        w1 = std::clamp(w1, 0, kScale);
-        const int w0 = kScale - w1;
-
-        out[i] = {idx0, idx1, w0, w1};
-    }
-}
-
-void ResizeBilinearImpl(const uint8_t* src, int srcW, int srcH, int srcStride,
-                        uint8_t* dst, int dstW, int dstH, int dstStride) {
-    if (!src || !dst || srcW <= 0 || srcH <= 0 || dstW <= 0 || dstH <= 0) return;
-    if (srcStride == 0) srcStride = srcW * 4;
-    if (dstStride == 0) dstStride = dstW * 4;
-
+void ResizeBilinearRowsImpl(const uint8_t* HWY_RESTRICT src, int srcStride,
+                            uint8_t* HWY_RESTRICT dst, int dstW, int dstStride,
+                            const BilinearAxisCoeff* HWY_RESTRICT xCoeff,
+                            const BilinearAxisCoeff* HWY_RESTRICT yCoeff,
+                            int yBegin, int yEnd) {
     constexpr int kBits = 11;
     constexpr int kShift = kBits * 2;
     constexpr int kRound = 1 << (kShift - 1);
 
-    std::vector<AxisCoeff> xCoeff, yCoeff;
-    BuildAxisCoeffs(srcW, dstW, xCoeff);
-    BuildAxisCoeffs(srcH, dstH, yCoeff);
+    const hn::FixedTag<int32_t, 4> d32;
+    const hn::FixedTag<uint16_t, 4> d16;
+    const hn::FixedTag<uint8_t, 4> d8;
+    const auto vRound = hn::Set(d32, kRound);
+    const auto vZero = hn::Zero(d32);
+    const auto vMax255 = hn::Set(d32, 255);
 
-    for (int y = 0; y < dstH; ++y) {
+    for (int y = yBegin; y < yEnd; ++y) {
         const auto& yc = yCoeff[y];
         const uint8_t* row0 = src + static_cast<size_t>(yc.idx0) * srcStride;
         const uint8_t* row1 = src + static_cast<size_t>(yc.idx1) * srcStride;
@@ -1520,22 +1568,27 @@ void ResizeBilinearImpl(const uint8_t* src, int srcW, int srcH, int srcStride,
 
         for (int x = 0; x < dstW; ++x) {
             const auto& xc = xCoeff[x];
-            const uint8_t* s00 = row0 + static_cast<size_t>(xc.idx0) * 4;
-            const uint8_t* s01 = row0 + static_cast<size_t>(xc.idx1) * 4;
-            const uint8_t* s10 = row1 + static_cast<size_t>(xc.idx0) * 4;
-            const uint8_t* s11 = row1 + static_cast<size_t>(xc.idx1) * 4;
+            const size_t x0Off = static_cast<size_t>(xc.idx0) * 4;
+            const size_t x1Off = static_cast<size_t>(xc.idx1) * 4;
 
-            const int w00 = xc.w0 * yc.w0;
-            const int w01 = xc.w1 * yc.w0;
-            const int w10 = xc.w0 * yc.w1;
-            const int w11 = xc.w1 * yc.w1;
+            const auto p00 = hn::PromoteTo(d32, hn::LoadU(d8, row0 + x0Off));
+            const auto p01 = hn::PromoteTo(d32, hn::LoadU(d8, row0 + x1Off));
+            const auto p10 = hn::PromoteTo(d32, hn::LoadU(d8, row1 + x0Off));
+            const auto p11 = hn::PromoteTo(d32, hn::LoadU(d8, row1 + x1Off));
 
-            const size_t dstBase = static_cast<size_t>(x) * 4;
-            for (int c = 0; c < 4; ++c) {
-                const int val = (s00[c] * w00 + s01[c] * w01 +
-                                 s10[c] * w10 + s11[c] * w11 + kRound) >> kShift;
-                pd[dstBase + c] = static_cast<uint8_t>(std::clamp(val, 0, 255));
-            }
+            const auto vw00 = hn::Set(d32, xc.w0 * yc.w0);
+            const auto vw01 = hn::Set(d32, xc.w1 * yc.w0);
+            const auto vw10 = hn::Set(d32, xc.w0 * yc.w1);
+            const auto vw11 = hn::Set(d32, xc.w1 * yc.w1);
+
+            auto sum = hn::MulAdd(p00, vw00, vRound);
+            sum = hn::MulAdd(p01, vw01, sum);
+            sum = hn::MulAdd(p10, vw10, sum);
+            sum = hn::MulAdd(p11, vw11, sum);
+            sum = hn::Clamp(hn::ShiftRight<kShift>(sum), vZero, vMax255);
+
+            const auto packed = hn::DemoteTo(d8, hn::DemoteTo(d16, sum));
+            hn::StoreU(packed, d8, pd + static_cast<size_t>(x) * 4);
         }
     }
 }
@@ -1574,7 +1627,8 @@ HWY_EXPORT(PremultiplyAlphaImpl);
 HWY_EXPORT(SwizzleRGBAToBGRAImpl);
 HWY_EXPORT(SwizzleBGRA16ToRGBA16Impl);
 HWY_EXPORT(ConvertRGBToBGRARowImpl);
-HWY_EXPORT(ResizeBilinearImpl);
+HWY_EXPORT(ConvertRGB16ToBGRARowImpl);
+HWY_EXPORT(ResizeBilinearRowsImpl);
 HWY_EXPORT(Pack16to8Impl);
 HWY_EXPORT(FindPeakFloatImpl);
 HWY_EXPORT(ComputeHistogramRowImpl);
@@ -1610,19 +1664,120 @@ void SwizzleBGRA16ToRGBA16(uint16_t* data, size_t pixelCount) {
 }
 
 void ConvertRGBToBGRA(const uint8_t* src, uint8_t* dst, int width, int height, int dstStride) {
+    if (!src || !dst || width <= 0 || height <= 0) return;
     auto dispatchFunc = HWY_DYNAMIC_DISPATCH(ConvertRGBToBGRARowImpl);
-#pragma omp parallel for schedule(static) if(height > 128)
+    const size_t srcRowBytes = static_cast<size_t>(width) * 3;
+    const uint64_t totalPixels = static_cast<uint64_t>(width) * static_cast<uint64_t>(height);
+    if (height > 128 && totalPixels >= 262144ULL) {
+        const int hwThreads = static_cast<int>(std::thread::hardware_concurrency());
+        int threads = std::clamp(hwThreads > 0 ? hwThreads : 4, 1, 16);
+        threads = std::min(threads, height / 32);
+        if (threads > 1) {
+            std::array<std::thread, 15> workers;
+            const int chunk = (height + threads - 1) / threads;
+            int spawned = 0;
+            for (int t = 0; t < threads - 1; ++t) {
+                const int y0 = t * chunk;
+                const int y1 = std::min(y0 + chunk, height);
+                if (y0 >= y1) break;
+                workers[spawned++] = std::thread([=]() {
+                    for (int y = y0; y < y1; ++y) {
+                        dispatchFunc(src + static_cast<size_t>(y) * srcRowBytes,
+                                     dst + static_cast<size_t>(y) * dstStride, width);
+                    }
+                });
+            }
+            const int mainY0 = spawned * chunk;
+            for (int y = mainY0; y < height; ++y) {
+                dispatchFunc(src + static_cast<size_t>(y) * srcRowBytes,
+                             dst + static_cast<size_t>(y) * dstStride, width);
+            }
+            for (int t = 0; t < spawned; ++t) {
+                if (workers[t].joinable()) workers[t].join();
+            }
+            return;
+        }
+    }
+
     for (int y = 0; y < height; ++y) {
-        const uint8_t* rowSrc = src + static_cast<size_t>(y) * width * 3;
+        const uint8_t* rowSrc = src + static_cast<size_t>(y) * srcRowBytes;
         uint8_t* rowDst = dst + static_cast<size_t>(y) * dstStride;
         dispatchFunc(rowSrc, rowDst, width);
     }
 }
 
+void ConvertRGB16ToBGRARow(const uint8_t* src, uint8_t* dst, int width, bool isLittleEndian) {
+    HWY_DYNAMIC_DISPATCH(ConvertRGB16ToBGRARowImpl)(src, dst, width, isLittleEndian);
+}
+
+static void BuildBilinearAxisCoeffs(int srcSize, int dstSize,
+                                    std::vector<BilinearAxisCoeff>& out) {
+    out.resize(dstSize);
+    constexpr int kScale = 1 << 11; // 2048
+
+    if (srcSize <= 1 || dstSize <= 1) {
+        for (int i = 0; i < dstSize; ++i) {
+            out[i] = {0, 0, kScale, 0};
+        }
+        return;
+    }
+
+    const double scale = static_cast<double>(srcSize - 1) / static_cast<double>(dstSize - 1);
+    for (int i = 0; i < dstSize; ++i) {
+        const double srcPos = static_cast<double>(i) * scale;
+        int idx0 = static_cast<int>(srcPos);
+        idx0 = std::clamp(idx0, 0, srcSize - 1);
+        const int idx1 = std::min(idx0 + 1, srcSize - 1);
+
+        const double frac = srcPos - static_cast<double>(idx0);
+        int w1 = static_cast<int>(frac * static_cast<double>(kScale) + 0.5);
+        w1 = std::clamp(w1, 0, kScale);
+        const int w0 = kScale - w1;
+
+        out[i] = {idx0, idx1, w0, w1};
+    }
+}
+
 void ResizeBilinear(const uint8_t* src, int srcW, int srcH, int srcStride,
                     uint8_t* dst, int dstW, int dstH, int dstStride) {
-    HWY_DYNAMIC_DISPATCH(ResizeBilinearImpl)(src, srcW, srcH, srcStride,
-                                              dst, dstW, dstH, dstStride);
+    if (!src || !dst || srcW <= 0 || srcH <= 0 || dstW <= 0 || dstH <= 0) return;
+    if (srcStride == 0) srcStride = srcW * 4;
+    if (dstStride == 0) dstStride = dstW * 4;
+
+    std::vector<BilinearAxisCoeff> xCoeff, yCoeff;
+    BuildBilinearAxisCoeffs(srcW, dstW, xCoeff);
+    BuildBilinearAxisCoeffs(srcH, dstH, yCoeff);
+
+    auto dispatchFunc = HWY_DYNAMIC_DISPATCH(ResizeBilinearRowsImpl);
+    const uint64_t totalDstPixels = static_cast<uint64_t>(dstW) * static_cast<uint64_t>(dstH);
+    if (dstH >= 128 && totalDstPixels >= 262144ULL) {
+        const int hwThreads = static_cast<int>(std::thread::hardware_concurrency());
+        int threads = std::clamp(hwThreads > 0 ? hwThreads : 4, 1, 16);
+        threads = std::min(threads, dstH / 32);
+        if (threads > 1) {
+            std::array<std::thread, 15> workers;
+            const int chunk = (dstH + threads - 1) / threads;
+            int spawned = 0;
+            for (int t = 0; t < threads - 1; ++t) {
+                const int y0 = t * chunk;
+                const int y1 = std::min(y0 + chunk, dstH);
+                if (y0 >= y1) break;
+                workers[spawned++] = std::thread([=, &xCoeff, &yCoeff]() {
+                    dispatchFunc(src, srcStride, dst, dstW, dstStride, xCoeff.data(), yCoeff.data(), y0, y1);
+                });
+            }
+            const int mainY0 = spawned * chunk;
+            if (mainY0 < dstH) {
+                dispatchFunc(src, srcStride, dst, dstW, dstStride, xCoeff.data(), yCoeff.data(), mainY0, dstH);
+            }
+            for (int t = 0; t < spawned; ++t) {
+                if (workers[t].joinable()) workers[t].join();
+            }
+            return;
+        }
+    }
+
+    dispatchFunc(src, srcStride, dst, dstW, dstStride, xCoeff.data(), yCoeff.data(), 0, dstH);
 }
 
 void Pack16to8(const uint16_t* src, uint8_t* dst, size_t pixelCount) {

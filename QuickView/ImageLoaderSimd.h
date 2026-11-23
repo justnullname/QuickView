@@ -26,6 +26,9 @@ void SwizzleBGRA16ToRGBA16(uint16_t* data, size_t pixelCount);
 /// OpenMP is used inside for multi-threaded row processing.
 void ConvertRGBToBGRA(const uint8_t* src, uint8_t* dst, int width, int height, int dstStride);
 
+/// Convert packed 48-bit RGB16 (3x uint16_t) to 32-bit BGRA8 (alpha=255) in a single SIMD pass.
+void ConvertRGB16ToBGRARow(const uint8_t* src, uint8_t* dst, int width, bool isLittleEndian);
+
 /// Bilinear resize of BGRA image.
 void ResizeBilinear(const uint8_t* src, int srcW, int srcH, int srcStride,
                     uint8_t* dst, int dstW, int dstH, int dstStride);

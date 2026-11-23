@@ -11,6 +11,9 @@
 #include <unordered_map>
 #include <memory>
 #include <string>
+#include <string_view>
+#include <algorithm>
+#include <cmath>
 #include <cwchar>
 #include <type_traits>
 #include <functional>
@@ -248,6 +251,92 @@ namespace QuickView {
             default:
                 return false;
         }
+    }
+
+    inline constexpr uint32_t kDefaultStandardAxisLimit = 8192u;
+    inline constexpr uint32_t kMaxProbeStandardAxisLimit = 16384u;
+    inline constexpr uint64_t kStandardSurfacePixelBudget = 4096ull * 4096ull; // 16,777,216 px (~64MB BGRA)
+    inline constexpr uint64_t kTitanPixelTrigger = 50000000ull;                // 50 MP
+
+    inline bool IsTitanSupportedFormat(std::wstring_view fmtUpper) noexcept {
+        return fmtUpper == L"JPEG" || fmtUpper == L"JPG" ||
+               fmtUpper == L"WEBP" || fmtUpper == L"PNG" ||
+               fmtUpper == L"JXL"  || fmtUpper == L"TIF" ||
+               fmtUpper == L"TIFF" || fmtUpper == L"AVIF";
+    }
+
+    // Single Source of Truth for Titan dimension threshold:
+    // - > 50MP total pixels -> Titan
+    // - Any axis > maxStandardAxis (16384 on FL11+ DComp-verified GPU, 8192 fallback) -> Titan
+    // - Any axis > 8192 AND total pixels > 16.77MP -> Titan (prevents 16.77MP surface budget downsampling blur)
+    // - Otherwise (e.g. 8193x100 or 1080x15000 on FL11+ GPU) -> Standard 1:1 single-surface fast path
+    inline bool ShouldTriggerTitanByDimensions(
+        uint32_t width, uint32_t height,
+        uint32_t maxStandardAxis = kDefaultStandardAxisLimit) noexcept {
+        if (width == 0 || height == 0) return false;
+        if (maxStandardAxis < kDefaultStandardAxisLimit) {
+            maxStandardAxis = kDefaultStandardAxisLimit;
+        }
+        const uint64_t pixels = static_cast<uint64_t>(width) * static_cast<uint64_t>(height);
+        if (pixels > kTitanPixelTrigger) return true;
+        if (width > maxStandardAxis || height > maxStandardAxis) return true;
+        if ((width > kDefaultStandardAxisLimit || height > kDefaultStandardAxisLimit) &&
+            pixels > kStandardSurfacePixelBudget) {
+            return true;
+        }
+        return false;
+    }
+
+    inline constexpr uint64_t kBaselineJpegMasterWarmupLimit = 128ull * 1024ull * 1024ull;    // 128 MB BGRA (~32 MP)
+    inline constexpr uint64_t kDefaultMasterWarmupLimit      = 1536ull * 1024ull * 1024ull;   // 1.5 GB BGRA (~384 MP)
+
+    // Policy for MasterBackingStore warmup in Titan mode:
+    // - Baseline JPEG: warmup only when unpacked BGRA <= 128 MB (small/medium strips like 25000x100
+    //   decode once in RAM and slice O(1)); larger Baseline JPEGs skip blocking full-decode and use
+    //   TurboJPEG 1/8 IDCT base + multi-core native ROI.
+    // - Progressive JPEG: keep full-decode warmup up to 1.5 GB because ROI reparses full scans.
+    // - Non-JPEG formats: Tier 2 (<= 1.5 GB) always warmup; Tier 3 (> 1.5 GB) only for non-ROI
+    //   formats (PNG, TIFF, AVIF, JXL).
+    inline bool ShouldWarmupMasterBackingForTitan(
+        int width, int height, TitanFormat fmt, bool isProgressiveJPEG) noexcept {
+        if (width <= 0 || height <= 0) return false;
+        if (width < 8000 && height < 8000) return false;
+
+        const uint64_t unpackedBytes =
+            static_cast<uint64_t>(width) * static_cast<uint64_t>(height) * 4ull;
+
+        if (fmt == TitanFormat::JPEG) {
+            if (isProgressiveJPEG) {
+                return unpackedBytes <= kDefaultMasterWarmupLimit;
+            }
+            return unpackedBytes <= kBaselineJpegMasterWarmupLimit;
+        }
+
+        if (unpackedBytes <= kDefaultMasterWarmupLimit) {
+            return true;
+        }
+
+        return (fmt == TitanFormat::PNG ||
+                fmt == TitanFormat::TIFF ||
+                fmt == TitanFormat::AVIF ||
+                fmt == TitanFormat::JXL);
+    }
+
+    // Aspect-preserving Base Layer target size for Titan mode.
+    // Never rounds to 0 on extreme aspect ratios (e.g. 25000x8 -> 1920x1) and avoids
+    // 8-pixel rounding distortion on thin strips (e.g. 25000x50 -> 1920x4 instead of 1920x8).
+    inline void ComputeTitanBaseLayerSize(
+        int srcW, int srcH, int screenW, int screenH, int& outW, int& outH) noexcept {
+        if (srcW <= 0 || srcH <= 0 || screenW <= 0 || screenH <= 0) {
+            outW = 0;
+            outH = 0;
+            return;
+        }
+        const double scaleW = static_cast<double>(screenW) / static_cast<double>(srcW);
+        const double scaleH = static_cast<double>(screenH) / static_cast<double>(srcH);
+        const double scale = (std::min)(1.0, (std::min)(scaleW, scaleH));
+        outW = std::clamp(static_cast<int>(std::lround(static_cast<double>(srcW) * scale)), 1, srcW);
+        outH = std::clamp(static_cast<int>(std::lround(static_cast<double>(srcH) * scale)), 1, srcH);
     }
 
 } // namespace QuickView

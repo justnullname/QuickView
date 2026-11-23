@@ -561,3 +561,111 @@ TEST(MiniTiffSecurityTest, RejectIfdCountOverflow) {
     EXPECT_FALSE(result.success);
     if (result.pixels) _aligned_free(result.pixels);
 }
+
+TEST(MiniTiffDirectBufferTest, LoadDirectToBuffer16BitRgbPreservesIcc) {
+    constexpr uint32_t kWidth = 37;   // Exercises SIMD vector + scalar tail
+    constexpr uint32_t kHeight = 260; // Exercises single-strip row path
+    constexpr uint32_t kStripBytes = kWidth * kHeight * 6;
+    const std::vector<uint8_t> mockIcc = {'m', 'o', 'c', 'k', 'I', 'C', 'C', '_', 'a', 'd', 'o', 'b', 'e', 'R', 'G', 'B'};
+
+    constexpr uint32_t kNumEntries = 10;
+    constexpr uint32_t kExtraBase = 8 + 2 + kNumEntries * 12 + 4;
+    const uint32_t bpsPos = kExtraBase;
+    const uint32_t iccPos = bpsPos + 6;
+    const uint32_t pixelPos = iccPos + static_cast<uint32_t>(mockIcc.size());
+
+    std::vector<uint8_t> extra;
+    AppendU16LE(extra, 16);
+    AppendU16LE(extra, 16);
+    AppendU16LE(extra, 16);
+    extra.insert(extra.end(), mockIcc.begin(), mockIcc.end());
+    extra.reserve(extra.size() + kStripBytes);
+    for (uint32_t y = 0; y < kHeight; ++y) {
+        for (uint32_t x = 0; x < kWidth; ++x) {
+            const uint8_t rHi = static_cast<uint8_t>((x * 7 + y) & 0xFF);
+            const uint8_t gHi = static_cast<uint8_t>((x * 3 + y * 5) & 0xFF);
+            const uint8_t bHi = static_cast<uint8_t>((x * 11 + y * 2) & 0xFF);
+            AppendU16LE(extra, static_cast<uint16_t>((rHi << 8) | 0x12));
+            AppendU16LE(extra, static_cast<uint16_t>((gHi << 8) | 0x34));
+            AppendU16LE(extra, static_cast<uint16_t>((bHi << 8) | 0x56));
+        }
+    }
+
+    std::vector<TiffIfdEntrySpec> entries = {
+        {256, 4, 1, kWidth},
+        {257, 4, 1, kHeight},
+        {258, 3, 3, bpsPos},
+        {259, 3, 1, 1}, // Uncompressed
+        {262, 3, 1, 2}, // RGB
+        {273, 4, 1, pixelPos},
+        {277, 3, 1, 3},
+        {278, 4, 1, kHeight}, // Single strip
+        {279, 4, 1, kStripBytes},
+        {34675, 7, static_cast<uint32_t>(mockIcc.size()), iccPos},
+    };
+
+    std::vector<uint8_t> tiff = BuildMinimalTiffLE(entries, extra);
+    std::vector<uint8_t> outBuf(static_cast<size_t>(kWidth) * kHeight * 4, 0xCC);
+    QuickView::Codec::DecodeResult result;
+
+    HRESULT hr = QuickView::MiniTiff::LoadDirectToBuffer(
+        tiff.data(), tiff.size(), outBuf.data(), outBuf.size(), 0, {}, result);
+    ASSERT_EQ(hr, S_OK);
+    ASSERT_TRUE(result.success);
+    EXPECT_EQ(result.pixels, outBuf.data());
+    EXPECT_EQ(result.stride, static_cast<int>(kWidth * 4));
+    EXPECT_EQ(result.width, static_cast<int>(kWidth));
+    EXPECT_EQ(result.height, static_cast<int>(kHeight));
+    EXPECT_TRUE(result.metadata.HasEmbeddedColorProfile.value_or(false));
+    EXPECT_TRUE(result.metadata.colorInfo.hasEmbeddedIcc);
+    std::vector<uint8_t> gotIcc(result.metadata.iccProfileData.begin(), result.metadata.iccProfileData.end());
+    EXPECT_EQ(gotIcc, mockIcc);
+
+    for (uint32_t y = 0; y < kHeight; ++y) {
+        for (uint32_t x = 0; x < kWidth; ++x) {
+            const size_t off = (static_cast<size_t>(y) * kWidth + x) * 4;
+            EXPECT_EQ(outBuf[off + 0], static_cast<uint8_t>((x * 11 + y * 2) & 0xFF));
+            EXPECT_EQ(outBuf[off + 1], static_cast<uint8_t>((x * 3 + y * 5) & 0xFF));
+            EXPECT_EQ(outBuf[off + 2], static_cast<uint8_t>((x * 7 + y) & 0xFF));
+            EXPECT_EQ(outBuf[off + 3], 0xFF);
+        }
+    }
+}
+
+TEST(MiniTiffDirectBufferTest, FloatTiffReturnsNotImplForHdrFallback) {
+    constexpr uint32_t kWidth = 4;
+    constexpr uint32_t kHeight = 4;
+    constexpr uint32_t kStripBytes = kWidth * kHeight * 12; // 32-bit float RGB
+    constexpr uint32_t kNumEntries = 10;
+    constexpr uint32_t kExtraBase = 8 + 2 + kNumEntries * 12 + 4;
+    const uint32_t bpsPos = kExtraBase;
+    const uint32_t pixelPos = bpsPos + 6;
+
+    std::vector<uint8_t> extra;
+    AppendU16LE(extra, 32);
+    AppendU16LE(extra, 32);
+    AppendU16LE(extra, 32);
+    extra.resize(extra.size() + kStripBytes, 0);
+
+    std::vector<TiffIfdEntrySpec> entries = {
+        {256, 4, 1, kWidth},
+        {257, 4, 1, kHeight},
+        {258, 3, 3, bpsPos},
+        {259, 3, 1, 1},
+        {262, 3, 1, 2},
+        {273, 4, 1, pixelPos},
+        {277, 3, 1, 3},
+        {278, 4, 1, kHeight},
+        {279, 4, 1, kStripBytes},
+        {339, 3, 1, 3}, // SampleFormat = IEEE floating point
+    };
+
+    std::vector<uint8_t> tiff = BuildMinimalTiffLE(entries, extra);
+    std::vector<uint8_t> outBuf(kWidth * kHeight * 4, 0);
+    QuickView::Codec::DecodeResult result;
+
+    HRESULT hr = QuickView::MiniTiff::LoadDirectToBuffer(
+        tiff.data(), tiff.size(), outBuf.data(), outBuf.size(), 0, {}, result);
+    EXPECT_EQ(hr, E_NOTIMPL);
+    EXPECT_FALSE(result.success);
+}
