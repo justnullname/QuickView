@@ -547,3 +547,44 @@ TEST(PngStreamingDecodeTest, Decodes8And16BitWithAllFiltersIccAndTrnsFallback) {
         EXPECT_EQ(out[7], 255);
     }
 }
+
+TEST(PngStreamingDecodeTest, PipelineRingBufferWraparound) {
+    // 2048 x 1400 x 6 Bpp (~17.2 MB raw scanlines) triggers the 64-row SPSC ring pipeline
+    // and wraps around > 20 times across all 5 PNG scanline filters.
+    constexpr uint32_t kW = 2048, kH = 1400;
+    std::vector<uint8_t> raw(static_cast<size_t>(kW) * kH * 6);
+    for (uint32_t y = 0; y < kH; ++y) {
+        const uint8_t yMod = static_cast<uint8_t>(y * 5u);
+        uint8_t* row = raw.data() + static_cast<size_t>(y) * kW * 6;
+        for (uint32_t x = 0; x < kW; ++x) {
+            row[x * 6 + 0] = static_cast<uint8_t>((x + yMod) & 0xFFu);
+            row[x * 6 + 1] = 0x11;
+            row[x * 6 + 2] = static_cast<uint8_t>(((x >> 1) ^ yMod) & 0xFFu);
+            row[x * 6 + 3] = 0x22;
+            row[x * 6 + 4] = static_cast<uint8_t>((x * 3u + y) & 0xFFu);
+            row[x * 6 + 5] = 0x33;
+        }
+    }
+
+    const auto png = BuildSyntheticPng(kW, kH, 16, 2, raw, true, {}, {});
+    uint32_t outW = 0, outH = 0;
+    std::vector<uint8_t> bgra;
+    WuffsLoader::WuffsImageInfo info;
+    ASSERT_TRUE(WuffsLoader::DecodePNG(png.data(), png.size(), &outW, &outH, bgra, {}, &info, true));
+    EXPECT_EQ(outW, kW);
+    EXPECT_EQ(outH, kH);
+    ASSERT_EQ(bgra.size(), static_cast<size_t>(kW) * kH * 4);
+
+    // Check initial rows, multiple 64-row ring wraparound boundaries, and final rows in full
+    const uint32_t checkRows[] = {0, 1, 62, 63, 64, 65, 127, 128, 129, 511, 512, 1023, 1024, kH - 2, kH - 1};
+    for (uint32_t y : checkRows) {
+        const uint8_t* srcRow = raw.data() + static_cast<size_t>(y) * kW * 6;
+        const uint8_t* dstRow = bgra.data() + static_cast<size_t>(y) * kW * 4;
+        for (uint32_t x = 0; x < kW; ++x) {
+            ASSERT_EQ(dstRow[x * 4 + 0], srcRow[x * 6 + 4]) << "y=" << y << " x=" << x;
+            ASSERT_EQ(dstRow[x * 4 + 1], srcRow[x * 6 + 2]) << "y=" << y << " x=" << x;
+            ASSERT_EQ(dstRow[x * 4 + 2], srcRow[x * 6 + 0]) << "y=" << y << " x=" << x;
+            ASSERT_EQ(dstRow[x * 4 + 3], 255) << "y=" << y << " x=" << x;
+        }
+    }
+}

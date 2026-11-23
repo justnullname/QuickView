@@ -47,6 +47,7 @@ typedef unsigned long uLongf;
 #endif
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <limits>
 #include <malloc.h>
@@ -406,7 +407,211 @@ static void ConvertPngRowToTarget(const uint8_t* src, uint8_t* dst, uint32_t wid
     }
 }
 
-// Streams non-interlaced 8/16-bit PNG via zlib-ng Raw Inflate (-15) and 2 rolling row buffers,
+static bool FeedNextIdatChunk(const uint8_t* data, size_t size,
+                                size_t& curOffset, uint32_t& curChunkLen, z_stream& strm) noexcept {
+    curOffset += 12 + static_cast<size_t>(curChunkLen);
+    curChunkLen = 0;
+    while (curOffset + 12 <= size) {
+        const uint32_t len = ReadU32BE_Png(data + curOffset);
+        const uint32_t type = ReadU32BE_Png(data + curOffset + 4);
+        if (static_cast<size_t>(len) > size - curOffset - 12 || type != 0x49444154) {
+            return false;
+        }
+        if (len > 0) {
+            curChunkLen = len;
+            strm.next_in = const_cast<Bytef*>(data + curOffset + 8);
+            strm.avail_in = static_cast<uInt>(curChunkLen);
+            return true;
+        }
+        curOffset += 12;
+    }
+    return false;
+}
+
+static bool DecodePngSingleThreadRows(
+    const uint8_t* data, size_t size, const PngPreScanInfo& scan,
+    uint8_t* outPtr, size_t rowBytes, size_t lineBytes, int bpp,
+    size_t dstRowBytes, bool output16Bit, CancelPredicate checkCancel,
+    size_t& curOffset, uint32_t& curChunkLen, z_stream& strm, bool& outCancelled) {
+    // Allocate two uninitialized rolling scanline buffers (~rowBytes each, zero memset overhead).
+    std::unique_ptr<uint8_t[]> rowBufA(new uint8_t[lineBytes]);
+    std::unique_ptr<uint8_t[]> rowBufB(new uint8_t[lineBytes]);
+    uint8_t* currLine = rowBufA.get();
+    uint8_t* prevLine = rowBufB.get();
+
+    size_t rowFill = 0;
+    uint32_t y = 0;
+    while (y < scan.height) {
+        if (strm.avail_in == 0 && !FeedNextIdatChunk(data, size, curOffset, curChunkLen, strm)) {
+            return false;
+        }
+
+        const size_t rem = lineBytes - rowFill;
+        strm.next_out = currLine + rowFill;
+        strm.avail_out = static_cast<uInt>((std::min)(rem, static_cast<size_t>(0x7FFFFFFFu)));
+
+        const int ret = inflate(&strm, Z_NO_FLUSH);
+        rowFill = static_cast<size_t>(strm.next_out - currLine);
+
+        if (rowFill == lineBytes) {
+            const uint8_t filterType = currLine[0];
+            if (filterType > 4) return false;
+            if ((y & 63u) == 0u && checkCancel && checkCancel()) {
+                outCancelled = true;
+                return false;
+            }
+
+            ImageLoaderSimd::PngUnfilterRow(
+                filterType, currLine + 1, (y > 0) ? (prevLine + 1) : nullptr, rowBytes, bpp);
+            ConvertPngRowToTarget(currLine + 1, outPtr + static_cast<size_t>(y) * dstRowBytes,
+                                  scan.width, scan.colorType, scan.bitDepth, output16Bit);
+
+            std::swap(currLine, prevLine);
+            rowFill = 0;
+            ++y;
+        }
+
+        if (ret == Z_STREAM_END) break;
+        if (ret != Z_OK && !(ret == Z_BUF_ERROR && strm.avail_in == 0)) return false;
+    }
+    return y == scan.height;
+}
+
+// Dual-thread lock-free SPSC ring pipeline: main thread feeds large contiguous avail_out chunks
+// to zlib-ng inflate while a consumer thread performs SIMD unfilter + pixel conversion in parallel.
+static bool DecodePngPipelinedRing(
+    const uint8_t* data, size_t size, const PngPreScanInfo& scan,
+    uint8_t* outPtr, size_t rowBytes, size_t lineBytes, int bpp,
+    size_t dstRowBytes, bool output16Bit, CancelPredicate checkCancel,
+    size_t& curOffset, uint32_t& curChunkLen, z_stream& strm, bool& outCancelled) {
+    uint64_t ringRows = 64;
+    while (ringRows > 8 && ringRows * static_cast<uint64_t>(lineBytes) > 16ULL * 1024ULL * 1024ULL) {
+        ringRows >>= 1;
+    }
+    const uint64_t mask = ringRows - 1u;
+    std::unique_ptr<uint8_t[]> ringBuf(new uint8_t[static_cast<size_t>(ringRows) * lineBytes]);
+
+    constexpr uint64_t kPipelineStop = (std::numeric_limits<uint64_t>::max)();
+    std::atomic<uint64_t> producedAtomic{0};
+    std::atomic<uint64_t> consumedAtomic{0};
+    std::atomic<bool> failed{false};
+
+    std::thread consumer([&]() {
+        uint64_t y = 0;
+        while (y < scan.height) {
+            const uint64_t avail = producedAtomic.load(std::memory_order_acquire);
+            if (avail == kPipelineStop || failed.load(std::memory_order_acquire)) break;
+            if (y >= avail) {
+                producedAtomic.wait(avail, std::memory_order_acquire);
+                continue;
+            }
+
+            const uint64_t batchEnd = (std::min)(avail, static_cast<uint64_t>(scan.height));
+            for (; y < batchEnd; ++y) {
+                if (failed.load(std::memory_order_relaxed)) break;
+                uint8_t* curr = ringBuf.get() + static_cast<size_t>(y & mask) * lineBytes;
+                const uint8_t* prev = (y > 0)
+                    ? (ringBuf.get() + static_cast<size_t>((y - 1u) & mask) * lineBytes + 1u)
+                    : nullptr;
+                const uint8_t filterType = curr[0];
+                if (filterType > 4) {
+                    failed.store(true, std::memory_order_release);
+                    consumedAtomic.store(kPipelineStop, std::memory_order_release);
+                    consumedAtomic.notify_one();
+                    return;
+                }
+                ImageLoaderSimd::PngUnfilterRow(filterType, curr + 1u, prev, rowBytes, bpp);
+                ConvertPngRowToTarget(curr + 1u, outPtr + static_cast<size_t>(y) * dstRowBytes,
+                                      scan.width, scan.colorType, scan.bitDepth, output16Bit);
+            }
+            consumedAtomic.store(y, std::memory_order_release);
+            consumedAtomic.notify_one();
+        }
+    });
+
+    uint64_t produced = 0;
+    uint64_t lastPublished = 0;
+    size_t partialBytes = 0;
+    bool streamOk = true;
+
+    while (produced < scan.height) {
+        if (checkCancel && checkCancel()) {
+            outCancelled = true;
+            streamOk = false;
+            break;
+        }
+
+        const uint64_t c = consumedAtomic.load(std::memory_order_acquire);
+        if (c == kPipelineStop || failed.load(std::memory_order_acquire)) {
+            streamOk = false;
+            break;
+        }
+
+        // Leave 1 slot safety gap so consumer can still read slot[(c - 1) & mask] as prevRow.
+        const uint64_t maxRowLimit = (std::min)(
+            static_cast<uint64_t>(scan.height), c + (ringRows - 1u));
+        if (produced >= maxRowLimit) {
+            if (produced > lastPublished) {
+                producedAtomic.store(produced, std::memory_order_release);
+                producedAtomic.notify_one();
+                lastPublished = produced;
+            }
+            consumedAtomic.wait(c, std::memory_order_acquire);
+            continue;
+        }
+
+        if (strm.avail_in == 0 && !FeedNextIdatChunk(data, size, curOffset, curChunkLen, strm)) {
+            streamOk = false;
+            break;
+        }
+
+        const uint64_t maxContigRows = (std::min)(
+            ringRows - (produced & mask), maxRowLimit - produced);
+        const uint64_t burstRows = (std::min)(maxContigRows, uint64_t{16});
+        const size_t availBytes = static_cast<size_t>(burstRows) * lineBytes - partialBytes;
+        uint8_t* writeStart = ringBuf.get() + static_cast<size_t>(produced & mask) * lineBytes + partialBytes;
+
+        strm.next_out = writeStart;
+        strm.avail_out = static_cast<uInt>((std::min)(availBytes, static_cast<size_t>(0x7FFFFFFFu)));
+
+        const int ret = inflate(&strm, Z_NO_FLUSH);
+        const size_t inflatedBytes = static_cast<size_t>(strm.next_out - writeStart);
+        const size_t totalBytes = partialBytes + inflatedBytes;
+        const uint64_t completedNewRows = totalBytes / lineBytes;
+        partialBytes = totalBytes % lineBytes;
+        produced += completedNewRows;
+
+        if (produced > lastPublished &&
+            (produced - lastPublished >= 8 || produced == scan.height ||
+             ret == Z_STREAM_END || produced >= maxRowLimit)) {
+            producedAtomic.store(produced, std::memory_order_release);
+            producedAtomic.notify_one();
+            lastPublished = produced;
+        }
+
+        if (ret == Z_STREAM_END) break;
+        if (ret != Z_OK && !(ret == Z_BUF_ERROR && strm.avail_in == 0)) {
+            streamOk = false;
+            break;
+        }
+    }
+
+    if (!streamOk || produced != scan.height) {
+        failed.store(true, std::memory_order_release);
+        producedAtomic.store(kPipelineStop, std::memory_order_release);
+        producedAtomic.notify_one();
+        streamOk = false;
+    } else if (produced > lastPublished) {
+        producedAtomic.store(produced, std::memory_order_release);
+        producedAtomic.notify_one();
+    }
+
+    if (consumer.joinable()) consumer.join();
+    if (failed.load(std::memory_order_acquire)) streamOk = false;
+    return streamOk;
+}
+
+// Streams non-interlaced 8/16-bit PNG via zlib-ng Raw Inflate (-15) and rolling row buffers,
 // eliminating full-frame workbuf commits while invoking Highway SIMD unfilter + pixel conversion.
 static bool TryDecodePngStreamingZlibNg(
     const uint8_t* data, size_t size, const PngPreScanInfo& scan,
@@ -484,12 +689,6 @@ static bool TryDecodePngStreamingZlibNg(
     inOutAllocatedPtr = outPtr;
     inOutAllocatedBytes = pixelSize;
 
-    // Allocate two uninitialized rolling scanline buffers (~rowBytes each, zero memset overhead).
-    std::unique_ptr<uint8_t[]> rowBufA(new uint8_t[lineBytes]);
-    std::unique_ptr<uint8_t[]> rowBufB(new uint8_t[lineBytes]);
-    uint8_t* currLine = rowBufA.get();
-    uint8_t* prevLine = rowBufB.get();
-
     z_stream strm = {};
     if (inflateInit2(&strm, -15) != Z_OK) {
         return false;
@@ -499,75 +698,17 @@ static bool TryDecodePngStreamingZlibNg(
     strm.avail_in = static_cast<uInt>(curChunkLen - 2);
 
     const size_t dstRowBytes = static_cast<size_t>(scan.width) * outBpp;
-    size_t rowFill = 0;
-    uint32_t y = 0;
-    bool streamOk = true;
+    const uint64_t totalScanlineBytes = static_cast<uint64_t>(lineBytes) * static_cast<uint64_t>(scan.height);
+    const bool usePipelinedRing = (scan.height >= 256 && totalScanlineBytes >= 16ULL * 1024ULL * 1024ULL);
 
-    while (y < scan.height) {
-        if (strm.avail_in == 0) {
-            curOffset += 12 + static_cast<size_t>(curChunkLen);
-            curChunkLen = 0;
-            while (curOffset + 12 <= size) {
-                const uint32_t len = ReadU32BE_Png(data + curOffset);
-                const uint32_t type = ReadU32BE_Png(data + curOffset + 4);
-                if (static_cast<size_t>(len) > size - curOffset - 12 || type != 0x49444154) {
-                    streamOk = false;
-                    break;
-                }
-                if (len > 0) {
-                    curChunkLen = len;
-                    strm.next_in = const_cast<Bytef*>(data + curOffset + 8);
-                    strm.avail_in = static_cast<uInt>(curChunkLen);
-                    break;
-                }
-                curOffset += 12;
-            }
-            if (!streamOk || curChunkLen == 0) {
-                streamOk = false;
-                break;
-            }
-        }
-
-        const size_t rem = lineBytes - rowFill;
-        strm.next_out = currLine + rowFill;
-        strm.avail_out = static_cast<uInt>((std::min)(rem, static_cast<size_t>(0x7FFFFFFFu)));
-
-        const int ret = inflate(&strm, Z_NO_FLUSH);
-        rowFill = static_cast<size_t>(strm.next_out - currLine);
-
-        if (rowFill == lineBytes) {
-            const uint8_t filterType = currLine[0];
-            if (filterType > 4) {
-                streamOk = false;
-                break;
-            }
-            if ((y & 63u) == 0u && checkCancel && checkCancel()) {
-                outCancelled = true;
-                streamOk = false;
-                break;
-            }
-
-            ImageLoaderSimd::PngUnfilterRow(
-                filterType, currLine + 1, (y > 0) ? (prevLine + 1) : nullptr, rowBytes, bpp);
-            ConvertPngRowToTarget(currLine + 1, outPtr + static_cast<size_t>(y) * dstRowBytes,
-                                  scan.width, scan.colorType, scan.bitDepth, output16Bit);
-
-            std::swap(currLine, prevLine);
-            rowFill = 0;
-            ++y;
-        }
-
-        if (ret == Z_STREAM_END) {
-            break;
-        }
-        if (ret != Z_OK && !(ret == Z_BUF_ERROR && strm.avail_in == 0)) {
-            streamOk = false;
-            break;
-        }
-    }
+    const bool streamOk = usePipelinedRing
+        ? DecodePngPipelinedRing(data, size, scan, outPtr, rowBytes, lineBytes, bpp,
+                                 dstRowBytes, output16Bit, checkCancel, curOffset, curChunkLen, strm, outCancelled)
+        : DecodePngSingleThreadRows(data, size, scan, outPtr, rowBytes, lineBytes, bpp,
+                                    dstRowBytes, output16Bit, checkCancel, curOffset, curChunkLen, strm, outCancelled);
 
     inflateEnd(&strm);
-    if (!streamOk || y != scan.height) {
+    if (!streamOk) {
         return false;
     }
 
