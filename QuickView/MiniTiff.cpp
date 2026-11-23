@@ -23,8 +23,9 @@
 #include <vector>
 #include <span>
 #include <atomic>
+#include <array>
 #include <limits>
-#include <omp.h>
+#include <thread>
 #include <zlib.h>
 #include <algorithm>
 
@@ -461,21 +462,128 @@ static void UndoHorizontalPredictor(uint8_t* rowData, uint32_t width, uint32_t s
     }
 }
 
-HRESULT LoadRegion(const uint8_t* data, size_t size,
-                   const QuickView::Codec::DecodeContext& ctx,
-                   QuickView::Codec::DecodeResult& result,
-                   int cropX, int cropY, int cropW, int cropH) {
-    TiffImageDesc desc;
-    Status status = ParseTiffIFD(data, size, desc);
-    if (status != Status::Ok) {
-        return (status == Status::NotTiff) ? E_NOTIMPL : E_FAIL;
+template <typename Fn>
+static void ParallelForRange(int begin, int end, int minItemsPerThread, Fn&& fn) {
+    const int count = end - begin;
+    if (count <= 0) return;
+
+    const int hw = static_cast<int>(std::thread::hardware_concurrency());
+    int threads = (hw > 0) ? (std::min)(hw, 16) : 4;
+    threads = (std::min)(threads, (std::max)(1, count / (std::max)(1, minItemsPerThread)));
+    if (threads <= 1) {
+        fn(begin, end);
+        return;
     }
 
-    status = CapabilityGate(desc);
-    if (status != Status::Ok) {
-        return (status == Status::Unsupported) ? E_NOTIMPL : E_FAIL;
+    std::array<std::thread, 15> workers;
+    const int chunk = (count + threads - 1) / threads;
+    int spawned = 0;
+    for (int t = 0; t < threads - 1; ++t) {
+        const int s = begin + t * chunk;
+        const int e = (std::min)(s + chunk, end);
+        if (s >= e) break;
+        workers[spawned++] = std::thread([s, e, &fn]() {
+            fn(s, e);
+        });
     }
+    const int mainStart = begin + spawned * chunk;
+    if (mainStart < end) {
+        fn(mainStart, end);
+    }
+    for (int t = 0; t < spawned; ++t) {
+        if (workers[t].joinable()) {
+            workers[t].join();
+        }
+    }
+}
 
+static inline void PackStripRowToBgra(
+    const uint8_t* srcRow, uint8_t* dstRow, int cropX, int cropW,
+    uint32_t samples, uint32_t bytesPerSample, uint32_t highByteOffset,
+    size_t pixelStride, uint16_t photometric, uint16_t extraSamples,
+    const TiffImageDesc& desc, std::atomic<bool>& decodeFailed) {
+    if (photometric == 0 || photometric == 1) {
+        for (int x = cropX; x < cropX + cropW; ++x) {
+            size_t ux = static_cast<size_t>(x);
+            size_t outX = static_cast<size_t>(x - cropX);
+            uint8_t val = srcRow[ux * pixelStride + highByteOffset];
+            if (photometric == 0) val = 255 - val;
+            dstRow[outX * 4 + 0] = val;
+            dstRow[outX * 4 + 1] = val;
+            dstRow[outX * 4 + 2] = val;
+            dstRow[outX * 4 + 3] = (samples > 1) ? srcRow[ux * pixelStride + bytesPerSample + highByteOffset] : 255;
+        }
+    } else if (photometric == 2) {
+        if (bytesPerSample == 2 && samples == 3) {
+            ImageLoaderSimd::ConvertRGB16ToBGRARow(
+                srcRow + static_cast<size_t>(cropX) * pixelStride, dstRow, cropW, desc.isLE);
+        } else if (bytesPerSample == 1 && samples == 3) {
+            ImageLoaderSimd::ConvertRGBToBGRA(
+                srcRow + static_cast<size_t>(cropX) * pixelStride, dstRow, cropW, 1, cropW * 4);
+        } else {
+            for (int x = cropX; x < cropX + cropW; ++x) {
+                size_t ux = static_cast<size_t>(x);
+                size_t outX = static_cast<size_t>(x - cropX);
+                uint8_t r = srcRow[ux * pixelStride + 0 * bytesPerSample + highByteOffset];
+                uint8_t g = srcRow[ux * pixelStride + 1 * bytesPerSample + highByteOffset];
+                uint8_t b = srcRow[ux * pixelStride + 2 * bytesPerSample + highByteOffset];
+                uint8_t a = (samples >= 4) ? srcRow[ux * pixelStride + 3 * bytesPerSample + highByteOffset] : 255;
+                if (samples >= 4 && extraSamples != 1) {
+                    r = static_cast<uint8_t>((r * a + 127) / 255);
+                    g = static_cast<uint8_t>((g * a + 127) / 255);
+                    b = static_cast<uint8_t>((b * a + 127) / 255);
+                }
+                dstRow[outX * 4 + 0] = b;
+                dstRow[outX * 4 + 1] = g;
+                dstRow[outX * 4 + 2] = r;
+                dstRow[outX * 4 + 3] = a;
+            }
+        }
+    } else if (photometric == 3) {
+        if (desc.colorMap.size() >= 768) {
+            for (int x = cropX; x < cropX + cropW; ++x) {
+                size_t ux = static_cast<size_t>(x);
+                size_t outX = static_cast<size_t>(x - cropX);
+                uint8_t idx = srcRow[ux * pixelStride + highByteOffset];
+                uint8_t r = static_cast<uint8_t>(desc.colorMap[idx] / 256);
+                uint8_t g = static_cast<uint8_t>(desc.colorMap[idx + 256] / 256);
+                uint8_t b = static_cast<uint8_t>(desc.colorMap[idx + 512] / 256);
+                dstRow[outX * 4 + 0] = b;
+                dstRow[outX * 4 + 1] = g;
+                dstRow[outX * 4 + 2] = r;
+                dstRow[outX * 4 + 3] = 255;
+            }
+        } else {
+            decodeFailed.store(true, std::memory_order_relaxed);
+        }
+    } else if (photometric == 5) {
+        if (bytesPerSample == 1) {
+            ConvertCmykToBgra(srcRow + static_cast<size_t>(cropX) * pixelStride, dstRow, cropW, samples);
+        } else {
+            for (int dx = 0; dx < cropW; ++dx) {
+                size_t srcBase = static_cast<size_t>(cropX + dx) * pixelStride;
+                uint8_t c = srcRow[srcBase + 0 * bytesPerSample + highByteOffset];
+                uint8_t m = srcRow[srcBase + 1 * bytesPerSample + highByteOffset];
+                uint8_t ye = srcRow[srcBase + 2 * bytesPerSample + highByteOffset];
+                uint8_t k = (samples >= 4) ? srcRow[srcBase + 3 * bytesPerSample + highByteOffset] : 0;
+                uint8_t r = (255 - c) * (255 - k) / 255;
+                uint8_t g = (255 - m) * (255 - k) / 255;
+                uint8_t b = (255 - ye) * (255 - k) / 255;
+                dstRow[static_cast<size_t>(dx) * 4 + 0] = b;
+                dstRow[static_cast<size_t>(dx) * 4 + 1] = g;
+                dstRow[static_cast<size_t>(dx) * 4 + 2] = r;
+                dstRow[static_cast<size_t>(dx) * 4 + 3] = 255;
+            }
+        }
+    }
+}
+
+static HRESULT LoadRegionInternal(const uint8_t* data, size_t size,
+                                  const TiffImageDesc& desc,
+                                  const QuickView::Codec::DecodeContext& ctx,
+                                  QuickView::Codec::DecodeResult& result,
+                                  int cropX, int cropY, int cropW, int cropH,
+                                  uint8_t* externalDst, size_t externalCapacity, int externalStride) {
     // Clamp crop parameters to valid boundaries
     cropX = (std::max)(0, cropX);
     cropY = (std::max)(0, cropY);
@@ -502,6 +610,7 @@ HRESULT LoadRegion(const uint8_t* data, size_t size,
     size_t tileBytes = 0;
     uint32_t rowsPerStrip = 0;
     uint32_t stripsCount = 0;
+    const bool needsUnitScratch = (desc.compression != 1 || desc.predictor == 2);
 
     if (desc.isTiled) {
         uint64_t tilesPerRow64 = 1ULL + (static_cast<uint64_t>(desc.width) - 1ULL) / desc.tileWidth;
@@ -517,7 +626,7 @@ HRESULT LoadRegion(const uint8_t* data, size_t size,
 
         if (!CheckedMul(static_cast<size_t>(desc.tileWidth), pixelStride, tileRowBytes) ||
             !CheckedMul(tileRowBytes, static_cast<size_t>(desc.tileHeight), tileBytes) ||
-            tileBytes == 0 || tileBytes > kMaxUnitBufferBytes) {
+            tileBytes == 0 || (needsUnitScratch && tileBytes > kMaxUnitBufferBytes)) {
             return E_FAIL;
         }
     } else {
@@ -534,43 +643,60 @@ HRESULT LoadRegion(const uint8_t* data, size_t size,
     }
 
     // Prepare Output
-    int outStride = ((cropW * 4) + 63) & ~63; // 64-byte aligned (cropW <= kMaxImageDimension guarantees no int overflow)
+    int outStride = 0;
     size_t totalBytes = 0;
-    if (!CheckedMul(static_cast<size_t>(outStride), static_cast<size_t>(cropH), totalBytes)) {
-        return E_OUTOFMEMORY;
+    uint8_t* pixels = nullptr;
+
+    if (externalDst != nullptr) {
+        outStride = (externalStride > 0) ? externalStride : (cropW * 4);
+        if (outStride < cropW * 4) {
+            return E_INVALIDARG;
+        }
+        if (!CheckedMul(static_cast<size_t>(outStride), static_cast<size_t>(cropH), totalBytes) ||
+            totalBytes > externalCapacity) {
+            return E_OUTOFMEMORY;
+        }
+        pixels = externalDst;
+        // Skip full-buffer memset when writing directly into caller MMF: every ROI row is packed below.
+    } else {
+        outStride = ((cropW * 4) + 63) & ~63; // 64-byte aligned (cropW <= kMaxImageDimension guarantees no int overflow)
+        if (!CheckedMul(static_cast<size_t>(outStride), static_cast<size_t>(cropH), totalBytes)) {
+            return E_OUTOFMEMORY;
+        }
+        pixels = ctx.allocator(totalBytes);
+        if (!pixels) {
+            return E_OUTOFMEMORY;
+        }
+        std::memset(pixels, 0, totalBytes);
     }
-    uint8_t* pixels = ctx.allocator(totalBytes);
-    if (!pixels) {
-        return E_OUTOFMEMORY;
-    }
-    std::memset(pixels, 0, totalBytes);
 
     uint16_t predictor = desc.predictor;
     uint16_t photometric = desc.photometric;
-    const bool needRgb8SimdBuf = (photometric == 2 && bytesPerSample == 2 && samples == 3 && highByteOffset == 1);
+    const bool useRgb16Simd = (photometric == 2 && bytesPerSample == 2 && samples == 3);
+    const bool useRgb8Simd = (photometric == 2 && bytesPerSample == 1 && samples == 3);
 
     std::atomic<bool> decodeFailed{false};
+    std::atomic<bool> decodeCancelled{false};
 
     if (desc.isTiled) {
-        // Tiled parallel decoder
-        [[maybe_unused]] bool useParallel = (tilesCount >= 4 && cropH >= 512);
+        const int minTileX = cropX / static_cast<int>(desc.tileWidth);
+        const int maxTileX = (cropX + cropW - 1) / static_cast<int>(desc.tileWidth);
+        const int minTileY = cropY / static_cast<int>(desc.tileHeight);
+        const int maxTileY = (cropY + cropH - 1) / static_cast<int>(desc.tileHeight);
+        const int intersectTiles = (maxTileX - minTileX + 1) * (maxTileY - minTileY + 1);
+        const int minPerThread = (intersectTiles >= 4 && cropH >= 512) ? 1 : (static_cast<int>(tilesCount) + 1);
 
-        #pragma omp parallel if(useParallel) shared(decodeFailed)
-        {
+        ParallelForRange(0, static_cast<int>(tilesCount), minPerThread, [&](int tBegin, int tEnd) {
             std::vector<uint8_t> localBuf;
             std::vector<uint8_t> predictorBuf;
-            std::vector<uint8_t> rgb8Buf;
-            if (needRgb8SimdBuf) {
-                rgb8Buf.resize(static_cast<size_t>((std::min)(static_cast<uint32_t>(cropW), desc.tileWidth)) * 3);
-            }
 
-            #pragma omp for
-            for (int i = 0; i < static_cast<int>(tilesCount); ++i) {
-                if (decodeFailed.load(std::memory_order_relaxed)) continue;
+            for (int i = tBegin; i < tEnd; ++i) {
+                if (decodeFailed.load(std::memory_order_relaxed)) break;
 
                 if (ctx.checkCancel && ctx.checkCancel()) {
+                    decodeCancelled.store(true, std::memory_order_relaxed);
                     decodeFailed.store(true, std::memory_order_relaxed);
-                    continue;
+                    break;
                 }
 
                 // Locate Tile boundary
@@ -593,7 +719,7 @@ HRESULT LoadRegion(const uint8_t* data, size_t size,
                 uint64_t byteCount = desc.byteCounts[i];
                 if (offset > size || byteCount > size - offset) {
                     decodeFailed.store(true, std::memory_order_relaxed);
-                    continue;
+                    break;
                 }
 
                 const uint8_t* tileData = nullptr;
@@ -601,35 +727,35 @@ HRESULT LoadRegion(const uint8_t* data, size_t size,
                 if (desc.compression == 1) {
                     if (tileBytes > size - offset) {
                         decodeFailed.store(true, std::memory_order_relaxed);
-                        continue;
+                        break;
                     }
                     tileData = data + offset;
                 } else if (desc.compression == 32773) {
                     localBuf.resize(tileBytes);
                     if (!DecompressPackBits(data + offset, static_cast<size_t>(byteCount), localBuf.data(), tileBytes)) {
                         decodeFailed.store(true, std::memory_order_relaxed);
-                        continue;
+                        break;
                     }
                     tileData = localBuf.data();
                 } else if (desc.compression == 5) {
                     localBuf.resize(tileBytes);
                     if (!DecompressLzw(data + offset, static_cast<size_t>(byteCount), localBuf.data(), tileBytes)) {
                         decodeFailed.store(true, std::memory_order_relaxed);
-                        continue;
+                        break;
                     }
                     tileData = localBuf.data();
                 } else if (desc.compression == 8 || desc.compression == 32946) {
                     localBuf.resize(tileBytes);
                     if (!DecompressDeflate(data + offset, static_cast<size_t>(byteCount), localBuf.data(), tileBytes)) {
                         decodeFailed.store(true, std::memory_order_relaxed);
-                        continue;
+                        break;
                     }
                     tileData = localBuf.data();
                 }
 
                 if (!tileData) {
                     decodeFailed.store(true, std::memory_order_relaxed);
-                    continue;
+                    break;
                 }
 
                 // Undo predictor
@@ -665,16 +791,16 @@ HRESULT LoadRegion(const uint8_t* data, size_t size,
                         }
                     } else if (photometric == 2) {
                         int runWidth = intersectEndX - intersectX;
-                        // [Titan Perf] SIMD Accelerated 16-to-8 bit downsampling + BGRA Swizzle
-                        // Only applicable when image is RGB (samples == 3) and Little-Endian (highByteOffset == 1)
-                        if (needRgb8SimdBuf) {
-                            size_t localXStart = static_cast<size_t>(intersectX - tileX);
-                            size_t outXStart = static_cast<size_t>(intersectX - cropX);
-                            const uint16_t* src16 = reinterpret_cast<const uint16_t*>(srcRow + localXStart * pixelStride);
-                            uint8_t* dst32 = dstRow + outXStart * 4;
-                            
-                            ImageLoaderSimd::Pack16to8(src16, rgb8Buf.data(), runWidth * 3);
-                            ImageLoaderSimd::ConvertRGBToBGRA(rgb8Buf.data(), dst32, runWidth, 1, runWidth * 4);
+                        size_t localXStart = static_cast<size_t>(intersectX - tileX);
+                        size_t outXStart = static_cast<size_t>(intersectX - cropX);
+                        if (useRgb16Simd) {
+                            ImageLoaderSimd::ConvertRGB16ToBGRARow(
+                                srcRow + localXStart * pixelStride,
+                                dstRow + outXStart * 4, runWidth, desc.isLE);
+                        } else if (useRgb8Simd) {
+                            ImageLoaderSimd::ConvertRGBToBGRA(
+                                srcRow + localXStart * pixelStride,
+                                dstRow + outXStart * 4, runWidth, 1, runWidth * 4);
                         } else {
                             for (int x = intersectX; x < intersectEndX; ++x) {
                                 size_t localX = static_cast<size_t>(x - tileX);
@@ -736,190 +862,192 @@ HRESULT LoadRegion(const uint8_t* data, size_t size,
                     }
                 }
             }
-        }
+        });
     } else {
         // Strip layout
-        [[maybe_unused]] bool useParallel = (stripsCount >= 4 && cropH >= 512);
-        int startStrip = cropY / static_cast<int>(rowsPerStrip);
-        int endStrip = (std::min)((cropY + cropH - 1) / static_cast<int>(rowsPerStrip), static_cast<int>(stripsCount) - 1);
+        const int startStrip = cropY / static_cast<int>(rowsPerStrip);
+        const int endStrip = (std::min)((cropY + cropH - 1) / static_cast<int>(rowsPerStrip), static_cast<int>(stripsCount) - 1);
+        const int activeStrips = endStrip - startStrip + 1;
 
-        #pragma omp parallel if(useParallel) shared(decodeFailed)
-        {
-            std::vector<uint8_t> localBuf;
-            std::vector<uint8_t> predictorBuf;
-            std::vector<uint8_t> rgb8Buf;
-            if (needRgb8SimdBuf) {
-                rgb8Buf.resize(static_cast<size_t>(cropW) * 3);
-            }
-
-            #pragma omp for
+        if (desc.compression == 1 && predictor != 2) {
+            // Fast path for uncompressed strips: zero-copy view into source MMF + row-level multi-core parallelism.
+            // Handles both massive single-strip TIFFs (e.g. noirlab2424a.tif) and multi-strip TIFFs at full core saturation.
             for (int i = startStrip; i <= endStrip; ++i) {
-                if (decodeFailed.load(std::memory_order_relaxed)) continue;
-
-                if (ctx.checkCancel && ctx.checkCancel()) {
-                    decodeFailed.store(true, std::memory_order_relaxed);
-                    continue;
-                }
-
                 int startY = i * static_cast<int>(rowsPerStrip);
                 int unitH = (std::min)(static_cast<int>(rowsPerStrip), static_cast<int>(desc.height) - startY);
-
-                // Y overlap check
                 int intersectY = (std::max)(cropY, startY);
                 int intersectEndY = (std::min)(cropY + cropH, startY + unitH);
-
-                if (intersectY >= intersectEndY) {
-                    continue; // Skip strip with no vertical intersection
-                }
+                if (intersectY >= intersectEndY) continue;
 
                 uint64_t offset = desc.offsets[i];
                 uint64_t byteCount = desc.byteCounts[i];
-                if (offset > size || byteCount > size - offset) {
-                    decodeFailed.store(true, std::memory_order_relaxed);
-                    continue;
-                }
-
                 size_t stripBytes = 0;
-                if (!CheckedMul(static_cast<size_t>(unitH), rowBytes, stripBytes) ||
-                    stripBytes == 0 || stripBytes > kMaxUnitBufferBytes) {
-                    decodeFailed.store(true, std::memory_order_relaxed);
-                    continue;
-                }
-
-                const uint8_t* stripData = nullptr;
-
-                if (desc.compression == 1) {
-                    if (stripBytes > size - offset) {
-                        decodeFailed.store(true, std::memory_order_relaxed);
-                        continue;
-                    }
-                    stripData = data + offset;
-                } else if (desc.compression == 32773) {
-                    localBuf.resize(stripBytes);
-                    if (!DecompressPackBits(data + offset, static_cast<size_t>(byteCount), localBuf.data(), stripBytes)) {
-                        decodeFailed.store(true, std::memory_order_relaxed);
-                        continue;
-                    }
-                    stripData = localBuf.data();
-                } else if (desc.compression == 5) {
-                    localBuf.resize(stripBytes);
-                    if (!DecompressLzw(data + offset, static_cast<size_t>(byteCount), localBuf.data(), stripBytes)) {
-                        decodeFailed.store(true, std::memory_order_relaxed);
-                        continue;
-                    }
-                    stripData = localBuf.data();
-                } else if (desc.compression == 8 || desc.compression == 32946) {
-                    localBuf.resize(stripBytes);
-                    if (!DecompressDeflate(data + offset, static_cast<size_t>(byteCount), localBuf.data(), stripBytes)) {
-                        decodeFailed.store(true, std::memory_order_relaxed);
-                        continue;
-                    }
-                    stripData = localBuf.data();
-                }
-
-                if (!stripData) {
-                    decodeFailed.store(true, std::memory_order_relaxed);
-                    continue;
-                }
-
-                // Undo predictor
-                if (predictor == 2) {
-                    if (desc.compression == 1) {
-                        predictorBuf.assign(stripData, stripData + stripBytes);
-                        stripData = predictorBuf.data();
-                    }
-                    uint8_t* mutableData = const_cast<uint8_t*>(stripData);
-                    for (int y = 0; y < unitH; ++y) {
-                        uint8_t* rowData = mutableData + static_cast<size_t>(y) * rowBytes;
-                        UndoHorizontalPredictor(rowData, desc.width, samples, bytesPerSample, desc.isLE);
-                    }
-                }
-
-                // Pack pixels falling into ROI horizontally
-                for (int y = intersectY; y < intersectEndY; ++y) {
-                    size_t localY = static_cast<size_t>(y - startY);
-                    size_t outY = static_cast<size_t>(y - cropY);
-                    const uint8_t* srcRow = stripData + localY * rowBytes;
-                    uint8_t* dstRow = pixels + outY * static_cast<size_t>(outStride);
-
-                    if (photometric == 0 || photometric == 1) {
-                        for (int x = cropX; x < cropX + cropW; ++x) {
-                            size_t ux = static_cast<size_t>(x);
-                            size_t outX = static_cast<size_t>(x - cropX);
-                            uint8_t val = srcRow[ux * pixelStride + highByteOffset];
-                            if (photometric == 0) val = 255 - val;
-                            dstRow[outX * 4 + 0] = val;
-                            dstRow[outX * 4 + 1] = val;
-                            dstRow[outX * 4 + 2] = val;
-                            dstRow[outX * 4 + 3] = (samples > 1) ? srcRow[ux * pixelStride + bytesPerSample + highByteOffset] : 255;
-                        }
-                    } else if (photometric == 2) {
-                        // [Titan Perf] SIMD Accelerated 16-to-8 bit downsampling + BGRA Swizzle for Stripped Layout
-                        if (needRgb8SimdBuf) {
-                            const uint16_t* src16 = reinterpret_cast<const uint16_t*>(srcRow + static_cast<size_t>(cropX) * pixelStride);
-                            ImageLoaderSimd::Pack16to8(src16, rgb8Buf.data(), cropW * 3);
-                            ImageLoaderSimd::ConvertRGBToBGRA(rgb8Buf.data(), dstRow, cropW, 1, cropW * 4);
-                        } else {
-                            for (int x = cropX; x < cropX + cropW; ++x) {
-                                size_t ux = static_cast<size_t>(x);
-                                size_t outX = static_cast<size_t>(x - cropX);
-                                uint8_t r = srcRow[ux * pixelStride + 0 * bytesPerSample + highByteOffset];
-                                uint8_t g = srcRow[ux * pixelStride + 1 * bytesPerSample + highByteOffset];
-                                uint8_t b = srcRow[ux * pixelStride + 2 * bytesPerSample + highByteOffset];
-                                uint8_t a = (samples >= 4) ? srcRow[ux * pixelStride + 3 * bytesPerSample + highByteOffset] : 255;
-                                if (samples >= 4 && desc.extraSamples != 1) {
-                                    r = static_cast<uint8_t>((r * a + 127) / 255);
-                                    g = static_cast<uint8_t>((g * a + 127) / 255);
-                                    b = static_cast<uint8_t>((b * a + 127) / 255);
-                                }
-                                dstRow[outX * 4 + 0] = b;
-                                dstRow[outX * 4 + 1] = g;
-                                dstRow[outX * 4 + 2] = r;
-                                dstRow[outX * 4 + 3] = a;
-                            }
-                        }
-                    } else if (photometric == 3) {
-                        if (desc.colorMap.size() >= 768) {
-                            for (int x = cropX; x < cropX + cropW; ++x) {
-                                size_t ux = static_cast<size_t>(x);
-                                size_t outX = static_cast<size_t>(x - cropX);
-                                uint8_t idx = srcRow[ux * pixelStride + highByteOffset];
-                                uint8_t r = static_cast<uint8_t>(desc.colorMap[idx] / 256);
-                                uint8_t g = static_cast<uint8_t>(desc.colorMap[idx + 256] / 256);
-                                uint8_t b = static_cast<uint8_t>(desc.colorMap[idx + 512] / 256);
-                                dstRow[outX * 4 + 0] = b;
-                                dstRow[outX * 4 + 1] = g;
-                                dstRow[outX * 4 + 2] = r;
-                                dstRow[outX * 4 + 3] = 255;
-                            }
-                        } else {
-                            decodeFailed.store(true, std::memory_order_relaxed);
-                        }
-                    } else if (photometric == 5) {
-                        if (bytesPerSample == 1) {
-                            ConvertCmykToBgra(srcRow + static_cast<size_t>(cropX) * pixelStride, dstRow, cropW, samples);
-                        } else {
-                            for (int dx = 0; dx < cropW; ++dx) {
-                                size_t srcBase = static_cast<size_t>(cropX + dx) * pixelStride;
-                                uint8_t c = srcRow[srcBase + 0 * bytesPerSample + highByteOffset];
-                                uint8_t m = srcRow[srcBase + 1 * bytesPerSample + highByteOffset];
-                                uint8_t ye = srcRow[srcBase + 2 * bytesPerSample + highByteOffset];
-                                uint8_t k = (samples >= 4) ? srcRow[srcBase + 3 * bytesPerSample + highByteOffset] : 0;
-                                uint8_t r = (255 - c) * (255 - k) / 255;
-                                uint8_t g = (255 - m) * (255 - k) / 255;
-                                uint8_t b = (255 - ye) * (255 - k) / 255;
-                                dstRow[static_cast<size_t>(dx) * 4 + 0] = b;
-                                dstRow[static_cast<size_t>(dx) * 4 + 1] = g;
-                                dstRow[static_cast<size_t>(dx) * 4 + 2] = r;
-                                dstRow[static_cast<size_t>(dx) * 4 + 3] = 255;
-                            }
-                        }
-                    }
+                if (offset > size || byteCount > size - offset ||
+                    !CheckedMul(static_cast<size_t>(unitH), rowBytes, stripBytes) ||
+                    stripBytes == 0 || stripBytes > size - offset) {
+                    return E_FAIL;
                 }
             }
+
+            if (activeStrips >= 4 && cropH >= 512) {
+                ParallelForRange(startStrip, endStrip + 1, 1, [&](int sBegin, int sEnd) {
+                    for (int i = sBegin; i < sEnd; ++i) {
+                        if (decodeFailed.load(std::memory_order_relaxed)) break;
+                        if (ctx.checkCancel && ctx.checkCancel()) {
+                            decodeCancelled.store(true, std::memory_order_relaxed);
+                            decodeFailed.store(true, std::memory_order_relaxed);
+                            break;
+                        }
+                        int startY = i * static_cast<int>(rowsPerStrip);
+                        int unitH = (std::min)(static_cast<int>(rowsPerStrip), static_cast<int>(desc.height) - startY);
+                        int intersectY = (std::max)(cropY, startY);
+                        int intersectEndY = (std::min)(cropY + cropH, startY + unitH);
+                        if (intersectY >= intersectEndY) continue;
+
+                        const uint8_t* stripData = data + desc.offsets[i];
+                        for (int y = intersectY; y < intersectEndY; ++y) {
+                            const uint8_t* srcRow = stripData + static_cast<size_t>(y - startY) * rowBytes;
+                            uint8_t* dstRow = pixels + static_cast<size_t>(y - cropY) * static_cast<size_t>(outStride);
+                            PackStripRowToBgra(srcRow, dstRow, cropX, cropW, samples, bytesPerSample,
+                                               highByteOffset, pixelStride, photometric, desc.extraSamples,
+                                               desc, decodeFailed);
+                        }
+                    }
+                });
+            } else {
+                for (int i = startStrip; i <= endStrip; ++i) {
+                    if (decodeFailed.load(std::memory_order_relaxed)) break;
+                    int startY = i * static_cast<int>(rowsPerStrip);
+                    int unitH = (std::min)(static_cast<int>(rowsPerStrip), static_cast<int>(desc.height) - startY);
+                    int intersectY = (std::max)(cropY, startY);
+                    int intersectEndY = (std::min)(cropY + cropH, startY + unitH);
+                    if (intersectY >= intersectEndY) continue;
+
+                    const uint8_t* stripData = data + desc.offsets[i];
+                    const int stripSpanH = intersectEndY - intersectY;
+                    const int minRowsPerThread = (stripSpanH >= 256 && static_cast<uint64_t>(cropW) * stripSpanH >= 262144ULL)
+                        ? 32 : (stripSpanH + 1);
+
+                    ParallelForRange(intersectY, intersectEndY, minRowsPerThread, [&](int yBegin, int yEnd) {
+                        for (int y = yBegin; y < yEnd; ++y) {
+                            if (decodeFailed.load(std::memory_order_relaxed)) break;
+                            if (ctx.checkCancel && ((y - yBegin) & 63) == 0 && ctx.checkCancel()) {
+                                decodeCancelled.store(true, std::memory_order_relaxed);
+                                decodeFailed.store(true, std::memory_order_relaxed);
+                                break;
+                            }
+                            const uint8_t* srcRow = stripData + static_cast<size_t>(y - startY) * rowBytes;
+                            uint8_t* dstRow = pixels + static_cast<size_t>(y - cropY) * static_cast<size_t>(outStride);
+                            PackStripRowToBgra(srcRow, dstRow, cropX, cropW, samples, bytesPerSample,
+                                               highByteOffset, pixelStride, photometric, desc.extraSamples,
+                                               desc, decodeFailed);
+                        }
+                    });
+                }
+            }
+        } else {
+            const int minStripsPerThread = (activeStrips >= 4 && cropH >= 512) ? 1 : (activeStrips + 1);
+            ParallelForRange(startStrip, endStrip + 1, minStripsPerThread, [&](int sBegin, int sEnd) {
+                std::vector<uint8_t> localBuf;
+                std::vector<uint8_t> predictorBuf;
+
+                for (int i = sBegin; i < sEnd; ++i) {
+                    if (decodeFailed.load(std::memory_order_relaxed)) break;
+
+                    if (ctx.checkCancel && ctx.checkCancel()) {
+                        decodeCancelled.store(true, std::memory_order_relaxed);
+                        decodeFailed.store(true, std::memory_order_relaxed);
+                        break;
+                    }
+
+                    int startY = i * static_cast<int>(rowsPerStrip);
+                    int unitH = (std::min)(static_cast<int>(rowsPerStrip), static_cast<int>(desc.height) - startY);
+
+                    int intersectY = (std::max)(cropY, startY);
+                    int intersectEndY = (std::min)(cropY + cropH, startY + unitH);
+                    if (intersectY >= intersectEndY) {
+                        continue;
+                    }
+
+                    uint64_t offset = desc.offsets[i];
+                    uint64_t byteCount = desc.byteCounts[i];
+                    if (offset > size || byteCount > size - offset) {
+                        decodeFailed.store(true, std::memory_order_relaxed);
+                        break;
+                    }
+
+                    size_t stripBytes = 0;
+                    if (!CheckedMul(static_cast<size_t>(unitH), rowBytes, stripBytes) ||
+                        stripBytes == 0 || stripBytes > kMaxUnitBufferBytes) {
+                        decodeFailed.store(true, std::memory_order_relaxed);
+                        break;
+                    }
+
+                    const uint8_t* stripData = nullptr;
+
+                    if (desc.compression == 1) {
+                        if (stripBytes > size - offset) {
+                            decodeFailed.store(true, std::memory_order_relaxed);
+                            break;
+                        }
+                        stripData = data + offset;
+                    } else if (desc.compression == 32773) {
+                        localBuf.resize(stripBytes);
+                        if (!DecompressPackBits(data + offset, static_cast<size_t>(byteCount), localBuf.data(), stripBytes)) {
+                            decodeFailed.store(true, std::memory_order_relaxed);
+                            break;
+                        }
+                        stripData = localBuf.data();
+                    } else if (desc.compression == 5) {
+                        localBuf.resize(stripBytes);
+                        if (!DecompressLzw(data + offset, static_cast<size_t>(byteCount), localBuf.data(), stripBytes)) {
+                            decodeFailed.store(true, std::memory_order_relaxed);
+                            break;
+                        }
+                        stripData = localBuf.data();
+                    } else if (desc.compression == 8 || desc.compression == 32946) {
+                        localBuf.resize(stripBytes);
+                        if (!DecompressDeflate(data + offset, static_cast<size_t>(byteCount), localBuf.data(), stripBytes)) {
+                            decodeFailed.store(true, std::memory_order_relaxed);
+                            break;
+                        }
+                        stripData = localBuf.data();
+                    }
+
+                    if (!stripData) {
+                        decodeFailed.store(true, std::memory_order_relaxed);
+                        break;
+                    }
+
+                    if (predictor == 2) {
+                        if (desc.compression == 1) {
+                            predictorBuf.assign(stripData, stripData + stripBytes);
+                            stripData = predictorBuf.data();
+                        }
+                        uint8_t* mutableData = const_cast<uint8_t*>(stripData);
+                        for (int y = 0; y < unitH; ++y) {
+                            uint8_t* rowData = mutableData + static_cast<size_t>(y) * rowBytes;
+                            UndoHorizontalPredictor(rowData, desc.width, samples, bytesPerSample, desc.isLE);
+                        }
+                    }
+
+                    for (int y = intersectY; y < intersectEndY; ++y) {
+                        size_t localY = static_cast<size_t>(y - startY);
+                        size_t outY = static_cast<size_t>(y - cropY);
+                        const uint8_t* srcRow = stripData + localY * rowBytes;
+                        uint8_t* dstRow = pixels + outY * static_cast<size_t>(outStride);
+                        PackStripRowToBgra(srcRow, dstRow, cropX, cropW, samples, bytesPerSample,
+                                           highByteOffset, pixelStride, photometric, desc.extraSamples,
+                                           desc, decodeFailed);
+                    }
+                }
+            });
         }
     }
 
+    if (decodeCancelled.load(std::memory_order_relaxed)) {
+        return E_ABORT;
+    }
     if (decodeFailed.load(std::memory_order_relaxed)) {
         return E_FAIL;
     }
@@ -936,7 +1064,7 @@ HRESULT LoadRegion(const uint8_t* data, size_t size,
     result.metadata.Width = desc.width;
     result.metadata.Height = desc.height;
     result.metadata.Format = L"TIFF";
-    
+
     wchar_t details[128];
     const wchar_t* compStr = L"";
     if (desc.compression == 1) compStr = L"Uncompressed";
@@ -998,6 +1126,26 @@ HRESULT LoadRegion(const uint8_t* data, size_t size,
     return S_OK;
 }
 
+HRESULT LoadRegion(const uint8_t* data, size_t size,
+                   const QuickView::Codec::DecodeContext& ctx,
+                   QuickView::Codec::DecodeResult& result,
+                   int cropX, int cropY, int cropW, int cropH) {
+    TiffImageDesc desc;
+    Status status = ParseTiffIFD(data, size, desc);
+    if (status != Status::Ok) {
+        return (status == Status::NotTiff) ? E_NOTIMPL : E_FAIL;
+    }
+
+    status = CapabilityGate(desc);
+    if (status != Status::Ok) {
+        return (status == Status::Unsupported) ? E_NOTIMPL : E_FAIL;
+    }
+
+    return LoadRegionInternal(data, size, desc, ctx, result,
+                              cropX, cropY, cropW, cropH,
+                              nullptr, 0, 0);
+}
+
 HRESULT Load(const uint8_t* data, size_t size,
              const QuickView::Codec::DecodeContext& ctx,
              QuickView::Codec::DecodeResult& result) {
@@ -1012,7 +1160,36 @@ HRESULT Load(const uint8_t* data, size_t size,
         return (status == Status::Unsupported) ? E_NOTIMPL : E_FAIL;
     }
 
-    return LoadRegion(data, size, ctx, result, 0, 0, desc.width, desc.height);
+    return LoadRegionInternal(data, size, desc, ctx, result,
+                              0, 0, static_cast<int>(desc.width), static_cast<int>(desc.height),
+                              nullptr, 0, 0);
+}
+
+HRESULT LoadDirectToBuffer(const uint8_t* data, size_t size,
+                           uint8_t* dstPixels, size_t dstCapacity, int dstStride,
+                           QuickView::SimplePredicate checkCancel,
+                           QuickView::Codec::DecodeResult& result) {
+    if (!data || !dstPixels || dstCapacity == 0) {
+        return E_INVALIDARG;
+    }
+
+    TiffImageDesc desc;
+    Status status = ParseTiffIFD(data, size, desc);
+    if (status != Status::Ok) {
+        return (status == Status::NotTiff) ? E_NOTIMPL : E_FAIL;
+    }
+
+    status = CapabilityGate(desc);
+    if (status != Status::Ok) {
+        return (status == Status::Unsupported) ? E_NOTIMPL : E_FAIL;
+    }
+
+    QuickView::Codec::DecodeContext ctx;
+    ctx.checkCancel = checkCancel;
+
+    return LoadRegionInternal(data, size, desc, ctx, result,
+                              0, 0, static_cast<int>(desc.width), static_cast<int>(desc.height),
+                              dstPixels, dstCapacity, dstStride);
 }
 
 } // namespace QuickView::MiniTiff

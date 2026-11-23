@@ -2,6 +2,7 @@
 #include "DisplayColorInfo.h"
 #include "EditState.h"
 #include "MappedFile.h"
+#include "TileTypes.h"
 #include <algorithm>
 #include <chrono>
 
@@ -138,14 +139,16 @@ void BootPreloader::Start(const std::wstring& imagePath) {
 
         if (st.stop_requested()) return;
 
-        // 3. Evaluate Titan candidate criteria
+        // 3. Evaluate Titan candidate criteria (defer if exceeding max possible standard surface or >16.77MP/>50MP)
         const int w = data->headerInfo.width;
         const int h = data->headerInfo.height;
-        const size_t pixelCount = static_cast<size_t>((std::max)(0, w)) * static_cast<size_t>((std::max)(0, h));
-        const bool sizeTrigger = (w > 8192 || h > 8192);
-        const bool pixelTrigger = (pixelCount > 50000000);
+        const bool shouldDeferToTitan =
+            (w > 0 && h > 0) &&
+            QuickView::ShouldTriggerTitanByDimensions(
+                static_cast<uint32_t>(w), static_cast<uint32_t>(h),
+                QuickView::kMaxProbeStandardAxisLimit);
 
-        if (sizeTrigger || pixelTrigger) {
+        if (shouldDeferToTitan) {
             // Leave Titan images to the multi-threaded pyramid tile scheduler, still
             // notifying UI so cold-start presentation never hangs waiting for WM_BOOT_FRAME_READY.
             data->isTitan.store(true, std::memory_order_release);

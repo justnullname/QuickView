@@ -193,6 +193,8 @@ public:
     
     // Backward compatibility
     bool Render(HWND hwnd, float deltaTime) { return RenderAll(hwnd, deltaTime); }
+    bool NeedsDecodeProgressTimer() const noexcept { return m_decodeNeedsAnimTimer; }
+    bool RenderDecodeProgressOnly(HWND hwnd, const ImageEngine::TelemetrySnapshot& telemetry);
 
     // ===== Info Panel Rendering Helpers =====
     D2D1_SIZE_F GetRequiredInfoPanelSize() const; // Calculate required dimensions
@@ -388,6 +390,9 @@ private:
     float m_decodeDisplayedProgress = 0.0f;
     bool m_decodeWasActive = false;
     DWORD m_decodeFinishTime = 0;
+    uint64_t m_decodeLastScanTickMs = 0;
+    bool m_decodeNeedsAnimTimer = false;
+    RECT CalculateDecodeProgressDirtyRect(HWND hwnd) const noexcept;
     bool m_borderGlowActive = false;
     uint64_t m_borderGlowLastTriggerMs = 0;
     ComPtr<ID2D1LinearGradientBrush> m_borderGlowBrush;

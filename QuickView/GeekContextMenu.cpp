@@ -287,6 +287,8 @@ void GeekContextMenu::DismissAll(UINT cmdId) {
     }
     s_root.reset();
     if (cmdId && appHwnd) PostMessage(appHwnd, WM_COMMAND, cmdId, 0);
+    // Resume any deferred tile uploads or progress bar animation paused while the menu was open.
+    if (appHwnd) PostMessage(appHwnd, WM_APP + 4, 0, 0);
 }
 
 // ============================================================
@@ -336,7 +338,11 @@ LRESULT GeekContextMenu::HandleMsg(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_PAINT: {
         ValidateRect(hwnd, nullptr);
-        RenderAndUI();
+        if (m_animating) {
+            TickAnimation();
+        } else {
+            RenderAndUI();
+        }
         return 0;
     }
     case WM_ERASEBKGND:
@@ -348,6 +354,7 @@ LRESULT GeekContextMenu::HandleMsg(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return DefWindowProcW(hwnd, msg, TRUE, lp);
 
     case WM_MOUSEMOVE: {
+        if (m_animating) TickAnimation();
         POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         ClientToScreen(hwnd, &pt);
         GetRoot()->OnMouseMove(pt);
@@ -1130,7 +1137,9 @@ void GeekContextMenu::RenderAndUI() {
     if (m_dcompVisual) {
         ComPtr<IDCompositionVisual3> v3;
         if (SUCCEEDED(m_dcompVisual.As(&v3))) {
-            v3->SetOpacity(easeT);
+            // Start visible immediately (>= 85% opacity) so content is crisp even before WM_TIMER ticks.
+            const float visualOpacity = m_animating ? (0.85f + 0.15f * easeT) : 1.0f;
+            v3->SetOpacity(visualOpacity);
         }
     }
 

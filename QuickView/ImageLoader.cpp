@@ -1449,6 +1449,12 @@ HRESULT LoadBufferUnified(const uint8_t *mappedData, size_t mappedSize,
     if (SUCCEEDED(hr)) {
       return S_OK;
     }
+  } else if (fmt == L"TIFF") {
+    HRESULT hr = QuickView::MiniTiff::Load(mappedData, mappedSize, ctx, result);
+    if (hr == E_OUTOFMEMORY || hr == E_ABORT || SUCCEEDED(hr)) {
+      return hr;
+    }
+    return hr;
   } else if (IsMetafileFormat(fmt)) {
     HRESULT hr = DecodeMetafileBuffer(mappedData, mappedSize, fmt, ctx, result);
     if (SUCCEEDED(hr)) {
@@ -3266,6 +3272,44 @@ HRESULT CImageLoader::FullDecodeToMMF(
     QV_LOG("MMF_Decode", TraceLoggingString("PNG DirectToMMF OK", "Action"),
            TraceLoggingUInt32(w, "Width"), TraceLoggingUInt32(h, "Height"));
     return S_OK;
+  }
+
+  // ---------------------------------------------------------------
+  // TIFF: MiniTiff direct decode into MMF view (zero intermediate alloc)
+  // ---------------------------------------------------------------
+  if (fmt == L"TIFF") {
+    QuickView::Codec::DecodeResult tiffResult;
+    HRESULT hrTiff = QuickView::MiniTiff::LoadDirectToBuffer(
+        data, size, mmfBuf, mmfBufSize, 0, checkCancel, tiffResult);
+    if (SUCCEEDED(hrTiff) && tiffResult.success) {
+      if (outColorMeta) {
+        outColorMeta->iccProfile.assign(tiffResult.metadata.iccProfileData.begin(),
+                                        tiffResult.metadata.iccProfileData.end());
+        outColorMeta->colorInfo = tiffResult.metadata.colorInfo;
+        outColorMeta->colorInfo.nominalBitDepth = 8; // Direct-to-MMF stores 8-bit BGRA
+        if (!outColorMeta->iccProfile.empty()) {
+          outColorMeta->colorInfo.hasEmbeddedIcc = true;
+        }
+        outColorMeta->hdrMetadata = tiffResult.metadata.hdrMetadata;
+        outColorMeta->exifOrientation =
+            (tiffResult.metadata.ExifOrientation >= 1 &&
+             tiffResult.metadata.ExifOrientation <= 8)
+                ? tiffResult.metadata.ExifOrientation
+                : 1;
+      }
+
+      *outW = tiffResult.width;
+      *outH = tiffResult.height;
+      *outStride = tiffResult.stride;
+
+      QV_LOG("MMF_Decode", TraceLoggingString("TIFF DirectToMMF OK", "Action"),
+             TraceLoggingInt32(tiffResult.width, "Width"),
+             TraceLoggingInt32(tiffResult.height, "Height"));
+      return S_OK;
+    }
+    if (hrTiff == E_ABORT || hrTiff == E_OUTOFMEMORY) {
+      return hrTiff;
+    }
   }
 
   // ---------------------------------------------------------------
@@ -14629,6 +14673,11 @@ static void ClassifyImageHeader(CImageLoader &loader, LPCWSTR filePath,
     } else if (result.width > 0) {
       result.type = ImageType::TypeB_Heavy;
     }
+  }
+
+  if (result.width > static_cast<int>(QuickView::kMaxProbeStandardAxisLimit) ||
+      result.height > static_cast<int>(QuickView::kMaxProbeStandardAxisLimit)) {
+    result.type = ImageType::TypeB_Heavy;
   }
 }
 

@@ -162,6 +162,7 @@ public:
     // [Accessors for external windows like GeekContextMenu]
     IDCompositionDesktopDevice* GetDevice() const { return m_device.Get(); }
     ID2D1Device* GetD2DDevice() const { return m_d2dDevice.Get(); }
+    UINT GetMaxStandardSurfaceSize() const { return m_maxStandardSurfaceSize; }
 
 private:
     HRESULT CreateLayerSurface(UILayer layer, UINT width, UINT height);
@@ -294,4 +295,5 @@ private:
 
     // [Overlay Mode] Root visual opacity (1.0 = fully opaque)
     float m_rootOpacity = 1.0f;
+    UINT m_maxStandardSurfaceSize = QuickView::kDefaultStandardAxisLimit;
 };

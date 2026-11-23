@@ -49,6 +49,7 @@ static UINT GetSvgSurfaceSizeLimit();
 #include "PaneContext.h"
 #include "AppStrings.h"
 #include "ContextMenu.h"
+#include "GeekContextMenu.h"
 #include "UndoManager.h"
 #include "Plugin/PluginHost.h"
 #include <shlobj.h>
@@ -2626,10 +2627,32 @@ static void RefreshSvgSurfaceAfterZoom(HWND hwnd) {
     InvalidateRect(hwnd, nullptr, FALSE);
 }
 
+static UINT GetMaxBitmapSurfaceSize() {
+    if (g_compEngine && g_compEngine->IsInitialized()) {
+        return g_compEngine->GetMaxStandardSurfaceSize();
+    }
+    return g_maxBitmapSurfaceSize;
+}
+
+static bool IsActiveTitanBitmapView(const CImageLoader::ImageMetadata& meta) {
+    if (g_imageEngine && g_imageEngine->IsTitanModeEnabled()) {
+        return true;
+    }
+    if (meta.Width > 0 && meta.Height > 0 && !meta.Format.empty()) {
+        std::wstring fmtUpper = meta.Format;
+        std::transform(fmtUpper.begin(), fmtUpper.end(), fmtUpper.begin(), ::towupper);
+        if (QuickView::IsTitanSupportedFormat(fmtUpper) &&
+            QuickView::ShouldTriggerTitanByDimensions(meta.Width, meta.Height, GetMaxBitmapSurfaceSize())) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static D2D1_SIZE_U ComputeDesiredBitmapSurfaceSize(UINT winW, UINT winH, const ImageResource& res, bool allowDownsampling = false, float downsampleScale = 1.0f) {
     if (!res.bitmap || res.isSvg) return D2D1::SizeU(0, 0);
     if (winW == 0 || winH == 0) return D2D1::SizeU(0, 0);
-    if (GetPaneContext(PaneSlot::Primary).metadata.Width > 8192 || GetPaneContext(PaneSlot::Primary).metadata.Height > 8192) return D2D1::SizeU(0, 0);
+    if (IsActiveTitanBitmapView(GetPaneContext(PaneSlot::Primary).metadata)) return D2D1::SizeU(0, 0);
 
     // Physical (pre-Flip*Rotate) dimensions so surface aspect ratio matches VisualState::PhysicalSize
     const D2D1_SIZE_F physSize = GetVisualState().PhysicalSize;
@@ -2643,7 +2666,7 @@ static D2D1_SIZE_U ComputeDesiredBitmapSurfaceSize(UINT winW, UINT winH, const I
     if (originalW <= 0.0f || originalH <= 0.0f) return D2D1::SizeU(0, 0);
 
     // [Surface Pool Architecture with Adaptive Downsampling]
-    // For standard images (<= 8192px on each axis), allocate up to 1:1 native resolution
+    // For standard images within GPU surface limits, allocate up to 1:1 native resolution
     // within a total pixel budget so tall/panoramic images are not shrunk to screen bounds.
     // For downsampling under Auto (0) or HQ Cubic (3), allocate the target viewport scale to enable true D2D bicubic anti-aliasing.
     float desiredScale = 1.0f;
@@ -2653,9 +2676,8 @@ static D2D1_SIZE_U ComputeDesiredBitmapSurfaceSize(UINT winW, UINT winH, const I
         desiredScale = downsampleScale;
     }
 
-    constexpr uint64_t kMaxBitmapSurfacePixels = 4096ull * 4096ull;
     const ColorMath::SurfaceSize2D bounded = ColorMath::ComputeBoundedBitmapSurfaceSize(
-        originalW, originalH, desiredScale, g_maxBitmapSurfaceSize, kMaxBitmapSurfacePixels);
+        originalW, originalH, desiredScale, GetMaxBitmapSurfaceSize(), QuickView::kStandardSurfacePixelBudget);
     return D2D1::SizeU(bounded.width, bounded.height);
 }
 
@@ -2666,13 +2688,6 @@ static bool ShouldUpgradeBitmapSurface(const D2D1_SIZE_U& desired) {
     const float curH = g_lastSurfaceSize.height;
     return (std::abs(static_cast<int>(desired.width) - static_cast<int>(curW)) > 4 ||
             std::abs(static_cast<int>(desired.height) - static_cast<int>(curH)) > 4);
-}
-
-
-
-static bool IsActiveTitanBitmapView(const CImageLoader::ImageMetadata& meta) {
-    return (meta.Width > 8192 || meta.Height > 8192 ||
-            (g_imageEngine && g_imageEngine->IsTitanModeEnabled()));
 }
 
 static void ComputeBitmapSurfaceDownsampleArgs(HWND hwnd, bool* outAllowDownsampling, float* outDownsampleScale) {
@@ -3481,6 +3496,21 @@ void RequestRepaint(PaintLayer layer) {
 
   if (g_mainHwnd) {
     ::InvalidateRect(g_mainHwnd, nullptr, FALSE);
+  }
+}
+
+void SyncDecodeProgressTimer(HWND hwnd) {
+  if (!hwnd) return;
+  static bool s_decodeProgressTimerRunning = false;
+  const bool menuOpen = QuickView::UI::Menu::GeekContextMenu::IsMenuOpen();
+  const bool wantTimer = !menuOpen &&
+      (g_isLoading || g_isLeftPaneDecoding || (g_uiRenderer && g_uiRenderer->NeedsDecodeProgressTimer()));
+  if (wantTimer && !s_decodeProgressTimerRunning) {
+      SetTimer(hwnd, 995, 33, nullptr);
+      s_decodeProgressTimerRunning = true;
+  } else if (!wantTimer && s_decodeProgressTimerRunning) {
+      KillTimer(hwnd, 995);
+      s_decodeProgressTimerRunning = false;
   }
 }
 
@@ -4307,9 +4337,12 @@ static void PerformZoom100(HWND hwnd, bool allowResizeWindow = true) {
                  
                  RECT rcWin; GetWindowRect(hwnd, &rcWin);
                  RECT targetRect = ExpandWindowRectToTargetWithinBounds(rcWin, targetW, targetH, bounds);
-                 SetWindowPos(hwnd, nullptr, targetRect.left, targetRect.top,
-                              targetRect.right - targetRect.left, targetRect.bottom - targetRect.top,
-                              SWP_NOZORDER | SWP_NOACTIVATE);
+                 {
+                     ProgrammaticResizeScope resizeScope;
+                     SetWindowPos(hwnd, nullptr, targetRect.left, targetRect.top,
+                                  targetRect.right - targetRect.left, targetRect.bottom - targetRect.top,
+                                  SWP_NOZORDER | SWP_NOACTIVATE);
+                 }
                  
                  RECT rcNew; GetClientRect(hwnd, &rcNew);
                  float galleryH = (g_gallery.IsPinned() && g_gallery.IsVisible()) ? g_gallery.GetVisualHeight((float)rcNew.bottom) : 0.0f;
@@ -4328,6 +4361,12 @@ static void PerformZoom100(HWND hwnd, bool allowResizeWindow = true) {
 
             GetPaneContext(PaneSlot::Primary).view.PanX = 0;
             GetPaneContext(PaneSlot::Primary).view.PanY = 0;
+            {
+                RECT rcFinal{};
+                if (GetClientRect(hwnd, &rcFinal)) {
+                    SyncDCompState(hwnd, (float)rcFinal.right, (float)rcFinal.bottom);
+                }
+            }
             g_osd.Show(hwnd, AppStrings::g.OSD_Zoom100, false, false, D2D1::ColorF(0.4f, 1.0f, 0.4f));
     }
     TryUpgradeBitmapSurface(hwnd);
@@ -4584,10 +4623,19 @@ static void PerformZoomFit(HWND hwnd, float maxScreenPct = 1.0f, bool allowResiz
              int x = mi.rcWork.left + (fullScreenW - targetWinW) / 2;
              int y = mi.rcWork.top + (fullScreenH - targetWinH) / 2;
              
-             SetWindowPos(hwnd, nullptr, x, y, targetWinW, targetWinH, SWP_NOZORDER | SWP_NOACTIVATE);
+             {
+                 ProgrammaticResizeScope resizeScope;
+                 SetWindowPos(hwnd, nullptr, x, y, targetWinW, targetWinH, SWP_NOZORDER | SWP_NOACTIVATE);
+             }
         }
         
         GetPaneContext(PaneSlot::Primary).view.Zoom = ComputeFitZoom(hwnd); 
+        {
+            RECT rcFinal{};
+            if (GetClientRect(hwnd, &rcFinal)) {
+                SyncDCompState(hwnd, (float)rcFinal.right, (float)rcFinal.bottom);
+            }
+        }
         g_osd.Show(hwnd, AppStrings::g.OSD_ZoomFit, false, false, D2D1::ColorF(D2D1::ColorF::White));
         RequestRepaint(PaintLayer::All);
         GetPaneContext(PaneSlot::Primary).view.IsInteracting = true;
@@ -9193,6 +9241,19 @@ static bool TryPresentBootPreloadedFrame(HWND hwnd, const std::wstring& initialI
         return false;
     }
 
+    if (!preloadedFrame->IsSvg() && !preloadedFrame->IsWebView()) {
+        const UINT srcW = (preloadedMeta.Width > 0) ? preloadedMeta.Width
+            : (preloadedFrame->srcWidth > 0 ? static_cast<UINT>(preloadedFrame->srcWidth) : static_cast<UINT>(preloadedFrame->width));
+        const UINT srcH = (preloadedMeta.Height > 0) ? preloadedMeta.Height
+            : (preloadedFrame->srcHeight > 0 ? static_cast<UINT>(preloadedFrame->srcHeight) : static_cast<UINT>(preloadedFrame->height));
+        std::wstring fmtUpper = !preloadedMeta.Format.empty() ? preloadedMeta.Format : preloadedFrame->sourceFormat;
+        std::transform(fmtUpper.begin(), fmtUpper.end(), fmtUpper.begin(), ::towupper);
+        if (QuickView::IsTitanSupportedFormat(fmtUpper) &&
+            QuickView::ShouldTriggerTitanByDimensions(srcW, srcH, GetMaxBitmapSurfaceSize())) {
+            return false;
+        }
+    }
+
     auto& primaryPane = GetPaneContext(PaneSlot::Primary);
     primaryPane.resource.Reset();
 
@@ -9868,6 +9929,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCm
     }
 
     RefreshDisplayColorPipeline(hwnd, false);
+    if (g_imageEngine) {
+        g_imageEngine->SetMaxStandardSurfaceSize(g_compEngine->GetMaxStandardSurfaceSize());
+    }
     // Pure DComp architecture: Surfaces are managed by CompositionEngine
     
     // Initialize UI Renderer (renders to independent DComp Surface)
@@ -10754,8 +10818,8 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
                 auto res = QuickView::ImageExporter::SetupDelayedClipboard(hwnd, g_pendingClipboard);
                 if (res.has_value()) {
                     bool isHeavy = (QuickView::IsRawPath(targetPath) && opts.RawForceFullDecode) ||
-                                   pane.metadata.Width >= 8192 ||
-                                   pane.metadata.Height >= 8192 ||
+                                   QuickView::ShouldTriggerTitanByDimensions(
+                                       pane.metadata.Width, pane.metadata.Height, GetMaxBitmapSurfaceSize()) ||
                                    pane.resource.isWebView;
                     if (isHeavy) {
                         g_osd.Show(hwnd, AppStrings::g.OSD_PixelsExtracting, false, false, QuickView::UI::Theme::GetThemePalette().accentText, OSDPosition::Bottom, 60000);
@@ -12166,6 +12230,7 @@ static void ShowContextMenuAtClientPt(HWND hwnd, POINT ptClient) {
             if (idx >= 0) {
                 g_galleryContextMenuIndex = idx;
                 ShowGalleryContextMenu(hwnd, pt);
+                SyncDecodeProgressTimer(hwnd);
             }
             return;
         }
@@ -12224,6 +12289,7 @@ static void ShowContextMenuAtClientPt(HWND hwnd, POINT ptClient) {
 
     bool isAnimated = GetPaneContext(PaneSlot::Primary).resource.IsAnimated();
     ShowContextMenu(hwnd, pt, hasImage, extensionFixNeeded, g_runtime.LockWindowSize, g_runtime.ShowInfoPanel, g_runtime.InfoPanelExpanded, g_config.AlwaysOnTop, renderRaw, isRaw, IsZoomed(hwnd) != 0, g_runtime.CrossMonitorMode, IsCompareModeActive(), isAnimated, isPixelArtMode, menuCmsMode, menuEnableSoftProofing, menuSoftProofPath);
+    SyncDecodeProgressTimer(hwnd);
 }
 
 static void RequestCloseWindow(HWND hwnd) {
@@ -14084,13 +14150,20 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             SyncToolbarTimer(hwnd);
         }
         
-        // Titan Base Decode UI Heartbeat (995)
+        // Decode Status Bar Animation Timer (995)
         if (wParam == 995) {
-            if (g_isLoading) {
-                RequestRepaint(PaintLayer::Dynamic);
-            } else {
-                KillTimer(hwnd, 995);
+            if (QuickView::UI::Menu::GeekContextMenu::IsMenuOpen()) {
+                SyncDecodeProgressTimer(hwnd);
+                return 0;
             }
+            if (g_uiRenderer && g_imageEngine) {
+                const auto s = g_imageEngine->GetTelemetry();
+                if (!g_uiRenderer->RenderDecodeProgressOnly(hwnd, s)) {
+                    RequestRepaint(PaintLayer::Dynamic);
+                }
+            }
+            SyncDecodeProgressTimer(hwnd);
+            return 0;
         }
         return 0;
     }
@@ -15905,7 +15978,10 @@ SKIP_EDGE_NAV:;
         return 0;
 
     case WM_APP + 4: // WM_DEFERRED_REPAINT
-        ::InvalidateRect(hwnd, nullptr, FALSE);
+        if (!QuickView::UI::Menu::GeekContextMenu::IsMenuOpen()) {
+            ::InvalidateRect(hwnd, nullptr, FALSE);
+            SyncDecodeProgressTimer(hwnd);
+        }
         return 0;
 
     case WM_NAVIGATOR_DIR_CHANGED: {
@@ -18651,7 +18727,7 @@ void ProcessEngineEvents(HWND hwnd) {
                 if (!isPreview) {
                     TryUpgradeBitmapSurface(hwnd);
                 }
-                KillTimer(hwnd, 995); // Stop UI heartbeat timer
+                SyncDecodeProgressTimer(hwnd);
                 
                 // [v10.5] Start Animation Timer (also cover animated frames arriving with preview flag)
                 const auto& primaryResource = GetPaneContext(PaneSlot::Primary).resource;
@@ -18892,6 +18968,7 @@ void ProcessEngineEvents(HWND hwnd) {
     if (g_imageEngine->IsIdle() && !g_isPhase2Debouncing.load(std::memory_order_acquire)) {
         if (g_isLoading) {  // Was loading, now finished
             g_isLoading = false;
+            SyncDecodeProgressTimer(hwnd);
             // Force cursor update immediately
             POINT pt;
             if (GetCursorPos(&pt) && ScreenToClient(hwnd, &pt)) {
@@ -19208,21 +19285,16 @@ static bool ShouldUsePhase2TitanDebounce(const std::wstring& path, uintmax_t fil
     std::wstring fmtUpper = info.format;
     std::transform(fmtUpper.begin(), fmtUpper.end(), fmtUpper.begin(), ::towupper);
 
-    const bool isSupportedFormat =
-        (fmtUpper == L"JPEG" || fmtUpper == L"JPG" ||
-         fmtUpper == L"WEBP" || fmtUpper == L"PNG" ||
-         fmtUpper == L"JXL" || fmtUpper == L"TIF" ||
-         fmtUpper == L"TIFF" || fmtUpper == L"AVIF" ||
-         fmtUpper == L"HEIC" || fmtUpper == L"HIF");
-
-    const bool sizeTrigger = (info.width > 8192 || info.height > 8192);
-    const size_t pixelCount = (size_t)info.width * (size_t)info.height;
-    const bool pixelTrigger = (pixelCount > 50000000);
+    const bool isSupportedFormat = QuickView::IsTitanSupportedFormat(fmtUpper);
+    const bool dimTrigger = (info.width > 0 && info.height > 0) &&
+        QuickView::ShouldTriggerTitanByDimensions(
+            static_cast<uint32_t>(info.width), static_cast<uint32_t>(info.height),
+            GetMaxBitmapSurfaceSize());
     const bool unknownDims = (info.width <= 0 || info.height <= 0);
     const uintmax_t observedFileSize = (info.fileSize > 0) ? info.fileSize : fileSize;
     const bool fallbackFileTrigger = unknownDims && observedFileSize >= (32ull * 1024ull * 1024ull);
 
-    return (sizeTrigger || pixelTrigger || fallbackFileTrigger) && isSupportedFormat;
+    return (dimTrigger || fallbackFileTrigger) && isSupportedFormat;
 }
 
 static void DispatchNavigationToEngine(
@@ -19380,7 +19452,7 @@ void StartNavigation(HWND hwnd, std::wstring path, [[maybe_unused]] bool showOSD
     g_waitingBootFrame = false;
     g_needsInitialPresentationReset = !g_preserveViewStateOnNextLoad;
     g_isLoading = true; // [Fix] Start loading state machine
-    SetTimer(hwnd, 995, 16, nullptr); // [Fix] ~60 FPS UI Heartbeat for progress bar (runs for ALL loads to avoid WM_PAINT starvation)
+    SyncDecodeProgressTimer(hwnd);
 
     // [Phase 3] Increment token FIRST (deprecated, kept for backward compatibility)
     uint64_t myToken = ++g_currentNavToken;
@@ -20068,7 +20140,9 @@ void OnPaint(HWND hwnd) {
             const auto titanMeta = GetPaneContext(PaneSlot::Primary).metadata; // Value copy - safe from concurrent reset
 
             // [Infinity Engine] Cascade Rendering Path
-            bool isTitan = g_imageEngine && g_imageEngine->IsTitanModeEnabled() && !GetPaneContext(PaneSlot::Primary).path.empty();
+            bool isTitan = g_imageEngine && g_imageEngine->IsTitanModeEnabled() &&
+                           !GetPaneContext(PaneSlot::Primary).path.empty() &&
+                           titanMeta.Width > 0 && titanMeta.Height > 0;
             if (isTitan) {
                  // 1. Calculate Dimensions
                  float imgFullW = (float)titanMeta.Width;
@@ -20179,7 +20253,8 @@ void OnPaint(HWND hwnd) {
                      &visibleRect
                  );
                  // [Throttle] Deferred tiles exist - request next frame to continue uploading
-                 if (hrTile == S_FALSE) {
+                 // Yield when context menu is open so DComp tile uploads never compete with menu presentation.
+                 if (hrTile == S_FALSE && !QuickView::UI::Menu::GeekContextMenu::IsMenuOpen()) {
                      // [Fix] Do not use RequestRepaint (which relies on InvalidateRect).
                      // InvalidateRect might be cleared by ValidateRect if OnPaint hasn't returned.
                      // Force a new message into the queue to guarantee the loop continues.
@@ -20364,6 +20439,7 @@ void OnPaint(HWND hwnd) {
         }
         
         g_uiRenderer->Render(hwnd, dt);
+        SyncDecodeProgressTimer(hwnd);
     }
     
     // Commit DirectComposition (Required for UI layer visibility)
