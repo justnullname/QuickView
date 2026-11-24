@@ -263,6 +263,8 @@ private:
     void DrawCropOverlay(ID2D1DeviceContext* dc, HWND hwnd);
     // [Loupe] press-and-hold magnifier overlay (shows the region at actual pixels)
     void DrawLoupe(ID2D1DeviceContext* dc, HWND hwnd);
+    // [Auto Pan] crisp vector anchor disc & directional indicator
+    void DrawAutoPanAnchor(ID2D1DeviceContext* dc, HWND hwnd);
     void DrawWindowControls(ID2D1DeviceContext* dc, HWND hwnd);
     void DrawBorderIndicators(ID2D1DeviceContext* dc, HWND hwnd);
     float ComputeBorderGlowAlpha() noexcept;

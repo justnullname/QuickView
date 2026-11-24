@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### ✨ Features & UX
+- **Auto Pan (zero-config Chromium-style continuous pan)**: Bind **Auto Pan** to any click or drag gesture under *Mouse Gestures* (classic 1:1 Pan Image and middle-click exit defaults stay untouched). Click-bound triggers lock an anchor disc so you can steer freely until the next click or `Esc`; drag-bound triggers pan while held and stop on release. Powered by a DPI-normalized axial deadzone, C1 power-law acceleration curve, crisp D2D vector anchor overlay, and hardware VSync pacing with zero settings clutter.
+
 ## [6.31.0.0] - Faster TIFF, Built-in Print Preview, Windows 11 Look & Smarter Controls
 **Release Date**: 2026-08-14
 

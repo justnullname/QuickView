@@ -6117,7 +6117,7 @@ static constexpr char kBlob_FR[] =
 
 struct PackedLangBlob {
     const char* data;
-    int bytes; // excludes trailing compiler NUL (includes all 759 string NUL terminators)
+    int bytes; // excludes trailing compiler NUL (includes all 775 string NUL terminators)
 };
 
 static constexpr PackedLangBlob kLangBlobs[8] = {
@@ -6169,7 +6169,7 @@ void SetLanguage(Language lang) {
 
     static int s_loadedIdx = -1;
     if (s_loadedIdx != idx) {
-        constexpr int kArenaCapacity = 32768; // Max language (Spanish) uses 26,172 UTF-16 code units
+        constexpr int kArenaCapacity = 40960; // Max language (Spanish) uses 28,062 UTF-16 code units
         static wchar_t s_arena[kArenaCapacity];
         const auto& blob = kLangBlobs[idx];
         const int written = MultiByteToWideChar(CP_UTF8, 0, blob.data, blob.bytes, s_arena, kArenaCapacity);
@@ -6607,6 +6607,9 @@ std::wstring GetMouseActionTargetName(::MouseActionTarget action) {
     }
     case MouseActionTarget::PanImage: {
         return PickLang({ L"Pan Image", L"平移图片", L"平移圖片", L"画像をパン", L"Панорамирование", L"Bild verschieben", L"Desplazar imagen", L"Déplacer l'image" });
+    }
+    case MouseActionTarget::ViewPan: {
+        return PickLang({ L"Auto Pan", L"自动平移", L"自動平移", L"自動パン", L"Автопанорамирование", L"Automatisches Verschieben", L"Desplazamiento automático", L"Déplacement automatique" });
     }
     case MouseActionTarget::Zoom: {
         return PickLang({ L"Zoom", L"缩放", L"縮放", L"ズーム", L"Масштаб", L"Zoom", L"Zoom", L"Zoom" });

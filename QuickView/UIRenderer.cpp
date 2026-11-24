@@ -1190,6 +1190,75 @@ void UIRenderer::DrawLoupe(ID2D1DeviceContext* dc, HWND hwnd) {
     }
 }
 
+void UIRenderer::DrawAutoPanAnchor(ID2D1DeviceContext* dc, [[maybe_unused]] HWND hwnd) {
+    const auto& autoPan = AppContext::GetInstance().AutoPan;
+    if (!autoPan.active || !dc) return;
+
+    const float s = (m_uiScale > 0.0f) ? m_uiScale : 1.0f;
+    const float ax = static_cast<float>(autoPan.anchorClient.x);
+    const float ay = static_cast<float>(autoPan.anchorClient.y);
+    const float cx = static_cast<float>(autoPan.cursorClient.x);
+    const float cy = static_cast<float>(autoPan.cursorClient.y);
+    const float dx = cx - ax;
+    const float dy = cy - ay;
+    const float dz = (std::max)(autoPan.deadzonePx, 4.0f * s);
+    const float radius = (std::max)(dz + 3.0f * s, 15.0f * s);
+
+    ComPtr<ID2D1SolidColorBrush> bgBrush, ringBrush, dimArrowBrush, tetherBrush;
+    dc->CreateSolidColorBrush(D2D1::ColorF(0.08f, 0.09f, 0.12f, 0.62f), &bgBrush);
+    dc->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.88f), &ringBrush);
+    dc->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.42f), &dimArrowBrush);
+    dc->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.28f), &tetherBrush);
+    if (!bgBrush || !ringBrush || !dimArrowBrush || !tetherBrush) return;
+
+    // Subtle vector tether from anchor perimeter to cursor when outside the disc
+    const float dist = std::sqrt(dx * dx + dy * dy);
+    if (dist > radius + 2.0f * s) {
+        const float ux = dx / dist;
+        const float uy = dy / dist;
+        dc->DrawLine(
+            D2D1::Point2F(ax + ux * radius, ay + uy * radius),
+            D2D1::Point2F(cx, cy),
+            tetherBrush.Get(),
+            1.25f * s);
+    }
+
+    // Translucent circular anchor + crisp white ring + center dot
+    const D2D1_ELLIPSE disc = D2D1::Ellipse(D2D1::Point2F(ax, ay), radius, radius);
+    dc->FillEllipse(disc, bgBrush.Get());
+    dc->DrawEllipse(disc, ringBrush.Get(), 1.5f * s);
+
+    const bool activeAny = (std::fabs(dx) > dz) || (std::fabs(dy) > dz);
+    ID2D1Brush* centerBrush = (activeAny && m_accentBrush) ? static_cast<ID2D1Brush*>(m_accentBrush.Get())
+                                                           : static_cast<ID2D1Brush*>(ringBrush.Get());
+    dc->FillEllipse(D2D1::Ellipse(D2D1::Point2F(ax, ay), 2.3f * s, 2.3f * s), centerBrush);
+
+    // 4 directional chevrons inside the anchor disc (highlights active axis direction)
+    const float arrowOffset = radius * 0.56f;
+    const float tip = 2.8f * s;
+    const float stroke = 1.6f * s;
+    ID2D1Brush* activeBrush = m_accentBrush ? static_cast<ID2D1Brush*>(m_accentBrush.Get())
+                                            : static_cast<ID2D1Brush*>(ringBrush.Get());
+
+    auto drawChevron = [&](float px, float py, float vx, float vy, bool active) {
+        ID2D1Brush* b = active ? activeBrush : static_cast<ID2D1Brush*>(dimArrowBrush.Get());
+        // Perpendicular vector (-vy, vx)
+        const float p0x = px - vx * tip - vy * tip;
+        const float p0y = py - vy * tip + vx * tip;
+        const float p1x = px + vx * tip * 0.6f;
+        const float p1y = py + vy * tip * 0.6f;
+        const float p2x = px - vx * tip + vy * tip;
+        const float p2y = py - vy * tip - vx * tip;
+        dc->DrawLine(D2D1::Point2F(p0x, p0y), D2D1::Point2F(p1x, p1y), b, stroke);
+        dc->DrawLine(D2D1::Point2F(p1x, p1y), D2D1::Point2F(p2x, p2y), b, stroke);
+    };
+
+    drawChevron(ax, ay - arrowOffset,  0.0f, -1.0f, dy < -dz); // Up
+    drawChevron(ax, ay + arrowOffset,  0.0f,  1.0f, dy >  dz); // Down
+    drawChevron(ax - arrowOffset, ay, -1.0f,  0.0f, dx < -dz); // Left
+    drawChevron(ax + arrowOffset, ay,  1.0f,  0.0f, dx >  dz); // Right
+}
+
 void UIRenderer::RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd) {
     // Create brushes
     const auto& themePal = QuickView::UI::Theme::GetThemePalette();
@@ -1210,6 +1279,9 @@ void UIRenderer::RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd) {
 
     // [Loupe] press-and-hold magnifier (drawn above OSD, below dialogs)
     DrawLoupe(dc, hwnd);
+
+    // [Auto Pan] crisp vector anchor disc & directional indicator
+    DrawAutoPanAnchor(dc, hwnd);
 
     // [Edge Focus] Tile decode status line
     DrawDecodingStatus(dc, hwnd);

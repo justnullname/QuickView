@@ -304,6 +304,7 @@ enum class MouseActionTarget : int {
     ToggleWheelPanMode,  // Wheel Mode 2: Toggle wheel pan mode
     PanVertical,         // Vertical pan image (wheel triggers)
     PanHorizontal,       // Horizontal pan image (wheel triggers)
+    ViewPan,             // RTS-style View Pan mode (drag triggers; bound under Mouse Gestures)
     Count
 };
 
@@ -354,6 +355,7 @@ inline bool IsMouseTriggerActionCompatible(MouseTrigger trig, MouseActionTarget 
         case MouseActionTarget::Zoom:
         case MouseActionTarget::CropRegionDrag:
         case MouseActionTarget::Loupe:
+        case MouseActionTarget::ViewPan:
             return true;
         default:
             return false;
@@ -388,6 +390,12 @@ inline bool IsMouseTriggerActionCompatible(MouseTrigger trig, MouseActionTarget 
     case MouseActionTarget::CropRegionDrag:
     case MouseActionTarget::Loupe:
         return false;
+    case MouseActionTarget::ViewPan:
+        return (trig == MouseTrigger::LeftClick ||
+                trig == MouseTrigger::MiddleClick ||
+                trig == MouseTrigger::RightClick ||
+                trig == MouseTrigger::XButton1Click ||
+                trig == MouseTrigger::XButton2Click);
     default:
         return true;
     }

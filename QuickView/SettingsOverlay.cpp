@@ -3299,7 +3299,7 @@ void SettingsOverlay::BuildControlTab(SettingsTab& tabControl) {
         AddSimpleToggle(tabControl, AppStrings::g.Settings_Label_EdgeNavClick, &g_config.EdgeNavClick);
         AddSimpleToggle(tabControl, AppStrings::g.Settings_Label_DisableEdgeNavInCompare, &g_config.DisableEdgeNavInCompare);
         tabControl.items.push_back({ AppStrings::g.Settings_Label_NavIndicator, OptionType::Segment, nullptr, nullptr, BindEnum(&g_config.NavIndicator), nullptr, 0, 0, {AppStrings::g.Settings_Option_Arrow, AppStrings::g.Settings_Option_Cursor} });
-     
+
         // Gallery Trigger Mode
         {
             AddHeader(tabControl, AppStrings::g.Settings_Header_GalleryTrigger);
@@ -6422,6 +6422,40 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                 D2D1_RECT_F headerRect = D2D1::RectF(contentX, contentY + 10.0f * s, contentX + contentW, contentY + 40.0f * s);
                 m_textFormatHeader->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
                 pRT->DrawText(item.label.c_str(), (UINT32)item.label.length(), m_textFormatHeader.Get(), headerRect, m_brushText.Get());
+
+                // Optional section info icon: hovering it shows item.tooltipText
+                // through the shared tooltip renderer.
+                if (item.tooltipText != nullptr && item.tooltipText[0] != L'\0') {
+                    float headerTextW = 100.0f * s;
+                    if (m_dwriteFactory && m_textFormatHeader) {
+                        ComPtr<IDWriteTextLayout> headerLayout;
+                        if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(
+                                item.label.c_str(), (UINT32)item.label.length(), m_textFormatHeader.Get(),
+                                contentW, headerTextH, &headerLayout)) && headerLayout) {
+                            DWRITE_TEXT_METRICS metrics = {};
+                            if (SUCCEEDED(headerLayout->GetMetrics(&metrics))) {
+                                headerTextW = ceilf(metrics.widthIncludingTrailingWhitespace);
+                            }
+                        }
+                    }
+                    float tipIconSize = 24.0f * s;
+                    float tipIconX = contentX + headerTextW + 10.0f * s;
+                    float tipIconY = contentY + 10.0f * s + (headerTextH - tipIconSize) * 0.5f;
+                    item.tooltipIconRect = D2D1::RectF(tipIconX, tipIconY, tipIconX + tipIconSize, tipIconY + tipIconSize);
+
+                    const bool tipHovered = (&item == m_pHoverTooltipItem);
+                    ComPtr<ID2D1SolidColorBrush> tipBrush = tipHovered ? m_brushText : m_brushTextDim;
+                    D2D1_RECT_F tipRect = item.tooltipIconRect;
+                    const float tiw = tipRect.right - tipRect.left;
+                    const float tih = tipRect.bottom - tipRect.top;
+                    const float tiside = (std::min)(tiw, tih) * 0.66f;
+                    const float ticx = (tipRect.left + tipRect.right) * 0.5f;
+                    const float ticy = (tipRect.top + tipRect.bottom) * 0.5f;
+                    tipRect = D2D1::RectF(ticx - tiside * 0.5f, ticy - tiside * 0.5f, ticx + tiside * 0.5f, ticy + tiside * 0.5f);
+                    QuickView::UI::GeekIconRenderer::DrawVectorIcon(pRT, *Icons::Info, tipRect, tipBrush.Get());
+                } else {
+                    item.tooltipIconRect = {};
+                }
 
                 if (item.isNewOption) {
                     // Measure header text width

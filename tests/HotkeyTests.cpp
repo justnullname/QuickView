@@ -97,7 +97,7 @@ TEST(MouseGestureTest, DefaultPresetRulesMatchQuickViewSignature) {
     // QuickView signature: None + LeftDrag -> WindowDrag
     EXPECT_EQ(config.GetMouseGestureAction(0, MouseTrigger::LeftDrag), MouseActionTarget::WindowDrag);
 
-    // QuickView signature: None + MiddleDrag -> PanImage
+    // Default: None + MiddleDrag -> PanImage
     EXPECT_EQ(config.GetMouseGestureAction(0, MouseTrigger::MiddleDrag), MouseActionTarget::PanImage);
 
     // QuickView signature: None + MiddleClick -> ExitApp
@@ -419,6 +419,7 @@ TEST(MouseGestureTest, TriggerActionCompatibilityMatrix) {
         EXPECT_TRUE(IsMouseTriggerActionCompatible(dragTrig, MouseActionTarget::Zoom));
         EXPECT_TRUE(IsMouseTriggerActionCompatible(dragTrig, MouseActionTarget::CropRegionDrag));
         EXPECT_TRUE(IsMouseTriggerActionCompatible(dragTrig, MouseActionTarget::Loupe));
+        EXPECT_TRUE(IsMouseTriggerActionCompatible(dragTrig, MouseActionTarget::ViewPan));
         EXPECT_FALSE(IsMouseTriggerActionCompatible(dragTrig, MouseActionTarget::PanVertical));
         EXPECT_FALSE(IsMouseTriggerActionCompatible(dragTrig, MouseActionTarget::PanHorizontal));
         EXPECT_FALSE(IsMouseTriggerActionCompatible(dragTrig, MouseActionTarget::ContextMenu));
@@ -436,6 +437,7 @@ TEST(MouseGestureTest, TriggerActionCompatibilityMatrix) {
         EXPECT_TRUE(IsMouseTriggerActionCompatible(wheelTrig, MouseActionTarget::AdjustZoomSpeedWheel));
         EXPECT_TRUE(IsMouseTriggerActionCompatible(wheelTrig, MouseActionTarget::Navigate));
         EXPECT_FALSE(IsMouseTriggerActionCompatible(wheelTrig, MouseActionTarget::Loupe));
+        EXPECT_FALSE(IsMouseTriggerActionCompatible(wheelTrig, MouseActionTarget::ViewPan));
         EXPECT_FALSE(IsMouseTriggerActionCompatible(wheelTrig, MouseActionTarget::ContextMenu));
         EXPECT_FALSE(IsMouseTriggerActionCompatible(wheelTrig, MouseActionTarget::CropRegionDrag));
     }
@@ -455,6 +457,15 @@ TEST(MouseGestureTest, TriggerActionCompatibilityMatrix) {
         EXPECT_FALSE(IsMouseTriggerActionCompatible(clickTrig, MouseActionTarget::CropRegionDrag));
         EXPECT_FALSE(IsMouseTriggerActionCompatible(clickTrig, MouseActionTarget::Loupe));
     }
+
+    // Auto Pan supports Click (Toggle) and Drag (Hold-Drag), but rejects DoubleClick / Chord
+    for (MouseTrigger singleClickTrig : { MouseTrigger::LeftClick, MouseTrigger::MiddleClick,
+                                           MouseTrigger::RightClick, MouseTrigger::XButton1Click,
+                                           MouseTrigger::XButton2Click }) {
+        EXPECT_TRUE(IsMouseTriggerActionCompatible(singleClickTrig, MouseActionTarget::ViewPan));
+    }
+    EXPECT_FALSE(IsMouseTriggerActionCompatible(MouseTrigger::LeftDblClick, MouseActionTarget::ViewPan));
+    EXPECT_FALSE(IsMouseTriggerActionCompatible(MouseTrigger::LeftRightChord, MouseActionTarget::ViewPan));
 }
 
 TEST(HotkeyDispatchTest, ExitShortcutsBypassEscapeLayeredDismissal) {

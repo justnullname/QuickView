@@ -61,6 +61,7 @@ option(ENABLE_SECURITY_COOKIE "Enable /GS buffer security check for Store/WACK c
 set(QUICKVIEW_SOURCES
     QuickView/main.cpp
     QuickView/StringUtils.cpp
+    QuickView/ViewPanController.cpp
     QuickView/AsyncJob.cpp
     QuickView/BootPreloader.cpp
     QuickView/ImageExporter.cpp
@@ -482,6 +483,8 @@ add_executable(QuickViewTests
     tests/UpdateManagerTests.cpp
     tests/HdrPipelineTests.cpp
     tests/ColorPipelineTests.cpp
+    tests/ViewPanTests.cpp
+    QuickView/ViewPanController.cpp
     QuickView/TileManager.cpp
     QuickView/AiActionManager.cpp
     QuickView/GeekWidgets.cpp
