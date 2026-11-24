@@ -220,29 +220,37 @@ void GalleryOverlay::SetMode(GalleryMode mode) {
 void GalleryOverlay::Update(float deltaTime, HWND hwnd) {
     m_hwnd = hwnd;
     bool repaintNeeded = false;
+    const float dt = std::max(0.0f, deltaTime);
+    auto dampAlpha = [dt](float speed) -> float {
+        return 1.0f - std::exp(-speed * dt);
+    };
     
     // 1. Transition Progress interpolation (Hidden <-> Filmstrip)
     if (fabsf(m_transitionProgress - m_targetProgress) > 0.001f) {
-        float speed = g_config.GlassUIAnimations ? 12.0f : 100.0f;
-        m_transitionProgress += (m_targetProgress - m_transitionProgress) * deltaTime * speed;
-        if (m_transitionProgress < 0.001f) m_transitionProgress = 0.0f;
-        if (m_transitionProgress > 0.999f) m_transitionProgress = 1.0f;
+        if (!g_config.GlassUIAnimations) {
+            m_transitionProgress = m_targetProgress;
+        } else {
+            m_transitionProgress += (m_targetProgress - m_transitionProgress) * dampAlpha(12.0f);
+            if (fabsf(m_transitionProgress - m_targetProgress) <= 0.001f) m_transitionProgress = m_targetProgress;
+        }
         repaintNeeded = true;
     }
     
     // 2. Grid Progress interpolation (Filmstrip <-> FullGrid)
     if (fabsf(m_gridProgress - m_targetGridProgress) > 0.001f) {
-        float speed = g_config.GlassUIAnimations ? 10.0f : 100.0f;
-        m_gridProgress += (m_targetGridProgress - m_gridProgress) * deltaTime * speed;
-        if (m_gridProgress < 0.001f) m_gridProgress = 0.0f;
-        if (m_gridProgress > 0.999f) m_gridProgress = 1.0f;
+        if (!g_config.GlassUIAnimations) {
+            m_gridProgress = m_targetGridProgress;
+        } else {
+            m_gridProgress += (m_targetGridProgress - m_gridProgress) * dampAlpha(10.0f);
+            if (fabsf(m_gridProgress - m_targetGridProgress) <= 0.001f) m_gridProgress = m_targetGridProgress;
+        }
         repaintNeeded = true;
     }
     
     // 3. Physical Inertia for Horizontal Scroll
     if (!m_isLButtonDown && fabsf(m_velocityX) > 0.1f) {
-        m_scrollLeft -= m_velocityX * deltaTime;
-        m_velocityX *= powf(m_friction, deltaTime * 60.0f);
+        m_scrollLeft -= m_velocityX * dt;
+        m_velocityX *= powf(m_friction, dt * 60.0f);
         
         if (m_scrollLeft < 0.0f) {
             m_scrollLeft = 0.0f;
@@ -260,9 +268,12 @@ void GalleryOverlay::Update(float deltaTime, HWND hwnd) {
             m_targetScrollLeft = m_scrollLeft;
         }
         if (fabsf(m_scrollLeft - m_targetScrollLeft) > 0.1f) {
-            float speed = g_config.GlassUIAnimations ? 12.0f : 100.0f;
-            m_scrollLeft += (m_targetScrollLeft - m_scrollLeft) * deltaTime * speed;
-            m_scrollLeft = std::clamp(m_scrollLeft, 0.0f, m_maxScrollLeft);
+            if (!g_config.GlassUIAnimations) {
+                m_scrollLeft = std::clamp(m_targetScrollLeft, 0.0f, m_maxScrollLeft);
+            } else {
+                m_scrollLeft += (m_targetScrollLeft - m_scrollLeft) * dampAlpha(12.0f);
+                m_scrollLeft = std::clamp(m_scrollLeft, 0.0f, m_maxScrollLeft);
+            }
             repaintNeeded = true;
         }
     } else {
@@ -273,19 +284,25 @@ void GalleryOverlay::Update(float deltaTime, HWND hwnd) {
     // 4. Alpha Transitions for Arrows & Visual Cues
     float targetLeftArrowAlpha = (m_arrowLeftHover && m_gridProgress < 0.2f) ? 1.0f : 0.0f;
     if (fabsf(m_arrowLeftAlpha - targetLeftArrowAlpha) > 0.01f) {
-        m_arrowLeftAlpha += (targetLeftArrowAlpha - m_arrowLeftAlpha) * deltaTime * 12.0f;
+        m_arrowLeftAlpha = g_config.GlassUIAnimations
+            ? (m_arrowLeftAlpha + (targetLeftArrowAlpha - m_arrowLeftAlpha) * dampAlpha(12.0f))
+            : targetLeftArrowAlpha;
         repaintNeeded = true;
     }
     
     float targetRightArrowAlpha = (m_arrowRightHover && m_gridProgress < 0.2f) ? 1.0f : 0.0f;
     if (fabsf(m_arrowRightAlpha - targetRightArrowAlpha) > 0.01f) {
-        m_arrowRightAlpha += (targetRightArrowAlpha - m_arrowRightAlpha) * deltaTime * 12.0f;
+        m_arrowRightAlpha = g_config.GlassUIAnimations
+            ? (m_arrowRightAlpha + (targetRightArrowAlpha - m_arrowRightAlpha) * dampAlpha(12.0f))
+            : targetRightArrowAlpha;
         repaintNeeded = true;
     }
     
     float targetHintAlpha = m_bottomHintHover ? 1.0f : 0.35f;
     if (fabsf(m_bottomHintAlpha - targetHintAlpha) > 0.01f) {
-        m_bottomHintAlpha += (targetHintAlpha - m_bottomHintAlpha) * deltaTime * 10.0f;
+        m_bottomHintAlpha = g_config.GlassUIAnimations
+            ? (m_bottomHintAlpha + (targetHintAlpha - m_bottomHintAlpha) * dampAlpha(10.0f))
+            : targetHintAlpha;
         repaintNeeded = true;
     }
     
@@ -1439,15 +1456,20 @@ bool GalleryOverlay::OnMouseWheel(int delta) {
     }
     
     // Horizontal scroll in filmstrip / vertical scroll in grid
+    const float scale = g_uiScale > 0.0f ? g_uiScale : 1.0f;
+    const float notches = static_cast<float>(delta) / 120.0f;
     if (m_gridProgress < 0.5f) {
-        m_scrollLeft -= delta * 0.5f;
+        // Scroll at least ~1.25 thumbnail cells (cell width + 10% gap) per wheel notch
+        const float cellStep = GetFilmCellSize() * scale * 1.10f * 1.25f;
+        m_scrollLeft -= notches * cellStep;
         m_scrollLeft = std::clamp(m_scrollLeft, 0.0f, m_maxScrollLeft);
         m_targetScrollLeft = m_scrollLeft; // Sync target to prevent smooth-scroll snap-back
         m_velocityX = 0.0f;               // Kill any residual inertia
         m_lastUserScrollTime = GetTickCount(); // Suppress auto-centering while user browses
         m_recenterPending = true;
     } else {
-        m_scrollTop -= delta * 0.5f;
+        const float rowStep = (m_cellHeight > 0.0f) ? (m_cellHeight * 1.10f) : (160.0f * scale);
+        m_scrollTop -= notches * rowStep;
         m_scrollTop = std::clamp(m_scrollTop, 0.0f, m_maxScroll);
     }
     return true;
@@ -1853,7 +1875,7 @@ void GalleryOverlay::EnsureVisible(int index, const D2D1_SIZE_F& size, bool smoo
         float clampedTarget = std::clamp(target, 0.0f, m_maxScrollLeft);
         
         m_targetScrollLeft = clampedTarget;
-        if (!smooth) {
+        if (!smooth || !g_config.GlassUIAnimations) {
             m_scrollLeft = clampedTarget;
         }
     }
