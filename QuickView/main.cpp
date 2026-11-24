@@ -941,7 +941,17 @@ VisualState GetVisualState();
 bool GetPrimaryImageDisplayMetrics(HWND hwnd, ImageDisplayMetrics& out);
 static bool PreparePrimaryCropReEditIfNeeded(HWND hwnd);
 static bool ApplyCurrentCropSelection(HWND hwnd);
-static float ComputeBaseFitScaleForVisual(const VisualState& vs, float winW, float winH);
+static inline float GetBaseMinWindowSize() {
+    const float ctrlMin = 4.0f * 38.0f * g_uiScale;
+    return std::max(200.0f, std::max(ctrlMin, g_config.WindowMinSize));
+}
+
+static inline bool IsSmallImageForUpscaleGuard(float imgW, float imgH, bool isVector) {
+    const float baseMin = GetBaseMinWindowSize();
+    return !isVector && imgW < baseMin && imgH < baseMin;
+}
+
+float ComputeBaseFitScaleForVisual(const VisualState& vs, float winW, float winH);
 static size_t CountWebContentFilesInNavigator();
 void SetLockWindowSize(HWND hwnd, bool locked);
 
@@ -1405,8 +1415,10 @@ bool GetCurrentPixelArtState(HWND hwnd) {
     if (winW <= 0 || winH <= 0) return false;
 
     float fitScale = std::min(winW / imgW, winH / imgH);
-    if (imgW < 200.0f && imgH < 200.0f) {
-        if (fitScale > 1.0f) fitScale = 1.0f;
+    const auto& res = GetPaneContext(PaneSlot::Primary).resource;
+    const bool isVector = (res.isSvg || res.isWebView);
+    if (IsSmallImageForUpscaleGuard(imgW, imgH, isVector) && fitScale > 1.0f) {
+        fitScale = 1.0f;
     }
 
     float totalScale = fitScale * GetPaneContext(PaneSlot::Primary).view.Zoom;
@@ -1904,7 +1916,8 @@ static void ZoomCompareView(CompareView& view,
     if (vpW <= 1.0f || vpH <= 1.0f) return;
 
     float fit = std::min(vpW / oriented.width, vpH / oriented.height);
-    if (oriented.width < 200.0f && oriented.height < 200.0f && fit > 1.0f) {
+    const bool isVector = (res.isSvg || res.isWebView);
+    if (IsSmallImageForUpscaleGuard(oriented.width, oriented.height, isVector) && fit > 1.0f) {
         fit = 1.0f;
     }
 
@@ -1996,7 +2009,7 @@ void DrawResourceIntoViewport(ID2D1DeviceContext* ctx,
 
     float fitScale = std::min(vpW / effectiveSize.width, vpH / effectiveSize.height);
     const bool isVector = (res.isSvg || res.isWebView);
-    if (!isVector && effectiveSize.width < 200.0f && effectiveSize.height < 200.0f && fitScale > 1.0f) {
+    if (IsSmallImageForUpscaleGuard(effectiveSize.width, effectiveSize.height, isVector) && fitScale > 1.0f) {
         fitScale = 1.0f;
     }
 
@@ -2486,8 +2499,6 @@ static WebViewReprojectionState g_webViewReproject;
 static bool UseSvgViewportRendering(const ImageResource& res) {
     return res.isSvg && res.svgDoc;
 }
-
-static float ComputeBaseFitScaleForVisual(const VisualState& vs, float winW, float winH);
 
 static float ComputeSvgViewportScale(float winW, float winH, const VisualState& vs) {
     if (vs.VisualSize.width <= 0.0f || vs.VisualSize.height <= 0.0f) {
@@ -4096,7 +4107,7 @@ D2D1_SIZE_F GetVisualImageSize() {
     return GetVisualState().VisualSize;
 }
 
-static float ComputeBaseFitScaleForVisual(const VisualState& vs, float winW, float winH) {
+float ComputeBaseFitScaleForVisual(const VisualState& vs, float winW, float winH) {
     if (vs.VisualSize.width <= 0.0f || vs.VisualSize.height <= 0.0f || winW <= 0.0f || winH <= 0.0f) {
         return 1.0f;
     }
@@ -4107,7 +4118,7 @@ static float ComputeBaseFitScaleForVisual(const VisualState& vs, float winW, flo
         if (!g_config.UpscaleSmallImagesWhenLocked && baseFit > 1.0f) {
             baseFit = 1.0f;
         }
-    } else if (!isVector && vs.VisualSize.width < 200.0f && vs.VisualSize.height < 200.0f && baseFit > 1.0f) {
+    } else if (IsSmallImageForUpscaleGuard(vs.VisualSize.width, vs.VisualSize.height, isVector) && baseFit > 1.0f) {
         baseFit = 1.0f;
     }
 
@@ -4297,7 +4308,7 @@ static float ComputeComparePaneFitScale(HWND hwnd, ComparePane p) {
     if (sz.width <= 0.0f || sz.height <= 0.0f || vpW <= 0.0f || vpH <= 0.0f) return 1.0f;
     float fit = std::min(vpW / sz.width, vpH / sz.height);
     const bool isVector = (pane.resource.isSvg || pane.resource.isWebView);
-    if (!isVector && sz.width < 200.0f && sz.height < 200.0f && fit > 1.0f) {
+    if (IsSmallImageForUpscaleGuard(sz.width, sz.height, isVector) && fit > 1.0f) {
         fit = 1.0f;
     }
     return (fit > 0.0001f) ? fit : 1.0f;
@@ -4476,7 +4487,7 @@ static float ComputeFitScaleForCurrentVisual(HWND hwnd, D2D1_SIZE_F visualSize) 
     } else {
         const auto& res = GetPaneContext(PaneSlot::Primary).resource;
         const bool isVector = (res.isSvg || res.isWebView);
-        if (!isVector && visualSize.width < 200.0f && visualSize.height < 200.0f && fitScale > 1.0f) {
+        if (IsSmallImageForUpscaleGuard(visualSize.width, visualSize.height, isVector) && fitScale > 1.0f) {
             fitScale = 1.0f;
         }
     }
@@ -5982,7 +5993,7 @@ void LoadConfig() {
         { L"View",     L"CanvasColor",                  &AppConfig::CanvasColor,                  2,    1,    0,    false },
         { L"View",     L"CanvasEffectStyle",            &AppConfig::CanvasEffectStyle,            0,    1,    0,    false },
         { L"View",     L"OpenFullScreenMode",           &AppConfig::OpenFullScreenMode,           0,    1,    0,    false },
-        { L"View",     L"FullScreenZoomMode",           &AppConfig::FullScreenZoomMode,           0,    1,    0,    false },
+        { L"View",     L"FullScreenZoomMode",           &AppConfig::FullScreenZoomMode,           1,    0,    1,    true  },
         { L"View",     L"ShowBorderIndicator",          &AppConfig::ShowBorderIndicator,          1,    1,    0,    false },
         { L"View",     L"ShowNavigator",                &AppConfig::ShowNavigator,                0,    1,    0,    false },
         { L"View",     L"NavigatorAlignX",              &AppConfig::NavigatorAlignX,              1,    1,    0,    false },
@@ -6633,7 +6644,7 @@ static bool ComputeSlotFitScale(PaneSlot slot, bool isCompare, float effVpW, flo
 
     float fitScale = (std::min)(effVpW / outOrientedSize.width, effVpH / outOrientedSize.height);
     const bool isVector = (pane.resource.isSvg || pane.resource.isWebView);
-    if (!isVector && outOrientedSize.width < 200.0f && outOrientedSize.height < 200.0f && fitScale > 1.0f) {
+    if (IsSmallImageForUpscaleGuard(outOrientedSize.width, outOrientedSize.height, isVector) && fitScale > 1.0f) {
         fitScale = 1.0f;
     }
     outFitScale = fitScale;
@@ -6741,7 +6752,9 @@ int GetCurrentZoomPercent() {
             fitScale = 1.0f;
         }
     } else {
-        if (effSize.width < 200.0f && effSize.height < 200.0f && fitScale > 1.0f) {
+        const auto& res = GetPaneContext(PaneSlot::Primary).resource;
+        const bool isVector = (res.isSvg || res.isWebView);
+        if (IsSmallImageForUpscaleGuard(effSize.width, effSize.height, isVector) && fitScale > 1.0f) {
             fitScale = 1.0f;
         }
     }
@@ -6787,8 +6800,8 @@ void AdjustWindowForOverlay(HWND hwnd, bool isClosed) {
     if (hasImage) {
         curBaseFit = std::min(curClientW / imgW, curClientH / imgH);
         const bool isVector = (GetPaneContext(PaneSlot::Primary).resource && (GetPaneContext(PaneSlot::Primary).resource.isSvg || GetPaneContext(PaneSlot::Primary).resource.isWebView));
-        if (!isVector && imgW < 200.0f && imgH < 200.0f) {
-            if (curBaseFit > 1.0f) curBaseFit = 1.0f;
+        if (IsSmallImageForUpscaleGuard(imgW, imgH, isVector) && curBaseFit > 1.0f) {
+            curBaseFit = 1.0f;
         }
         absoluteZoom = GetPaneContext(PaneSlot::Primary).view.Zoom * curBaseFit;
     }
@@ -6875,8 +6888,8 @@ void AdjustWindowForOverlay(HWND hwnd, bool isClosed) {
                                (GetPaneContext(PaneSlot::Primary).resource.isSvg || GetPaneContext(PaneSlot::Primary).resource.isWebView));
 
         float newBaseFit = std::min(finalClientW / imgW, finalClientH / imgH);
-        if (!isVector && imgW < 200.0f && imgH < 200.0f) {
-            if (newBaseFit > 1.0f) newBaseFit = 1.0f;
+        if (IsSmallImageForUpscaleGuard(imgW, imgH, isVector) && newBaseFit > 1.0f) {
+            newBaseFit = 1.0f;
         }
 
         if (newBaseFit > 0.0001f) {
@@ -7108,28 +7121,12 @@ void AdjustWindowToImage(HWND hwnd) {
         windowH = (int)(windowH * ratio);
     }
     
-    // Minimum size for UI controls (Preserve Aspect Ratio)
-    // [Phase 3] User Requested: Min 100x100. Small images stay at 100% inside this.
-    // If Settings is visible, we might want larger, but AdjustWindowToImage returns early if Settings visible.
+    // Minimum size for UI controls. Clamp each axis independently instead of scaling up by aspect ratio
+    // so thin strip images keep natural window proportions and display at 100% scale.
     int minW = (int)std::lround(GetMinWindowWidth());
     int minH = (int)std::lround(GetMinWindowHeight());
-    
-    // [Phase 3] Special handling for small images
-    if (imgWidth < minW && imgHeight < minH) {
-        // If image is intrinsically smaller than min window,
-        // just set window to min size. Do NOT upscale window dimensions (which attempts to preserve AR).
-        // The image will be centered at 1.0 scale by SyncDCompState.
-        if (windowW < minW) windowW = minW;
-        if (windowH < minH) windowH = minH;
-    } 
-    else if (windowW < minW || windowH < minH) {
-         float scaleW = (float)minW / windowW;
-         float scaleH = (float)minH / windowH;
-         float scaleUp = std::max(scaleW, scaleH); // Scale up to satisfy both mins
-         
-         windowW = (int)(windowW * scaleUp);
-         windowH = (int)(windowH * scaleUp);
-    }
+    if (windowW < minW) windowW = minW;
+    if (windowH < minH) windowH = minH;
 
     if (g_runtime.ShowInfoPanel && g_uiRenderer) {
         D2D1_SIZE_F reqSize = g_uiRenderer->GetRequiredInfoPanelSize();
@@ -10398,7 +10395,8 @@ bool ScreenToImageSpace(HWND hwnd, int screenX, int screenY, float& imgX, float&
     float vpH = (float)(rc.bottom - rc.top);
 
     float fitScale = std::min(vpW / orientedSize.width, vpH / orientedSize.height);
-    if (orientedSize.width < 200.0f && orientedSize.height < 200.0f && fitScale > 1.0f) {
+    const bool isVector = (pane.resource.isSvg || pane.resource.isWebView);
+    if (IsSmallImageForUpscaleGuard(orientedSize.width, orientedSize.height, isVector) && fitScale > 1.0f) {
         fitScale = 1.0f;
     }
     const float clampedZoom = (std::max)(0.02f, pane.view.Zoom);
@@ -11055,7 +11053,10 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
                 }
 
                 AppContext::GetInstance().CompareCtrl->CenterDialogOnPaneIfNeeded(hwnd, ComparePane::Left);
-                std::wstring newName = AppContext::GetInstance().DialogCtrl->ShowInputDialog(hwnd, AppStrings::g.Context_Rename, L"Enter new filename:", currentName);
+                std::wstring newName = AppContext::GetInstance().DialogCtrl->ShowInputDialog(
+                    hwnd, StripMenuShortcut(AppStrings::g.Context_Rename),
+                    AppStrings::g.Dialog_Prompt_EnterNewFilename ? AppStrings::g.Dialog_Prompt_EnterNewFilename : L"Enter new filename:",
+                    currentName);
                 ClearDialogCenter();
                 if (!newName.empty()) {
                     bool newHasExt = (newName.find_last_of(L'.') != std::wstring::npos);
@@ -11122,7 +11123,10 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
                 
                 // Show Input Dialog
                 AppContext::GetInstance().CompareCtrl->CenterDialogOnPaneIfNeeded(hwnd, ComparePane::Right);
-                std::wstring newName = AppContext::GetInstance().DialogCtrl->ShowInputDialog(hwnd, AppStrings::g.Context_Rename, L"Enter new filename:", currentName);
+                std::wstring newName = AppContext::GetInstance().DialogCtrl->ShowInputDialog(
+                    hwnd, StripMenuShortcut(AppStrings::g.Context_Rename),
+                    AppStrings::g.Dialog_Prompt_EnterNewFilename ? AppStrings::g.Dialog_Prompt_EnterNewFilename : L"Enter new filename:",
+                    currentName);
                 ClearDialogCenter();
                 
                 // [Feature] Auto-append extension if missing
@@ -21448,18 +21452,21 @@ static void HandlePairedRename(HWND hwnd, const std::wstring& renderedPath, cons
 
     // Ask which files to rename in a single integrated input dialog
     const std::wstring btnPair = rLabel + L" + " + wLabel; // both
-    const std::wstring btnRaw  = wLabel + L" only";        // RAW only
-    const std::wstring btnJpg  = rLabel + L" only";        // JPG only
+    const std::wstring btnRaw  = FormatOnlyExtLabel(wLabel);
+    const std::wstring btnJpg  = FormatOnlyExtLabel(rLabel);
+    const wchar_t* cancelLabel = AppStrings::g.Dialog_Cancel ? AppStrings::g.Dialog_Cancel : L"Cancel";
     std::vector<DialogButton> btns;
     btns.emplace_back(DialogResult::Yes, btnPair.c_str());
     btns.emplace_back(DialogResult::Custom2, btnRaw.c_str());
     btns.emplace_back(DialogResult::Custom1, btnJpg.c_str());
-    btns.emplace_back(DialogResult::Cancel, L"Cancel");
+    btns.emplace_back(DialogResult::Cancel, cancelLabel);
 
     AppContext::GetInstance().CompareCtrl->CenterDialogOnPaneIfNeeded(hwnd, ComparePane::Right);
     DialogResult choice = DialogResult::None;
     std::wstring newStem = AppContext::GetInstance().DialogCtrl->ShowInputDialog(
-        hwnd, AppStrings::g.Context_Rename, L"Enter new filename:", initialStem, btns, choice);
+        hwnd, StripMenuShortcut(AppStrings::g.Context_Rename),
+        AppStrings::g.Dialog_Prompt_EnterNewFilename ? AppStrings::g.Dialog_Prompt_EnterNewFilename : L"Enter new filename:",
+        initialStem, btns, choice);
     ClearDialogCenter();
 
     if (choice != DialogResult::Yes && choice != DialogResult::Custom1 && choice != DialogResult::Custom2) {

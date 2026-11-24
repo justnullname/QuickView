@@ -45,10 +45,7 @@ static POINT GetResolvedAnchorScreenPoint(HWND hwnd, const POINT* anchorScreenPt
     return centerPt;
 }
 
-static float ComputeBaseFitScaleForVisual(const VisualState& vs, float winW, float winH) {
-    if (vs.VisualSize.width <= 0 || vs.VisualSize.height <= 0 || winW <= 0 || winH <= 0) return 1.0f;
-    return std::min(winW / vs.VisualSize.width, winH / vs.VisualSize.height);
-}
+extern float ComputeBaseFitScaleForVisual(const VisualState& vs, float winW, float winH);
 
 SmoothZoomController::SmoothZoomController(AppContext& context) : m_context(context) {}
 

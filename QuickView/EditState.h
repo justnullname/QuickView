@@ -1249,7 +1249,7 @@ struct AppConfig {
     wchar_t CustomLiteTags[256] = L"ISO, Aperture, Shutter, Date"; // Using array for easier serialization or wstring
     bool RoundedCorners = true; // [v3.1.2] Toggle rounded corners
     bool EnableAmbientDimmer = true;    // [v9.0] Toggle background overlay for modals
-    int FullScreenZoomMode = 0;         // 0=Fit, 1=Auto
+    int FullScreenZoomMode = 1;         // 0=Fit, 1=Auto
 
     // --- Window Size Limits ---
     float WindowMinSize = 0.0f;         // Minimum window size (0 means auto-calculate from UI controls)
