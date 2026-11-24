@@ -170,6 +170,7 @@ void ScheduleDebouncedSuperResolution(HWND hwnd);
 constexpr UINT WM_DEFERRED_EXPLORER_SYNC = WM_APP + 27;
 // WebContentHost::kCommitMessage (WM_APP+55) — document ready, need DComp Commit
 constexpr UINT_PTR TIMER_ID_STARTUP_SHOW = 992;
+constexpr UINT_PTR TIMER_ID_RESTORE_DWM_TRANSITIONS = 993;
 constexpr UINT_PTR TIMER_ID_SR_DEBOUNCE = 3001;
 constexpr UINT_PTR TIMER_ID_UPDATE_CHECK = 3002;
 constexpr UINT_PTR TIMER_ID_MARQUEE = 3003;
@@ -177,6 +178,7 @@ constexpr UINT_PTR TIMER_ID_MARQUEE = 3003;
 bool g_isBootingWithImage = false;
 bool g_waitingBootFrame = false;
 static bool g_needsInitialPresentationReset = true;
+static bool g_startupDwmTransitionSuppressed = true;
 
 static const wchar_t* g_szClassName = L"QuickViewClass";
 static const wchar_t* g_szWindowTitle = L"QuickView";
@@ -5189,6 +5191,32 @@ void SyncWindowDwmFrameAttributes(HWND hwnd, int activeOverride) {
     s_dwmFrameCache.valid = true;
 }
 
+#ifndef DWMWA_TRANSITIONS_FORCEDISABLED
+#define DWMWA_TRANSITIONS_FORCEDISABLED 3
+#endif
+
+void SyncWindowDwmTransitions(HWND hwnd) {
+    if (!hwnd) return;
+
+    struct DwmTransitionCache {
+        HWND hwnd = nullptr;
+        bool disabled = false;
+        bool valid = false;
+    };
+    static DwmTransitionCache s_dwmTransitionCache;
+
+    // Suppress DWM open/show transitions on initial boot and whenever UI animations are disabled.
+    const bool disableTransitions = g_startupDwmTransitionSuppressed || !g_config.GlassUIAnimations;
+    const bool cacheHit = s_dwmTransitionCache.valid && s_dwmTransitionCache.hwnd == hwnd;
+    if (!cacheHit || s_dwmTransitionCache.disabled != disableTransitions) {
+        BOOL disable = disableTransitions ? TRUE : FALSE;
+        DwmSetWindowAttribute(hwnd, DWMWA_TRANSITIONS_FORCEDISABLED, &disable, sizeof(disable));
+        s_dwmTransitionCache.hwnd = hwnd;
+        s_dwmTransitionCache.disabled = disableTransitions;
+        s_dwmTransitionCache.valid = true;
+    }
+}
+
 bool IsSystemLightTheme() {
     return QuickView::UI::Theme::IsSystemLightThemeCached();
 }
@@ -5227,6 +5255,7 @@ void ApplyWindowTheme(HWND hwnd) {
     }
 
     SyncWindowDwmFrameAttributes(hwnd);
+    SyncWindowDwmTransitions(hwnd);
 
     if (const auto setPreferredAppMode = LoadSetPreferredAppMode()) {
         setPreferredAppMode(useLightTheme ? PreferredAppMode::ForceLight : PreferredAppMode::ForceDark);
@@ -9132,10 +9161,13 @@ static void TryCleanupOldVersion(int argc, LPWSTR* argv) {
 HCURSOR g_currentCursor = nullptr;
 
 static void ShowInitialWindow(HWND hwnd) {
+    SyncWindowDwmTransitions(hwnd);
     const int showMode = g_isFullScreen ? SW_SHOWNORMAL : g_initialCmdShow;
     ShowWindow(hwnd, showMode);
     UpdateWindow(hwnd);
     ForceForegroundWindow(hwnd);
+    // Re-enable runtime DWM transitions after DWM finishes initial window presentation.
+    SetTimer(hwnd, TIMER_ID_RESTORE_DWM_TRANSITIONS, 50, nullptr);
 }
 
 struct InitialWindowMetrics {
@@ -13691,7 +13723,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         auto* pathStr = reinterpret_cast<std::wstring*>(lParam);
         if (pathStr && !pathStr->empty()) {
             g_isExitingWithPrintJobs = false; // Revive process from keep-alive exit state
+            const bool wasHidden = !IsWindowVisible(hwnd);
+            if (wasHidden) {
+                g_startupDwmTransitionSuppressed = true;
+                SyncWindowDwmTransitions(hwnd);
+            }
             ShowWindow(hwnd, SW_SHOW);        // Restore window visibility
+            if (wasHidden) {
+                SetTimer(hwnd, TIMER_ID_RESTORE_DWM_TRANSITIONS, 50, nullptr);
+            }
             OpenPathOrDirectory(hwnd, *pathStr);
             if (IsIconic(hwnd)) ShowWindow(hwnd, SW_RESTORE);
             ForceForegroundWindow(hwnd);
@@ -14014,6 +14054,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 g_isBootingWithImage = false;
                 EnsureBootHydrated(hwnd);
             }
+            return 0;
+        }
+
+        if (wParam == TIMER_ID_RESTORE_DWM_TRANSITIONS) {
+            KillTimer(hwnd, TIMER_ID_RESTORE_DWM_TRANSITIONS);
+            g_startupDwmTransitionSuppressed = false;
+            SyncWindowDwmTransitions(hwnd);
             return 0;
         }
 

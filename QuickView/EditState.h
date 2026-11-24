@@ -1940,6 +1940,7 @@ bool IsSystemLightTheme();
 bool IsLightThemeActive();
 void ApplyWindowTheme(HWND hwnd);
 void SyncWindowDwmFrameAttributes(HWND hwnd, int activeOverride = -1);
+void SyncWindowDwmTransitions(HWND hwnd);
 
 // ============================================================================
 // Contrast Compensation — Automatic dim text brightness adaptation

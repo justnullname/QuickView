@@ -2586,7 +2586,12 @@ void SettingsOverlay::BuildThemeTab(SettingsTab& tabTheme) {
     tabTheme.items.push_back(std::move(itemEnableGlass));
 
     SettingsItem itemAnimations = { AppStrings::g.Settings_Label_GlassUIAnimations, OptionType::Toggle, &g_config.GlassUIAnimations };
-    itemAnimations.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
+    itemAnimations.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        SaveConfig();
+        if (overlay && overlay->m_hwnd) {
+            SyncWindowDwmTransitions(overlay->m_hwnd);
+        }
+    };
     tabTheme.items.push_back(std::move(itemAnimations));
     
     // --- Core Material Parameters ---
