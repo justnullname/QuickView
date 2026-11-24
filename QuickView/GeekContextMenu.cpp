@@ -585,12 +585,12 @@ void GeekContextMenu::CreateResources() {
     hoverClr.a = L ? 0.12f : 0.15f;
     m_d2dContext->CreateSolidColorBrush(hoverClr, &m_hoverBrush);
 
-    m_d2dContext->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, L ? 0.50f : 0.12f), &m_bevelLightBrush);
-    m_d2dContext->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, L ? 0.06f : 0.25f), &m_bevelDarkBrush);
+    m_d2dContext->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, L ? 0.55f : 0.14f), &m_bevelLightBrush);
+    m_d2dContext->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, L ? 0.22f : 0.40f), &m_bevelDarkBrush);
     m_d2dContext->CreateSolidColorBrush(
-        L ? D2D1::ColorF(1, 1, 1, 0.25f) : D2D1::ColorF(0, 0, 0, 0.20f), &m_capsuleBrush);
+        L ? D2D1::ColorF(0, 0, 0, 0.045f) : D2D1::ColorF(0, 0, 0, 0.20f), &m_capsuleBrush);
     m_d2dContext->CreateSolidColorBrush(
-        L ? D2D1::ColorF(1, 1, 1, 0.35f) : D2D1::ColorF(0, 0, 0, 0.30f), &m_capsuleBorderBrush);
+        L ? D2D1::ColorF(0, 0, 0, 0.10f) : D2D1::ColorF(0, 0, 0, 0.30f), &m_capsuleBorderBrush);
 
     auto sz = m_d2dContext->GetSize();
     D2D1_GRADIENT_STOP stops[2];
@@ -898,10 +898,18 @@ float GeekContextMenu::GetDwmCornerRadiusDIP() const {
 void GeekContextMenu::RenderBevel() {
     auto sz = m_d2dContext->GetSize();
     const float cr = GetDwmCornerRadiusDIP();
-    D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(
-        D2D1::RectF(0.5f, 0.5f, sz.width - 0.5f, sz.height - 0.5f), cr, cr);
-    if (m_bevelLightBrush)
-        m_d2dContext->DrawRoundedRectangle(rr, m_bevelLightBrush.Get(), 1.0f);
+    // Outer contrast border stays visible on bright/white images and Mica backdrops
+    if (m_bevelDarkBrush) {
+        D2D1_ROUNDED_RECT outerRR = D2D1::RoundedRect(
+            D2D1::RectF(0.5f, 0.5f, sz.width - 0.5f, sz.height - 0.5f), cr, cr);
+        m_d2dContext->DrawRoundedRectangle(outerRR, m_bevelDarkBrush.Get(), 1.0f);
+    }
+    if (m_bevelLightBrush) {
+        const float innerCr = std::max(0.0f, cr - 1.0f);
+        D2D1_ROUNDED_RECT innerRR = D2D1::RoundedRect(
+            D2D1::RectF(1.5f, 1.5f, sz.width - 1.5f, sz.height - 1.5f), innerCr, innerCr);
+        m_d2dContext->DrawRoundedRectangle(innerRR, m_bevelLightBrush.Get(), 1.0f);
+    }
 }
 
 // ============================================================
@@ -1180,8 +1188,8 @@ void GeekContextMenu::RenderAndUI() {
 
     m_glassEngine.DrawGeekGlassPanel(m_d2dContext.Get(), config);
 
-    if (m_bevelLightBrush) m_bevelLightBrush->SetOpacity(config.opacity);
-    if (m_bevelDarkBrush) m_bevelDarkBrush->SetOpacity(config.opacity);
+    if (m_bevelLightBrush) m_bevelLightBrush->SetOpacity(m_isLight ? std::max(0.45f, config.opacity) : std::max(0.70f, config.opacity));
+    if (m_bevelDarkBrush) m_bevelDarkBrush->SetOpacity(1.0f);
 
     RenderCapsule();
     RenderActionRow();
