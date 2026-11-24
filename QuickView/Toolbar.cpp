@@ -1,5 +1,7 @@
 #include "pch.h"
 #include "Toolbar.h"
+#include <algorithm>
+#include <cmath>
 #include "AppStrings.h"
 #include "EditState.h"
 #include "PaneContext.h"
@@ -773,7 +775,8 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
         
         // When paused, show the frame at the mouse cursor position
         if (!m_animPlaying) {
-             displayFrame = (uint32_t)round(m_animSeekHoverProgress * (m_totalFrames - 1));
+             const float clampedProgress = std::clamp(m_animSeekHoverProgress, 0.0f, 1.0f);
+             displayFrame = static_cast<uint32_t>(std::roundf(clampedProgress * static_cast<float>(m_totalFrames - 1)));
              if (displayFrame >= m_totalFrames) displayFrame = m_totalFrames - 1;
         }
 

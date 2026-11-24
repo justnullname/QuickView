@@ -10,6 +10,7 @@
 #include "FileAssociationManager.h"
 #include "SystemInfo.h"
 #include <vector>
+#include <cstddef>
 #include <mutex>
 #include <thread>
 #include <atomic>
@@ -128,27 +129,29 @@ static void ServerLoop(std::stop_token st) {
         }
 
         // Read binary payload: [uint64_t hwndVal][wchar_t path...]
-        alignas(8) char buf[4096]{};
+        struct PipePacket {
+            uint64_t rawHwnd;
+            wchar_t path[(4096 - sizeof(uint64_t)) / sizeof(wchar_t)];
+        };
+        static_assert(sizeof(PipePacket) == 4096);
+        static_assert(offsetof(PipePacket, path) == sizeof(uint64_t));
+
+        PipePacket pkt{};
         DWORD bytesRead = 0;
-        BOOL ok = ReadFile(hPipe, buf, sizeof(buf), &bytesRead, nullptr);
+        BOOL ok = ReadFile(hPipe, &pkt, sizeof(pkt), &bytesRead, nullptr);
         DisconnectNamedPipe(hPipe);
         CloseHandle(hPipe);
 
         if (ok && bytesRead >= sizeof(uint64_t) + sizeof(wchar_t)) {
-            uint64_t rawHwnd = 0;
-            memcpy(&rawHwnd, buf, sizeof(uint64_t));
-
             RoutePayload payload;
-            payload.hFgCaller = reinterpret_cast<HWND>(static_cast<uintptr_t>(rawHwnd));
+            payload.hFgCaller = reinterpret_cast<HWND>(static_cast<uintptr_t>(pkt.rawHwnd));
 
-            const wchar_t* pathStart = reinterpret_cast<const wchar_t*>(buf + sizeof(uint64_t));
-            size_t maxWChars = (bytesRead - sizeof(uint64_t)) / sizeof(wchar_t);
-
+            const size_t maxWChars = (bytesRead - sizeof(uint64_t)) / sizeof(wchar_t);
             size_t wlen = 0;
-            while (wlen < maxWChars && pathStart[wlen] != L'\0') {
+            while (wlen < maxWChars && pkt.path[wlen] != L'\0') {
                 wlen++;
             }
-            payload.path.assign(pathStart, wlen);
+            payload.path.assign(pkt.path, wlen);
 
             if (!payload.path.empty() && s_onNewPath) {
                 s_onNewPath(std::move(payload), s_onNewPathContext);
