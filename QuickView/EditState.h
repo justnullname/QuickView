@@ -389,8 +389,13 @@ inline bool IsMouseTriggerActionCompatible(MouseTrigger trig, MouseActionTarget 
     case MouseActionTarget::AdjustZoomSpeedWheel:
     case MouseActionTarget::CropRegionDrag:
     case MouseActionTarget::Loupe:
-    case MouseActionTarget::ViewPan:
         return false;
+    case MouseActionTarget::ViewPan:
+        return (trig == MouseTrigger::LeftClick ||
+                trig == MouseTrigger::MiddleClick ||
+                trig == MouseTrigger::RightClick ||
+                trig == MouseTrigger::XButton1Click ||
+                trig == MouseTrigger::XButton2Click);
     default:
         return true;
     }
@@ -463,10 +468,7 @@ inline std::vector<MouseGestureRule> GetDefaultMouseGestures() {
     return {
         // Default unmodified operations (100% QuickView signature feel)
         { 0, 0, (uint8_t)MouseTrigger::LeftDrag,        (int)MouseActionTarget::WindowDrag },
-        // [View Pan] Middle drag uses the RTS-style continuous View Pan by default
-        // (more native than the legacy positional PanImage); a middle click is
-        // still the ExitApp gesture below.
-        { 0, 0, (uint8_t)MouseTrigger::MiddleDrag,      (int)MouseActionTarget::ViewPan },
+        { 0, 0, (uint8_t)MouseTrigger::MiddleDrag,      (int)MouseActionTarget::PanImage },
         { 0, 0, (uint8_t)MouseTrigger::RightDrag,       (int)MouseActionTarget::Zoom },
         { 0, 0, (uint8_t)MouseTrigger::LeftDblClick,    (int)MouseActionTarget::SmartZoom },
         { 0, 0, (uint8_t)MouseTrigger::MiddleClick,     (int)MouseActionTarget::ExitApp },
@@ -1291,15 +1293,6 @@ struct AppConfig {
     bool RightButtonDragZoom = true;      // Hold right button and drag vertically to zoom
     float WheelZoomSpeed = 10.0f;         // 5.0f to 50.0f (percentage)
     float RightDragZoomSpeed = 1.0f;      // 0.1f to 3.0f (multiplier)
-
-    // --- View Pan (RTS-style continuous drag scroll) ---
-    // Bound to a drag gesture under Mouse Gestures (e.g. Middle Drag ▸ View Pan Mode).
-    bool ViewPanSnap8 = true;             // Snap drag direction to nearest 45° (8-way pan)
-    float ViewPanSpeed = 2.0f;            // Multiplier on the maximum continuous pan speed (0.25x - 6.0x)
-    int ViewPanDeadzone = 4;              // Pixels of movement before a press becomes a pan
-    float ViewPanSmoothing = 8.0f;        // Pan velocity easing (higher = snappier response)
-    bool ViewPanEdgeScroll = true;        // Smart edge auto-scroll while the button is held
-    int ViewPanEdgeThreshold = 30;        // Edge activation width in pixels
 
     // --- Loupe (hold-key magnifier; e.g. for checking focus while culling) ---
     // The activation key is the rebindable HotkeyAction::Loupe binding.

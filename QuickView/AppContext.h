@@ -173,6 +173,14 @@ struct LoupeState {
     uint32_t triggerMouseBtn = 0;  // 0 for keyboard, VK_LBUTTON/VK_RBUTTON/VK_MBUTTON for mouse gesture
 };
 
+// --- Auto Pan Vector Anchor Overlay ---
+struct AutoPanOverlayState {
+    bool active = false;
+    POINT anchorClient = { 0, 0 };
+    POINT cursorClient = { 0, 0 };
+    float deadzonePx = 12.0f;
+};
+
 enum class MinimapOverride : uint8_t {
     Auto = 0, // Follow default configuration rules
     Show = 1, // Runtime manual force-show (hotkey M)
@@ -278,6 +286,7 @@ public:
     SmoothZoomState SmoothZoom;
     CompareState Compare;
     LoupeState Loupe;
+    AutoPanOverlayState AutoPan;
     MinimapState Minimaps[2];
 
     std::unique_ptr<CompareController> CompareCtrl;
