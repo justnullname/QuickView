@@ -241,6 +241,9 @@ set_target_properties(QuickView PROPERTIES
     WIN32_EXECUTABLE TRUE
 )
 target_compile_definitions(QuickView PRIVATE UNICODE _UNICODE)
+if(MSVC OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    target_link_options(QuickView PRIVATE /STACK:4194304)
+endif()
 
 # Note: Manifest is handled via QuickView.rc
 

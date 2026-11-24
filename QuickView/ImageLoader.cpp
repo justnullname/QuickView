@@ -1859,7 +1859,8 @@ static std::wstring DetectFormatFromHeaderBytes(LPCWSTR filePath,
     return L"RAW";
 
   const std::wstring_view ext = QuickView::ExtensionOf(filePath);
-  if (QuickView::ExtEqualsIgnoreCase(ext, L".svg"))
+  if (QuickView::ExtEqualsIgnoreCase(ext, L".svg") ||
+      QuickView::ExtEqualsIgnoreCase(ext, L".svgz"))
     return L"SVG";
   if (QuickView::ExtEqualsIgnoreCase(ext, L".emf") ||
       QuickView::ExtEqualsIgnoreCase(ext, L".emz"))
@@ -1877,7 +1878,10 @@ static std::wstring DetectFormatFromHeaderBytes(LPCWSTR filePath,
 
   // === STEP 3: Extension Fallbacks ===
   if (fmt == L"Unknown") {
-    if (QuickView::ExtEqualsIgnoreCase(ext, L".tga"))
+    if (QuickView::ExtEqualsIgnoreCase(ext, L".tga") ||
+        QuickView::ExtEqualsIgnoreCase(ext, L".icb") ||
+        QuickView::ExtEqualsIgnoreCase(ext, L".vda") ||
+        QuickView::ExtEqualsIgnoreCase(ext, L".vst"))
       return L"TGA";
     if (QuickView::ExtEqualsIgnoreCase(ext, L".jxl"))
       return L"JXL";
@@ -1903,7 +1907,8 @@ static std::wstring DetectFormatFromContent(LPCWSTR filePath) {
     return L"RAW";
 
   const std::wstring_view ext = QuickView::ExtensionOf(filePath);
-  if (QuickView::ExtEqualsIgnoreCase(ext, L".svg"))
+  if (QuickView::ExtEqualsIgnoreCase(ext, L".svg") ||
+      QuickView::ExtEqualsIgnoreCase(ext, L".svgz"))
     return L"SVG";
   if (QuickView::ExtEqualsIgnoreCase(ext, L".emf") ||
       QuickView::ExtEqualsIgnoreCase(ext, L".emz"))
@@ -1986,7 +1991,8 @@ static void PopulateHdrInfoFromWicPixelFormat(
   // WIC is only used as an EXIF/GPS tag reader. Do not let WIC's intermediate
   // bitmap format overwrite our authoritative color and bit depth info!
   if (metadata->Format == L"AVIF" || metadata->Format == L"JXL" ||
-      metadata->Format == L"Raw" || metadata->Format == L"PNG") {
+      metadata->Format == L"RAW" || metadata->Format == L"Raw" ||
+      metadata->Format == L"PNG") {
     return;
   }
   if (metadata->colorInfo.dataSpace == QuickView::PixelDataSpace::EncodedHdr ||
@@ -6258,7 +6264,11 @@ HRESULT CImageLoader::LoadRaw(LPCWSTR filePath, IWICBitmap **ppBitmap,
   if (!filePath || !ppBitmap)
     return E_INVALIDARG;
 
-  LibRaw RawProcessor;
+  // Allocate LibRaw on heap to avoid ~750 KB stack frame overflow
+  std::unique_ptr<LibRaw> rawPtr(new (std::nothrow) LibRaw());
+  if (!rawPtr)
+    return E_OUTOFMEMORY;
+  LibRaw &RawProcessor = *rawPtr;
 #ifdef _WIN32
   if (RawProcessor.open_file(filePath) != LIBRAW_SUCCESS)
     return E_FAIL;
@@ -9096,7 +9106,11 @@ namespace RawCodec {
 // Forced)
 static HRESULT Load(LPCWSTR filePath, const DecodeContext &ctx,
                     DecodeResult &result) {
-  LibRaw RawProcessor;
+  // Allocate LibRaw on heap to avoid ~750 KB stack frame overflow
+  std::unique_ptr<LibRaw> rawPtr(new (std::nothrow) LibRaw());
+  if (!rawPtr)
+    return E_OUTOFMEMORY;
+  LibRaw &RawProcessor = *rawPtr;
 
   // Debug: Entry point
   QV_LOG("RawCodec_Load", TraceLoggingString("Enter", "Action"));
@@ -12234,7 +12248,11 @@ int64_t ReadCaptureTimeFallback(const wchar_t *filePath) {
     return 0;
 
   if (QuickView::IsRawPath(filePath)) {
-    LibRaw RawProcessor;
+    // Allocate LibRaw on heap to avoid ~750 KB stack frame overflow
+    std::unique_ptr<LibRaw> rawPtr(new (std::nothrow) LibRaw());
+    if (!rawPtr)
+      return 0;
+    LibRaw &RawProcessor = *rawPtr;
 
 #ifdef _WIN32
     if (RawProcessor.open_file(filePath) != LIBRAW_SUCCESS)
@@ -12312,7 +12330,11 @@ static HRESULT ReadMetadataLibRaw(LPCWSTR filePath,
     return E_INVALIDARG;
 
   // Use LibRaw to extract ISO, Shutter, etc. fast.
-  LibRaw RawProcessor;
+  // Allocate LibRaw on heap to avoid ~750 KB stack frame overflow
+  std::unique_ptr<LibRaw> rawPtr(new (std::nothrow) LibRaw());
+  if (!rawPtr)
+    return E_OUTOFMEMORY;
+  LibRaw &RawProcessor = *rawPtr;
 
 #ifdef _WIN32
   if (RawProcessor.open_file(filePath) != LIBRAW_SUCCESS)
@@ -12396,17 +12418,83 @@ static HRESULT ReadMetadataLibRaw(LPCWSTR filePath,
     pMetadata->Make = std::wstring(make.begin(), make.end());
   }
 
-  // [v5.2] Width/Height from sizes struct
-  if (RawProcessor.imgdata.sizes.width > 0 &&
-      RawProcessor.imgdata.sizes.height > 0) {
-    pMetadata->Width = RawProcessor.imgdata.sizes.width;
-    pMetadata->Height = RawProcessor.imgdata.sizes.height;
-  }
-
   // [v5.2] Lens Model
   if (RawProcessor.imgdata.lens.Lens[0] != 0) {
     std::string lens = RawProcessor.imgdata.lens.Lens;
     pMetadata->Lens = std::wstring(lens.begin(), lens.end());
+  }
+
+  // Software / Firmware
+  if (pMetadata->Software.empty() && RawProcessor.imgdata.idata.software[0] != 0) {
+    const char *swPtr = RawProcessor.imgdata.idata.software;
+    size_t swLen = 0;
+    while (swLen < sizeof(RawProcessor.imgdata.idata.software) && swPtr[swLen] != '\0')
+      ++swLen;
+    pMetadata->Software.assign(swPtr, swPtr + swLen);
+  }
+
+  // Metering Mode
+  if (pMetadata->MeteringMode.empty()) {
+    switch (RawProcessor.imgdata.shootinginfo.MeteringMode) {
+    case 1: pMetadata->MeteringMode = L"Average"; break;
+    case 2: pMetadata->MeteringMode = L"Center Weighted"; break;
+    case 3: pMetadata->MeteringMode = L"Spot"; break;
+    case 4: pMetadata->MeteringMode = L"MultiSpot"; break;
+    case 5: pMetadata->MeteringMode = L"Pattern"; break;
+    case 6: pMetadata->MeteringMode = L"Partial"; break;
+    case 255: pMetadata->MeteringMode = L"Other"; break;
+    default: break;
+    }
+  }
+
+  // Exposure Program
+  if (pMetadata->ExposureProgram.empty()) {
+    switch (RawProcessor.imgdata.shootinginfo.ExposureProgram) {
+    case 1: pMetadata->ExposureProgram = L"Manual"; break;
+    case 2: pMetadata->ExposureProgram = L"Normal"; break;
+    case 3: pMetadata->ExposureProgram = L"Aperture Priority"; break;
+    case 4: pMetadata->ExposureProgram = L"Shutter Priority"; break;
+    case 5: pMetadata->ExposureProgram = L"Creative"; break;
+    case 6: pMetadata->ExposureProgram = L"Action"; break;
+    case 7: pMetadata->ExposureProgram = L"Portrait"; break;
+    case 8: pMetadata->ExposureProgram = L"Landscape"; break;
+    default: break;
+    }
+  }
+
+  // Color Space
+  if (pMetadata->ColorSpace.empty()) {
+    switch (RawProcessor.imgdata.makernotes.common.ColorSpace) {
+    case 1: pMetadata->ColorSpace = L"sRGB"; break;
+    case 2: pMetadata->ColorSpace = L"Adobe RGB"; break;
+    case 65535: pMetadata->ColorSpace = L"Uncalibrated"; break;
+    default: break;
+    }
+  }
+
+  // GPS
+  if (!pMetadata->HasGPS) {
+    const auto &gps = RawProcessor.imgdata.other.parsed_gps;
+    if (gps.gpsparsed != 0) {
+      double lat = static_cast<double>(gps.latitude[0]) +
+                   static_cast<double>(gps.latitude[1]) / 60.0 +
+                   static_cast<double>(gps.latitude[2]) / 3600.0;
+      if (gps.latref == 'S' || gps.latref == 's')
+        lat = -lat;
+      double lon = static_cast<double>(gps.longitude[0]) +
+                   static_cast<double>(gps.longitude[1]) / 60.0 +
+                   static_cast<double>(gps.longitude[2]) / 3600.0;
+      if (gps.longref == 'W' || gps.longref == 'w')
+        lon = -lon;
+      if (lat != 0.0 || lon != 0.0) {
+        pMetadata->HasGPS = true;
+        pMetadata->Latitude = lat;
+        pMetadata->Longitude = lon;
+        pMetadata->Altitude = (gps.altref == 1)
+                                  ? -static_cast<double>(gps.altitude)
+                                  : static_cast<double>(gps.altitude);
+      }
+    }
   }
 
   // [HDR] RAW files are inherently high dynamic range and scene-linear
@@ -12835,13 +12923,20 @@ HRESULT CImageLoader::ReadMetadata(LPCWSTR filePath, ImageMetadata *pMetadata,
   // File Stats already populated above
 
   // 2. Dispatch
-  if (pMetadata->Format == L"Raw" || pMetadata->Format == L"Unknown") {
+  if (pMetadata->Format == L"RAW" || pMetadata->Format == L"Raw" ||
+      pMetadata->Format == L"Unknown") {
     // Try LibRaw first for metadata (RAW formats plus HEIF, whose embedded
     // EXIF LibRaw also parses)
-    if (QuickView::IsRawPath(filePath) || QuickView::IsHeifPath(filePath)) {
+    if (QuickView::IsRawPath(filePath)) {
       if (SUCCEEDED(ReadMetadataLibRaw(filePath, pMetadata))) {
-        // LibRaw succeeded - metadata fields populated
-        // Continue to WIC for GPS if needed (or other missing fields)
+        // RAW metadata fully parsed via LibRaw; do not fall back to WIC /
+        // Windows Raw Image Extension.
+        return S_OK;
+      }
+    } else if (QuickView::IsHeifPath(filePath)) {
+      if (SUCCEEDED(ReadMetadataLibRaw(filePath, pMetadata))) {
+        // LibRaw succeeded for partial EXIF; continue to WIC for full
+        // HEIF EXIF/ICC/HDR metadata.
       }
     }
   }
@@ -15094,12 +15189,10 @@ HRESULT CImageLoader::LoadToFrame(
   // This enables "lossless zoom" - re-rasterize when user zooms in.
   // ========================================================================
   if (format == L"SVG" || format == L"Unknown") {
-    // Check file extension for SVG (magic detection might fail for XML)
-    std::wstring pathLower = filePath;
-    std::transform(pathLower.begin(), pathLower.end(), pathLower.begin(),
-                   ::towlower);
-    bool isSvg = (pathLower.size() > 4 &&
-                  pathLower.substr(pathLower.size() - 4) == L".svg");
+    // Check file extension for SVG/SVGZ (magic detection might fail for XML)
+    const std::wstring_view svgExt = QuickView::ExtensionOf(filePath);
+    const bool isSvg = QuickView::ExtEqualsIgnoreCase(svgExt, L".svg") ||
+                       QuickView::ExtEqualsIgnoreCase(svgExt, L".svgz");
 
     if (isSvg) {
       std::vector<uint8_t> fileData;
@@ -15108,6 +15201,16 @@ HRESULT CImageLoader::LoadToFrame(
 
       if (checkCancel && checkCancel())
         return E_ABORT;
+
+      // Inflate gzip-compressed SVGZ streams before sanitization
+      if (fileData.size() >= 2 && fileData[0] == 0x1F && fileData[1] == 0x8B) {
+        std::vector<uint8_t> inflated;
+        if (!InflateGzip(fileData.data(), fileData.size(), inflated) ||
+            inflated.empty()) {
+          return E_FAIL;
+        }
+        fileData = std::move(inflated);
+      }
 
       // Hybrid D2D SVG Path (D3D11 WARP Device Architecture)
       // Debugging: Added detailed HRESULT logs.
@@ -16328,7 +16431,11 @@ HRESULT CImageLoader::GetEmbeddedPreviewInfo(LPCWSTR filePath, int *width,
   *height = 0;
 
   // Use LibRaw to extract thumbnail Dimensions FAST.
-  LibRaw RawProcessor;
+  // Allocate LibRaw on heap to avoid ~750 KB stack frame overflow
+  std::unique_ptr<LibRaw> rawPtr(new (std::nothrow) LibRaw());
+  if (!rawPtr)
+    return E_OUTOFMEMORY;
+  LibRaw &RawProcessor = *rawPtr;
 
 #ifdef _WIN32
   if (RawProcessor.open_file(filePath) != LIBRAW_SUCCESS)
