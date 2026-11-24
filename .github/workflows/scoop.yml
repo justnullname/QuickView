@@ -1,0 +1,120 @@
+name: Scoop Manifest Update
+
+permissions:
+  contents: write
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag to update Scoop manifest for (leave blank for latest release)'
+        required: false
+        default: ''
+
+jobs:
+  scoop:
+    if: github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false
+    name: Update Scoop Manifest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Determine Release Tag
+        id: get-tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CUSTOM_TAG="${{ inputs.release_tag }}"
+          EVENT_TAG="${{ github.event.release.tag_name }}"
+          if [ -n "$CUSTOM_TAG" ]; then
+            TAG="$CUSTOM_TAG"
+          elif [ -n "$EVENT_TAG" ]; then
+            TAG="$EVENT_TAG"
+          else
+            RELEASE_JSON=$(gh api "repos/${{ github.repository }}/releases/latest")
+            IS_PRE=$(echo "$RELEASE_JSON" | jq -r '.prerelease')
+            if [ "$IS_PRE" = "true" ]; then
+              echo "::error::Target release is a pre-release! Scoop manifest only tracks stable releases."
+              exit 1
+            fi
+            TAG=$(echo "$RELEASE_JSON" | jq -r '.tag_name')
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Resolved stable release: tag=$TAG version=$VERSION"
+
+      - name: Resolve Portable ZIP URLs and Compute SHA256
+        id: resolve-assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.get-tag.outputs.tag }}"
+          ASSETS_JSON=$(gh api "repos/${{ github.repository }}/releases/tags/${TAG}")
+
+          URL_AMD64=$(echo "$ASSETS_JSON" | jq -r '.assets[] | select(.name | test("^QuickView_.*_AMD64\\.zip$")) | .browser_download_url' | head -n1)
+          URL_ARM64=$(echo "$ASSETS_JSON" | jq -r '.assets[] | select(.name | test("^QuickView_.*_ARM64\\.zip$")) | .browser_download_url' | head -n1)
+
+          if [ -z "$URL_AMD64" ] || [ "$URL_AMD64" = "null" ]; then
+            echo "::error::QuickView AMD64 portable ZIP not found in release ${TAG}"
+            exit 1
+          fi
+          if [ -z "$URL_ARM64" ] || [ "$URL_ARM64" = "null" ]; then
+            echo "::error::QuickView ARM64 portable ZIP not found in release ${TAG}"
+            exit 1
+          fi
+
+          curl -fsSL -o /tmp/quickview_amd64.zip "$URL_AMD64"
+          curl -fsSL -o /tmp/quickview_arm64.zip "$URL_ARM64"
+
+          HASH_AMD64=$(sha256sum /tmp/quickview_amd64.zip | awk '{print $1}')
+          HASH_ARM64=$(sha256sum /tmp/quickview_arm64.zip | awk '{print $1}')
+
+          echo "url_amd64=$URL_AMD64" >> "$GITHUB_OUTPUT"
+          echo "hash_amd64=$HASH_AMD64" >> "$GITHUB_OUTPUT"
+          echo "url_arm64=$URL_ARM64" >> "$GITHUB_OUTPUT"
+          echo "hash_arm64=$HASH_ARM64" >> "$GITHUB_OUTPUT"
+
+      - name: Update bucket/quickview.json
+        env:
+          PKG_VERSION: ${{ steps.get-tag.outputs.version }}
+          URL_AMD64: ${{ steps.resolve-assets.outputs.url_amd64 }}
+          HASH_AMD64: ${{ steps.resolve-assets.outputs.hash_amd64 }}
+          URL_ARM64: ${{ steps.resolve-assets.outputs.url_arm64 }}
+          HASH_ARM64: ${{ steps.resolve-assets.outputs.hash_arm64 }}
+        run: |
+          python3 - << 'PYEOF'
+          import json
+          import os
+          from pathlib import Path
+
+          manifest_path = Path("bucket/quickview.json")
+          data = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+          data["version"] = os.environ["PKG_VERSION"]
+          data["architecture"]["64bit"]["url"] = os.environ["URL_AMD64"]
+          data["architecture"]["64bit"]["hash"] = os.environ["HASH_AMD64"]
+          data["architecture"]["arm64"]["url"] = os.environ["URL_ARM64"]
+          data["architecture"]["arm64"]["hash"] = os.environ["HASH_ARM64"]
+
+          manifest_path.write_text(json.dumps(data, indent=4, ensure_ascii=False) + "\n", encoding="utf-8")
+          print(manifest_path.read_text(encoding="utf-8"))
+          PYEOF
+
+      - name: Commit and Push Manifest Update
+        run: |
+          if git diff --quiet bucket/quickview.json; then
+            echo "No changes to bucket/quickview.json"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add bucket/quickview.json
+          git commit -m "chore(scoop): update quickview manifest to ${{ steps.get-tag.outputs.tag }}"
+          git push origin main
