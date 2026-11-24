@@ -883,6 +883,11 @@ namespace AppStrings {
         const wchar_t* Settings_Action_OpenStore = nullptr;
         const wchar_t* Settings_Status_AssocLegend = nullptr;
         const wchar_t* Context_OpenWithQuickView = nullptr;
+        const wchar_t* Dialog_Prompt_EnterNewFilename = nullptr;
+        const wchar_t* Dialog_Prompt_MoveToRecycleBin = nullptr;
+        const wchar_t* Dialog_Button_Delete = nullptr;
+        const wchar_t* Dialog_Prompt_DeleteWhichFiles = nullptr;
+        const wchar_t* Dialog_Format_OnlyExt = nullptr;
 
     };
 

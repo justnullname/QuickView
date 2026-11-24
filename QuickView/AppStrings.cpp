@@ -772,7 +772,12 @@ static constexpr char kBlob_EN[] =
     /* Settings_Label_StoreUpdatesManaged */ "Managed by Microsoft Store\0"
     /* Settings_Action_OpenStore */ "Open Store\0"
     /* Settings_Status_AssocLegend */ "Green dot = System Default · Highlighted = Selected / Open With\0"
-    /* Context_OpenWithQuickView */ "Open with QuickView\0";
+    /* Context_OpenWithQuickView */ "Open with QuickView\0"
+    /* Dialog_Prompt_EnterNewFilename */ "Enter new filename:\0"
+    /* Dialog_Prompt_MoveToRecycleBin */ "Move to Recycle Bin?\0"
+    /* Dialog_Button_Delete */ "Delete\0"
+    /* Dialog_Prompt_DeleteWhichFiles */ "Delete which files?\0"
+    /* Dialog_Format_OnlyExt */ "%ls only\0";
 static constexpr char kBlob_CN[] =
     /* CurrentLocale */ "zh-cn\0"
     /* OSD_NoImage */ "没有加载图片\0"
@@ -1535,7 +1540,12 @@ static constexpr char kBlob_CN[] =
     /* Settings_Label_StoreUpdatesManaged */ "由 Microsoft Store 管理更新\0"
     /* Settings_Action_OpenStore */ "打开商店\0"
     /* Settings_Status_AssocLegend */ "绿点 = 已设系统默认 · 高亮 = 已勾选 / 打开方式\0"
-    /* Context_OpenWithQuickView */ "使用 QuickView 打开\0";
+    /* Context_OpenWithQuickView */ "使用 QuickView 打开\0"
+    /* Dialog_Prompt_EnterNewFilename */ "请输入新文件名：\0"
+    /* Dialog_Prompt_MoveToRecycleBin */ "确定要移至回收站吗？\0"
+    /* Dialog_Button_Delete */ "删除\0"
+    /* Dialog_Prompt_DeleteWhichFiles */ "要删除哪些文件？\0"
+    /* Dialog_Format_OnlyExt */ "仅 %ls\0";
 static constexpr char kBlob_TW[] =
     /* CurrentLocale */ "zh-tw\0"
     /* OSD_NoImage */ "沒有載入圖片\0"
@@ -2298,7 +2308,12 @@ static constexpr char kBlob_TW[] =
     /* Settings_Label_StoreUpdatesManaged */ "由 Microsoft Store 管理更新\0"
     /* Settings_Action_OpenStore */ "開啟商店\0"
     /* Settings_Status_AssocLegend */ "綠點 = 已設系統預設 · 高亮 = 已勾選 / 開啟方式\0"
-    /* Context_OpenWithQuickView */ "使用 QuickView 開啟\0";
+    /* Context_OpenWithQuickView */ "使用 QuickView 開啟\0"
+    /* Dialog_Prompt_EnterNewFilename */ "請輸入新檔案名稱：\0"
+    /* Dialog_Prompt_MoveToRecycleBin */ "確定要移至資源回收筒嗎？\0"
+    /* Dialog_Button_Delete */ "刪除\0"
+    /* Dialog_Prompt_DeleteWhichFiles */ "要刪除哪些檔案？\0"
+    /* Dialog_Format_OnlyExt */ "僅 %ls\0";
 static constexpr char kBlob_JA[] =
     /* CurrentLocale */ "ja-jp\0"
     /* OSD_NoImage */ "画像が読み込まれていません\0"
@@ -3061,7 +3076,12 @@ static constexpr char kBlob_JA[] =
     /* Settings_Label_StoreUpdatesManaged */ "Microsoft Store で管理\0"
     /* Settings_Action_OpenStore */ "ストアを開く\0"
     /* Settings_Status_AssocLegend */ "緑の点 = システム既定 · ハイライト = 選択済み / プログラムから開く\0"
-    /* Context_OpenWithQuickView */ "QuickView で開く\0";
+    /* Context_OpenWithQuickView */ "QuickView で開く\0"
+    /* Dialog_Prompt_EnterNewFilename */ "新しいファイル名を入力：\0"
+    /* Dialog_Prompt_MoveToRecycleBin */ "ごみ箱に移動しますか？\0"
+    /* Dialog_Button_Delete */ "削除\0"
+    /* Dialog_Prompt_DeleteWhichFiles */ "どのファイルを削除しますか？\0"
+    /* Dialog_Format_OnlyExt */ "%ls のみ\0";
 static constexpr char kBlob_RU[] =
     /* CurrentLocale */ "ru-ru\0"
     /* OSD_NoImage */ "Изображение не загружено\0"
@@ -3824,7 +3844,12 @@ static constexpr char kBlob_RU[] =
     /* Settings_Label_StoreUpdatesManaged */ "Обновляется через Microsoft Store\0"
     /* Settings_Action_OpenStore */ "Открыть Store\0"
     /* Settings_Status_AssocLegend */ "Зелёная точка = по умолчанию · Выделено = выбрано / Открыть с помощью\0"
-    /* Context_OpenWithQuickView */ "Открыть в QuickView\0";
+    /* Context_OpenWithQuickView */ "Открыть в QuickView\0"
+    /* Dialog_Prompt_EnterNewFilename */ "Введите новое имя файла:\0"
+    /* Dialog_Prompt_MoveToRecycleBin */ "Переместить в Корзину?\0"
+    /* Dialog_Button_Delete */ "Удалить\0"
+    /* Dialog_Prompt_DeleteWhichFiles */ "Какие файлы удалить?\0"
+    /* Dialog_Format_OnlyExt */ "Только %ls\0";
 static constexpr char kBlob_DE[] =
     /* CurrentLocale */ "de-de\0"
     /* OSD_NoImage */ "Kein Bild geladen\0"
@@ -4587,7 +4612,12 @@ static constexpr char kBlob_DE[] =
     /* Settings_Label_StoreUpdatesManaged */ "Über Microsoft Store verwaltet\0"
     /* Settings_Action_OpenStore */ "Store öffnen\0"
     /* Settings_Status_AssocLegend */ "Grüner Punkt = Systemstandard · Hervorgehoben = Ausgewählt / Öffnen mit\0"
-    /* Context_OpenWithQuickView */ "Mit QuickView öffnen\0";
+    /* Context_OpenWithQuickView */ "Mit QuickView öffnen\0"
+    /* Dialog_Prompt_EnterNewFilename */ "Neuen Dateinamen eingeben:\0"
+    /* Dialog_Prompt_MoveToRecycleBin */ "In den Papierkorb verschieben?\0"
+    /* Dialog_Button_Delete */ "Löschen\0"
+    /* Dialog_Prompt_DeleteWhichFiles */ "Welche Dateien löschen?\0"
+    /* Dialog_Format_OnlyExt */ "Nur %ls\0";
 static constexpr char kBlob_ES[] =
     /* CurrentLocale */ "es-es\0"
     /* OSD_NoImage */ "No hay imagen cargada\0"
@@ -5350,7 +5380,12 @@ static constexpr char kBlob_ES[] =
     /* Settings_Label_StoreUpdatesManaged */ "Gestionado por Microsoft Store\0"
     /* Settings_Action_OpenStore */ "Abrir tienda\0"
     /* Settings_Status_AssocLegend */ "Punto verde = Predeterminado · Resaltado = Seleccionado / Abrir con\0"
-    /* Context_OpenWithQuickView */ "Abrir con QuickView\0";
+    /* Context_OpenWithQuickView */ "Abrir con QuickView\0"
+    /* Dialog_Prompt_EnterNewFilename */ "Ingrese el nuevo nombre de archivo:\0"
+    /* Dialog_Prompt_MoveToRecycleBin */ "¿Mover a la Papelera de reciclaje?\0"
+    /* Dialog_Button_Delete */ "Eliminar\0"
+    /* Dialog_Prompt_DeleteWhichFiles */ "¿Qué archivos eliminar?\0"
+    /* Dialog_Format_OnlyExt */ "Solo %ls\0";
 static constexpr char kBlob_FR[] =
     /* CurrentLocale */ "fr-fr\0"
     /* OSD_NoImage */ "No image loaded\0"
@@ -5520,8 +5555,8 @@ static constexpr char kBlob_FR[] =
     /* OSD_AlwaysOnTopOff */ "Always on Top: OFF\0"
     /* OSD_WallpaperSet */ "Wallpaper Set\0"
     /* OSD_WallpaperFailed */ "Failed to set wallpaper\0"
-    /* OSD_Renamed */ "Renamed\0"
-    /* OSD_RenameFailed */ "Rename Failed\0"
+    /* OSD_Renamed */ "Renommé\0"
+    /* OSD_RenameFailed */ "Échec du renommage\0"
     /* OSD_Restored */ "Restored\0"
     /* OSD_ExtensionFixed */ "Extension Fixed\0"
     /* OSD_FirstImage */ "First image\0"
@@ -6113,11 +6148,16 @@ static constexpr char kBlob_FR[] =
     /* Settings_Label_StoreUpdatesManaged */ "Géré par Microsoft Store\0"
     /* Settings_Action_OpenStore */ "Ouvrir le Store\0"
     /* Settings_Status_AssocLegend */ "Point vert = Par défaut · Surligné = Sélectionné / Ouvrir avec\0"
-    /* Context_OpenWithQuickView */ "Ouvrir avec QuickView\0";
+    /* Context_OpenWithQuickView */ "Ouvrir avec QuickView\0"
+    /* Dialog_Prompt_EnterNewFilename */ "Entrez le nouveau nom de fichier :\0"
+    /* Dialog_Prompt_MoveToRecycleBin */ "Déplacer vers la Corbeille ?\0"
+    /* Dialog_Button_Delete */ "Supprimer\0"
+    /* Dialog_Prompt_DeleteWhichFiles */ "Quels fichiers supprimer ?\0"
+    /* Dialog_Format_OnlyExt */ "%ls uniquement\0";
 
 struct PackedLangBlob {
     const char* data;
-    int bytes; // excludes trailing compiler NUL (includes all 775 string NUL terminators)
+    int bytes; // excludes trailing compiler NUL (includes all 780 string NUL terminators)
 };
 
 static constexpr PackedLangBlob kLangBlobs[8] = {

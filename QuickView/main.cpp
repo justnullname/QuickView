@@ -951,6 +951,20 @@ static inline bool IsSmallImageForUpscaleGuard(float imgW, float imgH, bool isVe
     return !isVector && imgW < baseMin && imgH < baseMin;
 }
 
+static inline std::wstring StripMenuShortcut(const wchar_t* label) {
+    if (!label) return L"";
+    std::wstring_view sv(label);
+    const size_t tab = sv.find(L'\t');
+    return std::wstring(tab == std::wstring_view::npos ? sv : sv.substr(0, tab));
+}
+
+static inline std::wstring FormatOnlyExtLabel(const std::wstring& ext) {
+    wchar_t buf[64]{};
+    const wchar_t* fmt = AppStrings::g.Dialog_Format_OnlyExt ? AppStrings::g.Dialog_Format_OnlyExt : L"%ls only";
+    swprintf_s(buf, fmt, ext.c_str());
+    return buf;
+}
+
 float ComputeBaseFitScaleForVisual(const VisualState& vs, float winW, float winH);
 static size_t CountWebContentFilesInNavigator();
 void SetLockWindowSize(HWND hwnd, bool locked);
@@ -10690,12 +10704,14 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
                         std::wstring filename = (lastSlash != std::wstring::npos) ? recycleTarget.substr(lastSlash + 1) : recycleTarget;
 
                         if (g_config.ConfirmDelete) {
-                            std::wstring dlgMessage = L"Move to Recycle Bin?";
+                            const wchar_t* dlgMessage = AppStrings::g.Dialog_Prompt_MoveToRecycleBin ? AppStrings::g.Dialog_Prompt_MoveToRecycleBin : L"Move to Recycle Bin?";
+                            const wchar_t* delLabel = AppStrings::g.Dialog_Button_Delete ? AppStrings::g.Dialog_Button_Delete : L"Delete";
+                            const wchar_t* cancelLabel = AppStrings::g.Dialog_Cancel ? AppStrings::g.Dialog_Cancel : L"Cancel";
                             std::vector<DialogButton> dlgButtons;
-                            dlgButtons.emplace_back(DialogResult::Yes, L"Delete");
-                            dlgButtons.emplace_back(DialogResult::Cancel, L"Cancel");
+                            dlgButtons.emplace_back(DialogResult::Yes, delLabel);
+                            dlgButtons.emplace_back(DialogResult::Cancel, cancelLabel);
                             
-                            DialogResult dlgResult = AppContext::GetInstance().DialogCtrl->ShowDialog(hwnd, filename.c_str(), dlgMessage.c_str(),
+                            DialogResult dlgResult = AppContext::GetInstance().DialogCtrl->ShowDialog(hwnd, filename.c_str(), dlgMessage,
                                                                          D2D1::ColorF(0.85f, 0.25f, 0.25f), dlgButtons, true, AppStrings::g.Checkbox_NeverConfirmDelete, L"");
                             confirmed = (dlgResult == DialogResult::Yes);
                             if (confirmed && AppContext::GetInstance().Dialog.IsChecked) {
@@ -11077,7 +11093,7 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
                             [](void* u, bool success) {
                                 auto h = static_cast<HWND>(u);
                                 if (IsWindow(h) && success) {
-                                    g_osd.Show(h, L"Renamed (Left)", false);
+                                    g_osd.Show(h, AppStrings::g.OSD_Renamed ? AppStrings::g.OSD_Renamed : L"Renamed", false);
                                     MarkCompareDirty();
                                     RequestRepaint(PaintLayer::Image | PaintLayer::Static);
                                 }
@@ -11085,7 +11101,7 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
                             hwnd
                         ));
                     } else {
-                        g_osd.Show(hwnd, L"Rename Failed", true);
+                        g_osd.Show(hwnd, AppStrings::g.OSD_RenameFailed ? AppStrings::g.OSD_RenameFailed : L"Rename Failed", true);
                     }
                 }
                 break;
@@ -11157,13 +11173,13 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
                         g_preserveViewStateOnNextLoad = true;
                         LoadImageAsync(hwnd, GetPaneContext(PaneSlot::Primary).navigator.GetResolvedPath(newPath).c_str()); 
                         
-                        g_osd.Show(hwnd, L"Renamed", false);
+                        g_osd.Show(hwnd, AppStrings::g.OSD_Renamed ? AppStrings::g.OSD_Renamed : L"Renamed", false);
                     } else {
                         // Failed, reload original
                         g_preservedViewState = GetPaneContext(PaneSlot::Primary).view;
                         g_preserveViewStateOnNextLoad = true;
                         LoadImageAsync(hwnd, GetPaneContext(PaneSlot::Primary).path); 
-                        g_osd.Show(hwnd, L"Rename Failed", true);
+                        g_osd.Show(hwnd, AppStrings::g.OSD_RenameFailed ? AppStrings::g.OSD_RenameFailed : L"Rename Failed", true);
                     }
                 }
                 RequestRepaint(PaintLayer::All);
@@ -11182,15 +11198,17 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
 
                 bool confirmed = true;
                 if (g_config.ConfirmDelete) {
-                    std::wstring dlgMessage = L"Move to Recycle Bin?";
+                    const wchar_t* dlgMessage = AppStrings::g.Dialog_Prompt_MoveToRecycleBin ? AppStrings::g.Dialog_Prompt_MoveToRecycleBin : L"Move to Recycle Bin?";
+                    const wchar_t* delLabel = AppStrings::g.Dialog_Button_Delete ? AppStrings::g.Dialog_Button_Delete : L"Delete";
+                    const wchar_t* cancelLabel = AppStrings::g.Dialog_Cancel ? AppStrings::g.Dialog_Cancel : L"Cancel";
                     std::vector<DialogButton> dlgButtons;
-                    dlgButtons.emplace_back(DialogResult::Yes, L"Delete");
-                    dlgButtons.emplace_back(DialogResult::Cancel, L"Cancel");
+                    dlgButtons.emplace_back(DialogResult::Yes, delLabel);
+                    dlgButtons.emplace_back(DialogResult::Cancel, cancelLabel);
                     if (IsCompareModeActive()) {
                         const D2D1_RECT_F vp = AppContext::GetInstance().CompareCtrl->GetViewport(hwnd, AppContext::GetInstance().Compare.contextPane);
                         SetDialogCenter((vp.left + vp.right) * 0.5f, (vp.top + vp.bottom) * 0.5f);
                     }
-                    DialogResult dlgResult = AppContext::GetInstance().DialogCtrl->ShowDialog(hwnd, filename.c_str(), dlgMessage.c_str(),
+                    DialogResult dlgResult = AppContext::GetInstance().DialogCtrl->ShowDialog(hwnd, filename.c_str(), dlgMessage,
                                                                   D2D1::ColorF(0.85f, 0.25f, 0.25f), dlgButtons, true, AppStrings::g.Checkbox_NeverConfirmDelete, L"");
                     ClearDialogCenter();
                     confirmed = (dlgResult == DialogResult::Yes);
@@ -11292,16 +11310,18 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
                 
                 // Show confirmation dialog only if ConfirmDelete is enabled
                 if (g_config.ConfirmDelete) {
-                    std::wstring dlgMessage = L"Move to Recycle Bin?";
+                    const wchar_t* dlgMessage = AppStrings::g.Dialog_Prompt_MoveToRecycleBin ? AppStrings::g.Dialog_Prompt_MoveToRecycleBin : L"Move to Recycle Bin?";
+                    const wchar_t* delLabel = AppStrings::g.Dialog_Button_Delete ? AppStrings::g.Dialog_Button_Delete : L"Delete";
+                    const wchar_t* cancelLabel = AppStrings::g.Dialog_Cancel ? AppStrings::g.Dialog_Cancel : L"Cancel";
                     std::vector<DialogButton> dlgButtons;
-                    dlgButtons.emplace_back(DialogResult::Yes, L"Delete");
-                    dlgButtons.emplace_back(DialogResult::Cancel, L"Cancel");
+                    dlgButtons.emplace_back(DialogResult::Yes, delLabel);
+                    dlgButtons.emplace_back(DialogResult::Cancel, cancelLabel);
                     if (IsCompareModeActive() && AppContext::GetInstance().Compare.contextPane == ComparePane::Right) {
                         const D2D1_RECT_F vp = AppContext::GetInstance().CompareCtrl->GetViewport(hwnd, ComparePane::Right);
                         SetDialogCenter((vp.left + vp.right) * 0.5f, (vp.top + vp.bottom) * 0.5f);
                     }
 
-                    DialogResult dlgResult = AppContext::GetInstance().DialogCtrl->ShowDialog(hwnd, filename.c_str(), dlgMessage.c_str(),
+                    DialogResult dlgResult = AppContext::GetInstance().DialogCtrl->ShowDialog(hwnd, filename.c_str(), dlgMessage,
                                                                  D2D1::ColorF(0.85f, 0.25f, 0.25f), dlgButtons, true, AppStrings::g.Checkbox_NeverConfirmDelete, L"");
                     ClearDialogCenter();
                     confirmed = (dlgResult == DialogResult::Yes);
@@ -21296,19 +21316,19 @@ static void HandlePairedDelete(HWND hwnd, const std::wstring& renderedPath, cons
     const std::wstring wLabel = extLabel(rawPath);      // e.g. CR3
 
     // Three explicit choices + Cancel -- never silently bind delete to both.
-    // Labels stay short so they fit the button width; English-only to match the
-    // surrounding delete dialog (its strings are not localized either).
     const std::wstring btnPair = rLabel + L" + " + wLabel; // both
-    const std::wstring btnRaw  = wLabel + L" only";        // RAW only
-    const std::wstring btnJpg  = rLabel + L" only";        // rendered only
+    const std::wstring btnRaw  = FormatOnlyExtLabel(wLabel);
+    const std::wstring btnJpg  = FormatOnlyExtLabel(rLabel);
+    const wchar_t* cancelLabel = AppStrings::g.Dialog_Cancel ? AppStrings::g.Dialog_Cancel : L"Cancel";
     std::vector<DialogButton> btns;
     btns.emplace_back(DialogResult::Yes, btnPair.c_str());
     btns.emplace_back(DialogResult::Custom2, btnRaw.c_str());
     btns.emplace_back(DialogResult::Custom1, btnJpg.c_str());
-    btns.emplace_back(DialogResult::Cancel, L"Cancel");
+    btns.emplace_back(DialogResult::Cancel, cancelLabel);
 
     const DialogResult res = AppContext::GetInstance().DialogCtrl->ShowDialog(
-        hwnd, baseName(renderedPath), L"Delete which files?",
+        hwnd, baseName(renderedPath),
+        AppStrings::g.Dialog_Prompt_DeleteWhichFiles ? AppStrings::g.Dialog_Prompt_DeleteWhichFiles : L"Delete which files?",
         D2D1::ColorF(0.85f, 0.25f, 0.25f), btns, true, AppStrings::g.Checkbox_NeverConfirmDelete, L"");
 
     if (res != DialogResult::Yes && res != DialogResult::Custom1 && res != DialogResult::Custom2) {
@@ -21511,7 +21531,7 @@ static void HandlePairedRename(HWND hwnd, const std::wstring& renderedPath, cons
     }
 
     if (ok) {
-        g_osd.Show(hwnd, L"Renamed", false);
+        g_osd.Show(hwnd, AppStrings::g.OSD_Renamed ? AppStrings::g.OSD_Renamed : L"Renamed", false);
         
         // Relocate primary path view state
         const std::wstring activeViewPath = (pane.path == rawPath) ? newRawPath : newRenderedPath;
@@ -21533,7 +21553,7 @@ static void HandlePairedRename(HWND hwnd, const std::wstring& renderedPath, cons
         g_preservedViewState = pane.view;
         g_preserveViewStateOnNextLoad = true;
         LoadImageAsync(hwnd, nav.GetResolvedPath(pane.path).c_str());
-        g_osd.Show(hwnd, L"Rename Failed", true);
+        g_osd.Show(hwnd, AppStrings::g.OSD_RenameFailed ? AppStrings::g.OSD_RenameFailed : L"Rename Failed", true);
     }
     RequestRepaint(PaintLayer::All);
 }
