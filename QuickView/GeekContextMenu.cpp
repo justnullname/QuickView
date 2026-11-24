@@ -315,7 +315,7 @@ void GeekContextMenu::ApplyWindowChrome() {
 }
 
 void GeekContextMenu::ApplyWindowRegion() {
-    if (!m_hwnd) return;
+    if (!m_hwnd || !SystemInfo::IsWindows11OrGreater()) return;
     DWORD preference = g_config.RoundedCorners ? DWMWCP_ROUND : DWMWCP_DONOTROUND;
     DwmSetWindowAttribute(m_hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &preference, sizeof(preference));
 }
@@ -890,7 +890,7 @@ void GeekContextMenu::RenderSeparator(float y) {
 }
 
 float GeekContextMenu::GetDwmCornerRadiusDIP() const {
-    if (!g_config.RoundedCorners) return 0.0f;
+    if (!SystemInfo::IsWindows11OrGreater() || !g_config.RoundedCorners) return 0.0f;
     float physicalRadius = CORNER_R * m_monitorDpiScale;
     return (m_scale > 0.0f) ? (physicalRadius / m_scale) : CORNER_R;
 }

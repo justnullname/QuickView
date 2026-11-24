@@ -25,6 +25,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $RcPath = Join-Path $RepoRoot "QuickView\QuickView.rc"
@@ -51,6 +52,25 @@ function Find-SdkTool {
         }
     }
     throw "$ToolName not found under $kitsRoot"
+}
+
+function Assert-MsixContainsPriAndUnplatedAssets {
+    param([string]$MsixFilePath)
+    $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $MsixFilePath).Path)
+    try {
+        $entryMap = @{}
+        foreach ($e in $zip.Entries) {
+            $entryMap[$e.FullName.ToLowerInvariant()] = $e.Length
+        }
+        if (-not $entryMap.ContainsKey("resources.pri") -or $entryMap["resources.pri"] -le 0) {
+            throw "MSIX validation failed ($MsixFilePath): missing or empty resources.pri"
+        }
+        if (-not $entryMap.ContainsKey("assets/square44x44logo.targetsize-48_altform-unplated.png")) {
+            throw "MSIX validation failed ($MsixFilePath): missing Assets/Square44x44Logo.targetsize-48_altform-unplated.png"
+        }
+    } finally {
+        $zip.Dispose()
+    }
 }
 
 function Get-StoreVersionFromRc {
@@ -115,7 +135,9 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
 }
 
 $makeAppx = Find-SdkTool -ToolName "makeappx.exe"
+$makePri = Find-SdkTool -ToolName "makepri.exe"
 Write-Host "[MSIX] Using makeappx: $makeAppx"
+Write-Host "[MSIX] Using makepri:  $makePri"
 Write-Host "[MSIX] Package Version (Store-normalized): $Version"
 
 if ($PSCmdlet.ParameterSetName -eq "Bundle") {
@@ -126,6 +148,7 @@ if ($PSCmdlet.ParameterSetName -eq "Bundle") {
             if (-not (Test-Path $inp)) {
                 throw "Input MSIX not found: $inp"
             }
+            Assert-MsixContainsPriAndUnplatedAssets -MsixFilePath $inp
             Copy-Item -Path $inp -Destination $bundleStaging -Force
         }
         $outDir = Split-Path -Parent $BundleOutputPath
@@ -170,7 +193,9 @@ if ($outputParent) {
 }
 
 $stagingDir = Join-Path $env:TEMP ("QuickView_Msix_Stage_${Arch}_" + [guid]::NewGuid().ToString("N"))
+$priTempDir = Join-Path $env:TEMP ("QuickView_Msix_PriTemp_${Arch}_" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force -Path $stagingDir | Out-Null
+New-Item -ItemType Directory -Force -Path $priTempDir | Out-Null
 
 try {
     Copy-Item -Path $exePath -Destination (Join-Path $stagingDir "QuickView.exe") -Force
@@ -189,14 +214,53 @@ try {
     $manifestXml = $manifestXml.Replace("@MSIX_VERSION@", $Version)
     $manifestXml = $manifestXml.Replace("@ARCH@", $Arch)
     $manifestXml = $manifestXml.Replace("@FILE_TYPES@", $fileTypesXml)
-    [System.IO.File]::WriteAllText((Join-Path $stagingDir "AppxManifest.xml"), $manifestXml, [System.Text.UTF8Encoding]::new($false))
+    $stagedManifestPath = Join-Path $stagingDir "AppxManifest.xml"
+    [System.IO.File]::WriteAllText($stagedManifestPath, $manifestXml, [System.Text.UTF8Encoding]::new($false))
+
+    # Generate resources.pri so MRT qualifiers (scale-*, targetsize-*, altform-unplated) take effect.
+    $priConfigPath = Join-Path $priTempDir "priconfig.xml"
+    $priDumpPath = Join-Path $priTempDir "pridump.xml"
+    $stagedPriPath = Join-Path $stagingDir "resources.pri"
+
+    Write-Host "[MSIX] Generating PRI config..."
+    & $makePri createconfig /cf $priConfigPath /dq en-US /o
+    if ($LASTEXITCODE -ne 0) {
+        throw "makepri createconfig failed with exit code $LASTEXITCODE"
+    }
+
+    # Disable autoResourcePackage splitting so all scale/targetsize PNG variants stay inside a single resources.pri.
+    [xml]$priCfgXml = Get-Content -Path $priConfigPath -Raw -Encoding UTF8
+    $packagingNode = $priCfgXml.resources.SelectSingleNode("packaging")
+    if ($null -ne $packagingNode) {
+        [void]$priCfgXml.resources.RemoveChild($packagingNode)
+    }
+    [System.IO.File]::WriteAllText($priConfigPath, $priCfgXml.OuterXml, [System.Text.UTF8Encoding]::new($false))
+
+    Write-Host "[MSIX] Building resources.pri..."
+    & $makePri new /pr $stagingDir /cf $priConfigPath /mn $stagedManifestPath /of $stagedPriPath /in "VivorLoong.QuickView-FastFileViewer" /o
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $stagedPriPath) -or ((Get-Item $stagedPriPath).Length -le 0)) {
+        throw "makepri new failed (exitCode=$LASTEXITCODE) or produced missing/empty resources.pri"
+    }
+
+    & $makePri dump /if $stagedPriPath /of $priDumpPath /dt detailed /o
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $priDumpPath)) {
+        throw "makepri dump failed with exit code $LASTEXITCODE"
+    }
+    $priDumpContent = Get-Content -Path $priDumpPath -Raw -Encoding UTF8
+    if ($priDumpContent -notmatch 'Square44x44Logo\.png' -or
+        $priDumpContent -notmatch 'UNPLATED' -or
+        $priDumpContent -notmatch 'LIGHTUNPLATED') {
+        throw "PRI validation failed: resources.pri did not index Square44x44Logo.png UNPLATED/LIGHTUNPLATED qualifiers."
+    }
+    Write-Host "[MSIX] Verified resources.pri contains Square44x44Logo UNPLATED & LIGHTUNPLATED qualifiers."
 
     Write-Host "[MSIX] Packing unsigned $Arch package -> $OutputPath"
     & $makeAppx pack /d $stagingDir /p $OutputPath /o
     if ($LASTEXITCODE -ne 0) {
         throw "makeappx pack failed with exit code $LASTEXITCODE"
     }
-    Write-Host "[MSIX] Created unsigned MSIX: $OutputPath"
+    Assert-MsixContainsPriAndUnplatedAssets -MsixFilePath $OutputPath
+    Write-Host "[MSIX] Created and verified unsigned MSIX: $OutputPath"
 
     if ($TestSign) {
         $signTool = Find-SdkTool -ToolName "signtool.exe"
@@ -223,4 +287,5 @@ try {
     }
 } finally {
     Remove-Item -Path $stagingDir -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path $priTempDir -Recurse -Force -ErrorAction SilentlyContinue
 }

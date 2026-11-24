@@ -1505,6 +1505,82 @@ static float ResolveUIScale(UINT dpi) {
     }
 }
 
+struct AppIconLoadResult {
+    HICON icon = nullptr;
+    bool owned = false;
+};
+
+static AppIconLoadResult LoadAppIconForPixelSize(HINSTANCE hInst, int px) noexcept {
+    const int targetPx = (std::max)(px, 16);
+    HICON hIcon = nullptr;
+    if (SUCCEEDED(LoadIconWithScaleDown(hInst, MAKEINTRESOURCEW(1), targetPx, targetPx, &hIcon)) && hIcon) {
+        return { hIcon, true };
+    }
+    hIcon = static_cast<HICON>(LoadImageW(hInst, MAKEINTRESOURCEW(1), IMAGE_ICON, targetPx, targetPx, LR_DEFAULTCOLOR));
+    if (hIcon) {
+        return { hIcon, true };
+    }
+    return { LoadIconW(hInst, MAKEINTRESOURCEW(1)), false };
+}
+
+static AppIconLoadResult s_windowIconBig{};
+static AppIconLoadResult s_windowIconSmall{};
+static UINT s_windowIconDpi = 0;
+
+static void UpdateWindowIconsForDpi(HWND hwnd, UINT dpi) {
+    if (!hwnd) return;
+    if (dpi == 0) dpi = GetDpiForWindow(hwnd);
+    if (dpi == 0) dpi = GetDpiForSystem();
+    if (dpi == 0) dpi = USER_DEFAULT_SCREEN_DPI;
+    if (dpi == s_windowIconDpi && s_windowIconBig.icon && s_windowIconSmall.icon) {
+        return;
+    }
+
+    HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
+    if (!hInst) hInst = GetModuleHandleW(nullptr);
+
+    // Match Windows 10/11 default taskbar (24px @ 96 DPI) and Win10 small taskbar (16px @ 96 DPI).
+    const int bigPx = MulDiv(24, static_cast<int>(dpi), USER_DEFAULT_SCREEN_DPI);
+    const int smallPx = MulDiv(16, static_cast<int>(dpi), USER_DEFAULT_SCREEN_DPI);
+
+    const AppIconLoadResult newBig = LoadAppIconForPixelSize(hInst, bigPx);
+    const AppIconLoadResult newSmall = LoadAppIconForPixelSize(hInst, smallPx);
+
+    if (newBig.icon) {
+        const AppIconLoadResult oldBig = s_windowIconBig;
+        SendMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(newBig.icon));
+        s_windowIconBig = newBig;
+        if (oldBig.owned && oldBig.icon && oldBig.icon != newBig.icon) {
+            DestroyIcon(oldBig.icon);
+        }
+    }
+    if (newSmall.icon) {
+        const AppIconLoadResult oldSmall = s_windowIconSmall;
+        SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(newSmall.icon));
+        s_windowIconSmall = newSmall;
+        if (oldSmall.owned && oldSmall.icon && oldSmall.icon != newSmall.icon) {
+            DestroyIcon(oldSmall.icon);
+        }
+    }
+    s_windowIconDpi = dpi;
+}
+
+static void DestroyWindowIcons(HWND hwnd) {
+    if (hwnd) {
+        SendMessageW(hwnd, WM_SETICON, ICON_BIG, 0);
+        SendMessageW(hwnd, WM_SETICON, ICON_SMALL, 0);
+    }
+    if (s_windowIconBig.owned && s_windowIconBig.icon) {
+        DestroyIcon(s_windowIconBig.icon);
+    }
+    if (s_windowIconSmall.owned && s_windowIconSmall.icon) {
+        DestroyIcon(s_windowIconSmall.icon);
+    }
+    s_windowIconBig = {};
+    s_windowIconSmall = {};
+    s_windowIconDpi = 0;
+}
+
 static void RefreshWindowDpi(HWND hwnd, UINT dpiHint = 0) {
     UINT dpi = dpiHint;
     if (dpi == 0 && hwnd) {
@@ -1513,6 +1589,7 @@ static void RefreshWindowDpi(HWND hwnd, UINT dpiHint = 0) {
     if (dpi == 0) dpi = USER_DEFAULT_SCREEN_DPI;
     ApplyUIScale(ResolveUIScale(dpi));
     if (hwnd) {
+        UpdateWindowIconsForDpi(hwnd, dpi);
         RefreshToolbarSafeLayout(hwnd);
     }
     if (hwnd && (g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible() || g_gallery.IsVisible() || AppContext::GetInstance().Dialog.IsVisible || g_imagePath.empty())) {
@@ -4989,34 +5066,84 @@ struct DwmFrameAttributeCache {
     COLORREF borderColor = 0;
     bool valid = false;
 };
+struct Win10WindowBorderState {
+    HWND hwnd = nullptr;
+    uint32_t colorRef = DWMWA_COLOR_DEFAULT;
+    bool isActive = false;
+    bool visible = false;
+    bool valid = false;
+};
 static DwmFrameAttributeCache s_dwmFrameCache;
+static Win10WindowBorderState s_win10BorderState;
 
 static void ResetWindowDwmFrameCache(HWND hwnd) {
     if (s_dwmFrameCache.hwnd == hwnd) {
         s_dwmFrameCache = {};
     }
+    if (s_win10BorderState.hwnd == hwnd) {
+        s_win10BorderState = {};
+    }
+}
+
+uint32_t GetWin10WindowBorderState(HWND hwnd, bool* outVisible, bool* outActive) noexcept {
+    if (hwnd && s_win10BorderState.valid && s_win10BorderState.hwnd == hwnd) {
+        if (outVisible) *outVisible = s_win10BorderState.visible;
+        if (outActive) *outActive = s_win10BorderState.isActive;
+        return s_win10BorderState.colorRef;
+    }
+
+    const bool isActive = hwnd && (GetForegroundWindow() == hwnd || GetActiveWindow() == hwnd);
+    const bool suppress = !hwnd || g_isFullScreen || (IsZoomed(hwnd) != 0);
+    const bool isSpotlightSlideshow = (g_slideshowState.IsActive && g_config.SlideshowImmersiveMode == 1);
+    const uint32_t colorRef = QuickView::UI::Theme::ResolveEffectiveWindowBorderColor(
+        g_config, isActive, g_isFullScreen, isSpotlightSlideshow);
+    const bool visible = !suppress && (colorRef != DWMWA_COLOR_NONE);
+    if (outVisible) *outVisible = visible;
+    if (outActive) *outActive = isActive;
+    return colorRef;
 }
 
 void SyncWindowDwmFrameAttributes(HWND hwnd, int activeOverride) {
-    if (!hwnd || !SystemInfo::IsWindows11OrGreater()) return;
+    if (!hwnd) return;
 
     // Suppress rounded corners in fullscreen and maximized states; fullscreen must
     // also explicitly disable the Win11 DWM border so WM_SIZE(SIZE_RESTORED) or
     // theme refreshes cannot restore a 1px border around the screen edge.
     const bool suppressCorners = g_isFullScreen || (IsZoomed(hwnd) != 0);
-    const DWM_WINDOW_CORNER_PREFERENCE targetCorner =
-        (!suppressCorners && g_config.RoundedCorners) ? DWMWCP_ROUND : DWMWCP_DONOTROUND;
-
     const bool isActiveWindow = (activeOverride >= 0)
         ? (activeOverride != 0)
         : (GetForegroundWindow() == hwnd || GetActiveWindow() == hwnd);
     const bool isSpotlightSlideshow = (g_slideshowState.IsActive && g_config.SlideshowImmersiveMode == 1);
+    const COLORREF targetBorder = static_cast<COLORREF>(QuickView::UI::Theme::ResolveEffectiveWindowBorderColor(
+        g_config, isActiveWindow, g_isFullScreen, isSpotlightSlideshow));
+
+    if (!SystemInfo::IsWindows11OrGreater()) {
+        // Windows 10 does not support DWMWA_BORDER_COLOR; maintain cached state for D2D 1px border rendering.
+        const bool targetVisible = !suppressCorners && (targetBorder != DWMWA_COLOR_NONE);
+        const bool stateChanged = !s_win10BorderState.valid ||
+            s_win10BorderState.hwnd != hwnd ||
+            s_win10BorderState.colorRef != static_cast<uint32_t>(targetBorder) ||
+            s_win10BorderState.isActive != isActiveWindow ||
+            s_win10BorderState.visible != targetVisible;
+
+        s_win10BorderState.hwnd = hwnd;
+        s_win10BorderState.colorRef = static_cast<uint32_t>(targetBorder);
+        s_win10BorderState.isActive = isActiveWindow;
+        s_win10BorderState.visible = targetVisible;
+        s_win10BorderState.valid = true;
+
+        if (stateChanged && g_uiRenderer) {
+            RequestRepaint(PaintLayer::Static);
+        }
+        return;
+    }
+
+    const DWM_WINDOW_CORNER_PREFERENCE targetCorner =
+        (!suppressCorners && g_config.RoundedCorners) ? DWMWCP_ROUND : DWMWCP_DONOTROUND;
 
     // Keep caption color disabled (DWMWA_COLOR_NONE) outside Spotlight slideshow
     // so Windows 11 never bleeds a default caption tint into transparent DComp surfaces.
     COLORREF targetCaption = isSpotlightSlideshow ? 0x00000000 : DWMWA_COLOR_NONE;
-    COLORREF targetBorder = static_cast<COLORREF>(QuickView::UI::Theme::ResolveEffectiveWindowBorderColor(
-        g_config, isActiveWindow, g_isFullScreen, isSpotlightSlideshow));
 
     const bool cacheHit = s_dwmFrameCache.valid && s_dwmFrameCache.hwnd == hwnd;
     if (!cacheHit || s_dwmFrameCache.corner != targetCorner) {
@@ -5773,15 +5900,18 @@ void LoadConfig() {
     const bool isPackaged = SystemInfo::IsPackagedApp();
     
     // Auto-detect Portable Mode state based on where we found the config (disabled in MSIX/Store mode)
-    if (isPackaged) {
-        g_config.PortableMode = false;
-    } else {
+    bool detectedPortable = false;
+    if (!isPackaged) {
         wchar_t exePath[MAX_PATH];
         GetModuleFileNameW(nullptr, exePath, MAX_PATH);
         std::wstring exeDir = exePath;
         size_t lastSlash = exeDir.find_last_of(L"\\/");
         if (lastSlash != std::wstring::npos) exeDir = exeDir.substr(0, lastSlash);
-        g_config.PortableMode = (iniPathW.find(exeDir) == 0);
+        detectedPortable = (iniPathW.find(exeDir) == 0);
+    }
+    g_config.PortableMode = detectedPortable;
+    if (g_config.PortableMode) {
+        g_config.FileAssocAutoRepair = false;
     }
     
     if (GetFileAttributesW(ini) == INVALID_FILE_ATTRIBUTES) {
@@ -5993,7 +6123,10 @@ void LoadConfig() {
         g_config.NavTraverse = ReadIniBool(ini, L"General", L"NavTraverse", false);
     }
 
-    g_config.PortableMode = isPackaged ? false : ReadIniBool(ini, L"General", L"PortableMode", false);
+    g_config.PortableMode = isPackaged ? false : ReadIniBool(ini, L"General", L"PortableMode", detectedPortable);
+    if (g_config.PortableMode) {
+        g_config.FileAssocAutoRepair = false;
+    }
     if (isPackaged) {
         g_config.CheckUpdates = false;
     }
@@ -9655,6 +9788,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCm
     }
     
     [[maybe_unused]] HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    UINT primaryDpi = GetDpiForSystem();
+    if (primaryDpi == 0) primaryDpi = USER_DEFAULT_SCREEN_DPI;
+    const int initBigPx = MulDiv(24, static_cast<int>(primaryDpi), USER_DEFAULT_SCREEN_DPI);
+    const int initSmallPx = MulDiv(16, static_cast<int>(primaryDpi), USER_DEFAULT_SCREEN_DPI);
+
     WNDCLASSEXW wcex = {};
     wcex.cbSize = sizeof(WNDCLASSEXW);
     wcex.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
@@ -9663,15 +9801,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCm
     wcex.hCursor = LoadCursor(nullptr, IDC_ARROW);
     wcex.hbrBackground = nullptr;
     wcex.lpszClassName = g_szClassName;
-    wcex.hIcon = LoadIconW(hInstance, MAKEINTRESOURCEW(1));    // Load from resource
-    wcex.hIconSm = LoadIconW(hInstance, MAKEINTRESOURCEW(1));  // Load from resource
+    wcex.hIcon = LoadAppIconForPixelSize(hInstance, initBigPx).icon;
+    wcex.hIconSm = LoadAppIconForPixelSize(hInstance, initSmallPx).icon;
     
     RegisterClassExW(&wcex);
     int screenW = GetSystemMetrics(SM_CXSCREEN);
     int screenH = GetSystemMetrics(SM_CYSCREEN);
 
-    UINT primaryDpi = GetDpiForSystem();
-    if (primaryDpi == 0) primaryDpi = USER_DEFAULT_SCREEN_DPI;
     float initScale = ResolveUIScale(primaryDpi);
     if (initScale < 0.75f) initScale = 0.75f;
     if (initScale > 4.0f) initScale = 4.0f;
@@ -14558,6 +14694,7 @@ case WM_DESTROY: {
             ViewPan_Stop(hwnd, false);
             g_viewPanClock.Shutdown();
             ResetWindowDwmFrameCache(hwnd);
+            DestroyWindowIcons(hwnd);
             if (g_compEngine) {
                 g_compEngine->UnmountWebViewVisual();
                 g_compEngine->SetWebViewMode(false);

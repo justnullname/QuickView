@@ -19,6 +19,7 @@
 #include "AiActionOverlay.h"
 #include "GeekWidgets.h"
 #include "ThemePalette.h"
+#include "SystemInfo.h"
 #include <functional> // For std::hash
 
 namespace {
@@ -856,6 +857,7 @@ void UIRenderer::RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd) {
         
         // [Topmost Guarantee] Window Controls drawn last on welcome screen
         DrawWindowControls(dc, hwnd);
+        DrawWin10WindowBorder(dc, hwnd);
       }
       return;
     }
@@ -938,6 +940,7 @@ void UIRenderer::RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd) {
     
     // [Topmost Guarantee] Window Controls strictly drawn at the very end of Static Layer
     DrawWindowControls(dc, hwnd);
+    DrawWin10WindowBorder(dc, hwnd);
 }
 
 // ============================================================================
@@ -1981,6 +1984,60 @@ bool UIRenderer::RenderDecodeProgressOnly(HWND hwnd, const ImageEngine::Telemetr
     return false;
 }
 
+void UIRenderer::DrawWin10WindowBorder(ID2D1DeviceContext* dc, HWND hwnd) {
+    if (SystemInfo::IsWindows11OrGreater() || !dc || !hwnd ||
+        m_width < 2 || m_height < 2 || m_isFullscreen || IsZoomed(hwnd)) {
+        return;
+    }
+
+    extern uint32_t GetWin10WindowBorderState(HWND hwnd, bool* outVisible, bool* outActive) noexcept;
+    extern bool IsLightThemeActive();
+
+    bool visible = false;
+    bool isActive = false;
+    const uint32_t colorRef = GetWin10WindowBorderState(hwnd, &visible, &isActive);
+    constexpr uint32_t kDwmColorNone = 0xFFFFFFFEu;
+    constexpr uint32_t kDwmColorDefault = 0xFFFFFFFFu;
+    if (!visible || colorRef == kDwmColorNone) {
+        return;
+    }
+
+    D2D1_COLOR_F strokeColor{};
+    if (colorRef == kDwmColorDefault) {
+        const bool isLight = IsLightThemeActive();
+        if (isLight) {
+            strokeColor = isActive
+                ? D2D1::ColorF(0.44f, 0.44f, 0.44f, 0.78f)
+                : D2D1::ColorF(0.67f, 0.67f, 0.67f, 0.60f);
+        } else {
+            strokeColor = isActive
+                ? D2D1::ColorF(0.32f, 0.32f, 0.34f, 0.90f)
+                : D2D1::ColorF(0.24f, 0.24f, 0.26f, 0.70f);
+        }
+    } else {
+        strokeColor = D2D1::ColorF(
+            static_cast<float>(colorRef & 0xFFu) / 255.0f,
+            static_cast<float>((colorRef >> 8) & 0xFFu) / 255.0f,
+            static_cast<float>((colorRef >> 16) & 0xFFu) / 255.0f,
+            1.0f);
+    }
+
+    ComPtr<ID2D1SolidColorBrush> borderBrush;
+    if (FAILED(dc->CreateSolidColorBrush(strokeColor, &borderBrush)) || !borderBrush) {
+        return;
+    }
+
+    // Static layer context uses 96 DPI (1:1 physical pixels); draw an aliased 1px inner border.
+    const D2D1_ANTIALIAS_MODE prevAA = dc->GetAntialiasMode();
+    dc->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
+    const D2D1_RECT_F borderRect = D2D1::RectF(
+        0.5f,
+        0.5f,
+        static_cast<float>(m_width) - 0.5f,
+        static_cast<float>(m_height) - 0.5f);
+    dc->DrawRectangle(borderRect, borderBrush.Get(), 1.0f);
+    dc->SetAntialiasMode(prevAA);
+}
 
 void UIRenderer::DrawWindowControls(ID2D1DeviceContext* dc, HWND hwnd) {
     if (!m_showControls && m_winCtrlHover == -1) return;
@@ -5065,7 +5122,7 @@ void UIRenderer::DrawComparePaneIndicator(ID2D1DeviceContext* dc, HWND hwnd) {
     const float thickness = 3.0f * s;
     const float armLen = (std::min)(11.0f * s, (std::min)(drawWidth, effHeight) * 0.25f);
 
-    const bool hasRoundCorner = (!m_isFullscreen && !IsZoomed(hwnd) && g_config.RoundedCorners);
+    const bool hasRoundCorner = (SystemInfo::IsWindows11OrGreater() && !m_isFullscreen && !IsZoomed(hwnd) && g_config.RoundedCorners);
     const float cornerR = (std::min)(hasRoundCorner ? (5.0f * s) : (3.0f * s), armLen * 0.6f);
 
     D2D1_COLOR_F accentClr = QuickView::UI::Theme::GetThemePalette().accentFill;

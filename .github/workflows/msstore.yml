@@ -116,6 +116,58 @@ jobs:
             --dir "store-dist"
           Get-ChildItem -Path "store-dist" | Format-Table Name, Length
 
+      - name: Verify MSIXBundle Contains PRI & Unplated Taskbar Assets
+        if: steps.check-secrets.outputs.configured == 'true'
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.IO.Compression
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $bundles = Get-ChildItem -Path "store-dist" -Filter "*.msixbundle"
+          if ($bundles.Count -ne 1) {
+            Write-Error "Expected exactly 1 .msixbundle file in store-dist, found $($bundles.Count)."
+            exit 1
+          }
+          $bundleZip = [System.IO.Compression.ZipFile]::OpenRead($bundles[0].FullName)
+          try {
+            $msixEntries = $bundleZip.Entries | Where-Object { $_.FullName.ToLowerInvariant().EndsWith(".msix") }
+            if ($msixEntries.Count -lt 1) {
+              Write-Error "MSIXBundle contains no inner .msix packages."
+              exit 1
+            }
+            foreach ($msixEntry in $msixEntries) {
+              Write-Host "Inspecting inner MSIX: $($msixEntry.FullName)"
+              $ms = New-Object System.IO.MemoryStream
+              $entryStream = $msixEntry.Open()
+              try {
+                $entryStream.CopyTo($ms)
+              } finally {
+                $entryStream.Dispose()
+              }
+              $ms.Position = 0
+              $innerZip = New-Object System.IO.Compression.ZipArchive($ms, [System.IO.Compression.ZipArchiveMode]::Read)
+              try {
+                $map = @{}
+                foreach ($ie in $innerZip.Entries) {
+                  $map[$ie.FullName.ToLowerInvariant()] = $ie.Length
+                }
+                if (-not $map.ContainsKey("resources.pri") -or $map["resources.pri"] -le 0) {
+                  Write-Error "Inner package $($msixEntry.FullName) is missing or has empty resources.pri!"
+                  exit 1
+                }
+                if (-not $map.ContainsKey("assets/square44x44logo.targetsize-48_altform-unplated.png")) {
+                  Write-Error "Inner package $($msixEntry.FullName) is missing unplated taskbar icon asset!"
+                  exit 1
+                }
+                Write-Host "  OK: resources.pri ($($map['resources.pri']) bytes) + unplated assets present."
+              } finally {
+                $innerZip.Dispose()
+                $ms.Dispose()
+              }
+            }
+          } finally {
+            $bundleZip.Dispose()
+          }
+
       - name: Setup Microsoft Store Developer CLI
         if: steps.check-secrets.outputs.configured == 'true'
         uses: microsoft/microsoft-store-apppublisher@v1.4

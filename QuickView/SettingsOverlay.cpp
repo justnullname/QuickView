@@ -2346,6 +2346,8 @@ void SettingsOverlay::BuildGeneralTab(SettingsTab& tabGeneral) {
                 return;
             }
             
+            g_config.FileAssocAutoRepair = false;
+
             // Refined Logic for Portable Mode transition:
             const bool appDataExists = (GetFileAttributesW(appDataIni.c_str()) != INVALID_FILE_ATTRIBUTES);
             const bool exeExists = (GetFileAttributesW(exeIni.c_str()) != INVALID_FILE_ATTRIBUTES);
@@ -2368,9 +2370,13 @@ void SettingsOverlay::BuildGeneralTab(SettingsTab& tabGeneral) {
                 if (!exeExists) {
                     // 2. Both missing: Generate default config in ExeDir
                     SaveConfigSync();
+                } else {
+                    // 3. AppData missing, ExeDir exists: Preserve existing portable config,
+                    //    while ensuring PortableMode=1 and FileAssocAutoRepair=0 are persisted.
+                    WritePrivateProfileStringW(L"General", L"PortableMode", L"1", exeIni.c_str());
+                    WritePrivateProfileStringW(L"Registry", L"FileAssocAutoRepair", L"0", exeIni.c_str());
                 }
             }
-            // 3. AppData missing, ExeDir exists: Do NOT overwrite (preserve existing portable config)
             
             QuickView::AI::AiActionManager::Instance().ReloadConfig();
 
@@ -2513,12 +2519,10 @@ void SettingsOverlay::BuildThemeTab(SettingsTab& tabTheme) {
         HWND targetHwnd = (overlay && overlay->m_hwnd) ? overlay->m_hwnd : GetActiveWindow();
         if (targetHwnd) {
             SyncWindowDwmFrameAttributes(targetHwnd);
+            InvalidateRect(targetHwnd, nullptr, FALSE);
         }
         SaveConfig();
     };
-    if (!IsWindows11()) {
-        itemBorderAccent.isDisabled = true;
-    }
     tabTheme.items.push_back(std::move(itemBorderAccent));
 
     SettingsItem itemDimmer = { AppStrings::g.Settings_Label_AmbientDimmer, OptionType::Toggle, &g_config.EnableAmbientDimmer, {} };
@@ -8071,6 +8075,7 @@ bool SettingsOverlay::OpenInputItemDialog(size_t tabIdx, size_t itemIdx) {
 }
 
 void SettingsOverlay::HandleItemKeyboardActivation(SettingsItem& item, WPARAM key) {
+    if (item.isDisabled) return;
     const bool isShiftDown = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
     extern void SaveConfig();
 

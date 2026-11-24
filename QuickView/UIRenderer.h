@@ -266,6 +266,7 @@ private:
     // [Auto Pan] crisp vector anchor disc & directional indicator
     void DrawAutoPanAnchor(ID2D1DeviceContext* dc, HWND hwnd);
     void DrawWindowControls(ID2D1DeviceContext* dc, HWND hwnd);
+    void DrawWin10WindowBorder(ID2D1DeviceContext* dc, HWND hwnd);
     void DrawBorderIndicators(ID2D1DeviceContext* dc, HWND hwnd);
     float ComputeBorderGlowAlpha() noexcept;
     void DrawNavigator(ID2D1DeviceContext* dc);
