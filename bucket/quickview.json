@@ -21,14 +21,17 @@
         ]
     ],
     "persist": "QuickView.ini",
-    "checkver": "github",
+    "checkver": {
+        "url": "https://api.github.com/repos/justnullname/QuickView/releases/latest",
+        "regex": "\"tag_name\":\\s*\"v([\\d.]+)\"[\\s\\S]*?QuickView_v(?<asset>[\\d.]+)_AMD64\\.zip"
+    },
     "autoupdate": {
         "architecture": {
             "64bit": {
-                "url": "https://github.com/justnullname/QuickView/releases/download/v$version/QuickView_v$version_AMD64.zip"
+                "url": "https://github.com/justnullname/QuickView/releases/download/v$version/QuickView_v$matchAsset_AMD64.zip"
             },
             "arm64": {
-                "url": "https://github.com/justnullname/QuickView/releases/download/v$version/QuickView_v$version_ARM64.zip"
+                "url": "https://github.com/justnullname/QuickView/releases/download/v$version/QuickView_v$matchAsset_ARM64.zip"
             }
         }
     }

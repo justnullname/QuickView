@@ -3,6 +3,10 @@ name: Scoop Manifest Update
 permissions:
   contents: write
 
+concurrency:
+  group: scoop-manifest
+  cancel-in-progress: false
+
 on:
   release:
     types: [published]
@@ -23,7 +27,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: main
-          fetch-depth: 1
+          fetch-depth: 10
 
       - name: Determine Release Tag
         id: get-tag
@@ -34,16 +38,23 @@ jobs:
           EVENT_TAG="${{ github.event.release.tag_name }}"
           if [ -n "$CUSTOM_TAG" ]; then
             TAG="$CUSTOM_TAG"
+            RELEASE_JSON=$(gh api "repos/${{ github.repository }}/releases/tags/${TAG}")
           elif [ -n "$EVENT_TAG" ]; then
             TAG="$EVENT_TAG"
+            RELEASE_JSON=$(gh api "repos/${{ github.repository }}/releases/tags/${TAG}")
           else
             RELEASE_JSON=$(gh api "repos/${{ github.repository }}/releases/latest")
-            IS_PRE=$(echo "$RELEASE_JSON" | jq -r '.prerelease')
-            if [ "$IS_PRE" = "true" ]; then
-              echo "::error::Target release is a pre-release! Scoop manifest only tracks stable releases."
-              exit 1
-            fi
             TAG=$(echo "$RELEASE_JSON" | jq -r '.tag_name')
+          fi
+          IS_DRAFT=$(echo "$RELEASE_JSON" | jq -r '.draft')
+          IS_PRE=$(echo "$RELEASE_JSON" | jq -r '.prerelease')
+          if [ "$IS_DRAFT" = "true" ]; then
+            echo "::error::Target release ${TAG} is still a draft! Publish it before updating Scoop manifest."
+            exit 1
+          fi
+          if [ "$IS_PRE" = "true" ]; then
+            echo "::error::Target release ${TAG} is a pre-release! Scoop manifest only tracks stable releases."
+            exit 1
           fi
           VERSION="${TAG#v}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
@@ -70,8 +81,8 @@ jobs:
             exit 1
           fi
 
-          curl -fsSL -o /tmp/quickview_amd64.zip "$URL_AMD64"
-          curl -fsSL -o /tmp/quickview_arm64.zip "$URL_ARM64"
+          curl -fsSL --retry 3 --retry-delay 2 -o /tmp/quickview_amd64.zip "$URL_AMD64"
+          curl -fsSL --retry 3 --retry-delay 2 -o /tmp/quickview_arm64.zip "$URL_ARM64"
 
           HASH_AMD64=$(sha256sum /tmp/quickview_amd64.zip | awk '{print $1}')
           HASH_ARM64=$(sha256sum /tmp/quickview_arm64.zip | awk '{print $1}')
@@ -117,4 +128,5 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add bucket/quickview.json
           git commit -m "chore(scoop): update quickview manifest to ${{ steps.get-tag.outputs.tag }}"
+          git pull --rebase origin main
           git push origin main
