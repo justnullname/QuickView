@@ -160,9 +160,119 @@ struct HttpExchangeResult {
     std::wstring errorMessage;
 };
 
-static HttpExchangeResult SendRequestAndReadResponse(
+static constexpr bool IsRetryableHttpStatus(DWORD statusCode) noexcept {
+    switch (statusCode) {
+        case 408: // Request Timeout
+        case 429: // Too Many Requests
+        case 500: // Internal Server Error
+        case 502: // Bad Gateway
+        case 503: // Service Unavailable
+        case 504: // Gateway Timeout
+        case 529: // Provider Overloaded (e.g. Anthropic)
+            return true;
+        default:
+            return false;
+    }
+}
+
+static std::optional<uint64_t> QueryRetryAfterMs(HINTERNET hRequest) noexcept {
+    wchar_t buf[64] = {};
+    DWORD bufBytes = sizeof(buf) - sizeof(wchar_t);
+    if (!WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_RETRY_AFTER,
+                             WINHTTP_HEADER_NAME_BY_INDEX, buf, &bufBytes, WINHTTP_NO_HEADER_INDEX)) {
+        return std::nullopt;
+    }
+
+    size_t len = bufBytes / sizeof(wchar_t);
+    if (len >= 64) len = 63;
+    buf[len] = L'\0';
+
+    std::wstring_view sv(buf);
+    while (!sv.empty() && (sv.front() == L' ' || sv.front() == L'\t')) sv.remove_prefix(1);
+    while (!sv.empty() && (sv.back() == L' ' || sv.back() == L'\t')) sv.remove_suffix(1);
+    if (sv.empty()) {
+        return std::nullopt;
+    }
+
+    bool allDigits = true;
+    uint64_t sec = 0;
+    for (wchar_t ch : sv) {
+        if (ch < L'0' || ch > L'9') {
+            allDigits = false;
+            break;
+        }
+        const uint64_t digit = static_cast<uint64_t>(ch - L'0');
+        constexpr uint64_t kMaxSec = (std::numeric_limits<uint64_t>::max)() / 1000ULL;
+        if (sec > (kMaxSec - digit) / 10ULL) {
+            sec = kMaxSec;
+        } else {
+            sec = sec * 10ULL + digit;
+        }
+    }
+    if (allDigits) {
+        return sec * 1000ULL;
+    }
+
+    // Fallback: RFC 9110 HTTP-date format (must contain time HH:MM:SS;
+    // WinHttpTimeToSystemTime returns TRUE with current time on non-date strings).
+    if (sv.find(L':') != std::wstring_view::npos) {
+        SYSTEMTIME retrySt{};
+        // buf was already null-terminated; pass pointer to trimmed start since trailing spaces were removed or ignored.
+        const size_t offset = static_cast<size_t>(sv.data() - buf);
+        buf[offset + sv.size()] = L'\0';
+        if (WinHttpTimeToSystemTime(buf + offset, &retrySt)) {
+            FILETIME retryFt{};
+            FILETIME nowFt{};
+            if (SystemTimeToFileTime(&retrySt, &retryFt)) {
+                GetSystemTimeAsFileTime(&nowFt);
+                ULARGE_INTEGER retryUli{};
+                retryUli.LowPart = retryFt.dwLowDateTime;
+                retryUli.HighPart = retryFt.dwHighDateTime;
+                ULARGE_INTEGER nowUli{};
+                nowUli.LowPart = nowFt.dwLowDateTime;
+                nowUli.HighPart = nowFt.dwHighDateTime;
+                if (retryUli.QuadPart <= nowUli.QuadPart) {
+                    return 0ULL;
+                }
+                return (retryUli.QuadPart - nowUli.QuadPart) / 10000ULL;
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+static DWORD ComputeRetryJitterMs(DWORD maxJitterMs) noexcept {
+    if (maxJitterMs == 0) return 0;
+    uint64_t x = GetTickCount64() ^ (static_cast<uint64_t>(GetCurrentThreadId()) * 0x9E3779B97F4A7C15ULL);
+    x ^= x >> 30;
+    x *= 0xBF58476D1CE4E5B9ULL;
+    x ^= x >> 27;
+    x *= 0x94D049BB133111EBULL;
+    x ^= x >> 31;
+    return static_cast<DWORD>(x % maxJitterMs);
+}
+
+static bool WaitForRetryBackoff(
+    DWORD delayMs,
+    uint64_t expectedTaskId,
+    const std::atomic<uint64_t>& currentTaskId) noexcept
+{
+    constexpr DWORD kSliceMs = 50;
+    DWORD remaining = delayMs;
+    while (remaining > 0) {
+        if (expectedTaskId != currentTaskId.load()) {
+            return false;
+        }
+        const DWORD slice = (remaining < kSliceMs) ? remaining : kSliceMs;
+        Sleep(slice);
+        remaining -= slice;
+    }
+    return expectedTaskId == currentTaskId.load();
+}
+
+static HttpExchangeResult SendRequestAndReadResponseOnce(
     HINTERNET hRequest,
-    const std::wstring& headers,
+    std::wstring_view headers,
     const void* payloadData,
     DWORD payloadLen,
     const wchar_t* hostName,
@@ -177,7 +287,9 @@ static HttpExchangeResult SendRequestAndReadResponse(
         return res;
     }
 
-    BOOL bSend = WinHttpSendRequest(hRequest, headers.c_str(), static_cast<DWORD>(headers.size()),
+    LPCWSTR hdrPtr = headers.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : headers.data();
+    DWORD hdrLen = headers.empty() ? 0 : static_cast<DWORD>(headers.size());
+    BOOL bSend = WinHttpSendRequest(hRequest, hdrPtr, hdrLen,
                                     const_cast<void*>(payloadData), payloadLen, payloadLen, 0);
 
     if (!bSend || !WinHttpReceiveResponse(hRequest, nullptr)) {
@@ -253,13 +365,73 @@ static HttpExchangeResult SendRequestAndReadResponse(
         return res;
     }
 
-    if (statusCode != 200) {
-        AiActionManager::ExtractSemanticError(statusCode, res.body, res.mainTitle, res.detailMessage, res.actionAdvice);
-        res.errorMessage = AiActionManager::FormatAiErrorMessage(statusCode, res.body);
-        return res;
-    }
+    res.ok = (statusCode == 200);
+    return res;
+}
 
-    res.ok = true;
+// Retries transient 408/429/5xx/529 responses with exponential backoff (honoring Retry-After up to 30 s).
+// Headers are sent only on the first attempt since WinHTTP retains them on the request handle.
+static HttpExchangeResult SendRequestAndReadResponse(
+    HINTERNET hRequest,
+    const std::wstring& headers,
+    const void* payloadData,
+    DWORD payloadLen,
+    const wchar_t* hostName,
+    INTERNET_PORT port,
+    bool isLocal,
+    uint64_t expectedTaskId,
+    const std::atomic<uint64_t>& currentTaskId)
+{
+    constexpr int kMaxAttempts = 3;
+    constexpr uint64_t kMaxRetryDelayMs = 30000ULL;
+    constexpr DWORD kBaseDelayMs = 1000;
+
+    HttpExchangeResult res;
+    for (int attempt = 0; attempt < kMaxAttempts; ++attempt) {
+        res = SendRequestAndReadResponseOnce(
+            hRequest,
+            attempt == 0 ? std::wstring_view(headers) : std::wstring_view{},
+            payloadData,
+            payloadLen,
+            hostName,
+            port,
+            isLocal,
+            expectedTaskId,
+            currentTaskId);
+
+        if (res.ok || res.interrupted || res.statusCode == 0) {
+            return res;
+        }
+
+        bool canRetry = (attempt + 1 < kMaxAttempts) && IsRetryableHttpStatus(res.statusCode);
+        DWORD delayMs = 0;
+
+        if (canRetry) {
+            const auto retryAfterMs = QueryRetryAfterMs(hRequest);
+            if (retryAfterMs.has_value()) {
+                if (*retryAfterMs > kMaxRetryDelayMs) {
+                    canRetry = false;
+                } else if (*retryAfterMs > 0) {
+                    const uint64_t d = *retryAfterMs + ComputeRetryJitterMs(100);
+                    delayMs = static_cast<DWORD>(d > kMaxRetryDelayMs ? kMaxRetryDelayMs : d);
+                }
+            } else {
+                const uint64_t d = (static_cast<uint64_t>(kBaseDelayMs) << attempt) + ComputeRetryJitterMs(200);
+                delayMs = static_cast<DWORD>(d > kMaxRetryDelayMs ? kMaxRetryDelayMs : d);
+            }
+        }
+
+        if (!canRetry) {
+            AiActionManager::ExtractSemanticError(res.statusCode, res.body, res.mainTitle, res.detailMessage, res.actionAdvice);
+            res.errorMessage = AiActionManager::FormatAiErrorMessage(res.statusCode, res.body);
+            return res;
+        }
+
+        if (!WaitForRetryBackoff(delayMs, expectedTaskId, currentTaskId)) {
+            res.interrupted = true;
+            return res;
+        }
+    }
     return res;
 }
 

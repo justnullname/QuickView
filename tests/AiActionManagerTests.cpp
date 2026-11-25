@@ -2,9 +2,13 @@
 #include "AiActionManager.h"
 #include "OSDState.h"
 #include "AppStrings.h"
+#include <winsock2.h>
 #include <windows.h>
 #include <shlwapi.h>
 #include <shlobj.h>
+#include <cstdlib>
+#include <thread>
+#pragma comment(lib, "ws2_32.lib")
 
 // Stubs for test harness
 OSDState g_osd;
@@ -521,6 +525,242 @@ TEST_F(AiActionManagerTest, VisualProviderSnapshotAndRenderIntegrationInpaintSli
     EXPECT_EQ(s_lastRes.sourceImagePath, L"C:\\fake_visual_snapshot.jpg");
 
     QuickView::AI::AiActionManager::SetVisualFrameProviders(nullptr, nullptr);
+}
+
+namespace {
+
+struct LoopbackHttpServer {
+    SOCKET listener = INVALID_SOCKET;
+    int port = 0;
+    std::thread serverThread;
+    std::atomic<int> postCount{ 0 };
+    std::string secondRequestHeaders;
+    HANDLE hFirstResponseSent = nullptr;
+
+    ~LoopbackHttpServer() {
+        Stop();
+        if (hFirstResponseSent) {
+            CloseHandle(hFirstResponseSent);
+            hFirstResponseSent = nullptr;
+        }
+    }
+
+    template <typename ResponderFn>
+    bool Start(ResponderFn responder, bool trackFirstSentEvent = false) {
+        WSADATA wsa{};
+        if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) return false;
+
+        listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (listener == INVALID_SOCKET) {
+            WSACleanup();
+            return false;
+        }
+
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        if (bind(listener, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0 ||
+            listen(listener, 4) != 0) {
+            closesocket(listener);
+            listener = INVALID_SOCKET;
+            WSACleanup();
+            return false;
+        }
+
+        int addrLen = sizeof(addr);
+        getsockname(listener, reinterpret_cast<sockaddr*>(&addr), &addrLen);
+        port = ntohs(addr.sin_port);
+
+        if (trackFirstSentEvent) {
+            hFirstResponseSent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        }
+
+        serverThread = std::thread([this, responder]() {
+            for (;;) {
+                SOCKET c = accept(listener, nullptr, nullptr);
+                if (c == INVALID_SOCKET) return;
+
+                std::string req;
+                char chunk[65536];
+                size_t hdrEnd = std::string::npos;
+                size_t bodyLen = 0;
+                for (;;) {
+                    if (hdrEnd == std::string::npos) {
+                        hdrEnd = req.find("\r\n\r\n");
+                        if (hdrEnd != std::string::npos) {
+                            size_t cl = req.find("Content-Length:");
+                            if (cl != std::string::npos && cl < hdrEnd) {
+                                bodyLen = std::strtoul(req.c_str() + cl + 15, nullptr, 10);
+                            }
+                        }
+                    }
+                    if (hdrEnd != std::string::npos && req.size() >= hdrEnd + 4 + bodyLen) break;
+                    int n = recv(c, chunk, sizeof(chunk), 0);
+                    if (n <= 0) break;
+                    req.append(chunk, n);
+                }
+
+                std::string resp = "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+                if (req.rfind("POST", 0) == 0) {
+                    int idx = ++postCount;
+                    if (idx == 2 && hdrEnd != std::string::npos) {
+                        secondRequestHeaders = req.substr(0, hdrEnd);
+                    }
+                    resp = responder(idx);
+                }
+                send(c, resp.data(), static_cast<int>(resp.size()), 0);
+                closesocket(c);
+                if (hFirstResponseSent && postCount.load() == 1) {
+                    SetEvent(hFirstResponseSent);
+                }
+            }
+        });
+        return true;
+    }
+
+    void Stop() {
+        if (listener != INVALID_SOCKET) {
+            closesocket(listener);
+            listener = INVALID_SOCKET;
+            if (serverThread.joinable()) {
+                serverThread.join();
+            }
+            WSACleanup();
+        }
+    }
+};
+
+void SetupFakeVisualProviders() {
+    QuickView::AI::AiActionManager::SetVisualFrameProviders(
+        [](QuickView::AI::VisualFrameSnapshot& out) -> bool {
+            out.imagePath = L"C:\\fake_visual_snapshot.jpg";
+            return true;
+        },
+        [](const QuickView::AI::VisualFrameSnapshot&, std::vector<uint8_t>& outBgra, uint32_t& outW, uint32_t& outH, uint32_t& outStride) -> bool {
+            outW = 40;
+            outH = 20;
+            outStride = 40 * 4;
+            outBgra.assign(40 * 20 * 4, 255);
+            return true;
+        });
+}
+
+} // namespace
+
+TEST_F(AiActionManagerTest, RateLimited429IsRetriedAndDoesNotDuplicateHeaders) {
+    LoopbackHttpServer server;
+    ASSERT_TRUE(server.Start([](int attempt) -> std::string {
+        if (attempt == 1) {
+            return "HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\nRetry-After: 0\r\nContent-Length: 2\r\n\r\n{}";
+        }
+        return "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 2\r\n\r\n{}";
+    }));
+
+    SetupFakeVisualProviders();
+    auto& mgr = QuickView::AI::AiActionManager::Instance();
+    mgr.GetProfiles()[0].baseUrl = "http://127.0.0.1:" + std::to_string(server.port) + "/";
+    mgr.GetProfiles()[0].protocol = QuickView::AI::ApiProtocol::StabilityInpaint;
+
+    HANDLE hDone = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    static QuickView::AI::ExecutionResult s_lastRes;
+    s_lastRes = {};
+    struct WaitCtx { HANDLE ev; };
+    mgr.ExecuteInpaint(
+        2, 2, 38, 18, L"test fill", nullptr,
+        QuickView::AI::ActionCallback(
+            [](void* ctx, const QuickView::AI::ExecutionResult& res) {
+                s_lastRes = res;
+                SetEvent(static_cast<WaitCtx*>(ctx)->ev);
+            },
+            new WaitCtx{ hDone },
+            [](void* ctx) { delete static_cast<WaitCtx*>(ctx); }));
+
+    EXPECT_EQ(WaitForSingleObject(hDone, 10000), WAIT_OBJECT_0);
+    CloseHandle(hDone);
+    server.Stop();
+    QuickView::AI::AiActionManager::SetVisualFrameProviders(nullptr, nullptr);
+
+    EXPECT_EQ(server.postCount.load(), 2);
+    EXPECT_EQ(s_lastRes.httpStatusCode, 400u);
+    size_t first = server.secondRequestHeaders.find("Content-Type:");
+    EXPECT_NE(first, std::string::npos);
+    EXPECT_EQ(server.secondRequestHeaders.find("Content-Type:", first + 1), std::string::npos);
+}
+
+TEST_F(AiActionManagerTest, RetryAfterOver30SecondsIsNotRetried) {
+    LoopbackHttpServer server;
+    ASSERT_TRUE(server.Start([](int) -> std::string {
+        return "HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\nRetry-After: 60\r\nContent-Length: 2\r\n\r\n{}";
+    }));
+
+    SetupFakeVisualProviders();
+    auto& mgr = QuickView::AI::AiActionManager::Instance();
+    mgr.GetProfiles()[0].baseUrl = "http://127.0.0.1:" + std::to_string(server.port) + "/";
+    mgr.GetProfiles()[0].protocol = QuickView::AI::ApiProtocol::StabilityInpaint;
+
+    HANDLE hDone = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    static QuickView::AI::ExecutionResult s_lastRes;
+    s_lastRes = {};
+    struct WaitCtx { HANDLE ev; };
+    const ULONGLONG t0 = GetTickCount64();
+    mgr.ExecuteInpaint(
+        2, 2, 38, 18, L"test fill", nullptr,
+        QuickView::AI::ActionCallback(
+            [](void* ctx, const QuickView::AI::ExecutionResult& res) {
+                s_lastRes = res;
+                SetEvent(static_cast<WaitCtx*>(ctx)->ev);
+            },
+            new WaitCtx{ hDone },
+            [](void* ctx) { delete static_cast<WaitCtx*>(ctx); }));
+
+    EXPECT_EQ(WaitForSingleObject(hDone, 3000), WAIT_OBJECT_0);
+    const ULONGLONG elapsedMs = GetTickCount64() - t0;
+    CloseHandle(hDone);
+    server.Stop();
+    QuickView::AI::AiActionManager::SetVisualFrameProviders(nullptr, nullptr);
+
+    EXPECT_EQ(server.postCount.load(), 1);
+    EXPECT_EQ(s_lastRes.httpStatusCode, 429u);
+    EXPECT_LT(elapsedMs, 3000ULL);
+}
+
+TEST_F(AiActionManagerTest, CancelDuringBackoffAbortsImmediately) {
+    LoopbackHttpServer server;
+    ASSERT_TRUE(server.Start([](int) -> std::string {
+        return "HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\nRetry-After: 10\r\nContent-Length: 2\r\n\r\n{}";
+    }, true));
+
+    SetupFakeVisualProviders();
+    auto& mgr = QuickView::AI::AiActionManager::Instance();
+    mgr.GetProfiles()[0].baseUrl = "http://127.0.0.1:" + std::to_string(server.port) + "/";
+    mgr.GetProfiles()[0].protocol = QuickView::AI::ApiProtocol::StabilityInpaint;
+
+    HANDLE hAborted = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    struct CancelCtx { HANDLE ev; };
+    mgr.ExecuteInpaint(
+        2, 2, 38, 18, L"test fill", nullptr,
+        QuickView::AI::ActionCallback(
+            [](void*, const QuickView::AI::ExecutionResult&) {},
+            new CancelCtx{ hAborted },
+            [](void* ctx) {
+                auto* c = static_cast<CancelCtx*>(ctx);
+                SetEvent(c->ev);
+                delete c;
+            }));
+
+    ASSERT_EQ(WaitForSingleObject(server.hFirstResponseSent, 5000), WAIT_OBJECT_0);
+    Sleep(50);
+    const ULONGLONG tCancel = GetTickCount64();
+    mgr.CancelCurrentTask();
+
+    EXPECT_EQ(WaitForSingleObject(hAborted, 1500), WAIT_OBJECT_0);
+    const ULONGLONG abortMs = GetTickCount64() - tCancel;
+    CloseHandle(hAborted);
+    server.Stop();
+    QuickView::AI::AiActionManager::SetVisualFrameProviders(nullptr, nullptr);
+
+    EXPECT_EQ(server.postCount.load(), 1);
+    EXPECT_LT(abortMs, 1500ULL);
 }
 
 
