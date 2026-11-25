@@ -19,6 +19,9 @@ void PremultiplyAlpha(uint8_t* data, int width, int height, int stride);
 /// Swizzle RGBA → BGRA with simultaneous alpha premultiplication (in-place).
 void SwizzleRGBAToBGRA(uint8_t* data, size_t pixelCount);
 
+/// Swizzle RGBA → BGRA without altering alpha or premultiplying RGB channels (in-place).
+void SwizzleRGBAToBGRAOnly(uint8_t* data, size_t pixelCount);
+
 /// Swizzle 16-bit BGRA to RGBA in-place without altering channel precision or alpha.
 void SwizzleBGRA16ToRGBA16(uint16_t* data, size_t pixelCount);
 
@@ -72,7 +75,8 @@ void ComputeHistogramRowFloat(const float* row, int width, float mapRange,
 void ComputeHistogramRowGainMap(const uint8_t* sdrRow, const uint8_t* gainMapRow,
                                 int width, int auxWidth, float mapRange, const ::QuickView::GpuShaderPayload& payload,
                                 uint32_t* histR, uint32_t* histG,
-                                uint32_t* histB, uint32_t* histL);
+                                uint32_t* histB, uint32_t* histL,
+                                int gainBytesPerPixel = 1);
 
 /// Sum luminance for a contiguous 8-bit 4-channel pixel span.
 /// Returns the sum of per-pixel luminance in 0..255 space.

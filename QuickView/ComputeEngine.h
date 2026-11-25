@@ -39,7 +39,8 @@ struct alignas(16) ToneMapSettings {
     float mappedAvgPq;              // Mapped scene average luminance in PQ space
 
     float contrastRecovery;         // Contrast recovery strength (defaults to 0.30)
-    float _pad[3];                  // Keep colorMatrix 16-byte aligned
+    uint32_t inputPremultiplied = 0; // 1 when source RGB channels are premultiplied by alpha
+    float _pad[2] = {};             // Keep colorMatrix 16-byte aligned
 
     float colorMatrix[16];          // float4x4 layout: 3x3 matrix stored as 4 rows of float4 for HLSL alignment
 };
@@ -133,7 +134,8 @@ public:
         const GpuShaderPayload& payload,
         ID3D11Texture2D** outTexture,
         ID3D11Texture2D** outSdrTex = nullptr,
-        ID3D11Texture2D** outGainTex = nullptr);
+        ID3D11Texture2D** outGainTex = nullptr,
+        int gainBytesPerPixel = 1);
 
     HRESULT ComposeGainMap(
         ID3D11Texture2D* sdrTex,

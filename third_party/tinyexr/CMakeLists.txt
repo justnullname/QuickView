@@ -48,6 +48,7 @@ target_include_directories(tinyexr
 )
 
 target_compile_definitions(tinyexr PRIVATE
+    EXR_USE_THREADS
     EXR_ZSTD_DECODE_ONLY
     EXR_JPH_ENABLE_AVX2_FOUR_QUAD16=1
     _CRT_SECURE_NO_WARNINGS

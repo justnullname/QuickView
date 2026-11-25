@@ -1,6 +1,7 @@
 #include "pch.h"
 #include <gtest/gtest.h>
 #include "ViewPanController.h"
+#include "EditState.h"
 
 #include <cmath>
 
@@ -112,4 +113,28 @@ TEST(ViewPanControllerTests, LargeDeltaTimeIsClampedToPreventTeleport) {
     const float expectedSpeed = ViewPanMath::AxisSpeed(112.0f, 1.0f);
     EXPECT_NEAR(dx, expectedSpeed * 0.1f, 1.0e-2f);
     EXPECT_FLOAT_EQ(dy, 0.0f);
+}
+
+TEST(WindowMetricsTests, StripImagesClampAxesIndependentlyWithoutDivZeroOrInflation) {
+    const RECT workArea{ 0, 0, 1920, 1080 };
+
+    // 600x40 strip image should keep natural 600px width instead of inflating to screen width
+    const auto mStrip = ComputeInitialWindowMetrics(600, 40, 1.0f, workArea, 90.0f, 0.0f);
+    EXPECT_EQ(mStrip.width, 600);
+    EXPECT_EQ(mStrip.height, 152);
+
+    // Extreme 20000x10 strip image must not truncate height to 0 or divide by zero
+    const auto mExtremeH = ComputeInitialWindowMetrics(20000, 10, 1.0f, workArea, 90.0f, 0.0f);
+    EXPECT_EQ(mExtremeH.width, 1728);
+    EXPECT_EQ(mExtremeH.height, 152);
+
+    // Extreme 10x20000 vertical strip image must clamp width safely to minimum
+    const auto mExtremeV = ComputeInitialWindowMetrics(10, 20000, 1.0f, workArea, 90.0f, 0.0f);
+    EXPECT_EQ(mExtremeV.width, 152);
+    EXPECT_EQ(mExtremeV.height, 972);
+
+    // Upscale guard threshold stays independent of WindowMinSize (600px)
+    EXPECT_FALSE(ShouldGuardSmallImageUpscale(500.0f, 500.0f, false, 1.0f));
+    EXPECT_TRUE(ShouldGuardSmallImageUpscale(180.0f, 180.0f, false, 1.0f));
+    EXPECT_TRUE(ShouldGuardSmallImageUpscale(250.0f, 250.0f, false, 2.0f)); // 4*38*2 = 304
 }

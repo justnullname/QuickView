@@ -301,6 +301,7 @@ private:
         QuickView::PixelFormat lastBaseFormat = QuickView::PixelFormat::BGRA8888;
         UINT lastBaseStride = 0;
         UINT lastAuxStride = 0;
+        int lastAuxBpp = 1;
         Microsoft::WRL::ComPtr<ID3D11Texture2D> baseTexture;
         Microsoft::WRL::ComPtr<ID3D11Texture2D> auxTexture;
         float lastHeadroom = -1.0f;
@@ -315,6 +316,7 @@ private:
             lastBaseFormat = QuickView::PixelFormat::BGRA8888;
             lastBaseStride = 0;
             lastAuxStride = 0;
+            lastAuxBpp = 1;
             baseTexture.Reset();
             auxTexture.Reset();
             lastHeadroom = -1.0f;

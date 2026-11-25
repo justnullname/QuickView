@@ -202,19 +202,19 @@ static Status ParseTiffIFD(const uint8_t* data, size_t size, TiffImageDesc& desc
         return Status::Corrupt;
     }
 
-    uint32_t stripOffsetsOffset = 0;
+    size_t stripOffsetsEntryOff = 0;
     uint32_t stripOffsetsCount = 0;
     uint16_t stripOffsetsType = 0;
 
-    uint32_t stripByteCountsOffset = 0;
+    size_t stripByteCountsEntryOff = 0;
     uint32_t stripByteCountsCount = 0;
     uint16_t stripByteCountsType = 0;
 
-    uint32_t tileOffsetsOffset = 0;
+    size_t tileOffsetsEntryOff = 0;
     uint32_t tileOffsetsCount = 0;
     uint16_t tileOffsetsType = 0;
 
-    uint32_t tileByteCountsOffset = 0;
+    size_t tileByteCountsEntryOff = 0;
     uint32_t tileByteCountsCount = 0;
     uint16_t tileByteCountsType = 0;
 
@@ -234,6 +234,12 @@ static Status ParseTiffIFD(const uint8_t* data, size_t size, TiffImageDesc& desc
             case 258: // BitsPerSample
                 if (count == 1) {
                     desc.bitsPerSample = static_cast<uint16_t>(getTagValue(entryOff, type, count));
+                } else if (count == 2 && type == 3) {
+                    // TIFF 6.0: 2 SHORTs fit in 4 bytes inline at entryOff + 8.
+                    desc.bitsPerSample = read16(entryOff + 8);
+                    if (read16(entryOff + 10) != desc.bitsPerSample) {
+                        return Status::Unsupported;
+                    }
                 } else if (count > 1) {
                     uint32_t valOrOff = read32(entryOff + 8);
                     if (type == 3) {
@@ -256,7 +262,7 @@ static Status ParseTiffIFD(const uint8_t* data, size_t size, TiffImageDesc& desc
                 desc.photometric = static_cast<uint16_t>(getTagValue(entryOff, type, count));
                 break;
             case 273: // StripOffsets
-                stripOffsetsOffset = read32(entryOff + 8);
+                stripOffsetsEntryOff = entryOff;
                 stripOffsetsCount = count;
                 stripOffsetsType = type;
                 break;
@@ -270,7 +276,7 @@ static Status ParseTiffIFD(const uint8_t* data, size_t size, TiffImageDesc& desc
                 desc.rowsPerStrip = getTagValue(entryOff, type, count);
                 break;
             case 279: // StripByteCounts
-                stripByteCountsOffset = read32(entryOff + 8);
+                stripByteCountsEntryOff = entryOff;
                 stripByteCountsCount = count;
                 stripByteCountsType = type;
                 break;
@@ -301,12 +307,12 @@ static Status ParseTiffIFD(const uint8_t* data, size_t size, TiffImageDesc& desc
                 desc.tileHeight = getTagValue(entryOff, type, count);
                 break;
             case 324: // TileOffsets
-                tileOffsetsOffset = read32(entryOff + 8);
+                tileOffsetsEntryOff = entryOff;
                 tileOffsetsCount = count;
                 tileOffsetsType = type;
                 break;
             case 325: // TileByteCounts
-                tileByteCountsOffset = read32(entryOff + 8);
+                tileByteCountsEntryOff = entryOff;
                 tileByteCountsCount = count;
                 tileByteCountsType = type;
                 break;
@@ -324,12 +330,10 @@ static Status ParseTiffIFD(const uint8_t* data, size_t size, TiffImageDesc& desc
         }
     }
 
-    // Populate offsets and byteCounts
-    auto readUintArray = [&](uint32_t arrayOffset, uint32_t count, uint16_t type, std::vector<uint64_t>& dst) -> Status {
-        if (count == 1) {
-            dst.resize(1);
-            dst[0] = arrayOffset;
-            return Status::Ok;
+    // Populate offsets and byteCounts (handles TIFF 6.0 inline values <= 4 bytes)
+    auto readUintArray = [&](size_t entryOff, uint32_t count, uint16_t type, std::vector<uint64_t>& dst) -> Status {
+        if (entryOff == 0) {
+            return Status::Corrupt;
         }
         size_t elemSize = 0;
         if (type == 3) {
@@ -339,6 +343,18 @@ static Status ParseTiffIFD(const uint8_t* data, size_t size, TiffImageDesc& desc
         } else {
             return Status::Unsupported;
         }
+        if (count == 1) {
+            dst.resize(1);
+            dst[0] = (elemSize == 2) ? read16(entryOff + 8) : read32(entryOff + 8);
+            return Status::Ok;
+        }
+        if (count == 2 && elemSize == 2) {
+            dst.resize(2);
+            dst[0] = read16(entryOff + 8);
+            dst[1] = read16(entryOff + 10);
+            return Status::Ok;
+        }
+        uint32_t arrayOffset = read32(entryOff + 8);
         if (!CheckRange(arrayOffset, count, elemSize, size)) {
             return Status::Corrupt;
         }
@@ -354,17 +370,17 @@ static Status ParseTiffIFD(const uint8_t* data, size_t size, TiffImageDesc& desc
         if (tileOffsetsCount == 0 || tileOffsetsCount != tileByteCountsCount) {
             return Status::Corrupt;
         }
-        Status st = readUintArray(tileOffsetsOffset, tileOffsetsCount, tileOffsetsType, desc.offsets);
+        Status st = readUintArray(tileOffsetsEntryOff, tileOffsetsCount, tileOffsetsType, desc.offsets);
         if (st != Status::Ok) return st;
-        st = readUintArray(tileByteCountsOffset, tileByteCountsCount, tileByteCountsType, desc.byteCounts);
+        st = readUintArray(tileByteCountsEntryOff, tileByteCountsCount, tileByteCountsType, desc.byteCounts);
         if (st != Status::Ok) return st;
     } else {
         if (stripOffsetsCount == 0 || stripOffsetsCount != stripByteCountsCount) {
             return Status::Corrupt;
         }
-        Status st = readUintArray(stripOffsetsOffset, stripOffsetsCount, stripOffsetsType, desc.offsets);
+        Status st = readUintArray(stripOffsetsEntryOff, stripOffsetsCount, stripOffsetsType, desc.offsets);
         if (st != Status::Ok) return st;
-        st = readUintArray(stripByteCountsOffset, stripByteCountsCount, stripByteCountsType, desc.byteCounts);
+        st = readUintArray(stripByteCountsEntryOff, stripByteCountsCount, stripByteCountsType, desc.byteCounts);
         if (st != Status::Ok) return st;
     }
 
@@ -684,7 +700,10 @@ static HRESULT LoadRegionInternal(const uint8_t* data, size_t size,
         const int minTileY = cropY / static_cast<int>(desc.tileHeight);
         const int maxTileY = (cropY + cropH - 1) / static_cast<int>(desc.tileHeight);
         const int intersectTiles = (maxTileX - minTileX + 1) * (maxTileY - minTileY + 1);
-        const int minPerThread = (intersectTiles >= 4 && cropH >= 512) ? 1 : (static_cast<int>(tilesCount) + 1);
+        if (tilesCount > static_cast<uint32_t>((std::numeric_limits<int>::max)())) {
+            return E_FAIL;
+        }
+        const int minPerThread = (intersectTiles >= 4 && cropH >= 512) ? 1 : (std::numeric_limits<int>::max)();
 
         ParallelForRange(0, static_cast<int>(tilesCount), minPerThread, [&](int tBegin, int tEnd) {
             std::vector<uint8_t> localBuf;

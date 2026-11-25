@@ -3119,9 +3119,9 @@ HRESULT HeavyLanePool::LaunchDecodeWorker(
     if (targetW <= 0 || targetH <= 0) return E_INVALIDARG;
     if (checkCancel && checkCancel()) return E_ABORT;
 
-    // Base-layer preview may return FP16 (8 bpp) or FP32 (16 bpp) HDR frames;
+    // Decode output may be BGRA8 (4 bpp), RGBA16/FP16 (8 bpp), or FP32 (16 bpp) HDR frames;
     // SEC_RESERVE only reserves VA space and commits only actual payloadBytes pages.
-    const uint64_t reserveBpp = fullDecode ? 4ull : 16ull;
+    const uint64_t reserveBpp = 16ull;
     const uint64_t payloadBytes64 = static_cast<uint64_t>(targetW) * static_cast<uint64_t>(targetH) * reserveBpp;
     if (payloadBytes64 == 0) return E_FAIL;
 
@@ -3495,6 +3495,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
         std::shared_ptr<uint8_t[]> masterPixels;
         const uint8_t* masterPixelsView = nullptr;
         int masterW = 0, masterH = 0, masterStride = 0;
+        QuickView::PixelFormat masterFormat = QuickView::PixelFormat::BGRA8888;
         bool masterFromRam = false;
         QuickView::PixelColorMetadata masterColorMeta;
         {
@@ -3504,6 +3505,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                 masterW = m_masterLOD0Cache.width;
                 masterH = m_masterLOD0Cache.height;
                 masterStride = m_masterLOD0Cache.stride;
+                masterFormat = m_masterLOD0Cache.format;
                 if (m_masterLOD0Cache.colorMeta) {
                     masterColorMeta = *m_masterLOD0Cache.colorMeta;
                 }
@@ -3525,8 +3527,11 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
             // m_titanSrcW/m_titanSrcH which may already be updated for a different image.
             int targetW = (masterW + (1 << lod) - 1) / (1 << lod);
             int targetH = (masterH + (1 << lod) - 1) / (1 << lod);
-            
-            size_t dstStride = (size_t)targetW * 4;
+            const size_t masterBpp =
+                (masterFormat == QuickView::PixelFormat::R32G32B32A32_FLOAT) ? 16u :
+                ((masterFormat == QuickView::PixelFormat::R16G16B16A16_UNORM ||
+                  masterFormat == QuickView::PixelFormat::R16G16B16A16_FLOAT) ? 8u : 4u);
+            size_t dstStride = static_cast<size_t>(targetW) * masterBpp;
             
             if (lod > 0) {
                 size_t dstSize = dstStride * targetH;
@@ -3534,47 +3539,77 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                 if (!dstBuf) {
                     hr = E_OUTOFMEMORY;
                 } else {
-                    // [Cascaded Downsampling] Prefer LOD N-1 cache as source
-                    // when available — pixel count is 1/4 of master, massive speedup.
-                    if (cascadeSource.pixels && cascadeSource.lod == lod - 1
-                        && cascadeSource.width > 0 && cascadeSource.height > 0) {
-                        ImageLoaderSimd::ResizeBilinear(
-                            cascadeSource.pixels.get(), cascadeSource.width, cascadeSource.height,
-                            cascadeSource.stride, dstBuf, targetW, targetH, (int)dstStride);
-                        QV_LOG("P15_MasterRoute",
-                            TraceLoggingString("CascadedDownscale", "Action"),
-                            TraceLoggingInt32(cascadeSource.width, "SrcW"),
-                            TraceLoggingInt32(cascadeSource.height, "SrcH"),
-                            TraceLoggingInt32(targetW, "DstW"),
-                            TraceLoggingInt32(targetH, "DstH"),
-                            TraceLoggingInt32(lod, "LOD"));
+                    if (masterBpp == 4u) {
+                        // [Cascaded Downsampling] Prefer LOD N-1 cache as source
+                        // when available — pixel count is 1/4 of master, massive speedup.
+                        if (cascadeSource.pixels && cascadeSource.lod == lod - 1
+                            && cascadeSource.format == masterFormat
+                            && cascadeSource.width > 0 && cascadeSource.height > 0) {
+                            ImageLoaderSimd::ResizeBilinear(
+                                cascadeSource.pixels.get(), cascadeSource.width, cascadeSource.height,
+                                cascadeSource.stride, dstBuf, targetW, targetH, (int)dstStride);
+                            QV_LOG("P15_MasterRoute",
+                                TraceLoggingString("CascadedDownscale", "Action"),
+                                TraceLoggingInt32(cascadeSource.width, "SrcW"),
+                                TraceLoggingInt32(cascadeSource.height, "SrcH"),
+                                TraceLoggingInt32(targetW, "DstW"),
+                                TraceLoggingInt32(targetH, "DstH"),
+                                TraceLoggingInt32(lod, "LOD"));
+                        } else {
+                            ImageLoaderSimd::ResizeBilinear(masterPixelsView, masterW, masterH,
+                                                      masterStride, dstBuf, targetW, targetH, (int)dstStride);
+                            QV_LOG("P15_MasterRoute",
+                                TraceLoggingString("InstantDownscale", "Action"),
+                                TraceLoggingInt32(targetW, "Width"),
+                                TraceLoggingInt32(targetH, "Height"),
+                                TraceLoggingInt32(lod, "LOD"));
+                        }
                     } else {
-                        ImageLoaderSimd::ResizeBilinear(masterPixelsView, masterW, masterH,
-                                                  masterStride, dstBuf, targetW, targetH, (int)dstStride);
-                        QV_LOG("P15_MasterRoute",
-                            TraceLoggingString("InstantDownscale", "Action"),
-                            TraceLoggingInt32(targetW, "Width"),
-                            TraceLoggingInt32(targetH, "Height"),
-                            TraceLoggingInt32(lod, "LOD"));
+                        // High-bit-depth / HDR master downscale preserving exact PixelFormat
+                        const uint8_t* srcBase = masterPixelsView;
+                        int srcW = masterW;
+                        int srcH = masterH;
+                        int srcStride = masterStride;
+                        if (cascadeSource.pixels && cascadeSource.lod == lod - 1 &&
+                            cascadeSource.format == masterFormat &&
+                            cascadeSource.width > 0 && cascadeSource.height > 0) {
+                            srcBase = cascadeSource.pixels.get();
+                            srcW = cascadeSource.width;
+                            srcH = cascadeSource.height;
+                            srcStride = cascadeSource.stride;
+                        }
+                        for (int y = 0; y < targetH; ++y) {
+                            const int sy = (std::min)(srcH - 1,
+                                                      static_cast<int>((static_cast<int64_t>(y) * srcH) / targetH));
+                            const uint8_t* srcRow = srcBase + static_cast<size_t>(sy) * static_cast<size_t>(srcStride);
+                            uint8_t* dstRow = dstBuf + static_cast<size_t>(y) * dstStride;
+                            for (int x = 0; x < targetW; ++x) {
+                                const int sx = (std::min)(srcW - 1,
+                                                          static_cast<int>((static_cast<int64_t>(x) * srcW) / targetW));
+                                memcpy(dstRow + static_cast<size_t>(x) * masterBpp,
+                                       srcRow + static_cast<size_t>(sx) * masterBpp, masterBpp);
+                            }
+                        }
                     }
                     
                     fullFrame.pixels = dstBuf;
                     fullFrame.width = targetW;
                     fullFrame.height = targetH;
                     fullFrame.stride = (int)dstStride;
-                    fullFrame.format = QuickView::PixelFormat::BGRA8888;
+                    fullFrame.format = masterFormat;
                     fullFrame.memoryDeleter = QuickView::MemoryDeleter::FromAlignedFree();
                     QuickView::ApplyColorMetadata(fullFrame, masterColorMeta);
                     hr = S_OK;
                 }
             } else {
                 if (masterFromRam) {
-                    // Zero-copy ownership transfer for LOD 0 (RAM cache path)
+                    // Zero-copy ownership transfer for LOD 0 (RAM cache path).
+                    // Preserve masterStride (which may be 64-byte aligned) and masterFormat.
                     fullFrame.pixels = masterPixels.get();
                     fullFrame.width = targetW;
                     fullFrame.height = targetH;
-                    fullFrame.stride = (int)dstStride;
-                    fullFrame.format = QuickView::PixelFormat::BGRA8888;
+                    fullFrame.stride = masterStride;
+                    fullFrame.format = masterFormat;
                     {
                         auto* ctx = new(std::nothrow) SharedPtrCtx{ masterPixels };
                         if (ctx) {
@@ -3792,6 +3827,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                         m_masterLOD0Cache.width = fullFrame.width;
                         m_masterLOD0Cache.height = fullFrame.height;
                         m_masterLOD0Cache.stride = fullFrame.stride;
+                        m_masterLOD0Cache.format = fullFrame.format;
                         m_masterLOD0Cache.lod = 0;
                         m_masterLOD0Cache.imageId = job.imageId;
                         m_masterLOD0Cache.colorMeta = std::move(sharedMeta);
@@ -3950,6 +3986,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
         m_lodCache.width = fullFrame.width;
         m_lodCache.height = fullFrame.height;
         m_lodCache.stride = fullFrame.stride;
+        m_lodCache.format = fullFrame.format;
         m_lodCache.lod = lod;
         m_lodCache.imageId = job.imageId;
         m_lodCache.colorMeta = std::move(sharedColorMeta);
@@ -3976,37 +4013,51 @@ HRESULT HeavyLanePool::SliceTileFromLODCache(const LODCache& cache, const JobInf
     int copyH = std::min(TILE_SIZE, cache.height - tileY);
     
     if (copyW <= 0 || copyH <= 0) return E_FAIL;
-    
-    // Allocate from Tile Slab Manager (1MB fixed blocks)
-    auto* tileBuf = (uint8_t*)m_tileMemory.Allocate();
+
+    const size_t bpp =
+        (cache.format == QuickView::PixelFormat::R32G32B32A32_FLOAT) ? 16u :
+        ((cache.format == QuickView::PixelFormat::R16G16B16A16_UNORM ||
+          cache.format == QuickView::PixelFormat::R16G16B16A16_FLOAT) ? 8u : 4u);
+    const int dstStride = TILE_SIZE * static_cast<int>(bpp);
+    const size_t tileBytes = static_cast<size_t>(dstStride) * static_cast<size_t>(TILE_SIZE);
+
+    uint8_t* tileBuf = nullptr;
+    bool usesSlab = (tileBytes <= QuickView::TILE_SLAB_SIZE);
+    if (usesSlab) {
+        tileBuf = static_cast<uint8_t*>(m_tileMemory.Allocate());
+    } else {
+        tileBuf = static_cast<uint8_t*>(_aligned_malloc(tileBytes, 32));
+    }
     if (!tileBuf) return E_OUTOFMEMORY;
     
     // Zero-fill entire tile (handles padding for edge tiles)
-    memset(tileBuf, 0, QuickView::TILE_SLAB_SIZE);
+    memset(tileBuf, 0, tileBytes);
     
     // Row-by-row copy from cached LOD buffer
-    int dstStride = TILE_SIZE * 4; // BGRA
     int srcStride = cache.stride;
     const uint8_t* srcBase = cache.pixels.get();
+    const size_t copyBytes = static_cast<size_t>(copyW) * bpp;
     
     for (int y = 0; y < copyH; y++) {
         memcpy(
-            tileBuf + (size_t)y * dstStride,
-            srcBase + (size_t)(tileY + y) * srcStride + (size_t)tileX * 4,
-            (size_t)copyW * 4
+            tileBuf + static_cast<size_t>(y) * static_cast<size_t>(dstStride),
+            srcBase + static_cast<size_t>(tileY + y) * static_cast<size_t>(srcStride) + static_cast<size_t>(tileX) * bpp,
+            copyBytes
         );
     }
     
-    // Set up RawImageFrame with slab memory
+    // Set up RawImageFrame with slab or aligned heap memory
     out.pixels = tileBuf;
     out.width = TILE_SIZE;
     out.height = TILE_SIZE;
     out.stride = dstStride;
-    out.format = QuickView::PixelFormat::BGRA8888;
-    auto* mgr = &m_tileMemory;
-    {
+    out.format = cache.format;
+    if (usesSlab) {
+        auto* mgr = &m_tileMemory;
         out.memoryDeleter.ctx = mgr;
         out.memoryDeleter.pfn = [](uint8_t* p, void* c) { static_cast<QuickView::TileMemoryManager*>(c)->Free(p); };
+    } else {
+        out.memoryDeleter = QuickView::MemoryDeleter::FromAlignedFree();
     }
     if (cache.colorMeta) {
         QuickView::ApplyColorMetadata(out, *cache.colorMeta);

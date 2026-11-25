@@ -58,6 +58,22 @@ static std::wstring PidlsToPath(PCIDLIST_ABSOLUTE folderPidl, PCUITEMID_CHILD it
     return path;
 }
 
+struct ScopedExplorerComGuard {
+    bool& flag;
+    bool acquired = false;
+    explicit ScopedExplorerComGuard(bool& f) : flag(f) {
+        if (!flag) {
+            flag = true;
+            acquired = true;
+        }
+    }
+    ~ScopedExplorerComGuard() {
+        if (acquired) flag = false;
+    }
+    ScopedExplorerComGuard(const ScopedExplorerComGuard&) = delete;
+    ScopedExplorerComGuard& operator=(const ScopedExplorerComGuard&) = delete;
+};
+
 // Live IFolderView for one Explorer window showing `dir`. UI-thread / STA only.
 // One Item() call is cheap; never walk the whole view.
 struct ExplorerFolderView {
@@ -624,23 +640,51 @@ std::wstring FileNavigator::Next(bool /*unused*/) {
     if (m_bootDeferredHydration) {
         HydrateBootNavigator();
     }
-    if (UsingExplorerCursor() && g_runtime.SortOrder == 0) {
-        SyncExplorerCursor(true);
-    } else if (!m_playlistReady && !UsingExplorerCursor() && !m_watchedDir.empty() && !m_archive && m_files.size() <= 1) {
+    if (!m_playlistReady && !UsingExplorerCursor() && !m_watchedDir.empty() && !m_archive && m_files.size() <= 1) {
         // User navigated before background Explorer bind / initial directory scan landed
         EnsureMaterialized();
-        if (UsingExplorerCursor() && g_runtime.SortOrder == 0) SyncExplorerCursor(true);
     }
-    if (UsingExplorerCursor()) {
-        std::wstring path = ExplorerStep(+1);
-        if (path.empty() && g_runtime.NavTraverse) {
-            std::wstring nextFolderImg = FindAdjacentFolderImage(true);
-            if (!nextFolderImg.empty()) {
-                m_crossFolderMessage = L">>> Entering [" + std::wstring(QuickView::FileNameView(QuickView::ParentPathView(nextFolderImg))) + L"] >>>";
-                return nextFolderImg;
+    if (UsingExplorerCursor() || (g_runtime.SortOrder == 0 && !m_archive && !m_watchedDir.empty())) {
+        std::wstring stepPath;
+        bool handledByExplorer = false;
+        bool needMaterializeFallback = false;
+        {
+            ScopedExplorerComGuard comGuard(m_inExplorerComCall);
+            if (!comGuard.acquired) {
+                if (UsingExplorerCursor()) return L"";
+            } else {
+                ExplorerFolderView view;
+                if (view.Open(m_watchedDir) && view.itemCount > 0) {
+                    if (g_runtime.SortOrder == 0) {
+                        SyncExplorerCursorWithView(view, true);
+                    }
+                    if (UsingExplorerCursor()) {
+                        handledByExplorer = true;
+                        stepPath = ExplorerStepWithView(view, +1);
+                        if (!UsingExplorerCursor()) {
+                            handledByExplorer = false;
+                            needMaterializeFallback = true;
+                        }
+                    }
+                } else if (UsingExplorerCursor()) {
+                    ClearExplorerCursor();
+                    needMaterializeFallback = true;
+                }
             }
         }
-        return path;
+        if (handledByExplorer) {
+            if (stepPath.empty() && g_runtime.NavTraverse) {
+                std::wstring nextFolderImg = FindAdjacentFolderImage(true);
+                if (!nextFolderImg.empty()) {
+                    m_crossFolderMessage = L">>> Entering [" + std::wstring(QuickView::FileNameView(QuickView::ParentPathView(nextFolderImg))) + L"] >>>";
+                    return nextFolderImg;
+                }
+            }
+            return stepPath;
+        }
+        if (needMaterializeFallback) {
+            EnsureMaterialized();
+        }
     }
 
     if (m_files.empty()) return L"";
@@ -699,22 +743,50 @@ std::wstring FileNavigator::Previous(bool /*unused*/) {
     if (m_bootDeferredHydration) {
         HydrateBootNavigator();
     }
-    if (UsingExplorerCursor() && g_runtime.SortOrder == 0) {
-        SyncExplorerCursor(true);
-    } else if (!m_playlistReady && !UsingExplorerCursor() && !m_watchedDir.empty() && !m_archive && m_files.size() <= 1) {
+    if (!m_playlistReady && !UsingExplorerCursor() && !m_watchedDir.empty() && !m_archive && m_files.size() <= 1) {
         EnsureMaterialized();
-        if (UsingExplorerCursor() && g_runtime.SortOrder == 0) SyncExplorerCursor(true);
     }
-    if (UsingExplorerCursor()) {
-        std::wstring path = ExplorerStep(-1);
-        if (path.empty() && g_runtime.NavTraverse) {
-            std::wstring prevFolderImg = FindAdjacentFolderImage(false);
-            if (!prevFolderImg.empty()) {
-                m_crossFolderMessage = L"<<< Entering [" + std::wstring(QuickView::FileNameView(QuickView::ParentPathView(prevFolderImg))) + L"] <<<";
-                return prevFolderImg;
+    if (UsingExplorerCursor() || (g_runtime.SortOrder == 0 && !m_archive && !m_watchedDir.empty())) {
+        std::wstring stepPath;
+        bool handledByExplorer = false;
+        bool needMaterializeFallback = false;
+        {
+            ScopedExplorerComGuard comGuard(m_inExplorerComCall);
+            if (!comGuard.acquired) {
+                if (UsingExplorerCursor()) return L"";
+            } else {
+                ExplorerFolderView view;
+                if (view.Open(m_watchedDir) && view.itemCount > 0) {
+                    if (g_runtime.SortOrder == 0) {
+                        SyncExplorerCursorWithView(view, true);
+                    }
+                    if (UsingExplorerCursor()) {
+                        handledByExplorer = true;
+                        stepPath = ExplorerStepWithView(view, -1);
+                        if (!UsingExplorerCursor()) {
+                            handledByExplorer = false;
+                            needMaterializeFallback = true;
+                        }
+                    }
+                } else if (UsingExplorerCursor()) {
+                    ClearExplorerCursor();
+                    needMaterializeFallback = true;
+                }
             }
         }
-        return path;
+        if (handledByExplorer) {
+            if (stepPath.empty() && g_runtime.NavTraverse) {
+                std::wstring prevFolderImg = FindAdjacentFolderImage(false);
+                if (!prevFolderImg.empty()) {
+                    m_crossFolderMessage = L"<<< Entering [" + std::wstring(QuickView::FileNameView(QuickView::ParentPathView(prevFolderImg))) + L"] <<<";
+                    return prevFolderImg;
+                }
+            }
+            return stepPath;
+        }
+        if (needMaterializeFallback) {
+            EnsureMaterialized();
+        }
     }
 
     if (m_files.empty()) return L"";
@@ -770,16 +842,41 @@ std::wstring FileNavigator::Previous(bool /*unused*/) {
 }
 
 std::wstring FileNavigator::First() {
-    if (g_runtime.SortOrder == 0) SyncExplorerCursor(true);
-    if (UsingExplorerCursor()) {
-        const int saved = m_explorerIndex;
-        m_explorerIndex = -1;
-        std::wstring path = ExplorerStep(+1);
-        if (path.empty()) {
-            m_explorerIndex = saved;
-            m_currentIndex = saved;
+    if (UsingExplorerCursor() || (g_runtime.SortOrder == 0 && !m_archive && !m_watchedDir.empty())) {
+        std::wstring path;
+        bool handledByExplorer = false;
+        bool needMaterializeFallback = false;
+        {
+            ScopedExplorerComGuard comGuard(m_inExplorerComCall);
+            if (!comGuard.acquired) {
+                if (UsingExplorerCursor()) return L"";
+            } else {
+                ExplorerFolderView view;
+                if (view.Open(m_watchedDir) && view.itemCount > 0) {
+                    if (g_runtime.SortOrder == 0) {
+                        SyncExplorerCursorWithView(view, true);
+                    }
+                    if (UsingExplorerCursor()) {
+                        handledByExplorer = true;
+                        const int saved = m_explorerIndex;
+                        m_explorerIndex = -1;
+                        path = ExplorerStepWithView(view, +1);
+                        if (!UsingExplorerCursor()) {
+                            handledByExplorer = false;
+                            needMaterializeFallback = true;
+                        } else if (path.empty()) {
+                            m_explorerIndex = saved;
+                            m_currentIndex = saved;
+                        }
+                    }
+                } else if (UsingExplorerCursor()) {
+                    ClearExplorerCursor();
+                    needMaterializeFallback = true;
+                }
+            }
         }
-        return path;
+        if (handledByExplorer) return path;
+        if (needMaterializeFallback) EnsureMaterialized();
     }
     if (m_files.empty()) return L"";
     m_hitEnd = false;
@@ -788,16 +885,41 @@ std::wstring FileNavigator::First() {
 }
 
 std::wstring FileNavigator::Last() {
-    if (g_runtime.SortOrder == 0) SyncExplorerCursor(true);
-    if (UsingExplorerCursor()) {
-        const int saved = m_explorerIndex;
-        m_explorerIndex = m_explorerCount;
-        std::wstring path = ExplorerStep(-1);
-        if (path.empty()) {
-            m_explorerIndex = saved;
-            m_currentIndex = saved;
+    if (UsingExplorerCursor() || (g_runtime.SortOrder == 0 && !m_archive && !m_watchedDir.empty())) {
+        std::wstring path;
+        bool handledByExplorer = false;
+        bool needMaterializeFallback = false;
+        {
+            ScopedExplorerComGuard comGuard(m_inExplorerComCall);
+            if (!comGuard.acquired) {
+                if (UsingExplorerCursor()) return L"";
+            } else {
+                ExplorerFolderView view;
+                if (view.Open(m_watchedDir) && view.itemCount > 0) {
+                    if (g_runtime.SortOrder == 0) {
+                        SyncExplorerCursorWithView(view, true);
+                    }
+                    if (UsingExplorerCursor()) {
+                        handledByExplorer = true;
+                        const int saved = m_explorerIndex;
+                        m_explorerIndex = view.itemCount;
+                        path = ExplorerStepWithView(view, -1);
+                        if (!UsingExplorerCursor()) {
+                            handledByExplorer = false;
+                            needMaterializeFallback = true;
+                        } else if (path.empty()) {
+                            m_explorerIndex = saved;
+                            m_currentIndex = saved;
+                        }
+                    }
+                } else if (UsingExplorerCursor()) {
+                    ClearExplorerCursor();
+                    needMaterializeFallback = true;
+                }
+            }
         }
-        return path;
+        if (handledByExplorer) return path;
+        if (needMaterializeFallback) EnsureMaterialized();
     }
     if (m_files.empty()) return L"";
     m_hitEnd = false;
@@ -812,16 +934,25 @@ std::wstring FileNavigator::GetCrossFolderMessage() {
 }
 
 std::wstring FileNavigator::PeekNext() const {
-    if (g_runtime.SortOrder == 0) {
-        const_cast<FileNavigator*>(this)->SyncExplorerCursor(false);
-    }
-    if (UsingExplorerCursor()) {
-        const int next = FindExplorerNeighbor(+1);
-        if (next < 0) return L"";
-        auto it = m_explorerPathCache.find(next);
-        if (it == m_explorerPathCache.end()) return L"";
-        const std::wstring rendered = UniqueRenderedSibling(it->second);
-        return rendered.empty() ? it->second : rendered;
+    if (UsingExplorerCursor() || (g_runtime.SortOrder == 0 && !m_archive && !m_watchedDir.empty())) {
+        ScopedExplorerComGuard comGuard(m_inExplorerComCall);
+        if (comGuard.acquired) {
+            ExplorerFolderView view;
+            if (view.Open(m_watchedDir) && view.itemCount > 0) {
+                if (g_runtime.SortOrder == 0) {
+                    const_cast<FileNavigator*>(this)->SyncExplorerCursorWithView(view, false);
+                }
+                if (UsingExplorerCursor()) {
+                    const int next = FindExplorerNeighborWithView(view, +1);
+                    if (next < 0) return L"";
+                    auto it = m_explorerPathCache.find(next);
+                    if (it == m_explorerPathCache.end()) return L"";
+                    const std::wstring rendered = UniqueRenderedSibling(it->second);
+                    return rendered.empty() ? it->second : rendered;
+                }
+            }
+        }
+        if (UsingExplorerCursor()) return L"";
     }
     if (m_files.empty()) return L"";
     size_t nextIdx = (m_currentIndex + 1) % m_files.size();
@@ -829,16 +960,25 @@ std::wstring FileNavigator::PeekNext() const {
 }
 
 std::wstring FileNavigator::PeekPrevious() const {
-    if (g_runtime.SortOrder == 0) {
-        const_cast<FileNavigator*>(this)->SyncExplorerCursor(false);
-    }
-    if (UsingExplorerCursor()) {
-        const int prev = FindExplorerNeighbor(-1);
-        if (prev < 0) return L"";
-        auto it = m_explorerPathCache.find(prev);
-        if (it == m_explorerPathCache.end()) return L"";
-        const std::wstring rendered = UniqueRenderedSibling(it->second);
-        return rendered.empty() ? it->second : rendered;
+    if (UsingExplorerCursor() || (g_runtime.SortOrder == 0 && !m_archive && !m_watchedDir.empty())) {
+        ScopedExplorerComGuard comGuard(m_inExplorerComCall);
+        if (comGuard.acquired) {
+            ExplorerFolderView view;
+            if (view.Open(m_watchedDir) && view.itemCount > 0) {
+                if (g_runtime.SortOrder == 0) {
+                    const_cast<FileNavigator*>(this)->SyncExplorerCursorWithView(view, false);
+                }
+                if (UsingExplorerCursor()) {
+                    const int prev = FindExplorerNeighborWithView(view, -1);
+                    if (prev < 0) return L"";
+                    auto it = m_explorerPathCache.find(prev);
+                    if (it == m_explorerPathCache.end()) return L"";
+                    const std::wstring rendered = UniqueRenderedSibling(it->second);
+                    return rendered.empty() ? it->second : rendered;
+                }
+            }
+        }
+        if (UsingExplorerCursor()) return L"";
     }
     if (m_files.empty()) return L"";
     size_t prevIdx = (m_currentIndex - 1 + m_files.size()) % m_files.size();
@@ -905,7 +1045,7 @@ bool FileNavigator::RemoveAt(int index) {
 }
 
 const std::wstring& FileNavigator::GetFile(int index) const {
-    static std::wstring empty;
+    static const std::wstring empty;
     if (UsingExplorerCursor()) {
         if (index < 0 || (m_explorerCount > 0 && index >= m_explorerCount)) return empty;
         auto it = m_explorerPathCache.find(index);
@@ -913,12 +1053,26 @@ const std::wstring& FileNavigator::GetFile(int index) const {
         if (index == m_explorerIndex && !m_files.empty()) {
             return CacheExplorerPath(index, m_files.front());
         }
+        ScopedExplorerComGuard comGuard(m_inExplorerComCall);
+        if (!comGuard.acquired) return empty;
         ExplorerFolderView view;
         if (!view.Open(m_watchedDir)) return empty;
         m_explorerCount = view.itemCount;
         std::wstring path = view.PathAt(index);
         if (path.empty()) return empty;
         return CacheExplorerPath(index, std::move(path));
+    }
+    if (index < 0 || index >= (int)m_files.size()) return empty;
+    return m_files[index];
+}
+
+const std::wstring& FileNavigator::TryGetCachedFile(int index) const {
+    static const std::wstring empty;
+    if (UsingExplorerCursor()) {
+        if (index < 0 || (m_explorerCount > 0 && index >= m_explorerCount)) return empty;
+        if (index == m_explorerIndex && !m_files.empty()) return m_files.front();
+        auto it = m_explorerPathCache.find(index);
+        return (it != m_explorerPathCache.end()) ? it->second : empty;
     }
     if (index < 0 || index >= (int)m_files.size()) return empty;
     return m_files[index];
@@ -1177,6 +1331,9 @@ bool FileNavigator::TryBindExplorer(const std::wstring& dir, const std::wstring&
         return false;
     }
 
+    ScopedExplorerComGuard comGuard(m_inExplorerComCall);
+    if (!comGuard.acquired) return false;
+
     ExplorerBindResult res;
     if (!ProbeExplorerView(dir, openedPath, CurrentVisiblePath(), res)) {
         ClearExplorerCursor();
@@ -1187,11 +1344,20 @@ bool FileNavigator::TryBindExplorer(const std::wstring& dir, const std::wstring&
     return true;
 }
 
-bool FileNavigator::SyncExplorerCursor(bool allowDematerialize) {
-    if (g_runtime.SortOrder != 0 || m_archive || m_watchedDir.empty()) return UsingExplorerCursor();
+void FileNavigator::PrefetchExplorerWindowAround(const ExplorerFolderView& view, int centerIndex) const {
+    if (!view.view || view.itemCount <= 0 || centerIndex < 0) return;
+    const int minIdx = (std::max)(0, centerIndex - 2);
+    const int maxIdx = (std::min)(view.itemCount - 1, centerIndex + 2);
+    for (int i = minIdx; i <= maxIdx; ++i) {
+        if (m_explorerPathCache.find(i) != m_explorerPathCache.end()) continue;
+        std::wstring p = view.PathAt(i);
+        if (!p.empty()) CacheExplorerPath(i, std::move(p));
+    }
+}
 
-    ExplorerFolderView view;
-    if (!view.Open(m_watchedDir) || view.itemCount <= 0) return UsingExplorerCursor();
+bool FileNavigator::SyncExplorerCursorWithView(const ExplorerFolderView& view, bool allowDematerialize) {
+    if (g_runtime.SortOrder != 0 || m_archive || m_watchedDir.empty()) return UsingExplorerCursor();
+    if (!view.view || view.itemCount <= 0) return UsingExplorerCursor();
 
     SORTCOLUMN sc{};
     const bool haveSort = view.GetSortColumnRaw(sc);
@@ -1238,17 +1404,27 @@ bool FileNavigator::SyncExplorerCursor(bool allowDematerialize) {
         if (!current.empty()) AdoptCurrentFile(current);
     }
     if (!current.empty()) CacheExplorerPath(idx, current);
+    PrefetchExplorerWindowAround(view, idx);
     return true;
+}
+
+bool FileNavigator::SyncExplorerCursor(bool allowDematerialize) {
+    if (g_runtime.SortOrder != 0 || m_archive || m_watchedDir.empty()) return UsingExplorerCursor();
+
+    ScopedExplorerComGuard comGuard(m_inExplorerComCall);
+    if (!comGuard.acquired) return UsingExplorerCursor();
+
+    ExplorerFolderView view;
+    if (!view.Open(m_watchedDir) || view.itemCount <= 0) return UsingExplorerCursor();
+    return SyncExplorerCursorWithView(view, allowDematerialize);
 }
 
 void FileNavigator::SyncWithExplorer() {
     SyncExplorerCursor(true);
 }
 
-int FileNavigator::FindExplorerNeighbor(int dir) const {
-    if (dir == 0 || m_watchedDir.empty()) return -1;
-    ExplorerFolderView view;
-    if (!view.Open(m_watchedDir) || view.itemCount <= 0) return -1;
+int FileNavigator::FindExplorerNeighborWithView(const ExplorerFolderView& view, int dir) const {
+    if (dir == 0 || m_watchedDir.empty() || !view.view || view.itemCount <= 0) return -1;
     m_explorerCount = view.itemCount;
 
     int i = m_explorerIndex;
@@ -1267,13 +1443,21 @@ int FileNavigator::FindExplorerNeighbor(int dir) const {
     return -2;
 }
 
-std::wstring FileNavigator::ExplorerStep(int dir) {
-    const int next = FindExplorerNeighbor(dir);
+int FileNavigator::FindExplorerNeighbor(int dir) const {
+    if (dir == 0 || m_watchedDir.empty()) return -1;
+    ScopedExplorerComGuard comGuard(m_inExplorerComCall);
+    if (!comGuard.acquired) return -2;
+    ExplorerFolderView view;
+    if (!view.Open(m_watchedDir) || view.itemCount <= 0) return -1;
+    return FindExplorerNeighborWithView(view, dir);
+}
+
+std::wstring FileNavigator::ExplorerStepWithView(const ExplorerFolderView& view, int dir) {
+    const int next = FindExplorerNeighborWithView(view, dir);
     if (next == -1) {
-        // Explorer window gone — fall back to a names-only playlist.
+        // Explorer window unavailable — fall back outside COM guard.
         ClearExplorerCursor();
-        EnsureMaterialized();
-        return (dir > 0) ? Next() : Previous();
+        return {};
     }
     if (next < 0) {
         m_hitEnd = true;
@@ -1284,12 +1468,38 @@ std::wstring FileNavigator::ExplorerStep(int dir) {
     m_currentIndex = next;
     auto it = m_explorerPathCache.find(next);
     const std::wstring path = (it != m_explorerPathCache.end()) ? it->second : CurrentVisiblePath();
+    PrefetchExplorerWindowAround(view, next);
     if (!path.empty()) AdoptCurrentFile(path);
     return CurrentVisiblePath();
 }
 
+std::wstring FileNavigator::ExplorerStep(int dir) {
+    bool needFallback = false;
+    {
+        ScopedExplorerComGuard comGuard(m_inExplorerComCall);
+        if (!comGuard.acquired) return L"";
+        ExplorerFolderView view;
+        if (view.Open(m_watchedDir) && view.itemCount > 0) {
+            std::wstring res = ExplorerStepWithView(view, dir);
+            if (UsingExplorerCursor()) return res;
+            needFallback = true;
+        } else {
+            ClearExplorerCursor();
+            needFallback = true;
+        }
+    }
+    if (needFallback) {
+        // Explorer window gone — fall back to a names-only playlist outside COM guard.
+        EnsureMaterialized();
+        return (dir > 0) ? Next() : Previous();
+    }
+    return L"";
+}
+
 void FileNavigator::RefreshExplorerCount() {
     if (!UsingExplorerCursor() || m_watchedDir.empty()) return;
+    ScopedExplorerComGuard comGuard(m_inExplorerComCall);
+    if (!comGuard.acquired) return;
     ExplorerFolderView view;
     if (!view.Open(m_watchedDir)) {
         ClearExplorerCursor();
@@ -1299,17 +1509,18 @@ void FileNavigator::RefreshExplorerCount() {
     m_explorerPathCache.clear();
     if (m_explorerIndex >= 0 && m_explorerIndex < m_explorerCount) {
         CacheExplorerPath(m_explorerIndex, CurrentVisiblePath());
+        PrefetchExplorerWindowAround(view, m_explorerIndex);
     }
 }
 
-void FileNavigator::EnsureMaterialized() {
+void FileNavigator::EnsureMaterialized(bool forceEvenIfExplorerBound) {
     if (m_bootDeferredHydration) {
         HydrateBootNavigator();
     }
     if (m_playlistReady || m_archive) return;
-    // Auto + live Explorer view: keep the cursor. Materializing would freeze
-    // the playlist to one snapshot and ignore later Explorer sort changes.
-    if (g_runtime.SortOrder == 0 && !m_watchedDir.empty()) {
+    // Auto + live Explorer view: keep the cursor unless caller explicitly demands
+    // a materialized playlist (e.g. GalleryOverlay).
+    if (!forceEvenIfExplorerBound && g_runtime.SortOrder == 0 && !m_watchedDir.empty()) {
         if (UsingExplorerCursor() || TryBindExplorer(m_watchedDir, CurrentVisiblePath())) {
             return;
         }
@@ -1354,7 +1565,7 @@ int FileNavigator::Index() const {
 uintmax_t FileNavigator::GetFileSize(int index) const {
     if (UsingExplorerCursor()) {
         if (index == m_explorerIndex && !m_sizes.empty()) return m_sizes[0];
-        const std::wstring& path = GetFile(index);
+        const std::wstring& path = TryGetCachedFile(index);
         if (path.empty()) return 0;
         WIN32_FILE_ATTRIBUTE_DATA fad{};
         if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &fad)) return 0;
@@ -1367,7 +1578,7 @@ uintmax_t FileNavigator::GetFileSize(int index) const {
 ImageID FileNavigator::GetImageID(int index) const {
     if (UsingExplorerCursor()) {
         if (index == m_explorerIndex && !m_ids.empty()) return m_ids[0];
-        const std::wstring& path = GetFile(index);
+        const std::wstring& path = TryGetCachedFile(index);
         return path.empty() ? 0 : ComputePathHash(path);
     }
     if (index < 0 || index >= (int)m_ids.size()) return 0;

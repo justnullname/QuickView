@@ -6,7 +6,9 @@
 #include <climits>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <string_view>
+#include <thread>
 
 static constexpr const char* CURRENT_MODULE = "TinyExrLoader";
 
@@ -394,6 +396,12 @@ bool LoadEXRFromMemory(const uint8_t* inData, size_t size,
                        int* width, int* height,
                        std::vector<float>& outData,
                        ExrChromaticities* outChromaticities) {
+    static std::once_flag s_exrThreadsInit;
+    std::call_once(s_exrThreadsInit, []() {
+        const unsigned hw = std::thread::hardware_concurrency();
+        const int nthreads = std::clamp<int>(hw > 0 ? static_cast<int>(hw) : 4, 1, 16);
+        exr_set_num_threads(nthreads);
+    });
     if (outChromaticities) *outChromaticities = {};
     if (!inData || size < 8 || !width || !height) return false;
     ReaderGuard guard;

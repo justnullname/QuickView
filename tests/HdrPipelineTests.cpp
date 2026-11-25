@@ -2912,3 +2912,89 @@ TEST(HdrPipelineTests, EndToEndHdrDisplayEmulationAllFormatsWarpReadback) {
         EXPECT_LT(HalfToFloat(fp16[5]), -0.05f);
     }
 }
+
+TEST(HdrPipelineTests, SwizzleRGBAToBGRAOnlyDoesNotDoublePremultiply) {
+    // 2x1 RGBA pixels with straight/premultiplied semi-transparent values
+    uint8_t px[8] = {
+        200, 100, 50, 128,
+        10, 20, 30, 64
+    };
+    ImageLoaderSimd::SwizzleRGBAToBGRAOnly(px, 2);
+    // R and B swapped, G and A preserved, NO multiplication by alpha
+    EXPECT_EQ(px[0], 50);
+    EXPECT_EQ(px[1], 100);
+    EXPECT_EQ(px[2], 200);
+    EXPECT_EQ(px[3], 128);
+    EXPECT_EQ(px[4], 30);
+    EXPECT_EQ(px[5], 20);
+    EXPECT_EQ(px[6], 10);
+    EXPECT_EQ(px[7], 64);
+}
+
+TEST(HdrPipelineTests, ToneMap8BitPremulAndRgbGainMap) {
+    ComPtr<ID3D11Device> d3dDevice;
+    ComPtr<ID3D11DeviceContext> d3dContext;
+    if (FAILED(CreateD3D11DeviceWithWarpFallback(&d3dDevice, &d3dContext))) {
+        GTEST_SKIP() << "D3D11 WARP unavailable";
+    }
+
+    QuickView::ComputeEngine compute;
+    ASSERT_HRESULT_SUCCEEDED(compute.Initialize(d3dDevice.Get()));
+
+    // 1. 8-bit premultiplied SDR-white pixel with alpha=0.5 (128/255) in sRGB transfer:
+    //    Straight color is white (1.0), premultiplied is 128 -> unpremultiplied -> 1.0 -> premul output ~128.
+    {
+        const uint8_t premulBgra[4] = { 128u, 128u, 128u, 128u };
+        QuickView::ToneMapSettings s = MakeIdentityToneMapSettings(1.0f, QuickView::TransferFunction::SRGB);
+        s.inputPremultiplied = 1u;
+        ComPtr<ID3D11Texture2D> outTex;
+        ASSERT_HRESULT_SUCCEEDED(compute.ToneMapHdrToSdr(
+            premulBgra, 1, 1, 4, s, &outTex, QuickView::PixelFormat::BGRA8888));
+
+        D3D11_TEXTURE2D_DESC desc{};
+        outTex->GetDesc(&desc);
+        D3D11_TEXTURE2D_DESC stgDesc = desc;
+        stgDesc.Usage = D3D11_USAGE_STAGING;
+        stgDesc.BindFlags = 0;
+        stgDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        ComPtr<ID3D11Texture2D> stg;
+        ASSERT_HRESULT_SUCCEEDED(d3dDevice->CreateTexture2D(&stgDesc, nullptr, &stg));
+        d3dContext->CopyResource(stg.Get(), outTex.Get());
+        D3D11_MAPPED_SUBRESOURCE mapped{};
+        ASSERT_HRESULT_SUCCEEDED(d3dContext->Map(stg.Get(), 0, D3D11_MAP_READ, 0, &mapped));
+        const uint8_t* p = static_cast<const uint8_t*>(mapped.pData);
+        EXPECT_NEAR(p[0], 128, 3);
+        EXPECT_NEAR(p[1], 128, 3);
+        EXPECT_NEAR(p[2], 128, 3);
+        EXPECT_NEAR(p[3], 128, 1);
+        d3dContext->Unmap(stg.Get(), 0);
+    }
+
+    // 2. 4-bpp RGB GainMap applies distinct per-channel gains
+    {
+        const uint8_t sdrBgra[4] = { 255u, 255u, 255u, 255u };
+        const uint8_t rgbGain[4] = { 255u, 0u, 128u, 255u }; // R=max, G=min, B=mid
+        QuickView::GpuShaderPayload payload{};
+        payload.gainMapMin[0] = payload.gainMapMin[1] = payload.gainMapMin[2] = 0.0f;
+        payload.gainMapMax[0] = 2.0f;
+        payload.gainMapMax[1] = 0.0f;
+        payload.gainMapMax[2] = 1.0f;
+        payload.gamma[0] = payload.gamma[1] = payload.gamma[2] = 1.0f;
+        payload.hdrCapacityMin = 0.0f;
+        payload.hdrCapacityMax = 2.0f;
+        payload.targetHeadroom = 2.0f;
+        payload.baseIsHdr = 0.0f;
+        payload.sdrWidth = 1u;
+        payload.sdrHeight = 1u;
+
+        ComPtr<ID3D11Texture2D> outTex;
+        ASSERT_HRESULT_SUCCEEDED(compute.ComposeGainMap(
+            sdrBgra, 1, 1, 4, QuickView::PixelFormat::BGRA8888,
+            rgbGain, 1, 1, 4, payload, &outTex, nullptr, nullptr, 4));
+        std::vector<uint16_t> fp16;
+        ASSERT_TRUE(ReadbackFp16Texture(d3dDevice.Get(), d3dContext.Get(), outTex.Get(), &fp16));
+        EXPECT_NEAR(HalfToFloat(fp16[0]), 4.0f, 0.05f);                       // R: 2^2 = 4.0
+        EXPECT_NEAR(HalfToFloat(fp16[1]), 1.0f, 0.02f);                       // G: 2^0 = 1.0
+        EXPECT_NEAR(HalfToFloat(fp16[2]), std::exp2(128.0f / 255.0f), 0.02f); // B: 2^(128/255) ~ 1.416
+    }
+}

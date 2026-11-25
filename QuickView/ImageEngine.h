@@ -257,7 +257,7 @@ public:
         size_t sysMemory = 0;    // [Phase 6] Working Set
     };
     
-    TelemetrySnapshot GetTelemetry() const;
+    TelemetrySnapshot GetTelemetry(bool includeTopology = false) const;
     
     // Legacy Debug API (Deprecated, to be removed)
     struct DebugStats {

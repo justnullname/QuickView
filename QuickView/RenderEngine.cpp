@@ -1218,6 +1218,11 @@ BuildToneMapSettings(const QuickView::RawImageFrame &frame,
   } else {
     settings.transferFunction = static_cast<uint32_t>(QuickView::TransferFunction::Linear);
   }
+  settings.inputPremultiplied =
+      (frame.format == QuickView::PixelFormat::BGRA8888 ||
+       frame.format == QuickView::PixelFormat::RGBA8888)
+          ? 1u
+          : 0u;
 
   return settings;
 }
@@ -2271,6 +2276,16 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
           ? options->displayStateOverride
           : GetDisplayColorState();
 
+  const int effectiveCmsMode = (options && options->hasOverrides) ? options->effectiveCmsMode : g_runtime.GetEffectiveCmsMode(g_config.ColorManagement);
+  const bool enableSoftProofing = (options && options->hasOverrides) ? options->enableSoftProofing : g_runtime.EnableSoftProofing;
+  const std::wstring softProofPath = (options && options->hasOverrides) ? options->softProofProfilePath : g_runtime.SoftProofProfilePath;
+  const bool useHdrOutput = ShouldUseHdrOutputForFrameLocked(frame, displayState);
+
+  bool applyCms = false;
+  ComPtr<ID2D1ColorContext> srcContext;
+  ComPtr<ID2D1Bitmap1> rawBitmap;
+  bool handledByGainMap = false;
+
   // ====================================================================
   // [GPU Pipeline] Multi-Layer Composition (GPU Bake)
   // ====================================================================
@@ -2286,7 +2301,6 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
           case QuickView::GpuBlendOp::UltraHdrGainMap: {
               QuickView::GpuShaderPayload payload = frame.shaderPayload;
               payload.targetHeadroom = displayState.GetHdrHeadroomStops(g_config.HdrPeakNitsOverride);
-              const bool useHdrOutput = ShouldUseHdrOutputForFrameLocked(frame, displayState);
 
               // [v6.1.4.28] Restore stable behavior: skip GPU composition on SDR displays (headroom <= 0)
               // to avoid overhead and potential color mismatches in the base layer.
@@ -2311,6 +2325,7 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
                        m_bakeCache.lastBaseFormat == frame.format &&
                        m_bakeCache.lastBaseStride == static_cast<UINT>(frame.stride) &&
                        m_bakeCache.lastAuxStride == static_cast<UINT>(frame.auxLayer->stride) &&
+                       m_bakeCache.lastAuxBpp == frame.auxLayer->bytesPerPixel &&
                        m_bakeCache.baseTexture != nullptr &&
                        m_bakeCache.auxTexture != nullptr);
 
@@ -2327,7 +2342,8 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
                           frame.auxLayer->width, frame.auxLayer->height,
                           frame.auxLayer->stride,
                           payload, &pBaked,
-                          &m_bakeCache.baseTexture, &m_bakeCache.auxTexture);
+                          &m_bakeCache.baseTexture, &m_bakeCache.auxTexture,
+                          frame.auxLayer->bytesPerPixel);
 
                       if (SUCCEEDED(hrBake)) {
                           m_bakeCache.lastBasePixels = frame.pixels;
@@ -2339,6 +2355,7 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
                           m_bakeCache.lastBaseFormat = frame.format;
                           m_bakeCache.lastBaseStride = static_cast<UINT>(frame.stride);
                           m_bakeCache.lastAuxStride = static_cast<UINT>(frame.auxLayer->stride);
+                          m_bakeCache.lastAuxBpp = frame.auxLayer->bytesPerPixel;
                       }
                   }
 
@@ -2355,6 +2372,7 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
 
                   toneMapSettings.transferFunction =
                       static_cast<uint32_t>(QuickView::TransferFunction::Linear);
+                  toneMapSettings.inputPremultiplied = 0u; // ComposeGainMap outputs straight alpha
 
                   ComPtr<ID3D11Texture2D> pMapped;
                   HRESULT hrToneMap = useHdrOutput
@@ -2370,34 +2388,44 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
               if (pBaked) {
                   ComPtr<IDXGISurface> dxgiSurface;
                   if (SUCCEEDED(pBaked.As(&dxgiSurface))) {
-                   D2D1_BITMAP_PROPERTIES1 hdrProps = {};
-                   hdrProps.pixelFormat.format = useHdrOutput
-                       ? DXGI_FORMAT_R16G16B16A16_FLOAT
-                       : DXGI_FORMAT_R8G8B8A8_UNORM;
-                   hdrProps.pixelFormat.alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED; 
-                   hdrProps.dpiX = 96.0f;
-                   hdrProps.dpiY = 96.0f;
-                   
-                   ComPtr<ID2D1ColorContext> scRgbContext;
-                   if (useHdrOutput &&
-                       SUCCEEDED(GetOrCreateScRgbColorContext(&scRgbContext))) {
-                       hdrProps.colorContext = scRgbContext.Get();
-                   }
-                  
-                  ComPtr<ID2D1Bitmap1> result;
-                  HRESULT hrResult = m_d2dContext->CreateBitmapFromDxgiSurface(
-                      dxgiSurface.Get(), &hdrProps, &result);
-                  
-                  if (SUCCEEDED(hrResult)) {
-                      result.CopyTo(outBitmap);
-                      return S_OK;
+                      D2D1_BITMAP_PROPERTIES1 hdrProps = {};
+                      hdrProps.pixelFormat.format = useHdrOutput
+                          ? DXGI_FORMAT_R16G16B16A16_FLOAT
+                          : DXGI_FORMAT_R8G8B8A8_UNORM;
+                      hdrProps.pixelFormat.alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED;
+                      hdrProps.dpiX = 96.0f;
+                      hdrProps.dpiY = 96.0f;
+
+                      ComPtr<ID2D1ColorContext> scRgbContext;
+                      if (useHdrOutput &&
+                          SUCCEEDED(GetOrCreateScRgbColorContext(&scRgbContext))) {
+                          hdrProps.colorContext = scRgbContext.Get();
+                      }
+
+                      ComPtr<ID2D1Bitmap1> result;
+                      HRESULT hrResult = m_d2dContext->CreateBitmapFromDxgiSurface(
+                          dxgiSurface.Get(), &hdrProps, &result);
+
+                      if (SUCCEEDED(hrResult)) {
+                          if (useHdrOutput) {
+                              result.CopyTo(outBitmap);
+                              return S_OK;
+                          }
+                          // ToneMapHdrTextureToSdr outputs sRGB R8G8B8A8_UNORM; flow into Step 3 for monitor ICC CMS.
+                          rawBitmap = std::move(result);
+                          GetOrCreateSrgbColorContext(&srcContext);
+                          applyCms = (effectiveCmsMode == 0)
+                                         ? false
+                                         : (effectiveCmsMode == 1 ? g_config.ColorManagement
+                                                                  : (effectiveCmsMode == 5));
+                          handledByGainMap = true;
+                      }
                   }
               }
+              break;
           }
-          break;
-      }
-      default:
-          break;
+          default:
+              break;
       }
   }
 
@@ -2477,16 +2505,6 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
   }
 
   D2D1_BITMAP_PROPERTIES1 props = GetDefaultBitmapProps(dxgiFormat, alphaMode);
-  bool applyCms = false;
-  ComPtr<ID2D1ColorContext> srcContext;
-  ComPtr<ID2D1Bitmap1> rawBitmap;
-
-  // CMS & Soft Proofing Config Resolution
-  // If options are provided, they take priority; otherwise, we fall back to global g_runtime state.
-  const int effectiveCmsMode = (options && options->hasOverrides) ? options->effectiveCmsMode : g_runtime.GetEffectiveCmsMode(g_config.ColorManagement);
-  const bool enableSoftProofing = (options && options->hasOverrides) ? options->enableSoftProofing : g_runtime.EnableSoftProofing;
-  const std::wstring softProofPath = (options && options->hasOverrides) ? options->softProofProfilePath : g_runtime.SoftProofProfilePath;
-  const bool useHdrOutput = ShouldUseHdrOutputForFrameLocked(frame, displayState);
 
   // [Diagnostic] HDR routing decision + full display state snapshot
   QV_LOG("Render_HdrRouting",
@@ -2515,7 +2533,7 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
       (frame.format == QuickView::PixelFormat::R16G16B16A16_UNORM &&
        (frame.hdrMetadata.isHdr || frame.colorInfo.IsSceneLinear()));
 
-  if (isHdrComputeEligible) {
+  if (!handledByGainMap && isHdrComputeEligible) {
       ComPtr<ID2D1ColorContext> scRgbContext;
       GetOrCreateScRgbColorContext(&scRgbContext);
 
@@ -2616,6 +2634,15 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
               std::vector<uint8_t> sdrPixels(static_cast<size_t>(frame.width) * frame.height * 4);
               const QuickView::ToneMapSettings toneMapSettings = BuildToneMapSettings(frame, displayState);
               const float exposure = toneMapSettings.exposure;
+              auto sanitizeFiniteCpu = [](float v) -> float {
+                  if (std::isnan(v)) return 0.0f;
+                  if (std::isinf(v)) return (v < 0.0f) ? -65504.0f : 65504.0f;
+                  return std::clamp(v, -65504.0f, 65504.0f);
+              };
+              auto sanitizeAlphaCpu = [](float a) -> float {
+                  if (std::isnan(a)) return 1.0f;
+                  return std::clamp(a, 0.0f, 1.0f);
+              };
               // Apply exposure
               for (int y = 0; y < frame.height; ++y) {
                   const uint8_t *srcRow = uploadPixels + static_cast<size_t>(y) * uploadStride;
@@ -2641,14 +2668,16 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
                           }
                       } else if (frame.format == QuickView::PixelFormat::R16G16B16A16_FLOAT) {
                           const uint16_t* p16 = reinterpret_cast<const uint16_t*>(srcRow);
-                          r = DirectX::PackedVector::XMConvertHalfToFloat(p16[x * 4 + 0]);
-                          g = DirectX::PackedVector::XMConvertHalfToFloat(p16[x * 4 + 1]);
-                          b = DirectX::PackedVector::XMConvertHalfToFloat(p16[x * 4 + 2]);
-                          a = std::clamp(DirectX::PackedVector::XMConvertHalfToFloat(p16[x * 4 + 3]), 0.0f, 1.0f);
+                          r = sanitizeFiniteCpu(DirectX::PackedVector::XMConvertHalfToFloat(p16[x * 4 + 0]));
+                          g = sanitizeFiniteCpu(DirectX::PackedVector::XMConvertHalfToFloat(p16[x * 4 + 1]));
+                          b = sanitizeFiniteCpu(DirectX::PackedVector::XMConvertHalfToFloat(p16[x * 4 + 2]));
+                          a = sanitizeAlphaCpu(DirectX::PackedVector::XMConvertHalfToFloat(p16[x * 4 + 3]));
                       } else if (frame.format == QuickView::PixelFormat::R32G32B32A32_FLOAT) {
                           const float* pf = reinterpret_cast<const float*>(srcRow);
-                          r = pf[x * 4 + 0]; g = pf[x * 4 + 1]; b = pf[x * 4 + 2];
-                          a = std::clamp(pf[x * 4 + 3], 0.0f, 1.0f);
+                          r = sanitizeFiniteCpu(pf[x * 4 + 0]);
+                          g = sanitizeFiniteCpu(pf[x * 4 + 1]);
+                          b = sanitizeFiniteCpu(pf[x * 4 + 2]);
+                          a = sanitizeAlphaCpu(pf[x * 4 + 3]);
                       } else {
                           const bool isBgra = (frame.format != QuickView::PixelFormat::RGBA8888);
                           const uint8_t* px8 = srcRow + static_cast<size_t>(x) * 4u;
@@ -2658,6 +2687,11 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
                           a = (frame.format == QuickView::PixelFormat::BGRX8888)
                                   ? 1.0f
                                   : std::clamp(px8[3] / 255.0f, 0.0f, 1.0f);
+                          if (toneMapSettings.inputPremultiplied != 0u && a > 1e-5f && a < 1.0f) {
+                              r = (std::min)(1.0f, r / a);
+                              g = (std::min)(1.0f, g / a);
+                              b = (std::min)(1.0f, b / a);
+                          }
                           if (toneMapSettings.transferFunction == static_cast<uint32_t>(QuickView::TransferFunction::PQ)) {
                               r = PQToLinear(r); g = PQToLinear(g); b = PQToLinear(b);
                           } else if (toneMapSettings.transferFunction == static_cast<uint32_t>(QuickView::TransferFunction::HLG)) {
@@ -2672,7 +2706,9 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
 
                       // 1. Apply Exposure/Gain first
                       const float expTotal = exposure * toneMapSettings.exposureGain;
-                      r *= expTotal; g *= expTotal; b *= expTotal;
+                      r = sanitizeFiniteCpu(r * expTotal);
+                      g = sanitizeFiniteCpu(g * expTotal);
+                      b = sanitizeFiniteCpu(b * expTotal);
 
                       // 2. ToneMapCore in source space (matches ToneMapCommon.hlsli)
                       const float displayPeak = (std::max)(toneMapSettings.displayPeakScRgb, 1.0f);

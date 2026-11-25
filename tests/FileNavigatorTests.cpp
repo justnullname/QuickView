@@ -907,3 +907,66 @@ TEST(UndoManagerTest, PushRenamePairAndPop) {
     EXPECT_FALSE(manager.CanUndo());
 }
 
+TEST(FileNavigatorTest, TryGetCachedFileReturnsMaterializedPathsAndEmptyOutOfBounds) {
+    namespace fs = std::filesystem;
+    fs::path tempDir = fs::current_path() / "test_try_get_cached_file_dir";
+    std::error_code ec;
+    fs::remove_all(tempDir, ec);
+    fs::create_directories(tempDir, ec);
+    ASSERT_FALSE(ec);
+
+    auto touch = [](const fs::path& p) {
+        std::ofstream f(p, std::ios::binary);
+        f << "x";
+    };
+    touch(tempDir / "01.jpg");
+    touch(tempDir / "02.jpg");
+
+    const int oldSortOrder = g_runtime.SortOrder;
+    g_runtime.SortOrder = 1; // Name ascending
+
+    FileNavigator nav;
+    nav.Initialize((tempDir / "01.jpg").wstring(), nullptr, false);
+    ASSERT_EQ(nav.Count(), 2u);
+    EXPECT_EQ(nav.TryGetCachedFile(0), (tempDir / "01.jpg").wstring());
+    EXPECT_EQ(nav.TryGetCachedFile(1), (tempDir / "02.jpg").wstring());
+    EXPECT_TRUE(nav.TryGetCachedFile(-1).empty());
+    EXPECT_TRUE(nav.TryGetCachedFile(2).empty());
+
+    g_runtime.SortOrder = oldSortOrder;
+    fs::remove_all(tempDir, ec);
+}
+
+TEST(FileNavigatorTest, ForceEnsureMaterializedBuildsFullPlaylistInAutoSortMode) {
+    namespace fs = std::filesystem;
+    fs::path tempDir = fs::current_path() / "test_force_materialize_auto_dir";
+    std::error_code ec;
+    fs::remove_all(tempDir, ec);
+    fs::create_directories(tempDir, ec);
+    ASSERT_FALSE(ec);
+
+    auto touch = [](const fs::path& p) {
+        std::ofstream f(p, std::ios::binary);
+        f << "x";
+    };
+    touch(tempDir / "a.jpg");
+    touch(tempDir / "b.jpg");
+    touch(tempDir / "c.jpg");
+
+    const int oldSortOrder = g_runtime.SortOrder;
+    g_runtime.SortOrder = 0; // Auto
+
+    FileNavigator nav;
+    nav.InitializeForBoot((tempDir / "b.jpg").wstring(), nullptr);
+    nav.EnsureMaterialized(true);
+
+    EXPECT_FALSE(nav.UsingExplorerCursor());
+    ASSERT_EQ(nav.Count(), 3u);
+    EXPECT_EQ(nav.TryGetCachedFile(0), (tempDir / "a.jpg").wstring());
+    EXPECT_EQ(nav.TryGetCachedFile(1), (tempDir / "b.jpg").wstring());
+    EXPECT_EQ(nav.TryGetCachedFile(2), (tempDir / "c.jpg").wstring());
+
+    g_runtime.SortOrder = oldSortOrder;
+    fs::remove_all(tempDir, ec);
+}
+

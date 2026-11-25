@@ -267,6 +267,7 @@ struct NcnnVulkanContextImpl {
         if (pipelineCache && pipelineCacheGpuIndex == targetGpuIndex) return;
 
         if (pipelineCache) {
+            netCache.clear();
             PersistPipelineCacheIfGrown();
             pipelineCache.reset();
             pipelineCachePath.clear();
@@ -292,7 +293,9 @@ struct NcnnVulkanContextImpl {
         const size_t currentSize = pipelineCache->size();
         if (currentSize <= lastSavedPipelineCacheSize) return;
 
-        std::wstring tmpPath = pipelineCachePath + L".tmp";
+        std::wstring tmpPath = pipelineCachePath + L".tmp." +
+                               std::to_wstring(GetCurrentProcessId()) + L"." +
+                               std::to_wstring(GetCurrentThreadId());
         if (pipelineCache->save_cache(tmpPath.c_str()) == 0) {
             if (MoveFileExW(tmpPath.c_str(), pipelineCachePath.c_str(), MOVEFILE_REPLACE_EXISTING)) {
                 lastSavedPipelineCacheSize = currentSize;

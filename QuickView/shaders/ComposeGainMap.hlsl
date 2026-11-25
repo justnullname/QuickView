@@ -1,6 +1,6 @@
 // Compute Shader: ISO 21496-1 Gain Map composition with source alpha preservation and HDR-base direction handling.
 Texture2D<float4> SdrTex        : register(t0);
-Texture2D<unorm float> GainTex  : register(t1);
+Texture2D<float4> GainTex       : register(t1);
 RWTexture2D<float4> DstTex      : register(u0);
 SamplerState LinearSampler      : register(s0);
 
@@ -17,7 +17,7 @@ cbuffer GainMapParams : register(b0)
     float  BaseIsHdr;
     uint   SdrWidth;
     uint   SdrHeight;
-    uint   _pad5;
+    uint   BaseFlags;
     uint   BaseIsLinear;
 };
 
@@ -55,13 +55,18 @@ void CSComposeGainMap(uint3 id : SV_DispatchThreadID)
     if (id.x >= SdrWidth || id.y >= SdrHeight) return;
 
     float4 sdrColor = SdrTex[id.xy];
+    float outAlpha = SanitizeAlpha(sdrColor.a);
     float3 baseLinear = SanitizeFinite(sdrColor.rgb);
+    if ((BaseFlags & 1u) != 0u && outAlpha > 1e-5f && outAlpha < 1.0f) {
+        baseLinear = saturate(baseLinear / outAlpha);
+    }
     if (BaseIsLinear == 0u) {
         baseLinear = SrgbToLinear(baseLinear);
     }
 
     float2 uv = (float2(id.xy) + 0.5f) / float2(SdrWidth, SdrHeight);
-    float gainEncoded = saturate(GainTex.SampleLevel(LinearSampler, uv, 0).r);
+    float4 gainSample = GainTex.SampleLevel(LinearSampler, uv, 0);
+    float3 gainEncoded = ((BaseFlags & 2u) != 0u) ? saturate(gainSample.rgb) : (float3)saturate(gainSample.r);
 
     float capRange = HdrCapacityMax - HdrCapacityMin;
     float weight = 0.0f;
@@ -75,12 +80,14 @@ void CSComposeGainMap(uint3 id : SV_DispatchThreadID)
     float3 outOffset  = lerp(baseOffset, altOffset, abs(signedWeight));
 
     float3 safeGamma = max(Gamma, 0.001f);
-    float3 gainPow = (gainEncoded > 0.0f) ? pow((float3)gainEncoded, 1.0f / safeGamma) : float3(0.0f, 0.0f, 0.0f);
+    float3 gainPow = float3(
+        (gainEncoded.r > 0.0f) ? pow(gainEncoded.r, 1.0f / safeGamma.r) : 0.0f,
+        (gainEncoded.g > 0.0f) ? pow(gainEncoded.g, 1.0f / safeGamma.g) : 0.0f,
+        (gainEncoded.b > 0.0f) ? pow(gainEncoded.b, 1.0f / safeGamma.b) : 0.0f);
     float3 gainLog = GainMapMin + (GainMapMax - GainMapMin) * gainPow;
 
     float3 hdrLinear = (baseLinear + baseOffset) * exp2(gainLog * signedWeight) - outOffset;
     hdrLinear = clamp(max(SanitizeFinite(hdrLinear), 0.0f), 0.0f, kFp16MaxFinite);
-    float outAlpha = SanitizeAlpha(sdrColor.a);
 
     DstTex[id.xy] = float4(hdrLinear, outAlpha);
 }

@@ -1061,7 +1061,8 @@ void UIRenderer::DrawLoupe(ID2D1DeviceContext* dc, HWND hwnd) {
         const float vpH = t.viewport.bottom - t.viewport.top;
         if (vpW < 1.0f || vpH < 1.0f) return false;
         float fitScale = std::min(vpW / osz.width, vpH / osz.height);
-        if (osz.width < 200.0f && osz.height < 200.0f && fitScale > 1.0f) fitScale = 1.0f;
+        const bool isVector = (pane.resource.isSvg || pane.resource.isWebView);
+        if (ShouldGuardSmallImageUpscale(osz.width, osz.height, isVector, m_uiScale) && fitScale > 1.0f) fitScale = 1.0f;
         const float totalScale = fitScale * (std::max)(0.02f, pane.view.Zoom);
         const float centerX = (t.viewport.left + t.viewport.right) * 0.5f + pane.view.PanX;
         const float centerY = (t.viewport.top + t.viewport.bottom) * 0.5f + pane.view.PanY;
@@ -3437,7 +3438,11 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
         }
         const int ridx = g_navigator.FindIndex(rendered);
         wchar_t rSizeBuf[32] = L"";
-        if (const uintmax_t rsize = g_navigator.GetFileSize(ridx); rsize >= 1024 * 1024) {
+        uintmax_t rsize = g_navigator.GetFileSize(ridx);
+        if (rsize == 0 && !rendered.empty()) {
+            rsize = QuickView::QueryFileSize(rendered.c_str());
+        }
+        if (rsize >= 1024 * 1024) {
             swprintf_s(rSizeBuf, L"%.2f MB", rsize / (1024.0 * 1024.0));
         } else if (rsize > 0) {
             swprintf_s(rSizeBuf, L"%.2f KB", rsize / 1024.0);
@@ -4611,7 +4616,7 @@ float UIRenderer::EstimateFrameLuminance(const QuickView::RawImageFrame& frame, 
     }
 
     float fitScale = std::min(viewportW / visualSize.width, viewportH / visualSize.height);
-    if (visualSize.width < 200.0f && visualSize.height < 200.0f && !g_runtime.LockWindowSize && fitScale > 1.0f) {
+    if (ShouldGuardSmallImageUpscale(visualSize.width, visualSize.height, pane.isVector, m_uiScale) && !g_runtime.LockWindowSize && fitScale > 1.0f) {
         fitScale = 1.0f;
     } else if (g_runtime.LockWindowSize && !g_config.UpscaleSmallImagesWhenLocked && fitScale > 1.0f) {
         fitScale = 1.0f;

@@ -143,8 +143,7 @@ void GalleryOverlay::Initialize(ThumbnailManager* pThumbMgr, FileNavigator* pNav
 
 void GalleryOverlay::Open(int currentIndex, GalleryMode targetMode, bool freezeDismissal) {
     if (m_pNav) {
-        m_pNav->EnsureMaterialized();
-        m_pNav->SyncWithExplorer();
+        m_pNav->EnsureMaterialized(true);
     }
     if (!m_pNav || m_pNav->Count() == 0) return;
     if (currentIndex < 0 || currentIndex >= (int)m_pNav->Count()) {
@@ -781,7 +780,7 @@ void GalleryOverlay::Render(ID2D1DeviceContext *pDC, const D2D1_SIZE_F &size,
         
         // Draw thumbnail
         ImageID imgId = m_pNav->GetImageID(i);
-        const std::wstring& path = m_pNav->GetFile(i);
+        const std::wstring& path = m_pNav->TryGetCachedFile(i);
         auto bmp = m_pThumbMgr->GetThumbnail(imgId, path.c_str(), pDC);
         
         if (bmp) {
@@ -929,7 +928,7 @@ void GalleryOverlay::Render(ID2D1DeviceContext *pDC, const D2D1_SIZE_F &size,
         if (cellRect.right >= 0.0f && cellRect.left <= size.width && cellRect.bottom >= 0.0f && cellRect.top <= galleryH) {
             ImageID imgId = m_pNav->GetImageID(m_hoverIndex);
             ThumbnailManager::ImageInfo info = m_pThumbMgr->GetImageInfo(imgId);
-            const std::wstring& path = m_pNav->GetFile(m_hoverIndex);
+            const std::wstring& path = m_pNav->TryGetCachedFile(m_hoverIndex);
             size_t lastSlash = path.find_last_of(L"\\/");
             std::wstring_view filename = (lastSlash != std::wstring::npos) ? std::wstring_view(path).substr(lastSlash + 1) : std::wstring_view(path);
             

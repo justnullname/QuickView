@@ -669,3 +669,107 @@ TEST(MiniTiffDirectBufferTest, FloatTiffReturnsNotImplForHdrFallback) {
     EXPECT_EQ(hr, E_NOTIMPL);
     EXPECT_FALSE(result.success);
 }
+
+TEST(MiniTiffSecurityTest, InlineTwoShortBitsPerSampleGrayAlphaSucceeds) {
+    // 4x2 8-bit Gray+Alpha (2 samples): BitsPerSample = [8, 8] stored inline (count=2, type=SHORT)
+    constexpr uint32_t kWidth = 4;
+    constexpr uint32_t kHeight = 2;
+    constexpr uint32_t kStripBytes = kWidth * kHeight * 2;
+    constexpr uint32_t kNumEntries = 9;
+    constexpr uint32_t kDataPos = 8 + 2 + kNumEntries * 12 + 4;
+
+    std::vector<uint8_t> extra(kStripBytes);
+    for (uint32_t i = 0; i < kWidth * kHeight; ++i) {
+        extra[i * 2 + 0] = 0x80; // Gray
+        extra[i * 2 + 1] = 0xFF; // Alpha
+    }
+
+    std::vector<TiffIfdEntrySpec> entries = {
+        {256, 4, 1, kWidth},
+        {257, 4, 1, kHeight},
+        {258, 3, 2, 0x00080008u}, // Inline 2x SHORT: [8, 8]
+        {259, 3, 1, 1},           // Uncompressed
+        {262, 3, 1, 1},           // BlackIsZero
+        {273, 4, 1, kDataPos},    // StripOffsets
+        {277, 3, 1, 2},           // SamplesPerPixel = 2
+        {278, 4, 1, kHeight},
+        {279, 4, 1, kStripBytes}, // StripByteCounts
+    };
+
+    std::vector<uint8_t> tiff = BuildMinimalTiffLE(entries, extra);
+    auto ctx = MakeTestDecodeContext();
+    QuickView::Codec::DecodeResult result;
+
+    HRESULT hr = QuickView::MiniTiff::Load(tiff.data(), tiff.size(), ctx, result);
+    ASSERT_EQ(hr, S_OK);
+    ASSERT_TRUE(result.success);
+    ASSERT_NE(result.pixels, nullptr);
+    EXPECT_EQ(result.pixels[0], 0x80);
+    EXPECT_EQ(result.pixels[1], 0x80);
+    EXPECT_EQ(result.pixels[2], 0x80);
+    EXPECT_EQ(result.pixels[3], 0xFF);
+    _aligned_free(result.pixels);
+}
+
+TEST(MiniTiffSecurityTest, BigEndianSingleShortStripOffsetAndByteCountSucceeds) {
+    // Big-Endian (MM) TIFF with StripOffsets & StripByteCounts encoded as count=1, type=SHORT (left-aligned)
+    auto appendU16BE = [](std::vector<uint8_t>& buf, uint16_t v) {
+        buf.push_back(static_cast<uint8_t>((v >> 8) & 0xFF));
+        buf.push_back(static_cast<uint8_t>(v & 0xFF));
+    };
+    auto appendU32BE = [](std::vector<uint8_t>& buf, uint32_t v) {
+        buf.push_back(static_cast<uint8_t>((v >> 24) & 0xFF));
+        buf.push_back(static_cast<uint8_t>((v >> 16) & 0xFF));
+        buf.push_back(static_cast<uint8_t>((v >> 8) & 0xFF));
+        buf.push_back(static_cast<uint8_t>(v & 0xFF));
+    };
+
+    constexpr uint32_t kWidth = 4;
+    constexpr uint32_t kHeight = 2;
+    constexpr uint16_t kStripBytes = kWidth * kHeight * 3;
+    constexpr uint16_t kNumEntries = 9;
+    constexpr uint16_t kDataPos = 8 + 2 + kNumEntries * 12 + 4;
+
+    std::vector<TiffIfdEntrySpec> entries = {
+        {256, 3, 1, kWidth << 16},
+        {257, 3, 1, kHeight << 16},
+        {258, 3, 1, 8u << 16},
+        {259, 3, 1, 1u << 16},
+        {262, 3, 1, 2u << 16}, // RGB
+        {273, 3, 1, static_cast<uint32_t>(kDataPos) << 16},   // SHORT StripOffset
+        {277, 3, 1, 3u << 16},
+        {278, 3, 1, kHeight << 16},
+        {279, 3, 1, static_cast<uint32_t>(kStripBytes) << 16}, // SHORT StripByteCount
+    };
+
+    std::vector<uint8_t> tiff;
+    tiff.push_back('M');
+    tiff.push_back('M');
+    appendU16BE(tiff, 42);
+    appendU32BE(tiff, 8);
+    appendU16BE(tiff, kNumEntries);
+    for (const auto& e : entries) {
+        appendU16BE(tiff, e.tag);
+        appendU16BE(tiff, e.type);
+        appendU32BE(tiff, e.count);
+        appendU32BE(tiff, e.valueOrOffset);
+    }
+    appendU32BE(tiff, 0);
+    for (uint32_t i = 0; i < kWidth * kHeight; ++i) {
+        tiff.push_back(0xAA); // R
+        tiff.push_back(0x55); // G
+        tiff.push_back(0x22); // B
+    }
+
+    auto ctx = MakeTestDecodeContext();
+    QuickView::Codec::DecodeResult result;
+    HRESULT hr = QuickView::MiniTiff::Load(tiff.data(), tiff.size(), ctx, result);
+    ASSERT_EQ(hr, S_OK);
+    ASSERT_TRUE(result.success);
+    ASSERT_NE(result.pixels, nullptr);
+    EXPECT_EQ(result.pixels[0], 0x22); // B
+    EXPECT_EQ(result.pixels[1], 0x55); // G
+    EXPECT_EQ(result.pixels[2], 0xAA); // R
+    EXPECT_EQ(result.pixels[3], 0xFF); // A
+    _aligned_free(result.pixels);
+}

@@ -3203,13 +3203,15 @@ HRESULT CImageLoader::FullDecodeToMMF(
       return FAILED(hr) ? hr : E_FAIL;
     }
 
-    // Final RGBA → BGRA swizzle for the full-quality image.
+    // Final RGBA -> BGRA swizzle for the full-quality image.
     // Respect libjxl 0.12.0 alpha_premultiplied flag: if bitstream already premultiplied alpha,
-    // skip secondary premultiplication to avoid dark/corrupted transparent edges!
+    // skip premultiplication to avoid double-premultiplied dark transparent edges.
+    const size_t totalPixels = static_cast<size_t>(info.xsize) * static_cast<size_t>(info.ysize);
     if (info.alpha_bits > 0 && !info.alpha_premultiplied) {
-      ImageLoaderSimd::PremultiplyAlpha((uint8_t*)mmfBuf, (int)info.xsize, (int)info.ysize, (int)(info.xsize * 4));
+      ImageLoaderSimd::SwizzleRGBAToBGRA(mmfBuf, totalPixels);
+    } else {
+      ImageLoaderSimd::SwizzleRGBAToBGRAOnly(mmfBuf, totalPixels);
     }
-    ImageLoaderSimd::SwizzleRGBAToBGRA(mmfBuf, (size_t)info.xsize * info.ysize);
 
     *outW = (int)info.xsize;
     *outH = (int)info.ysize;
@@ -7387,13 +7389,15 @@ DecodeGainMapJpeg(const uint8_t *data, size_t size, const DecodeContext &ctx) {
     return nullptr;
   }
 
-  cinfo.out_color_space = JCS_GRAYSCALE;
+  const bool isColorGainMap = (cinfo.num_components >= 3);
+  cinfo.out_color_space = isColorGainMap ? JCS_EXT_RGBA : JCS_GRAYSCALE;
   jpeg_start_decompress(&cinfo);
 
   const int w = cinfo.output_width;
   const int h = cinfo.output_height;
+  const int gainBpp = isColorGainMap ? 4 : 1;
   const int stride =
-      CalculateAlignedStride(w, 1, 64); // 64-byte aligned for GPU upload
+      CalculateAlignedStride(w, gainBpp, 64); // 64-byte aligned for GPU upload
 
   auto aux = std::make_unique<AuxLayer>();
   aux->pixels = ctx.allocator((size_t)stride * h);
@@ -7405,7 +7409,7 @@ DecodeGainMapJpeg(const uint8_t *data, size_t size, const DecodeContext &ctx) {
   aux->width = w;
   aux->height = h;
   aux->stride = stride;
-  aux->bytesPerPixel = 1;
+  aux->bytesPerPixel = gainBpp;
 
   while (cinfo.output_scanline < cinfo.output_height) {
     JSAMPROW row = aux->pixels + (size_t)cinfo.output_scanline * stride;
@@ -9802,6 +9806,10 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
   if (!supportedColorMode || !supportedDepth || !supportedCompression)
     return E_NOTIMPL;
 
+  if (header.width == 0 || header.height == 0 ||
+      header.width > 300000u || header.height > 300000u)
+    return E_FAIL;
+
   if (header.colorMode == 3 && header.channels < 3)
     return E_FAIL;
   if (header.colorMode == 1 && header.channels < 1)
@@ -9837,6 +9845,17 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
   uint8_t *pixels = ctx.allocator(totalSize);
   if (!pixels)
     return E_OUTOFMEMORY;
+
+  struct PixelBufferGuard {
+    uint8_t *ptr = nullptr;
+    const DecodeContext &ctx;
+    bool dismissed = false;
+    ~PixelBufferGuard() {
+      if (!dismissed && ptr && ctx.freeFunc) {
+        ctx.freeFunc(ptr);
+      }
+    }
+  } pixelGuard{pixels, ctx, false};
 
   std::memset(pixels, 0, totalSize);
   if (isFloat32) {
@@ -9940,7 +9959,7 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
         const uint32_t packedLen =
             (rleLenField == 2) ? ReadBE16(lenPtr) : ReadBE32(lenPtr);
 
-        if (compPtr > end || packedLen > static_cast<uint32_t>(end - compPtr))
+        if (compPtr > end || static_cast<size_t>(packedLen) > static_cast<size_t>(end - compPtr))
           return E_FAIL;
 
         const int32_t oy = srcYToOut[sy];
@@ -10012,8 +10031,60 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
       // BGRA8888 in D2D1_ALPHA_MODE_PREMULTIPLIED mode.
       ImageLoaderSimd::PremultiplyAlpha(pixels, outW, outH, stride);
     }
+  } else if (isFloat32 && header.channels >= (header.colorMode == 3 ? 4u : 2u)) {
+    // Evaluate true transparency for 32-bit float PSDs so opaque HDR images with
+    // an extra selection/alpha channel (initialized to 0.0f) remain visible.
+    size_t zeroAlphaCount = 0;
+    size_t zeroAlphaButNotEmptyCount = 0;
+    const bool isRgb = (header.colorMode == 3);
+
+    for (uint32_t y = 0; y < outH; ++y) {
+      const float *row = reinterpret_cast<const float *>(pixels + static_cast<size_t>(y) * stride);
+      for (uint32_t x = 0; x < outW; ++x) {
+        const float a = row[static_cast<size_t>(x) * 4u + 3u];
+        if (a <= 1e-5f) {
+          zeroAlphaCount++;
+          const float r = row[static_cast<size_t>(x) * 4u + 0u];
+          const float g = row[static_cast<size_t>(x) * 4u + 1u];
+          const float b = row[static_cast<size_t>(x) * 4u + 2u];
+          if (isRgb) {
+            const bool isBlack = (std::fabs(r) <= 1e-5f && std::fabs(g) <= 1e-5f && std::fabs(b) <= 1e-5f);
+            const bool isWhite = (std::fabs(r - 1.0f) <= 1e-5f && std::fabs(g - 1.0f) <= 1e-5f && std::fabs(b - 1.0f) <= 1e-5f);
+            if (!isBlack && !isWhite) {
+              zeroAlphaButNotEmptyCount++;
+            }
+          } else {
+            const bool isBlack = (std::fabs(r) <= 1e-5f);
+            const bool isWhite = (std::fabs(r - 1.0f) <= 1e-5f);
+            if (!isBlack && !isWhite) {
+              zeroAlphaButNotEmptyCount++;
+            }
+          }
+        }
+      }
+    }
+
+    bool hasTransparency = false;
+    if (zeroAlphaCount > 0) {
+      const size_t maxLeak =
+          (std::max)(static_cast<size_t>(50), zeroAlphaCount / 50);
+      if (zeroAlphaButNotEmptyCount <= maxLeak) {
+        hasTransparency = true;
+      }
+    }
+
+    if (!hasTransparency) {
+#pragma omp parallel for schedule(dynamic, 64)
+      for (int y = 0; y < static_cast<int>(outH); ++y) {
+        float *row = reinterpret_cast<float *>(pixels + static_cast<size_t>(y) * stride);
+        for (uint32_t x = 0; x < outW; ++x) {
+          row[static_cast<size_t>(x) * 4u + 3u] = 1.0f;
+        }
+      }
+    }
   }
 
+  pixelGuard.dismissed = true;
   result.pixels = pixels;
   result.width = static_cast<int>(outW);
   result.height = static_cast<int>(outH);
@@ -12325,7 +12396,8 @@ int64_t ReadCaptureTimeFallback(const wchar_t *filePath) {
 
 // [v5.1] LibRaw Metadata Helper
 static HRESULT ReadMetadataLibRaw(LPCWSTR filePath,
-                                  CImageLoader::ImageMetadata *pMetadata) {
+                                  CImageLoader::ImageMetadata *pMetadata,
+                                  bool markAsRawHdr = true) {
   if (!pMetadata)
     return E_INVALIDARG;
 
@@ -12497,14 +12569,16 @@ static HRESULT ReadMetadataLibRaw(LPCWSTR filePath,
     }
   }
 
-  // [HDR] RAW files are inherently high dynamic range and scene-linear
-  pMetadata->colorInfo.dataSpace = QuickView::PixelDataSpace::SceneLinear;
-  pMetadata->colorInfo.transfer = QuickView::TransferFunction::Linear;
-  pMetadata->colorInfo.nominalBitDepth = 14; // Typical RAW bit depth
-  pMetadata->hdrMetadata.isValid = true;
-  pMetadata->hdrMetadata.isHdr = true;
-  pMetadata->hdrMetadata.isSceneLinear = true;
-  pMetadata->hdrMetadata.transfer = QuickView::TransferFunction::Linear;
+  if (markAsRawHdr) {
+    // [HDR] RAW files are inherently high dynamic range and scene-linear
+    pMetadata->colorInfo.dataSpace = QuickView::PixelDataSpace::SceneLinear;
+    pMetadata->colorInfo.transfer = QuickView::TransferFunction::Linear;
+    pMetadata->colorInfo.nominalBitDepth = 14; // Typical RAW bit depth
+    pMetadata->hdrMetadata.isValid = true;
+    pMetadata->hdrMetadata.isHdr = true;
+    pMetadata->hdrMetadata.isSceneLinear = true;
+    pMetadata->hdrMetadata.transfer = QuickView::TransferFunction::Linear;
+  }
 
   return S_OK;
 }
@@ -12934,7 +13008,7 @@ HRESULT CImageLoader::ReadMetadata(LPCWSTR filePath, ImageMetadata *pMetadata,
         return S_OK;
       }
     } else if (QuickView::IsHeifPath(filePath)) {
-      if (SUCCEEDED(ReadMetadataLibRaw(filePath, pMetadata))) {
+      if (SUCCEEDED(ReadMetadataLibRaw(filePath, pMetadata, false))) {
         // LibRaw succeeded for partial EXIF; continue to WIC for full
         // HEIF EXIF/ICC/HDR metadata.
       }
@@ -13254,7 +13328,8 @@ void CImageLoader::ComputeHistogramFromFrame(
       ImageLoaderSimd::ComputeHistogramRowGainMap(
           row, auxRow, frame.width, auxWidth, mapRange, frame.shaderPayload,
           pMetadata->HistR.data(), pMetadata->HistG.data(),
-          pMetadata->HistB.data(), pMetadata->HistL.data());
+          pMetadata->HistB.data(), pMetadata->HistL.data(),
+          pAux->bytesPerPixel);
     } else {
       pMetadata->HistMapRange = 1.0f;
       // [Highway] Delegate histogram + luminance computation to dynamic

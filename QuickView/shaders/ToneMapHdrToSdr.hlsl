@@ -127,6 +127,7 @@ void CSToneMap(uint3 id : SV_DispatchThreadID)
     float4 raw = SrcTex[id.xy];
     float3 rgb = SanitizeFinite(raw.rgb);
     float alpha = SanitizeAlpha(raw.a);
+    rgb = UnpremultiplyIfNeeded(rgb, alpha, InputPremultiplied);
 
     rgb = DecodeInputTransfer(rgb, TransferFunction);
     rgb = SanitizeFinite(rgb * (Exposure * ExposureGain));

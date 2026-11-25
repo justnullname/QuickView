@@ -90,6 +90,7 @@ struct AdaptiveUiPaneSnapshot {
     float zoom = 1.0f;
     float panX = 0.0f;
     float panY = 0.0f;
+    bool isVector = false;
 };
 
 // ============================================================================

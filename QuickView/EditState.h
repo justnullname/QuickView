@@ -94,6 +94,65 @@ struct ImageDisplayMetrics {
     bool valid = false;
 };
 
+struct InitialWindowMetrics {
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+};
+
+inline float ComputeSmallImageUpscaleGuardThreshold(float uiScale) {
+    const float safeScale = (uiScale > 0.0f) ? uiScale : 1.0f;
+    return (std::max)(200.0f, 4.0f * 38.0f * safeScale);
+}
+
+inline bool ShouldGuardSmallImageUpscale(float imgW, float imgH, bool isVector, float uiScale) {
+    const float threshold = ComputeSmallImageUpscaleGuardThreshold(uiScale);
+    return !isVector && imgW < threshold && imgH < threshold;
+}
+
+inline InitialWindowMetrics ComputeInitialWindowMetrics(
+    int imgWidth, int imgHeight, float initScale, const RECT& workArea,
+    float windowMaxSizePercent, float windowMinSize) {
+    InitialWindowMetrics metrics;
+
+    float maxSizePercent = windowMaxSizePercent / 100.0f;
+    if (maxSizePercent <= 0.0f) maxSizePercent = 0.9f;
+    const int boundsW = workArea.right - workArea.left;
+    const int boundsH = workArea.bottom - workArea.top;
+    const int maxWinW = (std::max)(100, static_cast<int>(boundsW * maxSizePercent));
+    const int maxWinH = (std::max)(100, static_cast<int>(boundsH * maxSizePercent));
+
+    int windowW = (std::max)(1, imgWidth);
+    int windowH = (std::max)(1, imgHeight);
+
+    if (windowW > maxWinW || windowH > maxWinH) {
+        const float ratio = (std::min)(
+            static_cast<float>(maxWinW) / static_cast<float>(windowW),
+            static_cast<float>(maxWinH) / static_cast<float>(windowH));
+        windowW = (std::max)(1, static_cast<int>(windowW * ratio));
+        windowH = (std::max)(1, static_cast<int>(windowH * ratio));
+    }
+
+    const float defaultMin = 4.0f * 38.0f * initScale;
+    const float minLimit = (std::max)(defaultMin, windowMinSize);
+    const int minW = static_cast<int>(std::lround(minLimit));
+    const int minH = static_cast<int>(std::lround(minLimit));
+
+    // Clamp each axis independently so thin strip images keep natural proportions.
+    if (windowW < minW) windowW = minW;
+    if (windowH < minH) windowH = minH;
+
+    windowW = (std::min)(windowW, boundsW);
+    windowH = (std::min)(windowH, boundsH);
+
+    metrics.width = windowW;
+    metrics.height = windowH;
+    metrics.x = workArea.left + (boundsW - windowW) / 2;
+    metrics.y = workArea.top + (boundsH - windowH) / 2;
+    return metrics;
+}
+
 // Inverse-maps a rectangle in 1x visual (post-Flip*Rotate) space [0..visualW, 0..visualH]
 // back to 1x physical (pre-Flip*Rotate) space [0..physSize.width, 0..physSize.height].
 inline D2D1_RECT_F MapVisualRectToPhysicalRect(

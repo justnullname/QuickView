@@ -762,7 +762,8 @@ HRESULT ComputeEngine::ComposeGainMap(
     const GpuShaderPayload& payload,
     ID3D11Texture2D** outTexture,
     ID3D11Texture2D** outSdrTex,
-    ID3D11Texture2D** outGainTex)
+    ID3D11Texture2D** outGainTex,
+    int gainBytesPerPixel)
 {
     if (!m_valid || !sdrPixels || !gainPixels || !outTexture) {
         QV_LOG("Compute_GainMap", TraceLoggingString("InvalidArgs", "Action"));
@@ -802,13 +803,13 @@ HRESULT ComputeEngine::ComposeGainMap(
     HRESULT hr = m_d3dDevice->CreateTexture2D(&sdrDesc, &sdrData, &pSdr);
     if (FAILED(hr)) return hr;
 
-    // 2. Upload Gain Map
+    // 2. Upload Gain Map (1-channel grayscale R8 or 4-channel RGBA8)
     D3D11_TEXTURE2D_DESC gainDesc = {};
     gainDesc.Width = (UINT)gainW;
     gainDesc.Height = (UINT)gainH;
     gainDesc.MipLevels = 1;
     gainDesc.ArraySize = 1;
-    gainDesc.Format = DXGI_FORMAT_R8_UNORM;
+    gainDesc.Format = (gainBytesPerPixel == 4) ? DXGI_FORMAT_R8G8B8A8_UNORM : DXGI_FORMAT_R8_UNORM;
     gainDesc.SampleDesc.Count = 1;
     gainDesc.Usage = D3D11_USAGE_IMMUTABLE;
     gainDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
@@ -839,6 +840,8 @@ HRESULT QuickView::ComputeEngine::ComposeGainMap(
 
     D3D11_TEXTURE2D_DESC sdrDesc;
     sdrTex->GetDesc(&sdrDesc);
+    D3D11_TEXTURE2D_DESC gainDesc;
+    gainTex->GetDesc(&gainDesc);
 
     // 1. Create FP16 output texture
     D3D11_TEXTURE2D_DESC dstDesc = sdrDesc;
@@ -879,6 +882,15 @@ HRESULT QuickView::ComputeEngine::ComposeGainMap(
     D3D11_MAPPED_SUBRESOURCE mapped = {};
     if (SUCCEEDED(m_d3dContext->Map(m_gainMapConstantBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
         GpuShaderPayload safePayload = payload;
+        uint32_t baseFlags = 0;
+        if (sdrDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM ||
+            sdrDesc.Format == DXGI_FORMAT_R8G8B8A8_UNORM) {
+            baseFlags |= 1u; // BaseIsPremultiplied
+        }
+        if (gainDesc.Format != DXGI_FORMAT_R8_UNORM) {
+            baseFlags |= 2u; // GainMapIsRgb
+        }
+        safePayload._pad5 = baseFlags;
         // The shader expects _pad6 (BaseIsLinear) to indicate linear float base (1) vs sRGB encoded base (0).
         safePayload._pad6 = (sdrDesc.Format == DXGI_FORMAT_R32G32B32A32_FLOAT ||
                              sdrDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT)

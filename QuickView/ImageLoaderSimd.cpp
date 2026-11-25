@@ -228,6 +228,29 @@ void SwizzleRGBAToBGRAImpl(uint8_t* data, size_t pixelCount) {
 }
 
 // ============================================================================
+// SwizzleRGBAToBGRAOnly - Swap 8-bit R and B channels in-place (no premul)
+// ============================================================================
+void SwizzleRGBAToBGRAOnlyImpl(uint8_t* data, size_t pixelCount) {
+    if (!data || pixelCount == 0) return;
+
+    const hn::ScalableTag<uint8_t> d8;
+    const size_t N = hn::Lanes(d8);
+    size_t i = 0;
+
+    for (; i + N <= pixelCount; i += N) {
+        uint8_t* px = data + i * 4;
+        hn::Vec<decltype(d8)> vR, vG, vB, vA;
+        hn::LoadInterleaved4(d8, px, vR, vG, vB, vA);
+        hn::StoreInterleaved4(vB, vG, vR, vA, d8, px);
+    }
+
+    for (; i < pixelCount; ++i) {
+        uint8_t* px = data + i * 4;
+        std::swap(px[0], px[2]);
+    }
+}
+
+// ============================================================================
 // SwizzleBGRA16ToRGBA16 - Swap 16-bit B and R channels in-place
 // ============================================================================
 void SwizzleBGRA16ToRGBA16Impl(uint16_t* data, size_t pixelCount) {
@@ -867,7 +890,8 @@ void ComputeHistogramRowFloatImpl(const float* row, int width, float mapRange,
 void ComputeHistogramRowGainMapImpl(const uint8_t* sdrRow, const uint8_t* gainMapRow,
                                     int width, int auxWidth, float mapRange, const ::QuickView::GpuShaderPayload& payload,
                                     uint32_t* histR, uint32_t* histG,
-                                    uint32_t* histB, uint32_t* histL) {
+                                    uint32_t* histB, uint32_t* histL,
+                                    int gainBytesPerPixel) {
     const float W = payload.targetHeadroom;
     const float mapMinR = payload.gainMapMin[0];
     const float mapMinG = payload.gainMapMin[1];
@@ -898,17 +922,27 @@ void ComputeHistogramRowGainMapImpl(const uint8_t* sdrRow, const uint8_t* gainMa
     
     uint32_t stepX = auxWidth > 0 ? ((uint32_t)auxWidth << 16) / width : 0;
     uint32_t auxX_fp = 0;
+    const bool isRgbaGain = (gainBytesPerPixel == 4);
     
     for (int x = 0; x < width; ++x) {
         const uint8_t* px = sdrRow + (size_t)x * 4;
         uint32_t auxX = auxX_fp >> 16;
         if (auxX >= (uint32_t)auxWidth) auxX = auxWidth > 0 ? auxWidth - 1 : 0;
-        uint8_t gmIdx = gainMapRow[auxX]; 
+        uint8_t gmIdxR = 0, gmIdxG = 0, gmIdxB = 0;
+        if (isRgbaGain) {
+            const uint8_t* gmPx = gainMapRow + static_cast<size_t>(auxX) * 4u;
+            gmIdxR = gmPx[0];
+            gmIdxG = gmPx[1];
+            gmIdxB = gmPx[2];
+        } else {
+            const uint8_t gmIdx = gainMapRow[auxX];
+            gmIdxR = gmIdxG = gmIdxB = gmIdx;
+        }
         auxX_fp += stepX;
         
-        float hdrB = px[0] * gmGainB[gmIdx];
-        float hdrG = px[1] * gmGainG[gmIdx];
-        float hdrR = px[2] * gmGainR[gmIdx];
+        float hdrB = px[0] * gmGainB[gmIdxB];
+        float hdrG = px[1] * gmGainG[gmIdxG];
+        float hdrR = px[2] * gmGainR[gmIdxR];
         
         uint32_t ur = static_cast<uint32_t>(std::clamp(hdrR + 0.5f, 0.0f, 255.0f));
         uint32_t ug = static_cast<uint32_t>(std::clamp(hdrG + 0.5f, 0.0f, 255.0f));
@@ -1849,6 +1883,7 @@ namespace ImageLoaderSimd {
 // Export dispatch tables
 HWY_EXPORT(PremultiplyAlphaImpl);
 HWY_EXPORT(SwizzleRGBAToBGRAImpl);
+HWY_EXPORT(SwizzleRGBAToBGRAOnlyImpl);
 HWY_EXPORT(SwizzleBGRA16ToRGBA16Impl);
 HWY_EXPORT(ConvertRGBToBGRARowImpl);
 HWY_EXPORT(ConvertRGB16ToBGRARowImpl);
@@ -1882,6 +1917,10 @@ void PremultiplyAlpha(uint8_t* data, int width, int height, int stride) {
 
 void SwizzleRGBAToBGRA(uint8_t* data, size_t pixelCount) {
     HWY_DYNAMIC_DISPATCH(SwizzleRGBAToBGRAImpl)(data, pixelCount);
+}
+
+void SwizzleRGBAToBGRAOnly(uint8_t* data, size_t pixelCount) {
+    HWY_DYNAMIC_DISPATCH(SwizzleRGBAToBGRAOnlyImpl)(data, pixelCount);
 }
 
 void SwizzleBGRA16ToRGBA16(uint16_t* data, size_t pixelCount) {
@@ -2033,8 +2072,9 @@ void ComputeHistogramRowFloat(const float* row, int width, float mapRange,
 void ComputeHistogramRowGainMap(const uint8_t* sdrRow, const uint8_t* gainMapRow,
                                 int width, int auxWidth, float mapRange, const ::QuickView::GpuShaderPayload& payload,
                                 uint32_t* histR, uint32_t* histG,
-                                uint32_t* histB, uint32_t* histL) {
-    HWY_DYNAMIC_DISPATCH(ComputeHistogramRowGainMapImpl)(sdrRow, gainMapRow, width, auxWidth, mapRange, payload, histR, histG, histB, histL);
+                                uint32_t* histB, uint32_t* histL,
+                                int gainBytesPerPixel) {
+    HWY_DYNAMIC_DISPATCH(ComputeHistogramRowGainMapImpl)(sdrRow, gainMapRow, width, auxWidth, mapRange, payload, histR, histG, histB, histL, gainBytesPerPixel);
 }
 
 uint64_t SumLuminance8BitRange(const uint8_t* row, int x0, int x1, bool isRgbaOrder) {

@@ -382,6 +382,7 @@ private:
     struct LODCache {
         std::shared_ptr<uint8_t[]> pixels; // Decoded full-LOD pixel buffer
         int width = 0, height = 0, stride = 0;
+        QuickView::PixelFormat format = QuickView::PixelFormat::BGRA8888;
         int lod = -1;           // Which LOD level this cache represents
         ImageID imageId = 0;    // Which image (invalidate on switch)
         uint64_t lastAccessTime = 0; // [Titan Perf] LRU timestamp

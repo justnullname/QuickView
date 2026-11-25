@@ -33,6 +33,8 @@ inline ImageID ComputePathHash(const std::wstring& path) {
     return std::hash<std::wstring>{}(normalized);
 }
 
+struct ExplorerFolderView;
+
 class FileNavigator {
 public:
     // [RAW+JPEG Pairing] A RAW hidden behind its same-name rendered sibling
@@ -88,10 +90,10 @@ public:
     bool TrySelectExisting(const std::wstring& path);
 
     // Build the compact on-disk playlist (names-only directory pass).
-    // No-op when the list is already materialized or this is an archive.
-    // Gallery / explicit sort / pairing need this; Next/Prev in Auto mode
-    // use the live Explorer view and do not.
-    void EnsureMaterialized();
+    // No-op when the list is already materialized or this is an archive,
+    // unless forceEvenIfExplorerBound is true (e.g. Gallery needs a full list
+    // sorted with Explorer's column).
+    void EnsureMaterialized(bool forceEvenIfExplorerBound = false);
     bool UsingExplorerCursor() const { return m_explorerBound && !m_playlistReady && !m_archive; }
     // Re-read the live Explorer view (sort column + current-file index).
     // Auto mode calls this before Next/Prev and when the window is activated.
@@ -118,6 +120,8 @@ public:
 
     // Random Access (For Gallery Virtualization)
     const std::wstring& GetFile(int index) const;
+    // Pure in-memory lookup: returns cached/materialized path or empty string without COM/IO.
+    const std::wstring& TryGetCachedFile(int index) const;
     std::wstring GetResolvedPath(const std::wstring& requestedPath) const;
     int FindIndex(const std::wstring& path) const;
     uintmax_t GetFileSize(int index) const;
@@ -251,12 +255,16 @@ private:
     bool TryBindExplorer(const std::wstring& dir, const std::wstring& openedPath);
     void ApplyExplorerBindResult(ExplorerBindResult&& res);
     bool SyncExplorerCursor(bool allowDematerialize);
+    bool SyncExplorerCursorWithView(const ExplorerFolderView& view, bool allowDematerialize);
     void ClearExplorerCursor();
     std::wstring CurrentVisiblePath() const;
     void AdoptCurrentFile(const std::wstring& path);
     int FindExplorerNeighbor(int dir) const;
+    int FindExplorerNeighborWithView(const ExplorerFolderView& view, int dir) const;
+    void PrefetchExplorerWindowAround(const ExplorerFolderView& view, int centerIndex) const;
     bool IsExplorerVisibleImage(const std::wstring& path) const;
     std::wstring ExplorerStep(int dir);
+    std::wstring ExplorerStepWithView(const ExplorerFolderView& view, int dir);
     const std::wstring& CacheExplorerPath(int index, std::wstring path) const;
 
     // [RAW+JPEG Pairing] Asynchronous capture-time verification of the folded
@@ -303,6 +311,7 @@ private:
     mutable DWORD m_explorerSortPid = 0;
     mutable int m_explorerSortDir = 0;
     mutable bool m_hasExplorerSort = false;
+    mutable bool m_inExplorerComCall = false;
     HANDLE m_hCancelEvent = nullptr;
     std::thread m_watcherThread;
     std::mutex m_scanResultMutex;

@@ -434,8 +434,9 @@ static bool DecodePngSingleThreadRows(
     size_t dstRowBytes, bool output16Bit, CancelPredicate checkCancel,
     size_t& curOffset, uint32_t& curChunkLen, z_stream& strm, bool& outCancelled) {
     // Allocate two uninitialized rolling scanline buffers (~rowBytes each, zero memset overhead).
-    std::unique_ptr<uint8_t[]> rowBufA(new uint8_t[lineBytes]);
-    std::unique_ptr<uint8_t[]> rowBufB(new uint8_t[lineBytes]);
+    std::unique_ptr<uint8_t[]> rowBufA(new (std::nothrow) uint8_t[lineBytes]);
+    std::unique_ptr<uint8_t[]> rowBufB(new (std::nothrow) uint8_t[lineBytes]);
+    if (!rowBufA || !rowBufB) return false;
     uint8_t* currLine = rowBufA.get();
     uint8_t* prevLine = rowBufB.get();
 
@@ -489,7 +490,8 @@ static bool DecodePngPipelinedRing(
         ringRows >>= 1;
     }
     const uint64_t mask = ringRows - 1u;
-    std::unique_ptr<uint8_t[]> ringBuf(new uint8_t[static_cast<size_t>(ringRows) * lineBytes]);
+    std::unique_ptr<uint8_t[]> ringBuf(new (std::nothrow) uint8_t[static_cast<size_t>(ringRows) * lineBytes]);
+    if (!ringBuf) return false;
 
     constexpr uint64_t kPipelineStop = (std::numeric_limits<uint64_t>::max)();
     std::atomic<uint64_t> producedAtomic{0};
@@ -619,6 +621,8 @@ static bool TryDecodePngStreamingZlibNg(
     uint8_t*& inOutAllocatedPtr, size_t& inOutAllocatedBytes, bool& outCancelled) {
     outCancelled = false;
     if (!scan.hasIhdr || scan.width == 0 || scan.height == 0 ||
+        scan.width > 0x7FFFFFFFu || scan.height > 0x7FFFFFFFu ||
+        scan.width > static_cast<uint32_t>((std::numeric_limits<int>::max)() / 4) ||
         scan.compression != 0 || scan.filter != 0 || scan.interlace != 0 ||
         scan.hasTrns || scan.hasActl || scan.firstIdatOffset == 0) {
         return false;

@@ -96,6 +96,97 @@ static void parallel_for_impl(int nthreads, int njobs, exr_par_fn fn, void *ctx,
     dispatch_release(grp);
 }
 
+#elif defined(EXR_USE_THREADS) && defined(_WIN32)
+
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <process.h>
+
+typedef HANDLE exr_thread_t;
+typedef SRWLOCK exr_mutex_t;
+typedef unsigned exr_thread_ret;
+#define EXR_THREAD_CALL __stdcall
+#define EXR_THREAD_RET_OK 0u
+static int exr_mutex_init(exr_mutex_t *m) { InitializeSRWLock(m); return 1; }
+static void exr_mutex_lock(exr_mutex_t *m) { AcquireSRWLockExclusive(m); }
+static void exr_mutex_unlock(exr_mutex_t *m) { ReleaseSRWLockExclusive(m); }
+static void exr_mutex_destroy(exr_mutex_t *m) { (void)m; }
+static int exr_thread_create(exr_thread_t *t, exr_thread_ret (EXR_THREAD_CALL *fn)(void *),
+                             void *arg) {
+    uintptr_t h = _beginthreadex(NULL, 0, fn, arg, 0, NULL);
+    if (h == 0) return 0;
+    *t = (HANDLE)h;
+    return 1;
+}
+static void exr_thread_join(exr_thread_t t) {
+    WaitForSingleObject(t, INFINITE);
+    CloseHandle(t);
+}
+
+/* Upper bound on workers, so the thread handle array can live on the stack and
+ * a pathological count cannot exhaust resources. */
+#define EXR_THREAD_CAP 64
+
+typedef struct {
+    exr_par_fn fn;
+    void *ctx;
+    int njobs;
+    int next; /* next unclaimed job index, guarded by lock */
+    exr_mutex_t lock;
+} par_state;
+
+static exr_thread_ret EXR_THREAD_CALL par_worker(void *arg) {
+    par_state *st = (par_state *)arg;
+    for (;;) {
+        int job;
+        exr_mutex_lock(&st->lock);
+        job = (st->next < st->njobs) ? st->next++ : -1;
+        exr_mutex_unlock(&st->lock);
+        if (job < 0) break;
+        st->fn(st->ctx, job);
+    }
+    return EXR_THREAD_RET_OK;
+}
+
+static void parallel_for_impl(int nthreads, int njobs, exr_par_fn fn, void *ctx,
+                               exr_caller_fn caller) {
+    par_state st;
+    exr_thread_t threads[EXR_THREAD_CAP];
+    int spawned = 0, i;
+
+    if (njobs <= 0) return;
+    if (nthreads > njobs) nthreads = njobs;
+    if (nthreads > EXR_THREAD_CAP) nthreads = EXR_THREAD_CAP;
+    if (nthreads <= 1) { /* serial */
+        if (caller) caller(ctx);
+        else for (i = 0; i < njobs; ++i) fn(ctx, i);
+        return;
+    }
+
+    st.fn = fn;
+    st.ctx = ctx;
+    st.njobs = njobs;
+    st.next = 0;
+    if (!exr_mutex_init(&st.lock)) {
+        if (caller) caller(ctx);
+        else for (i = 0; i < njobs; ++i) fn(ctx, i); /* fallback: serial */
+        return;
+    }
+
+    for (i = 0; i < nthreads - 1; ++i) {
+        if (exr_thread_create(&threads[spawned], par_worker, &st))
+            ++spawned;
+    }
+
+    if (caller) caller(ctx);
+    else par_worker(&st); /* calling thread participates */
+
+    for (i = 0; i < spawned; ++i) exr_thread_join(threads[i]);
+    exr_mutex_destroy(&st.lock);
+}
+
 #elif defined(EXR_USE_THREADS)
 
 #if defined(EXR_THREADS_PTHREAD)
@@ -221,6 +312,8 @@ void exr_parallel_caller(int nthreads, exr_par_fn worker, exr_caller_fn caller,
 #if defined(EXR_USE_THREADS) && (defined(__APPLE__) || defined(EXR_THREADS_PTHREAD))
 #include <sched.h>
 void exr_thread_yield(void) { (void)sched_yield(); }
+#elif defined(EXR_USE_THREADS) && defined(_WIN32)
+void exr_thread_yield(void) { SwitchToThread(); }
 #elif defined(EXR_USE_THREADS)
 void exr_thread_yield(void) { thrd_yield(); }
 #else
@@ -247,6 +340,27 @@ void exr_wait_queue_lock(exr_wait_queue *q) { if (q) (void)pthread_mutex_lock(&q
 void exr_wait_queue_unlock(exr_wait_queue *q) { if (q) (void)pthread_mutex_unlock(&q->mutex); }
 void exr_wait_queue_wait(exr_wait_queue *q) { if (q) (void)pthread_cond_wait(&q->changed, &q->mutex); }
 void exr_wait_queue_notify(exr_wait_queue *q) { if (q) (void)pthread_cond_broadcast(&q->changed); }
+#elif defined(EXR_USE_THREADS) && defined(_WIN32)
+struct exr_wait_queue { SRWLOCK mutex; CONDITION_VARIABLE changed; };
+exr_wait_queue *exr_wait_queue_create(const exr_allocator *a) {
+    exr_wait_queue *q = (exr_wait_queue *)exr_malloc(a, sizeof(*q));
+    if (!q) return NULL;
+    InitializeSRWLock(&q->mutex);
+    InitializeConditionVariable(&q->changed);
+    return q;
+}
+void exr_wait_queue_free(const exr_allocator *a, exr_wait_queue *q) {
+    if (!q) return;
+    exr_free(a, q);
+}
+void exr_wait_queue_lock(exr_wait_queue *q) { if (q) AcquireSRWLockExclusive(&q->mutex); }
+void exr_wait_queue_unlock(exr_wait_queue *q) { if (q) ReleaseSRWLockExclusive(&q->mutex); }
+void exr_wait_queue_wait(exr_wait_queue *q) {
+    if (q) SleepConditionVariableSRW(&q->changed, &q->mutex, INFINITE, 0);
+}
+void exr_wait_queue_notify(exr_wait_queue *q) {
+    if (q) WakeAllConditionVariable(&q->changed);
+}
 #elif defined(EXR_USE_THREADS)
 struct exr_wait_queue { mtx_t mutex; cnd_t changed; };
 exr_wait_queue *exr_wait_queue_create(const exr_allocator *a) {

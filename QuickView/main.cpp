@@ -931,6 +931,7 @@ static void ClearDialogCenter();
 
 
 void AdjustWindowToImage(HWND hwnd);
+static void ViewPan_Stop(HWND hwnd, bool requestFinalHqRepaint);
 RECT GetVirtualScreenRect();
 static RECT GetWindowExpansionBounds(HWND hwnd);
 static RECT ExpandWindowRectToTargetWithinBounds(const RECT& currentRect, int targetW, int targetH, const RECT& bounds, const POINT* anchorScreenPt = nullptr);
@@ -943,14 +944,8 @@ VisualState GetVisualState();
 bool GetPrimaryImageDisplayMetrics(HWND hwnd, ImageDisplayMetrics& out);
 static bool PreparePrimaryCropReEditIfNeeded(HWND hwnd);
 static bool ApplyCurrentCropSelection(HWND hwnd);
-static inline float GetBaseMinWindowSize() {
-    const float ctrlMin = 4.0f * 38.0f * g_uiScale;
-    return std::max(200.0f, std::max(ctrlMin, g_config.WindowMinSize));
-}
-
 static inline bool IsSmallImageForUpscaleGuard(float imgW, float imgH, bool isVector) {
-    const float baseMin = GetBaseMinWindowSize();
-    return !isVector && imgW < baseMin && imgH < baseMin;
+    return ShouldGuardSmallImageUpscale(imgW, imgH, isVector, g_uiScale);
 }
 
 static inline std::wstring StripMenuShortcut(const wchar_t* label) {
@@ -1815,6 +1810,7 @@ bool GetAdaptiveUiPaneSnapshot(int paneIndex, AdaptiveUiPaneSnapshot& outSnapsho
         outSnapshot.zoom = GetPaneContext(PaneSlot::Primary).view.Zoom;
         outSnapshot.panX = GetPaneContext(PaneSlot::Primary).view.PanX;
         outSnapshot.panY = GetPaneContext(PaneSlot::Primary).view.PanY;
+        outSnapshot.isVector = (GetPaneContext(PaneSlot::Primary).resource.isSvg || GetPaneContext(PaneSlot::Primary).resource.isWebView);
         return outSnapshot.visualSize.width > 0.0f && outSnapshot.visualSize.height > 0.0f;
     }
 
@@ -1826,6 +1822,7 @@ bool GetAdaptiveUiPaneSnapshot(int paneIndex, AdaptiveUiPaneSnapshot& outSnapsho
         outSnapshot.zoom = GetPaneContext(PaneSlot::Left).view.Zoom;
         outSnapshot.panX = GetPaneContext(PaneSlot::Left).view.PanX;
         outSnapshot.panY = GetPaneContext(PaneSlot::Left).view.PanY;
+        outSnapshot.isVector = (GetPaneContext(PaneSlot::Left).resource.isSvg || GetPaneContext(PaneSlot::Left).resource.isWebView);
         return outSnapshot.visualSize.width > 0.0f && outSnapshot.visualSize.height > 0.0f;
     }
 
@@ -1837,6 +1834,7 @@ bool GetAdaptiveUiPaneSnapshot(int paneIndex, AdaptiveUiPaneSnapshot& outSnapsho
         outSnapshot.zoom = GetPaneContext(PaneSlot::Primary).view.Zoom;
         outSnapshot.panX = GetPaneContext(PaneSlot::Primary).view.PanX;
         outSnapshot.panY = GetPaneContext(PaneSlot::Primary).view.PanY;
+        outSnapshot.isVector = (GetPaneContext(PaneSlot::Primary).resource.isSvg || GetPaneContext(PaneSlot::Primary).resource.isWebView);
         return outSnapshot.visualSize.width > 0.0f && outSnapshot.visualSize.height > 0.0f;
     }
 
@@ -4159,7 +4157,7 @@ static size_t CountWebContentFilesInNavigator() {
     const auto& nav = GetPaneContext(PaneSlot::Primary).navigator;
     const size_t count = nav.Count();
     for (size_t i = 0; i < count; ++i) {
-        if (QuickView::IsWebContentPath(nav.GetFile(static_cast<int>(i)))) {
+        if (QuickView::IsWebContentPath(nav.TryGetCachedFile(static_cast<int>(i)))) {
             ++n;
         }
     }
@@ -4297,6 +4295,7 @@ static float GetCurrentRealScale(HWND hwnd) {
 }
 
 static void PerformRestoreWindow(HWND hwnd) {
+    ViewPan_Stop(hwnd, false);
     if (s_restoredWindowRect.right > s_restoredWindowRect.left && !IsZoomed(hwnd) && !g_isFullScreen && !g_runtime.LockWindowSize) {
         int rW = s_restoredWindowRect.right - s_restoredWindowRect.left;
         int rH = s_restoredWindowRect.bottom - s_restoredWindowRect.top;
@@ -4404,6 +4403,7 @@ static float ComputeFitZoom(HWND hwnd) {
 }
 
 static void PerformZoom100(HWND hwnd, bool allowResizeWindow = true) {
+    ViewPan_Stop(hwnd, false);
     AppContext::GetInstance().ZoomAnimCtrl->Reset();
     if (GetPaneContext(PaneSlot::Primary).resource) {
         VisualState vs = GetVisualState();
@@ -4660,6 +4660,7 @@ static void ShowZoomOsd(HWND hwnd, float newTotalScale) {
 }
 
 static void PerformZoomFit(HWND hwnd, float maxScreenPct = 1.0f, bool allowResizeWindow = true) {
+    ViewPan_Stop(hwnd, false);
     AppContext::GetInstance().ZoomAnimCtrl->Reset();
     if (GetPaneContext(PaneSlot::Primary).resource) {
         if (!allowResizeWindow || g_runtime.LockWindowSize) {
@@ -8705,7 +8706,14 @@ static int RunDecodeWorker(int argc, LPWSTR* argv) {
     using namespace QuickView::ToolProcess;
     
     // [Phase 4.1] COM initialization is required for WIC operations (JXL fallback/Color)
-    HRESULT coInitHr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    struct ScopedCoInit {
+        HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        ~ScopedCoInit() {
+            if (SUCCEEDED(hr)) {
+                CoUninitialize();
+            }
+        }
+    } coInit;
 
     std::wstring inputPath;
     std::wstring mapName;
@@ -8917,10 +8925,6 @@ static int RunDecodeWorker(int argc, LPWSTR* argv) {
     header->hr = static_cast<int32_t>(hr);
     UnmapViewOfFile(view);
     CloseHandle(hMap);
-    
-    if (SUCCEEDED(coInitHr)) {
-        CoUninitialize();
-    }
     
     return SUCCEEDED(hr) ? 0 : 2;
 }
@@ -9170,56 +9174,10 @@ static void ShowInitialWindow(HWND hwnd) {
     SetTimer(hwnd, TIMER_ID_RESTORE_DWM_TRANSITIONS, 50, nullptr);
 }
 
-struct InitialWindowMetrics {
-    int x = 0;
-    int y = 0;
-    int width = 0;
-    int height = 0;
-};
-
 static InitialWindowMetrics CalculateInitialWindowMetrics(int imgWidth, int imgHeight, float initScale, const RECT& workArea) {
-    InitialWindowMetrics metrics;
-    
-    float maxSizePercent = g_config.WindowMaxSizePercent / 100.0f;
-    if (maxSizePercent <= 0.0f) maxSizePercent = 0.9f;
-    const int boundsW = workArea.right - workArea.left;
-    const int boundsH = workArea.bottom - workArea.top;
-    const int maxWinW = (std::max)(100, (int)(boundsW * maxSizePercent));
-    const int maxWinH = (std::max)(100, (int)(boundsH * maxSizePercent));
-    
-    int windowW = static_cast<int>(imgWidth);
-    int windowH = static_cast<int>(imgHeight);
-    
-    if (windowW > maxWinW || windowH > maxWinH) {
-        float ratio = std::min((float)maxWinW / windowW, (float)maxWinH / windowH);
-        windowW = (int)(windowW * ratio);
-        windowH = (int)(windowH * ratio);
-    }
-    
-    float defaultMin = 4.0f * 38.0f * initScale;
-    float minLimit = (std::max)(defaultMin, g_config.WindowMinSize);
-    int minW = (int)std::lround(minLimit);
-    int minH = (int)std::lround(minLimit);
-    
-    if (imgWidth < minW && imgHeight < minH) {
-        if (windowW < minW) windowW = minW;
-        if (windowH < minH) windowH = minH;
-    } else if (windowW < minW || windowH < minH) {
-        float scaleW = (float)minW / (float)windowW;
-        float scaleH = (float)minH / (float)windowH;
-        float scaleUp = (std::max)(scaleW, scaleH);
-        windowW = (int)(windowW * scaleUp);
-        windowH = (int)(windowH * scaleUp);
-    }
-    
-    windowW = (std::min)(windowW, boundsW);
-    windowH = (std::min)(windowH, boundsH);
-    
-    metrics.width = windowW;
-    metrics.height = windowH;
-    metrics.x = workArea.left + (boundsW - windowW) / 2;
-    metrics.y = workArea.top + (boundsH - windowH) / 2;
-    return metrics;
+    return ComputeInitialWindowMetrics(
+        imgWidth, imgHeight, initScale, workArea,
+        g_config.WindowMaxSizePercent, g_config.WindowMinSize);
 }
 
 void DeactivateWebContentForCompare(HWND hwnd) {
@@ -12838,11 +12796,25 @@ static void ViewPan_Stop(HWND hwnd, bool requestFinalHqRepaint) {
 
     if (hwnd) {
         if (requestFinalHqRepaint && GetPaneContext(PaneSlot::Primary).resource) {
-            RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic);
+            RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic | PaintLayer::Static);
         } else {
-            RequestRepaint(PaintLayer::Dynamic);
+            RequestRepaint(PaintLayer::Dynamic | PaintLayer::Static);
         }
     }
+}
+
+static bool IsAutoPanBlockedByOverlay() {
+    auto& app = AppContext::GetInstance();
+    return app.Loupe.active ||
+           g_settingsOverlay.IsVisible() ||
+           g_helpOverlay.IsVisible() ||
+           app.Dialog.IsVisible ||
+           (app.DialogCtrl && app.DialogCtrl->IsActive()) ||
+           g_cropState.IsActive ||
+           g_gallery.IsVisible() ||
+           QuickView::ExportPanel::GetInstance().IsVisible() ||
+           QuickView::PrintPreviewUI::GetInstance().IsVisible() ||
+           QuickView::UI::AiActionOverlay::Instance().IsVisible();
 }
 
 static void ViewPan_OnTick(HWND hwnd) {
@@ -12852,8 +12824,7 @@ static void ViewPan_OnTick(HWND hwnd) {
     auto& app = AppContext::GetInstance();
     const bool invalidHold = !g_viewPan.IsToggleMode() &&
         (g_customMouseDrag.action != MouseActionTarget::ViewPan || !g_customMouseDrag.isDragging);
-    if (app.Loupe.active || g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible() ||
-        app.Dialog.IsVisible || (app.DialogCtrl && app.DialogCtrl->IsActive()) || invalidHold) {
+    if (IsAutoPanBlockedByOverlay() || invalidHold || (!IsCompareModeActive() && !CanPan(hwnd))) {
         ViewPan_Stop(hwnd, true);
         return;
     }
@@ -12885,24 +12856,61 @@ static void ViewPan_OnTick(HWND hwnd) {
     if (IsCompareModeActive() && app.CompareCtrl) {
         auto& primary = GetPaneContext(PaneSlot::Primary);
         auto& leftPane = GetPaneContext(PaneSlot::Left);
+        const bool targetValid = (g_viewPanComparePane == ComparePane::Left)
+            ? leftPane.valid
+            : static_cast<bool>(primary.resource);
+        if (!targetValid && !leftPane.valid && !primary.resource) {
+            ViewPan_Stop(hwnd, true);
+            return;
+        }
+
+        const float oldPrimX = primary.view.PanX;
+        const float oldPrimY = primary.view.PanY;
+        const float oldLeftX = leftPane.view.PanX;
+        const float oldLeftY = leftPane.view.PanY;
+
+        auto clampComparePane = [&](PaneSlot slot, ComparePane cp) {
+            const D2D1_RECT_F vp = app.CompareCtrl->GetViewport(hwnd, cp);
+            const float vpW = vp.right - vp.left;
+            const float vpH = vp.bottom - vp.top;
+            if (vpW > 1.0f && vpH > 1.0f) {
+                ClampPanForSlot(slot, vpW, vpH);
+            }
+        };
+
         if (g_viewPanComparePane == ComparePane::Left && leftPane.valid) {
             leftPane.view.PanX += contentDx;
             leftPane.view.PanY += contentDy;
-            if (app.Compare.syncPan) {
+            clampComparePane(PaneSlot::Left, ComparePane::Left);
+            if (app.Compare.syncPan && primary.resource) {
                 primary.view.PanX += contentDx;
                 primary.view.PanY += contentDy;
+                clampComparePane(PaneSlot::Primary, ComparePane::Right);
             }
-        } else {
+        } else if (primary.resource) {
             primary.view.PanX += contentDx;
             primary.view.PanY += contentDy;
+            clampComparePane(PaneSlot::Primary, ComparePane::Right);
             if (app.Compare.syncPan && leftPane.valid) {
                 leftPane.view.PanX += contentDx;
                 leftPane.view.PanY += contentDy;
+                clampComparePane(PaneSlot::Left, ComparePane::Left);
             }
         }
+
+        const float movedDelta =
+            std::fabs(primary.view.PanX - oldPrimX) + std::fabs(primary.view.PanY - oldPrimY) +
+            std::fabs(leftPane.view.PanX - oldLeftX) + std::fabs(leftPane.view.PanY - oldLeftY);
+        if (movedDelta <= 1.0e-4f) {
+            if (cursorChanged) {
+                RequestRepaint(PaintLayer::Dynamic);
+            }
+            return;
+        }
+
         MarkCompareDirty();
         NotifyBorderGlowInteraction(hwnd);
-        RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic);
+        RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic | PaintLayer::Static);
         return;
     }
 
@@ -12927,9 +12935,9 @@ static void ViewPan_OnTick(HWND hwnd) {
 
     NotifyBorderGlowInteraction(hwnd);
     if (UseSvgViewportRendering(primary.resource)) {
-        RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic);
+        RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic | PaintLayer::Static);
     } else {
-        RequestRepaint(PaintLayer::Dynamic);
+        RequestRepaint(PaintLayer::Dynamic | PaintLayer::Static);
     }
     if (g_compEngine) {
         g_compEngine->Commit();
@@ -14377,7 +14385,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 return 0;
             }
             if (g_uiRenderer && g_imageEngine) {
-                const auto s = g_imageEngine->GetTelemetry();
+                const auto s = g_imageEngine->GetTelemetry(false);
                 if (!g_uiRenderer->RenderDecodeProgressOnly(hwnd, s)) {
                     RequestRepaint(PaintLayer::Dynamic);
                 }
@@ -19694,6 +19702,7 @@ static void EnqueuePhase2NavigationTask(
 void StartNavigation(HWND hwnd, std::wstring path, [[maybe_unused]] bool showOSD, QuickView::BrowseDirection dir) {
 
     if (!g_imageEngine || path.empty()) return;
+    ViewPan_Stop(hwnd, false);
     g_waitingBootFrame = false;
     g_needsInitialPresentationReset = !g_preserveViewStateOnNextLoad;
     g_isLoading = true; // [Fix] Start loading state machine
@@ -20572,8 +20581,8 @@ void OnPaint(HWND hwnd) {
                 g_imageEngine->SetHighPriorityMode(isWarping);
             }
 
-            // Telemetry is always needed for the decode status UI.
-            auto s = g_imageEngine->GetTelemetry();
+            // Telemetry is always needed for the decode status UI; full topology only when Debug HUD is active.
+            auto s = g_imageEngine->GetTelemetry(shouldCompute);
             s.fps = shouldCompute ? g_fps : 0.0f;
             s.renderHash = ComputePathHash(GetPaneContext(PaneSlot::Primary).path);
             s.syncStatus = (s.targetHash == s.renderHash);

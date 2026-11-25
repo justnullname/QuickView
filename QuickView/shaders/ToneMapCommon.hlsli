@@ -28,7 +28,8 @@ cbuffer ToneMapParams : register(b0)
     float MappedAvgPQ;
 
     float ContrastRecovery;
-    float3 _pad;
+    uint  InputPremultiplied;
+    float2 _pad;
     row_major float4x4 ColorMatrix;
 };
 
@@ -50,6 +51,14 @@ float SanitizeAlpha(float a)
 {
     uint absBits = asuint(a) & 0x7FFFFFFFu;
     return (absBits > 0x7F800000u) ? 1.0f : saturate(a);
+}
+
+float3 UnpremultiplyIfNeeded(float3 rgb, float alpha, uint premul)
+{
+    if (premul != 0u && alpha > 1e-5f && alpha < 1.0f) {
+        return saturate(rgb / alpha);
+    }
+    return rgb;
 }
 
 float LinearToPQ(float L)

@@ -11,6 +11,7 @@ static constexpr const char* CURRENT_MODULE = "ImageEngine";
 #include "SupportedExtensions.h"
 
 #include <algorithm>
+#include <array>
 #include <psapi.h>
 #pragma comment(lib, "psapi.lib")
 #include <cctype>
@@ -979,15 +980,26 @@ ImageEngine::DebugStats ImageEngine::GetDebugStats() const {
         s.loaderName = L"[Unknown]";
     }
     
+    std::array<std::wstring, TOPOLOGY_RANGE * 2 + 1> slotPaths;
+    const int curViewIdx = m_currentViewIndex.load();
+    const int navCount = m_navigator ? static_cast<int>(m_navigator->Count()) : 0;
+    for (int i = -TOPOLOGY_RANGE; i <= TOPOLOGY_RANGE; ++i) {
+        int slotIndex = i + TOPOLOGY_RANGE;
+        int targetIndex = curViewIdx + i;
+        if (i != 0 && targetIndex >= 0 && targetIndex < navCount) {
+            slotPaths[slotIndex] = m_navigator->TryGetCachedFile(targetIndex);
+        }
+    }
+
     {
         std::lock_guard lock(m_cacheMutex);
         s.cacheMemoryUsed = m_currentCacheBytes;
         
         for (int i = -TOPOLOGY_RANGE; i <= TOPOLOGY_RANGE; ++i) {
             int slotIndex = i + TOPOLOGY_RANGE; // Convert to 0-4 array index
-            int targetIndex = m_currentViewIndex + i;
+            int targetIndex = curViewIdx + i;
             
-            if (!m_navigator || targetIndex < 0 || targetIndex >= (int)m_navigator->Count()) {
+            if (targetIndex < 0 || targetIndex >= navCount) {
                 s.topology.slots[slotIndex] = CacheStatus::EMPTY;
                 continue;
             }
@@ -1009,8 +1021,8 @@ ImageEngine::DebugStats ImageEngine::GetDebugStats() const {
             }
             
             // For neighbors, check prefetch cache
-            const std::wstring& path = m_navigator->GetFile(targetIndex);
-            auto it = m_cache.find(path);
+            const std::wstring& path = slotPaths[slotIndex];
+            auto it = path.empty() ? m_cache.end() : m_cache.find(path);
             
             if (it != m_cache.end()) {
                 s.topology.slots[slotIndex] = CacheStatus::HEAVY;
@@ -1030,8 +1042,9 @@ ImageEngine::DebugStats ImageEngine::GetDebugStats() const {
 }
 
 // [HUD V4] Zero-Cost Telemetry Gathering (Pull Mode)
-ImageEngine::TelemetrySnapshot ImageEngine::GetTelemetry() const {
+ImageEngine::TelemetrySnapshot ImageEngine::GetTelemetry(bool includeTopology) const {
     TelemetrySnapshot s = {};
+    static_assert(static_cast<int>(CacheStatus::EMPTY) == 0, "Zero-init assumes CacheStatus::EMPTY == 0");
     
     // 1. Vitals (Zone A & A2)
     s.targetHash = m_currentImageId.load();
@@ -1103,54 +1116,57 @@ ImageEngine::TelemetrySnapshot ImageEngine::GetTelemetry() const {
         }
     }
     
-    // 3. Logic (Zone C)
-    // Reconstruct topology from cache
-    {
-        std::lock_guard cacheLock(m_cacheMutex);
-        
-        // [v8.15] Use atomic loads for thread safety
-        int curViewIdx = m_currentViewIndex.load();
-        int lastDir = m_lastDirectionInt.load();
-        
+    // 3. Logic (Zone C) — only gathered when HUD is actively displayed.
+    if (includeTopology) {
+        static constexpr int OFFSET = TelemetrySnapshot::TOPO_OFFSET;
+        const int curViewIdx = m_currentViewIndex.load();
+        const int lastDir = m_lastDirectionInt.load();
+        const int navCount = m_navigator ? static_cast<int>(m_navigator->Count()) : 0;
+
         // [v8.12] Populate prefetch state for HUD
         s.prefetchEnabled = m_prefetchPolicy.enablePrefetch;
         s.prefetchLookAhead = m_prefetchPolicy.enablePrefetch ? m_prefetchPolicy.lookAheadCount : 0;
         s.browseDirection = lastDir;
-        
-        static constexpr int OFFSET = TelemetrySnapshot::TOPO_OFFSET;
-        
-        // [v8.15] Lock pending set for checking
-        std::lock_guard pendingLock(m_pendingMutex);
-        
+
+        // Query FileNavigator strictly in-memory OUTSIDE cache/pending mutexes so cross-process
+        // COM RPCs can never re-enter WndProc while holding locks.
+        std::array<std::wstring, 32> slotPaths;
         for (int i = 0; i < 32; ++i) {
-             int relOffset = i - OFFSET;
-             int targetIndex = curViewIdx + relOffset;
-             
-             if (!m_navigator || targetIndex < 0 || targetIndex >= (int)m_navigator->Count()) {
-                 s.cacheSlots[i] = CacheStatus::EMPTY;
-                 continue;
-             }
-             
-             std::wstring path = m_navigator->GetFile(targetIndex);
-             if (m_cache.count(path)) {
-                 s.cacheSlots[i] = CacheStatus::HEAVY; // Green (Cached)
-             } else if (m_pendingPaths.count(path)) {
-                 s.cacheSlots[i] = CacheStatus::PENDING; // Blue (Processing)
-             } else {
-                 s.cacheSlots[i] = CacheStatus::EMPTY; // Gray (Not loaded)
-             }
+            const int targetIndex = curViewIdx + (i - OFFSET);
+            if (targetIndex >= 0 && targetIndex < navCount) {
+                slotPaths[i] = m_navigator->TryGetCachedFile(targetIndex);
+            }
+        }
+
+        // Reconstruct topology from cache purely in memory
+        {
+            std::lock_guard cacheLock(m_cacheMutex);
+            std::lock_guard pendingLock(m_pendingMutex);
+
+            for (int i = 0; i < 32; ++i) {
+                const std::wstring& path = slotPaths[i];
+                if (path.empty()) {
+                    s.cacheSlots[i] = CacheStatus::EMPTY;
+                } else if (m_cache.count(path)) {
+                    s.cacheSlots[i] = CacheStatus::HEAVY; // Green (Cached)
+                } else if (m_pendingPaths.count(path)) {
+                    s.cacheSlots[i] = CacheStatus::PENDING; // Blue (Processing)
+                } else {
+                    s.cacheSlots[i] = CacheStatus::EMPTY; // Gray (Not loaded)
+                }
+            }
+        }
+
+        // System Memory
+        PROCESS_MEMORY_COUNTERS pmc;
+        if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
+            s.sysMemory = pmc.WorkingSetSize;
         }
     }
     
     // 4. Memory (Zone D)
     s.pmrUsed = m_pool.GetUsedMemory();
     s.pmrCapacity = m_pool.GetTotalMemory();
-    
-    // System Memory
-    PROCESS_MEMORY_COUNTERS pmc;
-    if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
-        s.sysMemory = pmc.WorkingSetSize;
-    }
     
     return s;
 }
@@ -1579,8 +1595,10 @@ void ImageEngine::ScheduleJob(int index, QuickView::Priority pri) {
     if (!m_navigator) return;
     if (index < 0 || index >= (int)m_navigator->Count()) return;
     
-    // 2. Get file path
-    const std::wstring& path = m_navigator->GetFile(index);
+    // 2. Get file path (avoid triggering Explorer COM RPCs for background prefetch)
+    const std::wstring& path = (pri == QuickView::Priority::Critical)
+        ? m_navigator->GetFile(index)
+        : m_navigator->TryGetCachedFile(index);
     if (path.empty()) return;
     
     // 3. Check if already in cache
@@ -1938,8 +1956,9 @@ void ImageEngine::PumpPrefetch() {
         // Check bounds
         if (!m_navigator || task.index < 0 || task.index >= (int)m_navigator->Count()) continue;
 
-        // Check cache before scheduling to avoid "scheduling nothing" and stopping
-        std::wstring path = m_navigator->GetFile(task.index);
+        // Check cache before scheduling without triggering Explorer COM RPCs on uncached lookahead indices
+        const std::wstring& path = m_navigator->TryGetCachedFile(task.index);
+        if (path.empty()) continue;
         {
             std::lock_guard lock(m_cacheMutex);
             if (m_cache.count(path)) continue; // Already cached, try next
