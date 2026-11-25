@@ -353,6 +353,9 @@ find_package(libyuv CONFIG REQUIRED)
 # ZLIB
 find_package(ZLIB REQUIRED)
 
+# TinyEXR (pure-C11 v3.4.0 decode core + SIMD + zstd decode-only)
+add_subdirectory(third_party/tinyexr)
+
 # Create targets for Brotli and Dav1d
 add_library(brotli::common STATIC IMPORTED)
 set_property(TARGET brotli::common PROPERTY IMPORTED_LOCATION_RELEASE "${BROTLI_COMMON_LIB_RELEASE}")
@@ -386,6 +389,7 @@ target_link_libraries(QuickView PRIVATE
     libraw::raw
     yuv
     ZLIB::ZLIB
+    tinyexr
     unrar-mini
     # Windows system libraries
     d2d1.lib
@@ -434,11 +438,6 @@ if(EXISTS "${NCNN_DIR}/include/ncnn")
         d3d11.lib dxgi.lib shlwapi.lib
         "${NCNN_DIR}/lib/ncnn.lib"
         "${NCNN_DIR}/lib/glslang.lib"
-        "${NCNN_DIR}/lib/SPIRV.lib"
-        "${NCNN_DIR}/lib/MachineIndependent.lib"
-        "${NCNN_DIR}/lib/OGLCompiler.lib"
-        "${NCNN_DIR}/lib/OSDependent.lib"
-        "${NCNN_DIR}/lib/GenericCodeGen.lib"
     )
 
     # Sync plugin models, README, and manifest to build directory

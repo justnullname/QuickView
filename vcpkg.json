@@ -2,7 +2,12 @@
   "name": "quickview",
   "version-string": "2.0.0",
   "dependencies": [
-    "libjpeg-turbo",
+    {
+      "name": "libjpeg-turbo",
+      "features": [
+        "turbojpeg"
+      ]
+    },
     {
       "name": "libwebp",
       "default-features": false,
@@ -24,5 +29,5 @@
     "highway",
     "gtest"
   ],
-  "builtin-baseline": "2475cc332a47b3a63bb3de58293bdab7726613ca"
+  "builtin-baseline": "2f8bf7a5bad48aaef99d80b221fca712f016ab8f"
 }

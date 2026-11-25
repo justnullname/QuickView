@@ -37,6 +37,7 @@
 #include <net.h>
 #include <gpu.h>
 #include <mat.h>
+#include <pipelinecache.h>
 
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -169,6 +170,43 @@ static bool FindModelFilePair(const char* modelId, std::wstring& outParamPath, s
     return false;
 }
 
+static bool EnsureDirectoryTreeExists(const std::wstring& dirPath) {
+    if (dirPath.empty()) return false;
+    DWORD attr = GetFileAttributesW(dirPath.c_str());
+    if (attr != INVALID_FILE_ATTRIBUTES) {
+        return (attr & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    }
+
+    size_t pos = 0;
+    if (dirPath.size() >= 2 && dirPath[1] == L':') {
+        pos = 2;
+    }
+    while ((pos = dirPath.find_first_of(L"\\/", pos + 1)) != std::wstring::npos) {
+        std::wstring sub = dirPath.substr(0, pos);
+        if (!sub.empty() && GetFileAttributesW(sub.c_str()) == INVALID_FILE_ATTRIBUTES) {
+            CreateDirectoryW(sub.c_str(), nullptr);
+        }
+    }
+    if (!CreateDirectoryW(dirPath.c_str(), nullptr)) {
+        DWORD err = GetLastError();
+        return err == ERROR_ALREADY_EXISTS;
+    }
+    return true;
+}
+
+static std::wstring BuildPipelineCacheFilePath(int gpuIndex) {
+    wchar_t localAppData[MAX_PATH * 2]{};
+    DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", localAppData, static_cast<DWORD>(std::size(localAppData)));
+    if (n == 0 || n >= std::size(localAppData)) {
+        return L"";
+    }
+    std::wstring cacheDir = std::wstring(localAppData, n) + L"\\QuickView\\plugins\\sr\\sr_ncnn_vulkan";
+    if (!EnsureDirectoryTreeExists(cacheDir)) {
+        return L"";
+    }
+    return cacheDir + L"\\vk_pipeline_cache_20261020_gpu" + std::to_wstring(gpuIndex) + L".bin";
+}
+
 // ----------------------------------------------------------------------------
 // Loaded Neural Network Cache Entry
 // ----------------------------------------------------------------------------
@@ -199,6 +237,12 @@ struct NcnnVulkanContextImpl {
     // Cache of loaded nets for instant model switching without disk reload
     std::unordered_map<std::string, std::unique_ptr<LoadedNetEntry>> netCache;
 
+    // Persistent Vulkan pipeline cache to eliminate shader recompilation stutter
+    std::unique_ptr<ncnn::PipelineCache> pipelineCache;
+    std::wstring pipelineCachePath;
+    size_t lastSavedPipelineCacheSize = 0;
+    int pipelineCacheGpuIndex = -1;
+
     std::string currentModelId = "realesr-animevideov3-auto";
     float currentDenoise = 0.0f;
     float currentTileSize = 0.0f; // 0 = Auto (VRAM aware)
@@ -211,9 +255,51 @@ struct NcnnVulkanContextImpl {
 
     ~NcnnVulkanContextImpl() {
         netCache.clear();
+        PersistPipelineCacheIfGrown();
+        pipelineCache.reset();
         cachedStageIn.Reset();
         std::lock_guard<std::mutex> lock(g_ncnnGlobalMutex);
         if (g_liveContextCount > 0) --g_liveContextCount;
+    }
+
+    void EnsurePipelineCache(int targetGpuIndex) {
+        if (targetGpuIndex < 0) return;
+        if (pipelineCache && pipelineCacheGpuIndex == targetGpuIndex) return;
+
+        if (pipelineCache) {
+            PersistPipelineCacheIfGrown();
+            pipelineCache.reset();
+            pipelineCachePath.clear();
+            lastSavedPipelineCacheSize = 0;
+            pipelineCacheGpuIndex = -1;
+        }
+
+        const ncnn::VulkanDevice* vkdev = ncnn::get_gpu_device(targetGpuIndex);
+        if (!vkdev) return;
+
+        pipelineCache = std::make_unique<ncnn::PipelineCache>(vkdev);
+        pipelineCacheGpuIndex = targetGpuIndex;
+        pipelineCachePath = BuildPipelineCacheFilePath(targetGpuIndex);
+        if (!pipelineCachePath.empty() && GetFileAttributesW(pipelineCachePath.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            if (pipelineCache->load_cache(pipelineCachePath.c_str()) == 0) {
+                lastSavedPipelineCacheSize = pipelineCache->size();
+            }
+        }
+    }
+
+    void PersistPipelineCacheIfGrown() {
+        if (!pipelineCache || pipelineCachePath.empty()) return;
+        const size_t currentSize = pipelineCache->size();
+        if (currentSize <= lastSavedPipelineCacheSize) return;
+
+        std::wstring tmpPath = pipelineCachePath + L".tmp";
+        if (pipelineCache->save_cache(tmpPath.c_str()) == 0) {
+            if (MoveFileExW(tmpPath.c_str(), pipelineCachePath.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+                lastSavedPipelineCacheSize = currentSize;
+            } else {
+                DeleteFileW(tmpPath.c_str());
+            }
+        }
     }
 
     LoadedNetEntry* GetOrLoadNet(const std::string& modelId) {
@@ -231,11 +317,13 @@ struct NcnnVulkanContextImpl {
         entry->net.opt.num_threads = 4;
 
         if (gpuIndex >= 0) {
+            EnsurePipelineCache(gpuIndex);
             entry->net.opt.use_vulkan_compute = true;
             entry->net.opt.use_fp16_packed = true;
             entry->net.opt.use_fp16_storage = true;
             entry->net.opt.use_fp16_arithmetic = true;
             entry->net.opt.use_packing_layout = true;
+            entry->net.opt.pipeline_cache = pipelineCache.get();
             entry->net.set_vulkan_device(gpuIndex);
         }
 
@@ -277,6 +365,7 @@ struct NcnnVulkanContextImpl {
         entry->isLoaded = true;
         LoadedNetEntry* rawPtr = entry.get();
         netCache[modelId] = std::move(entry);
+        PersistPipelineCacheIfGrown();
         return rawPtr;
     }
 
@@ -900,6 +989,7 @@ static int32_t NcnnVulkan_UpscaleGpu(
         }
 
         impl->d3d11Context->UpdateSubresource(out_tex, 0, nullptr, impl->outBgra.data(), outW * 4, 0);
+        impl->PersistPipelineCacheIfGrown();
 
         auto endTime = std::chrono::high_resolution_clock::now();
         double durationMs = std::chrono::duration<double, std::milli>(endTime - startTime).count();

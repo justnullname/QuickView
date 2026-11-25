@@ -110,9 +110,16 @@
 /* auto detected in yyjson.c */
 #endif
 
-/* Define to an integer to set a depth limit for containers (arrays/objects). */
+/* Define to an integer to set a depth limit for reading nested arrays/objects.
+   0 disables the policy limit. */
 #ifndef YYJSON_READER_DEPTH_LIMIT
 #define YYJSON_READER_DEPTH_LIMIT 0
+#endif
+
+/* Define to an integer to set a depth limit for writing nested arrays/objects.
+   0 disables the policy limit. */
+#ifndef YYJSON_WRITER_DEPTH_LIMIT
+#define YYJSON_WRITER_DEPTH_LIMIT 0
 #endif
 
 /* Define as 1 to build without libc (stdlib, string, math, stdio).
@@ -571,16 +578,16 @@ extern "C" {
 #define YYJSON_VERSION_MAJOR  0
 
 /** The minor version of yyjson. */
-#define YYJSON_VERSION_MINOR  12
+#define YYJSON_VERSION_MINOR  13
 
 /** The patch version of yyjson. */
 #define YYJSON_VERSION_PATCH  0
 
 /** The version of yyjson in hex: `(major << 16) | (minor << 8) | (patch)`. */
-#define YYJSON_VERSION_HEX    0x000C00
+#define YYJSON_VERSION_HEX    0x000D00
 
 /** The version string of yyjson. */
-#define YYJSON_VERSION_STRING "0.12.0"
+#define YYJSON_VERSION_STRING "0.13.0"
 
 /** The version of yyjson in hex, same as `YYJSON_VERSION_HEX`. */
 yyjson_api uint32_t yyjson_version(void);
@@ -1330,6 +1337,9 @@ static const yyjson_write_code YYJSON_WRITE_ERROR_FILE_WRITE            = 6;
 /** Invalid unicode in string. */
 static const yyjson_write_code YYJSON_WRITE_ERROR_INVALID_STRING        = 7;
 
+/** Nesting depth limit exceeded. */
+static const yyjson_write_code YYJSON_WRITE_ERROR_DEPTH                 = 8;
+
 /** Error information for JSON writer. */
 typedef struct yyjson_write_err {
     /** Error code, see `yyjson_write_code` for all possible values. */
@@ -2044,8 +2054,9 @@ yyjson_api_inline double yyjson_get_num(const yyjson_val *val);
     Returns NULL if `val` is NULL or type is not string. */
 yyjson_api_inline const char *yyjson_get_str(const yyjson_val *val);
 
-/** Returns the content length (string length, array size, object size).
-    Returns 0 if `val` is NULL or type is not string/array/object. */
+/** Returns the content length for raw/string/array/object values.
+    Returns 0 if `val` is NULL.
+    The return value is unspecified for other types. */
 yyjson_api_inline size_t yyjson_get_len(const yyjson_val *val);
 
 /** Returns whether the JSON value is equal to a string.
@@ -2649,8 +2660,9 @@ yyjson_api_inline double yyjson_mut_get_num(const yyjson_mut_val *val);
     Returns NULL if `val` is NULL or type is not string. */
 yyjson_api_inline const char *yyjson_mut_get_str(const yyjson_mut_val *val);
 
-/** Returns the content length (string length, array size, object size).
-    Returns 0 if `val` is NULL or type is not string/array/object. */
+/** Returns the content length for raw/string/array/object values.
+    Returns 0 if `val` is NULL.
+    The return value is unspecified for other types. */
 yyjson_api_inline size_t yyjson_mut_get_len(const yyjson_mut_val *val);
 
 /** Returns whether the JSON value is equal to a string.

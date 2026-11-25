@@ -17,9 +17,6 @@ namespace StbLoader {
                              int* width, int* height, int* channels, 
                              std::pmr::vector<uint8_t>& outData, bool useFloat);
 
-    // Expose internal zlib decoder for TinyEXR
-    int ZlibDecode(char* obuffer, int olen, const char* ibuffer, int ilen);
-
     /// <summary>
     /// Check if format is supported by checking file signature
     /// </summary>

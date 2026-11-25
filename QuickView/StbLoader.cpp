@@ -23,39 +23,6 @@
 #pragma clang diagnostic pop
 #endif
 #pragma warning(pop)
-#include <zlib.h>
-
-#ifndef Bytef
-typedef unsigned char Bytef;
-#endif
-#ifndef uLongf
-typedef unsigned long uLongf;
-#endif
-#ifndef uLong
-typedef unsigned long uLong;
-#endif
-
-// ----------------------------------------------------------------------------
-// Zlib Shim for TinyEXR (using System Zlib / zlib-ng)
-// ----------------------------------------------------------------------------
-extern "C" int stbi_zlib_decode_buffer(char *obuffer, int olen, const char *ibuffer, int ilen) {
-    uLongf destLen = (uLongf)olen;
-    int ret = uncompress((Bytef*)obuffer, &destLen, (const Bytef*)ibuffer, (uLong)ilen);
-    if (ret == Z_OK) return (int)destLen;
-    return -1;
-}
-
-extern "C" unsigned char *stbi_zlib_compress(unsigned char *data, int data_len, int *out_len, int /*quality*/) {
-    uLongf destLen = compressBound(data_len);
-    unsigned char* dest = (unsigned char*)malloc(destLen);
-    if (!dest) return nullptr;
-    if (compress(dest, &destLen, data, data_len) != Z_OK) {
-        free(dest);
-        return nullptr;
-    }
-    if (out_len) *out_len = (int)destLen;
-    return dest;
-}
 
 namespace StbLoader {
 
@@ -117,14 +84,6 @@ namespace StbLoader {
 
         stbi_image_free(data);
         return true;
-    }
-
-    int ZlibDecode(char* obuffer, int olen, const char* ibuffer, int ilen) {
-        // Use system zlib
-        uLongf destLen = (uLongf)olen;
-        int ret = uncompress((Bytef*)obuffer, &destLen, (const Bytef*)ibuffer, (uLong)ilen);
-        if (ret == Z_OK) return (int)destLen;
-        return -1;
     }
 
     bool IsSupported(const char* filename) {
