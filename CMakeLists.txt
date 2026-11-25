@@ -167,6 +167,27 @@ set_source_files_properties(QuickView/WuffsImpl.cpp PROPERTIES SKIP_PRECOMPILED_
 set_source_files_properties(QuickView/ImageLoaderSimd.cpp PROPERTIES SKIP_PRECOMPILED_HEADERS ON)
 set_source_files_properties(third_party/yyjson/yyjson.c PROPERTIES SKIP_PRECOMPILED_HEADERS ON)
 
+if(ENABLE_LTO)
+    # Pure-cold UI/config/setup translation units: optimize for size (/clang:-Oz).
+    # Must skip PCH before target_precompile_headers() so Clang-cl does not reject
+    # OptimizationLevel mismatch against the /O2 PCH. UIRenderer.cpp and all hot paths stay at /O2.
+    set(QUICKVIEW_COLD_CXX_SOURCES
+        QuickView/SettingsOverlay.cpp
+        QuickView/HelpOverlay.cpp
+        QuickView/UpdateManager.cpp
+        QuickView/FileAssociationManager.cpp
+        QuickView/ExportPanel.cpp
+        QuickView/PrintPreviewUI.cpp
+    )
+    set_source_files_properties(${QUICKVIEW_COLD_CXX_SOURCES} PROPERTIES
+        SKIP_PRECOMPILE_HEADERS ON
+        COMPILE_OPTIONS "/FIpch.h;/clang:-Oz"
+    )
+    set_source_files_properties(third_party/yyjson/yyjson.c PROPERTIES
+        COMPILE_OPTIONS "/clang:-Oz"
+    )
+endif()
+
 # Precompiled Headers (PCH) - CXX only to avoid conflict with C source (yyjson.c)
 target_precompile_headers(QuickView PRIVATE $<$<COMPILE_LANGUAGE:CXX>:pch.h>)
 

@@ -38,10 +38,12 @@ set(COMPILER_LTO_FLAGS "-flto /clang:-fuse-ld=lld /clang:-fno-ident")
 set(VCPKG_C_FLAGS_RELEASE "/O2 /Oi /Ob2 ${COMPILER_LTO_FLAGS} /DNDEBUG -DHWY_BASELINE_TARGETS=0x800 -DHWY_DISABLED_TARGETS=0x7080")
 set(VCPKG_CXX_FLAGS_RELEASE "/O2 /Oi /Ob2 ${COMPILER_LTO_FLAGS} /DNDEBUG -DHWY_BASELINE_TARGETS=0x800 -DHWY_DISABLED_TARGETS=0x7080")
 
-# LibRaw requires exceptions and RTTI. Disable for others to save size.
+# LibRaw requires C++ exceptions (/EHsc), but uses neither dynamic_cast nor typeid (/GR- is safe).
+string(APPEND VCPKG_C_FLAGS_RELEASE " /GR-")
+string(APPEND VCPKG_CXX_FLAGS_RELEASE " /GR-")
 if(NOT PORT STREQUAL "libraw")
-    string(APPEND VCPKG_C_FLAGS_RELEASE " /GR- /EHs-c-")
-    string(APPEND VCPKG_CXX_FLAGS_RELEASE " /GR- /EHs-c-")
+    string(APPEND VCPKG_C_FLAGS_RELEASE " /EHs-c-")
+    string(APPEND VCPKG_CXX_FLAGS_RELEASE " /EHs-c-")
 endif()
 
 # Pure Linker flags for lld-link
@@ -77,6 +79,10 @@ set(VCPKG_CMAKE_CONFIGURE_OPTIONS
 if(PORT STREQUAL "zlib-ng" OR PORT STREQUAL "highway")
     string(APPEND VCPKG_C_FLAGS_RELEASE " /fp:fast")
     string(APPEND VCPKG_CXX_FLAGS_RELEASE " /fp:fast")
+endif()
+
+if(PORT STREQUAL "libjpeg-turbo")
+    list(APPEND VCPKG_CMAKE_CONFIGURE_OPTIONS "-DWITH_ARITH_ENC=OFF")
 endif()
 
 set(ZLIB_COMPAT ON)

@@ -29,8 +29,6 @@ set(TINYEXR_SOURCES
     src/exr_util_simd_x86.c
     src/exr_zip.c
     src/exr_zlib_ng_shim.c
-    src/exr_zstd.c
-    deps/zstd/tinyexr_zstd.c
 )
 
 add_library(tinyexr STATIC ${TINYEXR_SOURCES})
@@ -44,12 +42,12 @@ set_source_files_properties(${TINYEXR_SOURCES} PROPERTIES SKIP_PRECOMPILED_HEADE
 
 target_include_directories(tinyexr
     PUBLIC  "${CMAKE_CURRENT_SOURCE_DIR}/include"
-    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}/deps/zstd"
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
 
 target_compile_definitions(tinyexr PRIVATE
     EXR_USE_THREADS
-    EXR_ZSTD_DECODE_ONLY
+    EXR_NO_ZSTD
     EXR_JPH_ENABLE_AVX2_FOUR_QUAD16=1
     _CRT_SECURE_NO_WARNINGS
 )

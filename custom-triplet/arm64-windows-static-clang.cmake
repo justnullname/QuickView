@@ -30,10 +30,12 @@ set(VCPKG_CXX_FLAGS "--target=arm64-pc-windows-msvc /DWIN32 /D_WINDOWS /W3 /utf-
 set(VCPKG_C_FLAGS_RELEASE "/O2 /Oi /Ob2 -flto /DNDEBUG")
 set(VCPKG_CXX_FLAGS_RELEASE "/O2 /Oi /Ob2 -flto /DNDEBUG")
 
-# Optimization for size and performance
+# LibRaw requires C++ exceptions (/EHsc), but uses neither dynamic_cast nor typeid (/GR- is safe).
+string(APPEND VCPKG_C_FLAGS_RELEASE " /GR-")
+string(APPEND VCPKG_CXX_FLAGS_RELEASE " /GR-")
 if(NOT PORT STREQUAL "libraw")
-    string(APPEND VCPKG_C_FLAGS_RELEASE " /GR- /EHs-c-")
-    string(APPEND VCPKG_CXX_FLAGS_RELEASE " /GR- /EHs-c-")
+    string(APPEND VCPKG_C_FLAGS_RELEASE " /EHs-c-")
+    string(APPEND VCPKG_CXX_FLAGS_RELEASE " /EHs-c-")
 endif()
 
 # Let vcpkg handle the machine type and other linker flags automatically
@@ -65,3 +67,7 @@ set(VCPKG_CMAKE_CONFIGURE_OPTIONS
 )
 
 set(ZLIB_COMPAT ON)
+
+if(PORT STREQUAL "libjpeg-turbo")
+    list(APPEND VCPKG_CMAKE_CONFIGURE_OPTIONS "-DWITH_ARITH_ENC=OFF")
+endif()
