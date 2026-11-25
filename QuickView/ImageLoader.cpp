@@ -8171,7 +8171,14 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
       }
 
       // [v6.2] Populate Metadata
+      result.metadata.Width = info.xsize;
+      result.metadata.Height = info.ysize;
+      if (result.metadata.Format.empty()) {
+        result.metadata.Format = L"JXL";
+      }
       if (ctx.pMetadata) {
+        ctx.pMetadata->Width = info.xsize;
+        ctx.pMetadata->Height = info.ysize;
         // Note: do NOT set HasEmbeddedColorProfile from uses_original_profile.
         CImageLoader::PopulateFormatDetails(
             ctx.pMetadata, L"JXL", info.bits_per_sample,
@@ -8554,10 +8561,12 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
         JxlDecoderDestroy(dec);
 
         result.pixels = pixels;
-        result.width = info.xsize;  // [Fix Bug #137]
-        result.height = info.ysize; // [Fix Bug #137]
-        result.stride = info.xsize * 4;
+        result.width = 1;
+        result.height = 1;
+        result.stride = 4;
         result.format = PixelFormat::BGRA8888;
+        result.metadata.Width = info.xsize;
+        result.metadata.Height = info.ysize;
         result.metadata.colorInfo.dataSpace = QuickView::PixelDataSpace::EncodedSdr;
         result.metadata.colorInfo.transfer = QuickView::TransferFunction::SRGB;
         result.metadata.colorInfo.nominalBitDepth = 8;
@@ -8565,10 +8574,21 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
         result.metadata.hdrMetadata.isSceneLinear = false;
         result.success = true;
 
+        if (result.metadata.Format.empty()) {
+          result.metadata.Format = L"JXL";
+        }
         result.metadata.FormatDetails = L"JXL";
         if (info.have_animation)
           result.metadata.FormatDetails += L" [Anim]";
-        result.metadata.LoaderName = L"libjxl (Stub Base)";
+        result.metadata.LoaderName = L"libjxl (Fake Base)";
+
+        if (ctx.pMetadata) {
+          ctx.pMetadata->Width = info.xsize;
+          ctx.pMetadata->Height = info.ysize;
+          if (ctx.pMetadata->Format.empty()) {
+            ctx.pMetadata->Format = L"JXL";
+          }
+        }
 
         return S_OK;
       }

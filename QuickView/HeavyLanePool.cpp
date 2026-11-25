@@ -1553,7 +1553,10 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                         QV_LOG("Worker_Route", TraceLoggingString("Phase3 TitanBaseLayer DecodeWorker", "Action"));
                        hr = LaunchDecodeWorker(self, job, targetW, targetH, rawFrame, meta, cancelPred, false, !job.allowFakeBase);
                        if (SUCCEEDED(hr)) {
-                           loaderName = L"DecodeWorker";
+                           loaderName = (rawFrame.width <= 1 && rawFrame.height <= 1 &&
+                                         (meta.Width > 2 || meta.Height > 2))
+                               ? L"DecodeWorker (Fake Base)"
+                               : L"DecodeWorker";
                        } else if (hr == E_ABORT) {
                            // Cancelled by user switching — normal flow
                            return;
@@ -1648,7 +1651,8 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                        // [v8.4 Fix] If the Base Layer is a Fake 1x1, its real MP/s is 0.
                        // This would cause the auto-regulator to maliciously throttle the pool to < 3 threads, 
                        // crippling our N+1 Native Region Decoding. We simulate 100 MP/s to unlock full core usage!
-                        if (loaderName.contains(L"Fake Base")) {
+                        if (loaderName.contains(L"Fake Base") ||
+                            (rawFrame.width <= 1 && rawFrame.height <= 1)) {
                             QV_LOG("Baseline_FakeBase", TraceLoggingString("FakeBaseSimulate100MPS", "Action"));
                            RecordBaselineSample(10000000.0, 100.0, srcWidth, srcHeight, isProgressiveJPEG);
                        } else {
