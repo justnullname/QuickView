@@ -91,6 +91,13 @@ public:
     ID2D1DeviceContext* BeginImageOverlayUpdate(UINT sourceWidth, UINT sourceHeight, UINT maskWidth, UINT maskHeight);
     HRESULT EndImageOverlayUpdate(bool visible);
     HRESULT ClearImageOverlay();
+
+    // Viewport-space high-DPI PDF ROI overlay (sits above ImageContainer, below UI layers).
+    HRESULT UpdatePdfRoiOverlay(const QuickView::RawImageFrame& frame,
+                                float screenX, float screenY,
+                                float screenW, float screenH,
+                                float rotationDeg, bool flipH, bool flipV);
+    void HidePdfRoiOverlay(bool releaseSurface = false);
     
     // [WebView2 DComp] Mount/Unmount external WebView2 visual into ImageContainer
     // The mounted visual inherits all hardware transforms (scale/translate/rotate)
@@ -249,6 +256,13 @@ private:
     POINT m_imageOverlayDrawOffset = {};
     UINT m_imageOverlayMaskWidth = 0;
     UINT m_imageOverlayMaskHeight = 0;
+
+    // Viewport-space PDF ROI high-DPI overlay
+    ComPtr<IDCompositionVisual2> m_pdfRoiVisual;
+    ComPtr<IDCompositionSurface> m_pdfRoiSurface;
+    ComPtr<ID2D1DeviceContext> m_pdfRoiContext;
+    UINT m_pdfRoiWidth = 0;
+    UINT m_pdfRoiHeight = 0;
     
     // [WebView2 DComp] External WebView visual mounted in ImageContainer
     IDCompositionVisual2* m_webviewVisual = nullptr; // Non-owning, lifecycle managed by WebContentHost

@@ -92,6 +92,7 @@ set(QUICKVIEW_SOURCES
     QuickView/MiniTiffLzw.cpp
     QuickView/MiniTiffCmyk.cpp
     QuickView/IcoDecoder.cpp
+    QuickView/PdfDecoder.cpp
     QuickView/LosslessTransform.cpp
     QuickView/StbLoader.cpp
     QuickView/TinyExrLoader.cpp
@@ -421,6 +422,7 @@ target_link_libraries(QuickView PRIVATE
     imm32.lib
     dwrite.lib
     windowscodecs.lib
+    shcore.lib
     shlwapi.lib
     shell32.lib
     comctl32.lib
@@ -491,6 +493,7 @@ add_executable(QuickViewTests
     tests/FileNavigatorTests.cpp
     tests/HotkeyTests.cpp
     tests/MultiPageTests.cpp
+    tests/PdfDecoderTests.cpp
     tests/StringUtilsTests.cpp
     tests/SupportedExtensionsTests.cpp
     tests/MiniTiffTests.cpp
@@ -527,6 +530,7 @@ add_executable(QuickViewTests
     QuickView/MiniTiffLzw.cpp
     QuickView/MiniTiffCmyk.cpp
     QuickView/IcoDecoder.cpp
+    QuickView/PdfDecoder.cpp
     QuickView/ColorMath.cpp 
     QuickView/FileNavigator.cpp 
     QuickView/ArchiveVFS.cpp 
@@ -556,6 +560,7 @@ target_link_libraries(QuickViewTests PRIVATE
     windowscodecs.lib 
     dxgi.lib 
     d3d11.lib 
+    shcore.lib
     shlwapi.lib 
     shell32.lib 
     comctl32.lib

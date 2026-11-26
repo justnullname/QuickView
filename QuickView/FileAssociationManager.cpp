@@ -48,8 +48,8 @@ struct ExtMetaEntry {
 };
 
 // Compile-time contiguous DOD lookup table for friendly type names in Windows Explorer.
-constexpr std::array<ExtMetaEntry, 92> kExtMetadataTable = {{
-    // Standard (11)
+constexpr std::array<ExtMetaEntry, 95> kExtMetadataTable = {{
+    // Standard (12)
     { L".jpg",   L"JPEG Image" },
     { L".jpeg",  L"JPEG Image" },
     { L".jpe",   L"JPEG Image" },
@@ -61,6 +61,7 @@ constexpr std::array<ExtMetaEntry, 92> kExtMetadataTable = {{
     { L".tif",   L"TIFF Image" },
     { L".tiff",  L"TIFF Image" },
     { L".ico",   L"Windows Icon" },
+    { L".cur",   L"Windows Cursor" },
     // Web / Modern (9)
     { L".webp",  L"WebP Image" },
     { L".avif",  L"AV1 Image (AVIF)" },
@@ -142,11 +143,13 @@ constexpr std::array<ExtMetaEntry, 92> kExtMetadataTable = {{
     { L".rwz",   L"Rawzor Compressed RAW" },
     { L".srf",   L"Sony SRF RAW Image" },
     { L".sti",   L"Sinar CaptureShop RAW" },
-    // Archives (4)
+    // Archives & Documents (6)
     { L".cbz",   L"Comic Book ZIP Archive" },
     { L".zip",   L"ZIP Image Archive" },
     { L".cbr",   L"Comic Book RAR Archive" },
-    { L".rar",   L"RAR Image Archive" }
+    { L".rar",   L"RAR Image Archive" },
+    { L".pdf",   L"PDF Document" },
+    { L".ai",    L"Adobe Illustrator Document" }
 }};
 
 static_assert(kExtMetadataTable.size() == ALL_ASSOCIABLE_EXTENSIONS.size(),
@@ -655,7 +658,7 @@ const wchar_t* GetExtensionTypeDescription(std::wstring_view ext) {
 }
 
 std::wstring GetExtensionNativeIcon(std::wstring_view ext, std::wstring_view sysDir) {
-    if (ExtEqualsIgnoreCase(ext, L".ico")) {
+    if (ExtEqualsIgnoreCase(ext, L".ico") || ExtEqualsIgnoreCase(ext, L".cur")) {
         return L"%1";
     }
     std::wstring base(sysDir);
@@ -668,6 +671,9 @@ std::wstring GetExtensionNativeIcon(std::wstring_view ext, std::wstring_view sys
     if (ExtEqualsIgnoreCase(ext, L".tif") || ExtEqualsIgnoreCase(ext, L".tiff")) {
         return base + L"\\imageres.dll,-122";
     }
+    if (IsDocumentExtension(ext)) {
+        return base + L"\\imageres.dll,-19";
+    }
     if (IsArchiveExtension(ext)) {
         return base + L"\\imageres.dll,-174";
     }
@@ -675,10 +681,11 @@ std::wstring GetExtensionNativeIcon(std::wstring_view ext, std::wstring_view sys
 }
 
 bool ShouldIncludeExtInContextMenu(std::wstring_view ext, bool isSelectedInAssoc) {
-    // Plain archive containers (.zip/.rar) are only given a context menu entry when the user explicitly opts in,
-    // avoiding menu clutter on software/document archives. All 88 image/RAW formats and comic archives (.cbz/.cbr)
+    // Plain archive containers (.zip/.rar) and documents (.pdf/.ai) are only given a context menu entry when the user explicitly opts in,
+    // avoiding menu clutter. All image/RAW formats and comic archives (.cbz/.cbr)
     // always receive context menu support when Explorer context menu integration is enabled.
-    if (SameExtNormalized(ext, L".zip") || SameExtNormalized(ext, L".rar")) {
+    if (SameExtNormalized(ext, L".zip") || SameExtNormalized(ext, L".rar") ||
+        IsDocumentExtension(ext)) {
         return isSelectedInAssoc;
     }
     return IsAssociableExtension(ext) ||

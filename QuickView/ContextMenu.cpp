@@ -20,7 +20,8 @@ void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
                      bool isWindowLocked, bool showInfoPanel, bool infoPanelExpanded,
                      bool alwaysOnTop, bool renderRaw, bool isRawFile, bool isFullscreen,
                      bool isCrossMonitor, bool isCompareMode, [[maybe_unused]] bool isAnimated, bool isPixelArtMode,
-                     int cmsMode, bool enableSoftProofing, const std::wstring& softProofProfilePath) {
+                     int cmsMode, bool enableSoftProofing, const std::wstring& softProofProfilePath,
+                     bool isBookMode) {
 
     LinearWideStringPool menuStrings;
     menuStrings.Reserve(512);
@@ -44,9 +45,9 @@ void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
     // ========================================================
     std::vector<AB> actions = {
         { IDM_OPEN, AppStrings::g.Context_Open, GeekIcons::Open, true, false },
-        { IDM_RENAME, AppStrings::g.Context_Rename, GeekIcons::Rename, hasImage, false },
+        { IDM_RENAME, AppStrings::g.Context_Rename, GeekIcons::Rename, hasImage && !isBookMode, false },
         { IDM_EDIT, AppStrings::g.Context_Edit, GeekIcons::Edit, hasImage, false },
-        { IDM_DELETE, AppStrings::g.Context_Delete, GeekIcons::Delete, hasImage, true /*isDanger*/ },
+        { IDM_DELETE, AppStrings::g.Context_Delete, GeekIcons::Delete, hasImage && !isBookMode, true /*isDanger*/ },
     };
 
     // ========================================================

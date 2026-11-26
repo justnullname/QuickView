@@ -124,6 +124,24 @@ TEST(SupportedExtensionsTest, FilterStringIsWellFormed) {
     EXPECT_NE(filter.find(L"*.emf"), std::wstring::npos);
     EXPECT_NE(filter.find(L"*.wmz"), std::wstring::npos);
     EXPECT_NE(filter.find(L"*.emz"), std::wstring::npos);
-    // Extended (non-browsable) RAW must NOT be offered by the folder filter
-    EXPECT_EQ(filter.find(L"*.braw"), std::wstring::npos);
+    EXPECT_NE(filter.find(L"*.pdf"), std::wstring::npos);
+    EXPECT_NE(filter.find(L"*.ai"), std::wstring::npos);
+    EXPECT_NE(filter.find(L"*.braw"), std::wstring::npos);
+    EXPECT_NE(filter.find(L"All Supported Files"), std::wstring::npos);
+    EXPECT_NE(filter.find(L"Standard Raster"), std::wstring::npos);
+    EXPECT_NE(filter.find(L"Documents, Comics & Archives"), std::wstring::npos);
+    ASSERT_GE(filter.size(), 2u);
+    EXPECT_EQ(filter[filter.size() - 1], L'\0');
+    EXPECT_EQ(filter[filter.size() - 2], L'\0');
+
+    const wchar_t* customLabels[static_cast<size_t>(AssocExtCategory::Count)] = {
+        L"CustomStd", L"CustomMod", L"CustomPro", L"CustomRaw", L"CustomExtRaw", L"CustomDoc"
+    };
+    const std::wstring customFilter = GetSupportedExtensionsFilter(customLabels, L"CustomAll", L"CustomAny");
+    EXPECT_NE(customFilter.find(L"CustomAll"), std::wstring::npos);
+    EXPECT_NE(customFilter.find(L"CustomStd"), std::wstring::npos);
+    EXPECT_NE(customFilter.find(L"CustomRaw"), std::wstring::npos);
+    EXPECT_NE(customFilter.find(L"CustomDoc"), std::wstring::npos);
+    EXPECT_NE(customFilter.find(L"CustomAny"), std::wstring::npos);
+    EXPECT_EQ(customFilter.find(L"Standard Raster"), std::wstring::npos);
 }

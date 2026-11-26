@@ -28,9 +28,9 @@ consteval auto Concat(const std::array<std::wstring_view, Ns>&... lists) {
 }
 
 // Standard raster formats
-inline constexpr std::array<std::wstring_view, 11> STANDARD_EXTENSIONS = {
+inline constexpr std::array<std::wstring_view, 12> STANDARD_EXTENSIONS = {
     L".jpg", L".jpeg", L".jpe", L".jfif", L".png", L".bmp", L".dib", L".gif",
-    L".tif", L".tiff", L".ico"
+    L".tif", L".tiff", L".ico", L".cur"
 };
 
 // Web / Modern formats
@@ -65,6 +65,12 @@ inline constexpr std::array<std::wstring_view, 4> ARCHIVE_EXTENSIONS_SEG = {
     L".cbz", L".zip", L".cbr", L".rar"
 };
 
+// Document formats opened explicitly directly into Multi-Page Book Mode
+// (never mixed into normal folder image scans or playlists)
+inline constexpr std::array<std::wstring_view, 2> DOCUMENT_EXTENSIONS_SEG = {
+    L".pdf", L".ai"
+};
+
 } // namespace detail
 
 // Everything QuickView can open from a folder scan
@@ -72,10 +78,15 @@ inline constexpr auto SUPPORTED_EXTENSIONS = detail::Concat(
     detail::STANDARD_EXTENSIONS, detail::WEB_MODERN_EXTENSIONS, detail::PRO_LEGACY_EXTENSIONS,
     detail::CAMERA_RAW_EXTENSIONS, detail::ARCHIVE_EXTENSIONS_SEG);
 
-// Every extension QuickView can decode and associate (includes extended/cinema RAWs)
+// Every extension QuickView can decode and associate (includes extended/cinema RAWs & documents)
 inline constexpr auto ALL_ASSOCIABLE_EXTENSIONS = detail::Concat(
     detail::STANDARD_EXTENSIONS, detail::WEB_MODERN_EXTENSIONS, detail::PRO_LEGACY_EXTENSIONS,
-    detail::CAMERA_RAW_EXTENSIONS, detail::EXTENDED_RAW_EXTENSIONS, detail::ARCHIVE_EXTENSIONS_SEG);
+    detail::CAMERA_RAW_EXTENSIONS, detail::EXTENDED_RAW_EXTENSIONS,
+    detail::ARCHIVE_EXTENSIONS_SEG, detail::DOCUMENT_EXTENSIONS_SEG);
+
+// Archive + document formats displayed together under the Archives/Documents category
+inline constexpr auto ARCHIVE_AND_DOCUMENT_EXTENSIONS = detail::Concat(
+    detail::ARCHIVE_EXTENSIONS_SEG, detail::DOCUMENT_EXTENSIONS_SEG);
 
 // Every extension classified as camera RAW (decode-routing, RAW toggles, etc.)
 inline constexpr auto RAW_EXTENSIONS = detail::Concat(
@@ -83,6 +94,9 @@ inline constexpr auto RAW_EXTENSIONS = detail::Concat(
 
 // Archive container formats (VFS)
 inline constexpr auto ARCHIVE_EXTENSIONS = detail::ARCHIVE_EXTENSIONS_SEG;
+
+// Explicit-open document formats
+inline constexpr auto DOCUMENT_EXTENSIONS = detail::DOCUMENT_EXTENSIONS_SEG;
 
 enum class AssocExtCategory : uint8_t {
     Standard = 0,
@@ -154,6 +168,25 @@ constexpr bool IsArchivePath(std::wstring_view path) {
     return IsArchiveExtension(ExtensionOf(path));
 }
 
+constexpr bool IsDocumentExtension(std::wstring_view ext) {
+    for (const auto& d : DOCUMENT_EXTENSIONS) {
+        if (ExtEqualsIgnoreCase(ext, d)) return true;
+    }
+    return false;
+}
+
+constexpr bool IsDocumentPath(std::wstring_view path) {
+    return IsDocumentExtension(ExtensionOf(path));
+}
+
+constexpr bool IsNonImageDocumentExtension(std::wstring_view ext) {
+    return IsArchiveExtension(ext) || IsDocumentExtension(ext);
+}
+
+constexpr bool IsNonImageDocumentPath(std::wstring_view path) {
+    return IsNonImageDocumentExtension(ExtensionOf(path));
+}
+
 constexpr bool IsSupportedExtension(std::wstring_view ext) {
     for (const auto& s : SUPPORTED_EXTENSIONS) {
         if (ExtEqualsIgnoreCase(ext, s)) return true;
@@ -194,8 +227,8 @@ constexpr bool IsRenderedPairExtension(std::wstring_view ext) {
 }
 
 // Compile-time regression tests (zero runtime cost)
-static_assert(SUPPORTED_EXTENSIONS.size() == 71);
-static_assert(ALL_ASSOCIABLE_EXTENSIONS.size() == 92);
+static_assert(SUPPORTED_EXTENSIONS.size() == 72);
+static_assert(ALL_ASSOCIABLE_EXTENSIONS.size() == 95);
 static_assert(RAW_EXTENSIONS.size() == 43);
 static_assert(IsRawExtension(L".crw"));   // was missing from main.cpp's IsRawFile
 static_assert(IsRawExtension(L".CR3"));   // case-insensitive
@@ -212,6 +245,10 @@ static_assert(!IsRenderedPairExtension(L".png")); // not camera-written beside a
 static_assert(IsPlaylistImageExtension(L".JPG"));
 static_assert(IsPlaylistImageExtension(L".CR3"));
 static_assert(!IsPlaylistImageExtension(L".zip"));
+static_assert(IsDocumentExtension(L".PDF"));
+static_assert(IsDocumentPath(L"C:\\docs\\manual.pdf"));
+static_assert(!IsPlaylistImageExtension(L".pdf"));
+static_assert(!IsSupportedExtension(L".pdf"));
 
 constexpr std::span<const std::wstring_view> GetExtensionsByCategory(AssocExtCategory cat) {
     switch (cat) {
@@ -220,7 +257,7 @@ constexpr std::span<const std::wstring_view> GetExtensionsByCategory(AssocExtCat
         case AssocExtCategory::ProLegacy:   return detail::PRO_LEGACY_EXTENSIONS;
         case AssocExtCategory::CameraRaw:   return detail::CAMERA_RAW_EXTENSIONS;
         case AssocExtCategory::ExtendedRaw: return detail::EXTENDED_RAW_EXTENSIONS;
-        case AssocExtCategory::Archive:     return detail::ARCHIVE_EXTENSIONS_SEG;
+        case AssocExtCategory::Archive:     return ARCHIVE_AND_DOCUMENT_EXTENSIONS;
         default:                            return {};
     }
 }
@@ -233,12 +270,13 @@ constexpr bool IsAssociableExtension(std::wstring_view ext) {
 }
 
 constexpr AssocExtCategory GetCategoryOfExtension(std::wstring_view ext) {
-    for (const auto& s : detail::STANDARD_EXTENSIONS)    if (ExtEqualsIgnoreCase(ext, s)) return AssocExtCategory::Standard;
-    for (const auto& s : detail::WEB_MODERN_EXTENSIONS)   if (ExtEqualsIgnoreCase(ext, s)) return AssocExtCategory::WebModern;
-    for (const auto& s : detail::PRO_LEGACY_EXTENSIONS)   if (ExtEqualsIgnoreCase(ext, s)) return AssocExtCategory::ProLegacy;
-    for (const auto& s : detail::CAMERA_RAW_EXTENSIONS)   if (ExtEqualsIgnoreCase(ext, s)) return AssocExtCategory::CameraRaw;
-    for (const auto& s : detail::EXTENDED_RAW_EXTENSIONS) if (ExtEqualsIgnoreCase(ext, s)) return AssocExtCategory::ExtendedRaw;
-    for (const auto& s : detail::ARCHIVE_EXTENSIONS_SEG) if (ExtEqualsIgnoreCase(ext, s)) return AssocExtCategory::Archive;
+    for (const auto& s : detail::STANDARD_EXTENSIONS)      if (ExtEqualsIgnoreCase(ext, s)) return AssocExtCategory::Standard;
+    for (const auto& s : detail::WEB_MODERN_EXTENSIONS)    if (ExtEqualsIgnoreCase(ext, s)) return AssocExtCategory::WebModern;
+    for (const auto& s : detail::PRO_LEGACY_EXTENSIONS)    if (ExtEqualsIgnoreCase(ext, s)) return AssocExtCategory::ProLegacy;
+    for (const auto& s : detail::CAMERA_RAW_EXTENSIONS)    if (ExtEqualsIgnoreCase(ext, s)) return AssocExtCategory::CameraRaw;
+    for (const auto& s : detail::EXTENDED_RAW_EXTENSIONS)  if (ExtEqualsIgnoreCase(ext, s)) return AssocExtCategory::ExtendedRaw;
+    for (const auto& s : detail::ARCHIVE_EXTENSIONS_SEG)   if (ExtEqualsIgnoreCase(ext, s)) return AssocExtCategory::Archive;
+    for (const auto& s : detail::DOCUMENT_EXTENSIONS_SEG)  if (ExtEqualsIgnoreCase(ext, s)) return AssocExtCategory::Archive;
     return AssocExtCategory::Count;
 }
 
@@ -290,22 +328,48 @@ inline std::wstring GetPhotoAndRawAssocExtensionsString() {
     return result;
 }
 
-// Generate the COMDLG filter string, e.g., "All Images\0*.jpg;*.png...\0All Files\0*.*\0\0"
-inline std::wstring GetSupportedExtensionsFilter() {
-    std::wstring filter;
-    filter.append(L"All Images");
-    filter.push_back(L'\0');
+// Generate the COMDLG double-null-terminated filter string directly from
+// ALL_ASSOCIABLE_EXTENSIONS and AssocExtCategory (single source of truth).
+inline std::wstring GetSupportedExtensionsFilter(
+    std::span<const wchar_t* const> categoryLabels = {},
+    const wchar_t* allSupportedLabel = L"All Supported Files",
+    const wchar_t* allFilesLabel = L"All Files") {
+    static constexpr std::array<const wchar_t*, static_cast<size_t>(AssocExtCategory::Count)> kDefaultCatLabels = {
+        L"Standard Raster",
+        L"Modern & Vector",
+        L"Pro / HDR / Legacy",
+        L"Camera RAW",
+        L"Extended / Cinema RAW",
+        L"Documents, Comics & Archives",
+    };
 
-    for (size_t i = 0; i < std::size(SUPPORTED_EXTENSIONS); ++i) {
-        filter += L"*";
-        filter += SUPPORTED_EXTENSIONS[i];
-        if (i < std::size(SUPPORTED_EXTENSIONS) - 1) {
-            filter += L";";
+    std::wstring filter;
+    filter.reserve(1536);
+
+    auto appendFilterGroup = [&](const wchar_t* label, std::span<const std::wstring_view> exts) {
+        if (!label || !*label || exts.empty()) return;
+        filter.append(label);
+        filter.push_back(L'\0');
+        for (size_t i = 0; i < exts.size(); ++i) {
+            if (i > 0) filter.push_back(L';');
+            filter.push_back(L'*');
+            filter.append(exts[i]);
         }
+        filter.push_back(L'\0');
+    };
+
+    appendFilterGroup((allSupportedLabel && *allSupportedLabel) ? allSupportedLabel : L"All Supported Files",
+                      ALL_ASSOCIABLE_EXTENSIONS);
+
+    for (size_t ci = 0; ci < static_cast<size_t>(AssocExtCategory::Count); ++ci) {
+        const auto cat = static_cast<AssocExtCategory>(ci);
+        const wchar_t* label = (ci < categoryLabels.size() && categoryLabels[ci] && *categoryLabels[ci])
+            ? categoryLabels[ci]
+            : kDefaultCatLabels[ci];
+        appendFilterGroup(label, GetExtensionsByCategory(cat));
     }
 
-    filter.push_back(L'\0');
-    filter.append(L"All Files");
+    filter.append((allFilesLabel && *allFilesLabel) ? allFilesLabel : L"All Files");
     filter.push_back(L'\0');
     filter.append(L"*.*");
     filter.push_back(L'\0');

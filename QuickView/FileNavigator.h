@@ -142,10 +142,11 @@ public:
     // Book Mode (switch navigator/gallery between inner pages and parent folder)
     bool IsBookModeActive() const { return m_bookModeActive || (m_archive != nullptr); }
     bool IsArchiveParentBrowse() const { return m_savedFromArchive; }
+    bool IsDocumentOnlyScan() const { return m_documentOnlyScan; }
     bool CanToggleBookMode() const { return m_bookModeActive || (m_archive != nullptr) || m_savedFromArchive; }
     const std::wstring& GetBookHostPath() const { return m_bookHostPath; }
-    bool EnterBookModeWithPages(const std::wstring& hostPath, std::vector<std::wstring> pagePaths, uint32_t startPage);
-    bool EnterMultiPageBookMode(const std::wstring& hostPath, uint32_t pageCount, uint32_t startPage);
+    bool EnterBookModeWithPages(const std::wstring& hostPath, std::vector<std::wstring> pagePaths, uint32_t startPage, bool allowSinglePage = false);
+    bool EnterMultiPageBookMode(const std::wstring& hostPath, uint32_t pageCount, uint32_t startPage, bool allowSinglePage = false);
     bool ExitBookMode(std::wstring& outTargetPath);
     bool ReenterArchiveBookMode();
 
@@ -320,7 +321,7 @@ private:
     std::unordered_map<ImageID, PairedRaw> m_savedFolderPairedRaws;
     int m_savedFolderIndex = -1;
     std::wstring m_savedWatchedDir;
-    bool m_includeArchivesInScan = false;
+    bool m_documentOnlyScan = false;
 
     // [Directory Watcher] Background monitoring state
     HWND m_hwnd = nullptr;

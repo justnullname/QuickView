@@ -442,6 +442,9 @@ HRESULT CompositionEngine::Initialize(HWND hwnd, ID3D11Device* d3dDevice, ID2D1D
     hr = m_device->CreateVisual(&m_imageContainer);
     if (FAILED(hr)) return hr;
 
+    hr = m_device->CreateVisual(&m_pdfRoiVisual);
+    if (FAILED(hr)) return hr;
+
     hr = m_device->CreateVisual(&m_imageOverlayVisual);
     if (FAILED(hr)) return hr;
     
@@ -511,9 +514,11 @@ HRESULT CompositionEngine::Initialize(HWND hwnd, ID3D11Device* d3dDevice, ID2D1D
     
     // Image Container above background
     m_rootVisual->AddVisual(m_imageContainer.Get(), TRUE, m_backgroundLayer.visual.Get());
+    m_rootVisual->AddVisual(m_pdfRoiVisual.Get(), TRUE, m_imageContainer.Get());
+    m_pdfRoiVisual->SetBitmapInterpolationMode(DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
     
-    // UI layers explicitly ABOVE Image Container
-    m_rootVisual->AddVisual(m_galleryLayer.visual.Get(), TRUE, m_imageContainer.Get());
+    // UI layers explicitly ABOVE Image Container & PDF ROI overlay
+    m_rootVisual->AddVisual(m_galleryLayer.visual.Get(), TRUE, m_pdfRoiVisual.Get());
     m_rootVisual->AddVisual(m_staticLayer.visual.Get(), TRUE, m_galleryLayer.visual.Get());
     m_rootVisual->AddVisual(m_dynamicLayer.visual.Get(), TRUE, m_staticLayer.visual.Get());
 
@@ -535,6 +540,10 @@ HRESULT CompositionEngine::Initialize(HWND hwnd, ID3D11Device* d3dDevice, ID2D1D
     // 9. Create shared D2D contexts
     hr = m_d2dDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &m_pendingContext);
     if (FAILED(hr)) return hr;
+    hr = m_d2dDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &m_pdfRoiContext);
+    if (FAILED(hr)) return hr;
+    m_pdfRoiContext->SetDpi(96.0f, 96.0f);
+    m_pdfRoiContext->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
 
     // Probe runtime D2D + DComp single-surface axis cap (16384 on FL11+, fallback 8192)
     m_maxStandardSurfaceSize = QuickView::kDefaultStandardAxisLimit;
@@ -1118,6 +1127,112 @@ HRESULT CompositionEngine::ClearImageOverlay() {
         return m_imageOverlayVisual->SetContent(nullptr);
     }
     return S_OK;
+}
+
+HRESULT CompositionEngine::UpdatePdfRoiOverlay(
+    const QuickView::RawImageFrame& frame,
+    float screenX, float screenY,
+    float screenW, float screenH,
+    float rotationDeg, bool flipH, bool flipV) {
+    if (!m_device || !m_pdfRoiVisual || !m_pdfRoiContext || !frame.IsValid() ||
+        screenW < 1.0f || screenH < 1.0f) {
+        return E_INVALIDARG;
+    }
+
+    const UINT maxW = (m_width > 0) ? m_width : 4096u;
+    const UINT maxH = (m_height > 0) ? m_height : 4096u;
+    const UINT surfW = std::clamp<UINT>(static_cast<UINT>(std::ceil(screenW)), 1u, maxW);
+    const UINT surfH = std::clamp<UINT>(static_cast<UINT>(std::ceil(screenH)), 1u, maxH);
+
+    if (!m_pdfRoiSurface || m_pdfRoiWidth != surfW || m_pdfRoiHeight != surfH) {
+        m_pdfRoiSurface.Reset();
+        HRESULT hrCreate = m_device->CreateSurface(
+            surfW, surfH,
+            DXGI_FORMAT_B8G8R8A8_UNORM,
+            DXGI_ALPHA_MODE_PREMULTIPLIED,
+            &m_pdfRoiSurface);
+        if (FAILED(hrCreate) || !m_pdfRoiSurface) {
+            m_pdfRoiWidth = 0;
+            m_pdfRoiHeight = 0;
+            return FAILED(hrCreate) ? hrCreate : E_FAIL;
+        }
+        m_pdfRoiWidth = surfW;
+        m_pdfRoiHeight = surfH;
+    }
+
+    ComPtr<ID2D1Bitmap> srcBmp;
+    D2D1_BITMAP_PROPERTIES srcProps = D2D1::BitmapProperties(
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE), 96.0f, 96.0f);
+    HRESULT hr = m_pdfRoiContext->CreateBitmap(
+        D2D1::SizeU(static_cast<UINT32>(frame.width), static_cast<UINT32>(frame.height)),
+        frame.pixels,
+        static_cast<UINT32>(frame.stride),
+        &srcProps,
+        &srcBmp);
+    if (FAILED(hr) || !srcBmp) return FAILED(hr) ? hr : E_FAIL;
+
+    ComPtr<IDXGISurface> dxgiSurface;
+    POINT drawOffset{};
+    hr = m_pdfRoiSurface->BeginDraw(nullptr, IID_PPV_ARGS(&dxgiSurface), &drawOffset);
+    if (FAILED(hr) || !dxgiSurface) return FAILED(hr) ? hr : E_FAIL;
+
+    D2D1_BITMAP_PROPERTIES1 targetProps = D2D1::BitmapProperties1(
+        D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+    ComPtr<ID2D1Bitmap1> targetBmp;
+    hr = m_pdfRoiContext->CreateBitmapFromDxgiSurface(dxgiSurface.Get(), &targetProps, &targetBmp);
+    if (FAILED(hr) || !targetBmp) {
+        m_pdfRoiSurface->EndDraw();
+        return FAILED(hr) ? hr : E_FAIL;
+    }
+
+    m_pdfRoiContext->SetTarget(targetBmp.Get());
+    m_pdfRoiContext->BeginDraw();
+    m_pdfRoiContext->SetTransform(D2D1::Matrix3x2F::Translation(
+        static_cast<float>(drawOffset.x), static_cast<float>(drawOffset.y)));
+    m_pdfRoiContext->Clear(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f));
+
+    const float normRot = fmodf(fmodf(rotationDeg, 360.0f) + 360.0f, 360.0f);
+    const bool rot90 = (fabsf(normRot - 90.0f) < 1.0f || fabsf(normRot - 270.0f) < 1.0f);
+    const float drawPhysW = rot90 ? static_cast<float>(surfH) : static_cast<float>(surfW);
+    const float drawPhysH = rot90 ? static_cast<float>(surfW) : static_cast<float>(surfH);
+
+    const D2D1_MATRIX_3X2_F xf =
+        D2D1::Matrix3x2F::Translation(-drawPhysW * 0.5f, -drawPhysH * 0.5f) *
+        D2D1::Matrix3x2F::Scale(flipH ? -1.0f : 1.0f, flipV ? -1.0f : 1.0f) *
+        D2D1::Matrix3x2F::Rotation(rotationDeg) *
+        D2D1::Matrix3x2F::Translation(static_cast<float>(surfW) * 0.5f, static_cast<float>(surfH) * 0.5f) *
+        D2D1::Matrix3x2F::Translation(static_cast<float>(drawOffset.x), static_cast<float>(drawOffset.y));
+    m_pdfRoiContext->SetTransform(xf);
+    m_pdfRoiContext->DrawBitmap(
+        srcBmp.Get(),
+        D2D1::RectF(0.0f, 0.0f, drawPhysW, drawPhysH),
+        1.0f,
+        D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+
+    m_pdfRoiContext->SetTransform(D2D1::Matrix3x2F::Identity());
+    HRESULT hrDraw = m_pdfRoiContext->EndDraw();
+    m_pdfRoiContext->SetTarget(nullptr);
+    HRESULT hrSurf = m_pdfRoiSurface->EndDraw();
+
+    if (SUCCEEDED(hrDraw) && SUCCEEDED(hrSurf)) {
+        m_pdfRoiVisual->SetOffsetX(std::floor(screenX));
+        m_pdfRoiVisual->SetOffsetY(std::floor(screenY));
+        m_pdfRoiVisual->SetContent(m_pdfRoiSurface.Get());
+        return S_OK;
+    }
+    return FAILED(hrDraw) ? hrDraw : hrSurf;
+}
+
+void CompositionEngine::HidePdfRoiOverlay(bool releaseSurface) {
+    if (m_pdfRoiVisual) {
+        m_pdfRoiVisual->SetContent(nullptr);
+    }
+    if (releaseSurface) {
+        m_pdfRoiSurface.Reset();
+        m_pdfRoiWidth = 0;
+        m_pdfRoiHeight = 0;
+    }
 }
 
 HRESULT CompositionEngine::SetGalleryOffset(float offsetX, float offsetY) {

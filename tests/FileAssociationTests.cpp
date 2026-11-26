@@ -141,8 +141,8 @@ TEST(FileAssociationTest, CommandLineValidationDetectsIssue265UnquotedPercentOne
     EXPECT_FALSE(IsCommandLineTemplateValid(L"", exe));
 }
 
-TEST(FileAssociationTest, All92SupportedExtensionsHaveValidCategoryMetadataAndIcon) {
-    constexpr size_t kExpectedTotal = 92;
+TEST(FileAssociationTest, All95SupportedExtensionsHaveValidCategoryMetadataAndIcon) {
+    constexpr size_t kExpectedTotal = 95;
     ASSERT_EQ(ALL_ASSOCIABLE_EXTENSIONS.size(), kExpectedTotal);
 
     size_t categorySum = 0;
@@ -244,21 +244,24 @@ TEST(FileAssociationTest, HashIsOrderIndependentAndSensitiveToOptions) {
     EXPECT_EQ(hex.size(), 16u);
 }
 
-TEST(FileAssociationTest, AllImagesPresetIncludesComicsAndExcludesZipRar) {
+TEST(FileAssociationTest, AllImagesPresetIncludesComicsAndExcludesZipRarAndDocuments) {
     const std::wstring allImg = GetPresetCsv(AssocPreset::AllImages);
     const std::wstring direct = GetAllImagesAssocExtensionsString();
     EXPECT_EQ(allImg, direct);
 
     EXPECT_TRUE(IsExtensionInCsv(allImg, L".cbz"));
     EXPECT_TRUE(IsExtensionInCsv(allImg, L".cbr"));
+    EXPECT_TRUE(IsExtensionInCsv(allImg, L".cur"));
     EXPECT_FALSE(IsExtensionInCsv(allImg, L".zip"));
     EXPECT_FALSE(IsExtensionInCsv(allImg, L".rar"));
+    EXPECT_FALSE(IsExtensionInCsv(allImg, L".pdf"));
+    EXPECT_FALSE(IsExtensionInCsv(allImg, L".ai"));
 
     int count = 0;
     for (auto ext : ALL_ASSOCIABLE_EXTENSIONS) {
         if (IsExtensionInCsv(allImg, ext)) ++count;
     }
-    EXPECT_EQ(count, static_cast<int>(ALL_ASSOCIABLE_EXTENSIONS.size()) - 2);
+    EXPECT_EQ(count, static_cast<int>(ALL_ASSOCIABLE_EXTENSIONS.size()) - 4);
 }
 
 TEST(FileAssociationTest, ContextMenuPolicyCoversImagesAndComicsUnconditionally) {

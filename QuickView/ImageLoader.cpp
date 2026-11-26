@@ -48,6 +48,7 @@ using namespace QuickView;
 #include <thread>
 #include "MiniTiff.h"
 #include "IcoDecoder.h"
+#include "PdfDecoder.h"
 #include "OffscreenWebView2.h"
 #include "WebViewThumbService.h"
 #include "ImageTypes.h"
@@ -823,9 +824,11 @@ static std::wstring DetectFormatFromContent(const uint8_t *magic, size_t size) {
   static const uint8_t sig_qoi[] = {'q', 'o', 'i', 'f'};
   static const uint8_t sig_pcx[] = {0x0A};
   static const uint8_t sig_ico[] = {0x00, 0x00, 0x01, 0x00};
+  static const uint8_t sig_cur[] = {0x00, 0x00, 0x02, 0x00};
   static const uint8_t sig_tif1[] = {0x49, 0x49, 0x2A, 0x00};
   static const uint8_t sig_tif2[] = {0x4D, 0x4D, 0x00, 0x2A};
   static const uint8_t sig_jxr[] = {0x49, 0x49, 0xBC, 0x01};
+  static const uint8_t sig_pdf[] = {'%', 'P', 'D', 'F', '-'};
 
   static const MagicSignature signatures[] = {
       {L"JPEG", 0, sig_jpeg, sizeof(sig_jpeg)},
@@ -842,9 +845,11 @@ static std::wstring DetectFormatFromContent(const uint8_t *magic, size_t size) {
       {L"QOI", 0, sig_qoi, sizeof(sig_qoi)},
       {L"PCX", 0, sig_pcx, sizeof(sig_pcx)},
       {L"ICO", 0, sig_ico, sizeof(sig_ico)},
+      {L"CUR", 0, sig_cur, sizeof(sig_cur)},
       {L"TIFF", 0, sig_tif1, sizeof(sig_tif1)},
       {L"TIFF", 0, sig_tif2, sizeof(sig_tif2)},
-      {L"JXR", 0, sig_jxr, sizeof(sig_jxr)}};
+      {L"JXR", 0, sig_jxr, sizeof(sig_jxr)},
+      {L"PDF", 0, sig_pdf, sizeof(sig_pdf)}};
 
   for (const auto &sig : signatures) {
     if (size >= sig.offset + sig.sig_len) {
@@ -936,7 +941,7 @@ bool IsUnifiedBufferCodec(const std::wstring &fmt) {
          fmt == L"BMP" || fmt == L"JXL" || fmt == L"AVIF" || fmt == L"QOI" ||
          fmt == L"TGA" || fmt == L"PNM" || fmt == L"WBMP" || fmt == L"PSD" ||
          fmt == L"HDR" || fmt == L"PIC" || fmt == L"PCX" || fmt == L"EXR" ||
-         fmt == L"TIFF" || fmt == L"ICO";
+         fmt == L"TIFF" || fmt == L"ICO" || fmt == L"CUR";
 }
 
 bool ShouldProbeAnimatedBufferCodec(const std::wstring &fmt) {
@@ -1886,6 +1891,9 @@ static std::wstring DetectFormatFromHeaderBytes(LPCWSTR filePath,
   if (QuickView::ExtEqualsIgnoreCase(ext, L".wmf") ||
       QuickView::ExtEqualsIgnoreCase(ext, L".wmz"))
     return L"WMF";
+  if (QuickView::ExtEqualsIgnoreCase(ext, L".pdf") ||
+      QuickView::ExtEqualsIgnoreCase(ext, L".ai"))
+    return L"PDF";
 
   // === STEP 2: Magic Bytes Detection ===
   if (!data || size == 0)
@@ -1934,6 +1942,9 @@ static std::wstring DetectFormatFromContent(LPCWSTR filePath) {
   if (QuickView::ExtEqualsIgnoreCase(ext, L".wmf") ||
       QuickView::ExtEqualsIgnoreCase(ext, L".wmz"))
     return L"WMF";
+  if (QuickView::ExtEqualsIgnoreCase(ext, L".pdf") ||
+      QuickView::ExtEqualsIgnoreCase(ext, L".ai"))
+    return L"PDF";
 
   // === STEP 2: Magic Bytes Detection (for non-RAW formats) ===
   uint8_t magic[64] = {0};
@@ -5035,6 +5046,31 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize,
     }
   }
 
+  const wchar_t* thumbTargetPath = isMultiPageVirtual ? multiHostPath.c_str() : filePath;
+  if (pathStr.find(L"|") == std::wstring::npos || isMultiPageVirtual) {
+    if (QuickView::IsDocumentPath(thumbTargetPath) ||
+        DetectFormatFromContent(thumbTargetPath) == L"PDF") {
+      QuickView::RawImageFrame pdfThumb;
+      if (SUCCEEDED(QuickView::PdfDecoder::RenderPage(
+              thumbTargetPath, isMultiPageVirtual ? multiPageIndex : 0u,
+              static_cast<uint32_t>((std::max)(targetSize, 64)), pdfThumb, nullptr)) &&
+          pdfThumb.pixels && pdfThumb.width > 0 && pdfThumb.height > 0) {
+        pData->width = pdfThumb.width;
+        pData->height = pdfThumb.height;
+        pData->stride = pdfThumb.stride;
+        pData->pixels.assign(pdfThumb.pixels,
+                             pdfThumb.pixels + static_cast<size_t>(pdfThumb.stride) * pdfThumb.height);
+        pData->origWidth = pdfThumb.width;
+        pData->origHeight = pdfThumb.height;
+        pData->fileSize = fallbackFileSize;
+        pData->loaderName = L"Windows.Data.Pdf";
+        pData->isValid = true;
+        return S_OK;
+      }
+      return E_FAIL;
+    }
+  }
+
   if (!mappedData) {
     mapping = std::make_unique<QuickView::MappedFile>(isMultiPageVirtual ? multiHostPath.c_str() : filePath);
     if (mapping->IsValid()) {
@@ -5124,8 +5160,8 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize,
     }
   }
 
-  // ICO thumbnail: render requested virtual frame (in Book Mode) or largest frame cleanly (never Contact Sheet in gallery)
-  if (format == L"ICO" && mappedData && mappedSize > 0 && m_wicFactory) {
+  // ICO/CUR thumbnail: render requested virtual frame (in Book Mode) or largest frame cleanly (never Contact Sheet in gallery)
+  if ((format == L"ICO" || format == L"CUR") && mappedData && mappedSize > 0 && m_wicFactory) {
     std::vector<QuickView::IcoDecoder::IcoEntryInfo> entries;
     if (QuickView::IcoDecoder::ParseDirectory(mappedData, mappedSize, entries) && !entries.empty()) {
       const size_t entryIdx = (isMultiPageVirtual && multiPageIndex < entries.size()) ? multiPageIndex : 0u;
@@ -10771,6 +10807,44 @@ HRESULT CImageLoader::LoadImageUnifiedInternal(LPCWSTR filePath,
                                 result);
   }
 
+  if (fmt == L"PDF") {
+    QuickView::PdfDecoder::PdfPageInfo pdfInfo{};
+    QuickView::RawImageFrame pdfFrame;
+    const uint32_t pageReq = (effCtx.pageIndex == 0xFFFFu) ? 0u : effCtx.pageIndex;
+    HRESULT hrPdf = QuickView::PdfDecoder::RenderPage(
+        actualFilePath, pageReq,
+        QuickView::PdfDecoder::GetDefaultBaseLongEdge(), pdfFrame, &pdfInfo);
+    if (FAILED(hrPdf) || !pdfFrame.pixels) {
+      return FAILED(hrPdf) ? hrPdf : E_FAIL;
+    }
+    const size_t totalBytes = static_cast<size_t>(pdfFrame.stride) * pdfFrame.height;
+    uint8_t* dst = effCtx.allocator
+        ? effCtx.allocator(totalBytes)
+        : static_cast<uint8_t*>(_aligned_malloc(totalBytes, 64));
+    if (!dst) return E_OUTOFMEMORY;
+    std::memcpy(dst, pdfFrame.pixels, totalBytes);
+    result.pixels = dst;
+    result.width = pdfFrame.width;
+    result.height = pdfFrame.height;
+    result.stride = pdfFrame.stride;
+    result.format = pdfFrame.format;
+    result.success = true;
+    result.metadata.Format = L"PDF";
+    result.metadata.PageCount = pdfInfo.pageCount > 0 ? pdfInfo.pageCount : 1u;
+    result.metadata.CurrentPage = (pageReq < result.metadata.PageCount) ? pageReq : 0u;
+    result.metadata.LoaderName = L"Windows.Data.Pdf";
+    result.metadata.Width = static_cast<UINT>(result.width);
+    result.metadata.Height = static_cast<UINT>(result.height);
+    wchar_t detailBuf[96]{};
+    swprintf_s(detailBuf, L"PDF %u pages (%.0fx%.0f pt)",
+               result.metadata.PageCount,
+               pdfInfo.pageWidthDip * 72.0f / 96.0f,
+               pdfInfo.pageHeightDip * 72.0f / 96.0f);
+    result.metadata.FormatDetails = detailBuf;
+    result.metadata.colorInfo = pdfFrame.colorInfo;
+    return S_OK;
+  }
+
   // --- Buffer Based Codecs ---
   // [v6.7] Expanded: Include ALL integrated specialized formats
   bool isBufferCodec = IsUnifiedBufferCodec(fmt) || fmt == L"HEIC";
@@ -11000,7 +11074,7 @@ HRESULT CImageLoader::LoadImageUnifiedInternal(LPCWSTR filePath,
         }
         return hr; // Returns E_NOTIMPL to fallback, other to fail
       }
-      if (fmt == L"ICO") {
+      if (fmt == L"ICO" || fmt == L"CUR") {
         std::vector<QuickView::IcoDecoder::IcoEntryInfo> entries;
         if (QuickView::IcoDecoder::ParseDirectory(mappedData, mappedSize, entries) && !entries.empty()) {
           const bool wantOverview = (effCtx.pageIndex == 0xFFFFu && entries.size() > 1);
@@ -11025,7 +11099,7 @@ HRESULT CImageLoader::LoadImageUnifiedInternal(LPCWSTR filePath,
             result.stride = icoFrame.stride;
             result.format = icoFrame.format;
             result.success = true;
-            result.metadata.Format = L"ICO";
+            result.metadata.Format = fmt;
             result.metadata.PageCount = static_cast<uint32_t>(entries.size());
             result.metadata.CurrentPage = wantOverview ? 0u : ((effCtx.pageIndex < entries.size()) ? effCtx.pageIndex : 0u);
             result.metadata.IsIcoOverview = wantOverview;
@@ -11113,8 +11187,11 @@ HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage *pOutput,
   LPCWSTR pmrResolvedPath = pmrIsMultiPage ? pmrMultiHost.c_str() : filePath;
   if (pmrIsMultiPage) {
     ctx.pageIndex = pmrMultiPageIdx;
-  } else if (DetectFormatFromContent(pmrResolvedPath) == L"ICO") {
-    ctx.pageIndex = 0xFFFFu;
+  } else {
+    const std::wstring pmrFmt = DetectFormatFromContent(pmrResolvedPath);
+    if (pmrFmt == L"ICO" || pmrFmt == L"CUR") {
+      ctx.pageIndex = 0xFFFFu;
+    }
   }
   if (targetWidth > 0) {
     ctx.dpiScale = (std::clamp)(static_cast<float>(targetWidth) / 1400.0f, 1.0f, 2.5f);

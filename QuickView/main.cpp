@@ -10,6 +10,7 @@ static constexpr const char* CURRENT_MODULE = "Main";
 #include "PrintPreviewUI.h"
 #include "ImageLoader.h"
 #include "IcoDecoder.h"
+#include "PdfDecoder.h"
 #include "ImageEngine.h"
 #include "MappedFile.h"
 #include "BootPreloader.h"
@@ -156,6 +157,8 @@ static std::string GetAppVersionUTF8() {
 void SyncDCompState(HWND hwnd, float winW, float winH, bool animate);
 void UpdateTargetColorSpaceForEngine(HWND hwnd);
 void ScheduleDebouncedSuperResolution(HWND hwnd);
+static void SchedulePdfRoiDebounce(HWND hwnd);
+static void ClearPdfRoiOverlay(HWND hwnd);
 
 
 // --- Globals ---
@@ -166,6 +169,7 @@ void ScheduleDebouncedSuperResolution(HWND hwnd);
 #define WM_SR_COMPLETED  (WM_APP + 60)  // [QVX-SR] Background Neural Super-Resolution finished
 #define WM_SR_ANIMATION_COMPLETED (WM_APP + 61) // [QVX-SR] Background Full-Sequence Animation SR finished
 #define WM_SR_PROGRESS   (WM_APP + 64)  // [QVX-SR] UI-marshaled progress & animation step status
+constexpr UINT WM_PDF_ROI_READY = WM_APP + 67;
 #define WM_DEFERRED_BOOT_HYDRATE (WM_APP + 25)
 #define WM_BOOT_FRAME_READY      (WM_APP + 26)
 constexpr UINT WM_DEFERRED_EXPLORER_SYNC = WM_APP + 27;
@@ -175,6 +179,7 @@ constexpr UINT_PTR TIMER_ID_RESTORE_DWM_TRANSITIONS = 993;
 constexpr UINT_PTR TIMER_ID_SR_DEBOUNCE = 3001;
 constexpr UINT_PTR TIMER_ID_UPDATE_CHECK = 3002;
 constexpr UINT_PTR TIMER_ID_MARQUEE = 3003;
+constexpr UINT_PTR TIMER_ID_PDF_ROI_DEBOUNCE = 3004;
 
 bool g_isBootingWithImage = false;
 bool g_waitingBootFrame = false;
@@ -1038,6 +1043,8 @@ static bool IsReadOnlyContainerForTransform(const PaneContext& pane) {
            pane.path.find(L'|') != std::wstring::npos ||
            pane.metadata.PageCount > 1 ||
            pane.metadata.IsIcoOverview ||
+           pane.metadata.Format == L"PDF" ||
+           QuickView::IsDocumentPath(pane.path) ||
            (!pane.path.empty() && QuickView::IsArchivePath(pane.path));
 }
 
@@ -2815,6 +2822,55 @@ static bool IsActiveTitanBitmapView(const CImageLoader::ImageMetadata& meta) {
     return false;
 }
 
+struct PdfRoiState {
+    std::atomic<uint64_t> generation{0};
+
+    std::mutex pendingMutex;
+    std::shared_ptr<QuickView::RawImageFrame> pendingFrame;
+    float pendingScreenX = 0.0f;
+    float pendingScreenY = 0.0f;
+    float pendingScreenW = 0.0f;
+    float pendingScreenH = 0.0f;
+    float pendingRotation = 0.0f;
+    bool pendingFlipH = false;
+    bool pendingFlipV = false;
+    std::wstring pendingPath;
+    uint64_t pendingGen = 0;
+
+    float lastSchedZoom = 0.0f;
+    float lastSchedPanX = 0.0f;
+    float lastSchedPanY = 0.0f;
+    float lastSchedRot = 0.0f;
+    UINT lastSchedWinW = 0;
+    UINT lastSchedWinH = 0;
+    std::wstring lastSchedPath;
+};
+static PdfRoiState g_pdfRoi;
+static std::wstring g_pdfAutoEnteredBookHost;
+
+static void ClearPdfRoiOverlay(HWND hwnd) {
+    if (hwnd) {
+        KillTimer(hwnd, TIMER_ID_PDF_ROI_DEBOUNCE);
+    }
+    g_pdfRoi.generation.fetch_add(1, std::memory_order_acq_rel);
+    if (g_compEngine && g_compEngine->IsInitialized()) {
+        g_compEngine->HidePdfRoiOverlay(true);
+    }
+    g_pdfRoi.lastSchedZoom = 0.0f;
+    g_pdfRoi.lastSchedPanX = 0.0f;
+    g_pdfRoi.lastSchedPanY = 0.0f;
+    g_pdfRoi.lastSchedRot = 0.0f;
+    g_pdfRoi.lastSchedWinW = 0;
+    g_pdfRoi.lastSchedWinH = 0;
+    g_pdfRoi.lastSchedPath.clear();
+    {
+        std::lock_guard<std::mutex> lock(g_pdfRoi.pendingMutex);
+        g_pdfRoi.pendingFrame.reset();
+        g_pdfRoi.pendingPath.clear();
+        g_pdfRoi.pendingGen = 0;
+    }
+}
+
 static D2D1_SIZE_U ComputeDesiredBitmapSurfaceSize(UINT winW, UINT winH, const ImageResource& res, bool allowDownsampling = false, float downsampleScale = 1.0f) {
     if (!res.bitmap || res.isSvg) return D2D1::SizeU(0, 0);
     if (winW == 0 || winH == 0) return D2D1::SizeU(0, 0);
@@ -3271,6 +3327,8 @@ static void CancelActiveSuperResolution(HWND hwnd);
 
 void ReleaseImageResources() {
     CancelActiveSuperResolution(g_mainHwnd);
+    ClearPdfRoiOverlay(g_mainHwnd);
+    QuickView::PdfDecoder::ClearDocumentCache();
     GetPaneContext(PaneSlot::Primary).resource.Reset();
     Sleep(50);
 }
@@ -3929,8 +3987,25 @@ static void SyncMultiPageAndIcoToolbar(HWND hwnd, const std::wstring& path, cons
 
     const std::wstring physical = FileNavigator::GetPhysicalPath(path);
     const bool onArchiveItem = isArchive || (isArchiveParent && (path.find(L'|') != std::wstring::npos ||
-        (nav.Index() >= 0 && nav.Index() < (int)nav.Count() && QuickView::IsArchivePath(nav.GetFile(nav.Index())))));
+        (nav.Index() >= 0 && nav.Index() < (int)nav.Count() && QuickView::IsNonImageDocumentPath(nav.GetFile(nav.Index())))));
     const bool isMultiPageImage = (!isArchive && meta.PageCount > 1);
+    const bool isIcoOrCur = (meta.Format == L"ICO" || meta.Format == L"CUR");
+    if (!isPreview && meta.Format == L"PDF" && meta.PageCount >= 1 && !isArchive && !physical.empty()) {
+        if (!nav.IsBookModeActive() && !nav.IsArchiveParentBrowse() && !nav.IsDocumentOnlyScan() &&
+            _wcsicmp(g_pdfAutoEnteredBookHost.c_str(), physical.c_str()) != 0) {
+            g_pdfAutoEnteredBookHost = physical;
+            if (nav.EnterMultiPageBookMode(physical, meta.PageCount, meta.CurrentPage, true)) {
+                GetPaneContext(PaneSlot::Primary).path = nav.GetFile(nav.Index());
+                if (g_gallery.IsVisible()) {
+                    g_gallery.Initialize(&g_thumbMgr, &nav);
+                    g_gallery.Open((std::max)(nav.Index(), 0), g_gallery.GetMode(), g_gallery.IsPinned());
+                }
+            }
+        }
+    } else if (!isPreview && meta.Format != L"PDF") {
+        g_pdfAutoEnteredBookHost.clear();
+    }
+
     if (isArchive) {
         const uint32_t cur = nav.Index() >= 0 ? static_cast<uint32_t>(nav.Index()) : 0u;
         const uint32_t tot = static_cast<uint32_t>((std::max<size_t>)(1, nav.Count()));
@@ -3939,6 +4014,9 @@ static void SyncMultiPageAndIcoToolbar(HWND hwnd, const std::wstring& path, cons
     } else if (onArchiveItem) {
         g_toolbar.SetBookModeState(true, false, 0, 1);
         ApplyBookModeWindowLock(hwnd, false);
+    } else if (meta.Format == L"PDF" && nav.IsBookModeActive()) {
+        g_toolbar.SetBookModeState(true, true, meta.CurrentPage, meta.PageCount);
+        ApplyBookModeWindowLock(hwnd, true);
     } else if (isMultiPageImage) {
         g_toolbar.SetBookModeState(true, nav.IsBookModeActive(), meta.CurrentPage, meta.PageCount);
         ApplyBookModeWindowLock(hwnd, nav.IsBookModeActive());
@@ -3947,7 +4025,7 @@ static void SyncMultiPageAndIcoToolbar(HWND hwnd, const std::wstring& path, cons
         ApplyBookModeWindowLock(hwnd, false);
     }
 
-    if (!isPreview && meta.Format == L"ICO" && meta.PageCount > 1) {
+    if (!isPreview && isIcoOrCur && meta.PageCount > 1) {
         if (_wcsicmp(g_currentIcoHostPath.c_str(), physical.c_str()) != 0 || g_currentIcoEntries.empty()) {
             QuickView::MappedFile mf(physical.c_str());
             if (mf.IsValid() && mf.data() && mf.size() > 0) {
@@ -3966,14 +4044,16 @@ static void SyncMultiPageAndIcoToolbar(HWND hwnd, const std::wstring& path, cons
         if (_wcsicmp(g_lastMultiPageOsdHost.c_str(), physical.c_str()) != 0) {
             g_lastMultiPageOsdHost = physical;
             wchar_t osdBuf[96]{};
-            if (meta.Format == L"ICO") {
-                swprintf_s(osdBuf, L"ICO \x00B7 %u sizes (Alt+\u2190/\u2192)", meta.PageCount);
+            if (isIcoOrCur) {
+                swprintf_s(osdBuf, L"%s \x00B7 %u sizes (Alt+\u2190/\u2192)", meta.Format.c_str(), meta.PageCount);
+            } else if (meta.Format == L"PDF") {
+                swprintf_s(osdBuf, L"PDF \x00B7 %u / %u (Alt+\u2190/\u2192)", meta.CurrentPage + 1, meta.PageCount);
             } else {
                 swprintf_s(osdBuf, L"TIFF \x00B7 %u / %u (Alt+\u2190/\u2192)", meta.CurrentPage + 1, meta.PageCount);
             }
             g_osd.Show(hwnd, osdBuf, false);
         }
-    } else if (!isPreview && meta.PageCount <= 1 && meta.Format != L"ICO") {
+    } else if (!isPreview && meta.PageCount <= 1 && !isIcoOrCur) {
         g_lastMultiPageOsdHost.clear();
     }
 }
@@ -8575,6 +8655,7 @@ void SyncDCompState([[maybe_unused]] HWND hwnd, float winW, float winH, [[maybe_
     g_compEngine->UpdateBackground(winW, winH, bgColor, showGrid);
 
     if (IsCompareModeActive()) {
+        ClearPdfRoiOverlay(hwnd);
         AppContext::GetInstance().ZoomAnimCtrl->Reset();
         VisualState vs{};
         vs.PhysicalSize = D2D1::SizeF(winW, winH);
@@ -8681,11 +8762,149 @@ void SyncDCompState([[maybe_unused]] HWND hwnd, float winW, float winH, [[maybe_
                 }
                 DCOMPOSITION_BITMAP_INTERPOLATION_MODE interpMode = GetOptimalDCompInterpolationMode(displayZoom, origW, origH);
                 g_compEngine->SetImageInterpolationMode(interpMode);
+                SchedulePdfRoiDebounce(hwnd);
             }
         }
     } else {
         AppContext::GetInstance().ZoomAnimCtrl->Reset();
     }
+}
+
+static void SchedulePdfRoiDebounce(HWND hwnd) {
+    if (!hwnd || IsCompareModeActive()) return;
+    const auto& pane = GetPaneContext(PaneSlot::Primary);
+    if (pane.metadata.Format != L"PDF" || !pane.resource.bitmap) {
+        return;
+    }
+    ImageDisplayMetrics metrics{};
+    if (!GetPrimaryImageDisplayMetrics(hwnd, metrics) || !metrics.valid) return;
+
+    if (metrics.totalScale <= 1.02f) {
+        KillTimer(hwnd, TIMER_ID_PDF_ROI_DEBOUNCE);
+        g_pdfRoi.generation.fetch_add(1, std::memory_order_acq_rel);
+        if (g_compEngine && g_compEngine->IsInitialized()) {
+            g_compEngine->HidePdfRoiOverlay(true);
+            g_compEngine->Commit();
+        }
+        g_pdfRoi.lastSchedPath.clear();
+        return;
+    }
+
+    const VisualState vs = GetVisualState();
+    const UINT uWinW = static_cast<UINT>(metrics.winW);
+    const UINT uWinH = static_cast<UINT>(metrics.effWinH);
+    const bool viewChanged =
+        g_pdfRoi.lastSchedPath != pane.path ||
+        fabsf(metrics.totalScale - g_pdfRoi.lastSchedZoom) > 1e-3f ||
+        fabsf(metrics.imgDrawX - g_pdfRoi.lastSchedPanX) > 0.5f ||
+        fabsf(metrics.imgDrawY - g_pdfRoi.lastSchedPanY) > 0.5f ||
+        fabsf(vs.TotalRotation - g_pdfRoi.lastSchedRot) > 0.5f ||
+        uWinW != g_pdfRoi.lastSchedWinW ||
+        uWinH != g_pdfRoi.lastSchedWinH;
+    if (!viewChanged) return;
+
+    // Immediately switch back to the 120fps base layer while panning/zooming
+    if (g_compEngine && g_compEngine->IsInitialized()) {
+        g_compEngine->HidePdfRoiOverlay(false);
+        g_compEngine->Commit();
+    }
+
+    g_pdfRoi.lastSchedPath = pane.path;
+    g_pdfRoi.lastSchedZoom = metrics.totalScale;
+    g_pdfRoi.lastSchedPanX = metrics.imgDrawX;
+    g_pdfRoi.lastSchedPanY = metrics.imgDrawY;
+    g_pdfRoi.lastSchedRot = vs.TotalRotation;
+    g_pdfRoi.lastSchedWinW = uWinW;
+    g_pdfRoi.lastSchedWinH = uWinH;
+    SetTimer(hwnd, TIMER_ID_PDF_ROI_DEBOUNCE, 120, nullptr);
+}
+
+static void TriggerDebouncedPdfRoi(HWND hwnd) {
+    if (!hwnd || !IsWindow(hwnd) || IsCompareModeActive()) return;
+    const auto& pane = GetPaneContext(PaneSlot::Primary);
+    if (pane.metadata.Format != L"PDF" || !pane.resource.bitmap || pane.path.empty()) return;
+
+    ImageDisplayMetrics metrics{};
+    if (!GetPrimaryImageDisplayMetrics(hwnd, metrics) || !metrics.valid) return;
+    const float screenPerBase = metrics.totalScale;
+    if (screenPerBase <= 1.02f) return;
+
+    const VisualState vs = GetVisualState();
+    const D2D1_SIZE_F physSize = pane.resource.GetSize();
+    if (physSize.width <= 0.0f || physSize.height <= 0.0f ||
+        metrics.visualW <= 0.0f || metrics.visualH <= 0.0f) {
+        return;
+    }
+
+    const float imgLeftScreen = metrics.imgDrawX;
+    const float imgTopScreen = metrics.imgDrawY;
+    const float imgRightScreen = imgLeftScreen + metrics.visualW * screenPerBase;
+    const float imgBottomScreen = imgTopScreen + metrics.visualH * screenPerBase;
+
+    const float screenL = std::floor((std::max)(0.0f, imgLeftScreen));
+    const float screenT = std::floor((std::max)(0.0f, imgTopScreen));
+    const float screenR = std::ceil((std::min)(metrics.winW, imgRightScreen));
+    const float screenB = std::ceil((std::min)(metrics.effWinH, imgBottomScreen));
+    const float screenW = screenR - screenL;
+    const float screenH = screenB - screenT;
+    if (screenW < 4.0f || screenH < 4.0f) return;
+
+    const float vL = std::clamp((screenL - metrics.imgDrawX) / screenPerBase, 0.0f, metrics.visualW);
+    const float vT = std::clamp((screenT - metrics.imgDrawY) / screenPerBase, 0.0f, metrics.visualH);
+    const float vR = std::clamp((screenR - metrics.imgDrawX) / screenPerBase, 0.0f, metrics.visualW);
+    const float vB = std::clamp((screenB - metrics.imgDrawY) / screenPerBase, 0.0f, metrics.visualH);
+    if (vR <= vL + 0.5f || vB <= vT + 0.5f) return;
+
+    const D2D1_RECT_F physRect = MapVisualRectToPhysicalRect(
+        D2D1::RectF(vL, vT, vR, vB), physSize,
+        static_cast<int>(vs.TotalRotation), vs.FlipX < 0.0f, vs.FlipY < 0.0f);
+    const D2D1_RECT_F normRect = D2D1::RectF(
+        std::clamp(physRect.left / physSize.width, 0.0f, 0.999f),
+        std::clamp(physRect.top / physSize.height, 0.0f, 0.999f),
+        std::clamp(physRect.right / physSize.width, 0.001f, 1.0f),
+        std::clamp(physRect.bottom / physSize.height, 0.001f, 1.0f));
+    if (normRect.right <= normRect.left + 0.0005f || normRect.bottom <= normRect.top + 0.0005f) return;
+
+    const float unrotScreenW = vs.IsRotated90 ? screenH : screenW;
+    const float unrotScreenH = vs.IsRotated90 ? screenW : screenH;
+    const uint32_t destW = static_cast<uint32_t>(std::clamp<long>(
+        std::lround(unrotScreenW), 16L, static_cast<long>(QuickView::PdfDecoder::kMaxRoiAxisPixels)));
+    const uint32_t destH = static_cast<uint32_t>(std::clamp<long>(
+        std::lround(unrotScreenH), 16L, static_cast<long>(QuickView::PdfDecoder::kMaxRoiAxisPixels)));
+
+    const std::wstring physicalPath = FileNavigator::GetPhysicalPath(pane.path);
+    if (physicalPath.empty()) return;
+    const uint32_t pageIdx = pane.metadata.CurrentPage;
+    const std::wstring pagePath = pane.path;
+    const float rotDeg = vs.TotalRotation;
+    const bool flipH = (vs.FlipX < 0.0f);
+    const bool flipV = (vs.FlipY < 0.0f);
+    const uint64_t gen = g_pdfRoi.generation.fetch_add(1, std::memory_order_acq_rel) + 1;
+
+    std::thread([hwnd, physicalPath, pageIdx, pagePath, normRect, destW, destH, screenL, screenT, screenW, screenH, rotDeg, flipH, flipV, gen]() {
+        auto frame = std::make_shared<QuickView::RawImageFrame>();
+        HRESULT hr = QuickView::PdfDecoder::RenderPageRoi(
+            physicalPath.c_str(), pageIdx, normRect, destW, destH, *frame);
+        if (FAILED(hr) || !frame->IsValid()) return;
+        if (g_pdfRoi.generation.load(std::memory_order_acquire) != gen) return;
+        {
+            std::lock_guard<std::mutex> lock(g_pdfRoi.pendingMutex);
+            if (g_pdfRoi.generation.load(std::memory_order_acquire) != gen) return;
+            g_pdfRoi.pendingFrame = std::move(frame);
+            g_pdfRoi.pendingScreenX = screenL;
+            g_pdfRoi.pendingScreenY = screenT;
+            g_pdfRoi.pendingScreenW = screenW;
+            g_pdfRoi.pendingScreenH = screenH;
+            g_pdfRoi.pendingRotation = rotDeg;
+            g_pdfRoi.pendingFlipH = flipH;
+            g_pdfRoi.pendingFlipV = flipV;
+            g_pdfRoi.pendingPath = pagePath;
+            g_pdfRoi.pendingGen = gen;
+        }
+        if (IsWindow(hwnd)) {
+            PostMessageW(hwnd, WM_PDF_ROI_READY, 0, 0);
+        }
+    }).detach();
 }
 
 // [Fix] Draw Internal Background (Grid/Color) explicitly.
@@ -10864,6 +11083,10 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
 
         const bool contextLeft = IsCompareContextLeft();
         const std::wstring& contextPath = contextLeft ? GetPaneContext(PaneSlot::Left).path : GetPaneContext(PaneSlot::Primary).path;
+        const std::wstring physicalContextPath = FileNavigator::GetPhysicalPath(contextPath);
+        const bool isBookModeContext = contextLeft
+            ? GetPaneContext(PaneSlot::Left).navigator.IsBookModeActive()
+            : GetPaneContext(PaneSlot::Primary).navigator.IsBookModeActive();
         const CImageLoader::ImageMetadata& contextMeta = contextLeft ? GetPaneContext(PaneSlot::Left).metadata : GetPaneContext(PaneSlot::Primary).metadata;
 
         if (wmId == IDM_ENTER_CROP_MODE) {
@@ -10945,6 +11168,9 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
         case IDM_GALLERY_DELETE: {
             if (g_galleryContextMenuIndex >= 0 && g_galleryContextMenuIndex < (int)GetPaneContext(PaneSlot::Primary).navigator.Count()) {
                 std::wstring recycleTarget = GetPaneContext(PaneSlot::Primary).navigator.GetFile(g_galleryContextMenuIndex);
+                if (recycleTarget.find(L'|') != std::wstring::npos) {
+                    break; // Do not recycle host containers from virtual page entries
+                }
                 if (!recycleTarget.empty()) {
                     // Check RAW+JPEG Pairing for the target gallery item using direct ImageID
                     std::wstring renderedPath, rawPath;
@@ -11032,7 +11258,15 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
             ofn.hwndOwner = hwnd;
             ofn.lpstrFile = szFile;
             ofn.nMaxFile = MAX_PATH;
-            std::wstring filterStr = QuickView::GetSupportedExtensionsFilter();
+            const wchar_t* catLabels[static_cast<size_t>(QuickView::AssocExtCategory::Count)] = {
+                AppStrings::g.Settings_Label_FileAssocCatStandard,
+                AppStrings::g.Settings_Label_FileAssocCatModern,
+                AppStrings::g.Settings_Label_FileAssocCatPro,
+                AppStrings::g.Settings_Label_FileAssocCatRaw,
+                AppStrings::g.Settings_Label_FileAssocCatExtRaw,
+                AppStrings::g.Settings_Label_FileAssocCatArchive,
+            };
+            std::wstring filterStr = QuickView::GetSupportedExtensionsFilter(catLabels);
             ofn.lpstrFilter = filterStr.c_str();
             ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
                 if (GetOpenFileNameW(&ofn)) {
@@ -11058,21 +11292,28 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
         }
         case IDM_OPENWITH_DEFAULT: {
             if (!CheckUnsavedChanges(hwnd)) break;
-            // Use rundll32 to show proper "Open With" dialog
-            if (!contextPath.empty()) {
-                std::wstring args = L"shell32.dll,OpenAs_RunDLL " + contextPath;
-                ShellExecuteW(hwnd, nullptr, L"rundll32.exe", args.c_str(), nullptr, SW_SHOWNORMAL);
+            // Use native SHOpenWithDialog on the physical host path, with rundll32 fallback
+            if (!physicalContextPath.empty()) {
+                OPENASINFO oai = {};
+                oai.pcszFile = physicalContextPath.c_str();
+                oai.pcszClass = nullptr;
+                oai.oaifInFlags = OAIF_ALLOW_REGISTRATION | OAIF_EXEC;
+                HRESULT hrOpenWith = SHOpenWithDialog(hwnd, &oai);
+                if (FAILED(hrOpenWith) && hrOpenWith != HRESULT_FROM_WIN32(ERROR_CANCELLED)) {
+                    std::wstring args = L"shell32.dll,OpenAs_RunDLL " + physicalContextPath;
+                    ShellExecuteW(hwnd, nullptr, L"rundll32.exe", args.c_str(), nullptr, SW_SHOWNORMAL);
+                }
             }
             break;
         }
         case IDM_EDIT: {
             if (!CheckUnsavedChanges(hwnd)) break;
             // Open with default editor (use "edit" verb, fallback to mspaint)
-            if (!contextPath.empty()) {
+            if (!physicalContextPath.empty()) {
                 bool customEditorFailed = false;
                 if (!g_config.CustomEditorPath.empty()) {
                     // Try to launch the custom editor
-                    std::wstring args = L"\"" + contextPath + L"\"";
+                    std::wstring args = L"\"" + physicalContextPath + L"\"";
                     HINSTANCE result = ShellExecuteW(hwnd, L"open", g_config.CustomEditorPath.c_str(), args.c_str(), nullptr, SW_SHOWNORMAL);
                     if ((intptr_t)result <= 32) {
                         customEditorFailed = true;
@@ -11087,10 +11328,10 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
                 }
 
                 if (g_config.CustomEditorPath.empty() && !customEditorFailed) {
-                    HINSTANCE result = ShellExecuteW(hwnd, L"edit", contextPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                    HINSTANCE result = ShellExecuteW(hwnd, L"edit", physicalContextPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
                     if ((intptr_t)result <= 32) {
                         // No editor registered, try mspaint
-                        std::wstring quotedPath = L"\"" + contextPath + L"\"";
+                        std::wstring quotedPath = L"\"" + physicalContextPath + L"\"";
                         ShellExecuteW(hwnd, L"open", L"mspaint.exe", quotedPath.c_str(), nullptr, SW_SHOWNORMAL);
                     }
                 }
@@ -11099,15 +11340,15 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
         }
         case IDM_SHOW_IN_EXPLORER: {
             if (!CheckUnsavedChanges(hwnd)) break;
-            if (!contextPath.empty()) {
-                std::wstring cmd = L"/select,\"" + contextPath + L"\"";
+            if (!physicalContextPath.empty()) {
+                std::wstring cmd = L"/select,\"" + physicalContextPath + L"\"";
                 ShellExecuteW(nullptr, nullptr, L"explorer.exe", cmd.c_str(), nullptr, SW_SHOWNORMAL);
             }
             break;
         }
         case IDM_OPEN_FOLDER: {
             if (!CheckUnsavedChanges(hwnd)) break;
-            const std::wstring selectedFolder = PickFolder(hwnd, contextPath);
+            const std::wstring selectedFolder = PickFolder(hwnd, physicalContextPath);
             if (!selectedFolder.empty()) {
                 OpenPathOrDirectory(hwnd, selectedFolder);
             }
@@ -11115,7 +11356,7 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
         }
         case IDM_COPY_PATH: {
             if (!CheckUnsavedChanges(hwnd)) break;
-            std::wstring pathToCopy = contextPath;
+            std::wstring pathToCopy = physicalContextPath;
             
             if (!pathToCopy.empty() && OpenClipboard(hwnd)) {
                 EmptyClipboard();
@@ -11239,7 +11480,8 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
         }
         case IDM_COPY_FILE: {
             if (!CheckUnsavedChanges(hwnd)) break;
-            std::wstring targetPath = !contextPath.empty() ? contextPath : (!GetPaneContext(PaneSlot::Primary).path.empty() ? GetPaneContext(PaneSlot::Primary).path : g_imagePath);
+            std::wstring rawTargetPath = !contextPath.empty() ? contextPath : (!GetPaneContext(PaneSlot::Primary).path.empty() ? GetPaneContext(PaneSlot::Primary).path : g_imagePath);
+            std::wstring targetPath = FileNavigator::GetPhysicalPath(rawTargetPath);
             if (!targetPath.empty() && OpenClipboard(hwnd)) {
                 EmptyClipboard();
                 
@@ -11337,16 +11579,18 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
             break;
         }
         case IDM_RENAME: {
+            if (isBookModeContext) break;
             if (!CheckUnsavedChanges(hwnd)) break;
             if (IsCompareModeActive() && AppContext::GetInstance().Compare.contextPane == ComparePane::Left && !GetPaneContext(PaneSlot::Left).path.empty()) {
+                const std::wstring leftPhysicalPath = FileNavigator::GetPhysicalPath(GetPaneContext(PaneSlot::Left).path);
                 std::wstring currentFolder = L"";
                 std::wstring currentName = L"";
-                size_t lastSlash = GetPaneContext(PaneSlot::Left).path.find_last_of(L"\\/");
+                size_t lastSlash = leftPhysicalPath.find_last_of(L"\\/");
                 if (lastSlash != std::wstring::npos) {
-                    currentFolder = GetPaneContext(PaneSlot::Left).path.substr(0, lastSlash + 1);
-                    currentName = GetPaneContext(PaneSlot::Left).path.substr(lastSlash + 1);
+                    currentFolder = leftPhysicalPath.substr(0, lastSlash + 1);
+                    currentName = leftPhysicalPath.substr(lastSlash + 1);
                 } else {
-                    currentName = GetPaneContext(PaneSlot::Left).path;
+                    currentName = leftPhysicalPath;
                 }
 
                 AppContext::GetInstance().CompareCtrl->CenterDialogOnPaneIfNeeded(hwnd, ComparePane::Left);
@@ -11367,7 +11611,7 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
 
                 if (!newName.empty() && newName != currentName) {
                     std::wstring newPath = currentFolder + newName;
-                    std::wstring oldPath = GetPaneContext(PaneSlot::Left).path;
+                    std::wstring oldPath = leftPhysicalPath;
                     if (MoveFileW(oldPath.c_str(), newPath.c_str())) {
                         g_undoManager.PushRename(oldPath, newPath, true);
                         AppContext::GetInstance().CompareCtrl->LoadImageIntoLeftSlot(hwnd, newPath, CompareSlotCallback(
@@ -11389,10 +11633,11 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
             }
 
             if (!GetPaneContext(PaneSlot::Primary).path.empty()) {
+                const std::wstring primaryPhysicalPath = FileNavigator::GetPhysicalPath(GetPaneContext(PaneSlot::Primary).path);
                 // [RAW+JPEG Pairing] Route folded pairs to HandlePairedRename
                 if (!IsCompareModeActive()) {
                     auto& nav = GetPaneContext(PaneSlot::Primary).navigator;
-                    const std::wstring cur = GetPaneContext(PaneSlot::Primary).path;
+                    const std::wstring cur = primaryPhysicalPath;
                     std::wstring renderedPath, rawPath;
                     if (const auto* pr = nav.GetPairedRaw(FileNavigator::PathToImageID(cur))) {
                         renderedPath = cur;                       // viewing the rendered face
@@ -11410,12 +11655,12 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
 
                 std::wstring currentFolder = L"";
                 std::wstring currentName = L"";
-                size_t lastSlash = GetPaneContext(PaneSlot::Primary).path.find_last_of(L"\\/");
+                size_t lastSlash = primaryPhysicalPath.find_last_of(L"\\/");
                 if (lastSlash != std::wstring::npos) {
-                    currentFolder = GetPaneContext(PaneSlot::Primary).path.substr(0, lastSlash + 1);
-                    currentName = GetPaneContext(PaneSlot::Primary).path.substr(lastSlash + 1);
+                    currentFolder = primaryPhysicalPath.substr(0, lastSlash + 1);
+                    currentName = primaryPhysicalPath.substr(lastSlash + 1);
                 } else {
-                    currentName = GetPaneContext(PaneSlot::Primary).path;
+                    currentName = primaryPhysicalPath;
                 }
                 
                 // Show Input Dialog
@@ -11443,7 +11688,7 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
                     // Release resources before rename (Critical)
                     ReleaseImageResources();
                     
-                    std::wstring oldPath = GetPaneContext(PaneSlot::Primary).path;
+                    std::wstring oldPath = primaryPhysicalPath;
                     if (MoveFileW(oldPath.c_str(), newPath.c_str())) {
                         g_undoManager.PushRename(oldPath, newPath, false);
                         GetPaneContext(PaneSlot::Primary).path = newPath;
@@ -11468,8 +11713,9 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
             break;
         }
         case IDM_DELETE: {
+            if (isBookModeContext) break;
             if (IsCompareModeActive() && AppContext::GetInstance().Compare.contextPane == ComparePane::Left && !GetPaneContext(PaneSlot::Left).path.empty()) {
-                std::wstring recycleTarget = GetPaneContext(PaneSlot::Left).path;
+                std::wstring recycleTarget = FileNavigator::GetPhysicalPath(GetPaneContext(PaneSlot::Left).path);
                 size_t lastSlash = recycleTarget.find_last_of(L"\\/");
                 std::wstring filename = (lastSlash != std::wstring::npos) ? recycleTarget.substr(lastSlash + 1) : recycleTarget;
                 auto& leftNavigator = GetPaneContext(PaneSlot::Left).navigator;
@@ -11572,12 +11818,12 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
 
             // [v9.9 Fix] Handle Deletion during Edit/Transform
             // Determine actual target to recycle and temp file to map
-            std::wstring recycleTarget = GetPaneContext(PaneSlot::Primary).path;
+            std::wstring recycleTarget = FileNavigator::GetPhysicalPath(GetPaneContext(PaneSlot::Primary).path);
             std::wstring tempToDelete = L"";
             
             if (!GetPaneContext(PaneSlot::Primary).editState.OriginalFilePath.empty()) {
                 // We are in edit mode (Rotate/Flip), so target is the ORIGINAL file
-                recycleTarget = GetPaneContext(PaneSlot::Primary).editState.OriginalFilePath;
+                recycleTarget = FileNavigator::GetPhysicalPath(GetPaneContext(PaneSlot::Primary).editState.OriginalFilePath);
                 // And we must cleanup the temp file too
                 tempToDelete = GetPaneContext(PaneSlot::Primary).editState.TempFilePath;
             }
@@ -12735,7 +12981,10 @@ static void ShowContextMenuAtClientPt(HWND hwnd, POINT ptClient) {
     }
 
     bool isAnimated = GetPaneContext(PaneSlot::Primary).resource.IsAnimated();
-    ShowContextMenu(hwnd, pt, hasImage, extensionFixNeeded, g_runtime.LockWindowSize, g_runtime.ShowInfoPanel, g_runtime.InfoPanelExpanded, g_config.AlwaysOnTop, renderRaw, isRaw, IsZoomed(hwnd) != 0, g_runtime.CrossMonitorMode, IsCompareModeActive(), isAnimated, isPixelArtMode, menuCmsMode, menuEnableSoftProofing, menuSoftProofPath);
+    const bool isContextBookMode = contextLeft
+        ? GetPaneContext(PaneSlot::Left).navigator.IsBookModeActive()
+        : GetPaneContext(PaneSlot::Primary).navigator.IsBookModeActive();
+    ShowContextMenu(hwnd, pt, hasImage, extensionFixNeeded, g_runtime.LockWindowSize, g_runtime.ShowInfoPanel, g_runtime.InfoPanelExpanded, g_config.AlwaysOnTop, renderRaw, isRaw, IsZoomed(hwnd) != 0, g_runtime.CrossMonitorMode, IsCompareModeActive(), isAnimated, isPixelArtMode, menuCmsMode, menuEnableSoftProofing, menuSoftProofPath, isContextBookMode);
     SyncDecodeProgressTimer(hwnd);
 }
 
@@ -13582,6 +13831,40 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
 
+    case WM_PDF_ROI_READY: {
+        std::shared_ptr<QuickView::RawImageFrame> frame;
+        float sx = 0.0f, sy = 0.0f, sw = 0.0f, sh = 0.0f, rotDeg = 0.0f;
+        bool flipH = false, flipV = false;
+        std::wstring path;
+        uint64_t gen = 0;
+        {
+            std::lock_guard<std::mutex> lock(g_pdfRoi.pendingMutex);
+            frame = std::move(g_pdfRoi.pendingFrame);
+            sx = g_pdfRoi.pendingScreenX;
+            sy = g_pdfRoi.pendingScreenY;
+            sw = g_pdfRoi.pendingScreenW;
+            sh = g_pdfRoi.pendingScreenH;
+            rotDeg = g_pdfRoi.pendingRotation;
+            flipH = g_pdfRoi.pendingFlipH;
+            flipV = g_pdfRoi.pendingFlipV;
+            path = std::move(g_pdfRoi.pendingPath);
+            gen = g_pdfRoi.pendingGen;
+            g_pdfRoi.pendingGen = 0;
+        }
+        if (frame && frame->IsValid() &&
+            gen == g_pdfRoi.generation.load(std::memory_order_acquire) &&
+            !IsCompareModeActive() &&
+            GetPaneContext(PaneSlot::Primary).metadata.Format == L"PDF" &&
+            GetPaneContext(PaneSlot::Primary).path == path &&
+            GetPaneContext(PaneSlot::Primary).resource.bitmap &&
+            g_compEngine && g_compEngine->IsInitialized()) {
+            if (SUCCEEDED(g_compEngine->UpdatePdfRoiOverlay(*frame, sx, sy, sw, sh, rotDeg, flipH, flipV))) {
+                g_compEngine->Commit();
+            }
+        }
+        return 0;
+    }
+
     // [Async Anim Seek]
     case WM_APP + 22: { // WM_ANIM_SEEK_READY
         extern float g_pendingAsyncSeekTarget;
@@ -14379,6 +14662,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             return 0;
         }
 
+        if (wParam == TIMER_ID_PDF_ROI_DEBOUNCE) {
+            KillTimer(hwnd, TIMER_ID_PDF_ROI_DEBOUNCE);
+            TriggerDebouncedPdfRoi(hwnd);
+            return 0;
+        }
+
         if (wParam == TIMER_ID_UPDATE_CHECK) {
             KillTimer(hwnd, TIMER_ID_UPDATE_CHECK);
             if (!SystemInfo::IsPackagedApp() && g_config.CheckUpdates) {
@@ -15084,6 +15373,8 @@ case WM_DESTROY: {
             }
             g_thumbMgr.Shutdown();
             g_ratingStore.Shutdown();
+            ClearPdfRoiOverlay(hwnd);
+            QuickView::PdfDecoder::ReleaseResources();
             QuickView::WebViewThumbService::Instance().Shutdown();
             PostQuitMessage(0);
             return 0;
@@ -20077,6 +20368,7 @@ static void EnqueuePhase2NavigationTask(
 void StartNavigation(HWND hwnd, std::wstring path, [[maybe_unused]] bool showOSD, QuickView::BrowseDirection dir) {
 
     if (!g_imageEngine || path.empty()) return;
+    ClearPdfRoiOverlay(hwnd);
     ViewPan_Stop(hwnd, false);
     g_waitingBootFrame = false;
     g_needsInitialPresentationReset = !g_preserveViewStateOnNextLoad;
@@ -21459,7 +21751,7 @@ void NavigateToMultiPage(HWND hwnd, uint32_t targetPage) {
         targetPage,
         pane.metadata.PageCount);
     RequestRepaint(PaintLayer::Static | PaintLayer::Dynamic);
-    if (pane.metadata.Format == L"ICO") {
+    if (pane.metadata.Format == L"ICO" || pane.metadata.Format == L"CUR") {
         if (pane.navigator.IsBookModeActive() && pane.navigator.GetArchive() == nullptr) {
             pane.navigator.SetIndex(static_cast<int>(targetPage));
         }
@@ -21507,7 +21799,7 @@ void HandlePageOrFrameStep(HWND hwnd, bool forward) {
     }
     if (pane.metadata.PageCount <= 1) return;
     const int total = static_cast<int>(pane.metadata.PageCount);
-    if (pane.metadata.Format == L"ICO") {
+    if (pane.metadata.Format == L"ICO" || pane.metadata.Format == L"CUR") {
         const int cur = pane.metadata.IsIcoOverview ? -1 : static_cast<int>(pane.metadata.CurrentPage);
         int next = forward ? (cur + 1) : (cur - 1);
         if (next >= total) next = -1;
@@ -21543,13 +21835,19 @@ void ToggleBookMode(HWND hwnd) {
 
     if (nav.IsBookModeActive()) {
         const bool wasArchive = (nav.GetArchive() != nullptr);
-        const bool wasIco = (!wasArchive && pane.metadata.Format == L"ICO");
+        const bool wasDocument = (!wasArchive && QuickView::IsDocumentPath(nav.GetBookHostPath()));
+        const bool wasArchiveOrDoc = wasArchive || wasDocument;
+        const bool wasIco = (!wasArchive && (pane.metadata.Format == L"ICO" || pane.metadata.Format == L"CUR"));
         if (IsCompareModeActive()) {
             AppContext::GetInstance().CompareCtrl->ExitMode(hwnd);
         }
         std::wstring targetPath;
         if (!nav.ExitBookMode(targetPath)) return;
+        if (!targetPath.empty()) {
+            pane.path = targetPath;
+        }
 
+        ClearPdfRoiOverlay(hwnd);
         ClearBookSessionViewRotation();
         pane.editState.TotalRotation = 0;
         pane.editState.FlippedH = false;
@@ -21564,10 +21862,10 @@ void ToggleBookMode(HWND hwnd) {
 
         g_toolbar.SetBookModeState(
             true, false,
-            wasArchive ? 0u : pane.metadata.CurrentPage,
-            wasArchive ? 1u : pane.metadata.PageCount);
+            wasArchiveOrDoc ? 0u : pane.metadata.CurrentPage,
+            wasArchiveOrDoc ? 1u : pane.metadata.PageCount);
         if (wasIco && !targetPath.empty()) {
-            // Return from single-frame ICO inspection back to Contact Sheet overview in folder mode
+            // Return from single-frame ICO/CUR inspection back to Contact Sheet overview in folder mode
             LoadImageAsync(hwnd, targetPath.c_str(), false);
         } else {
             AdjustWindowToImage(hwnd);
@@ -21579,10 +21877,30 @@ void ToggleBookMode(HWND hwnd) {
         return;
     }
 
-    // Check archive parent browse or currently selected archive
+    // Check document/archive parent browse or currently selected archive/document
     const std::wstring curNavItem = (nav.Index() >= 0 && nav.Index() < static_cast<int>(nav.Count()))
         ? nav.GetFile(nav.Index())
         : std::wstring{};
+    if (!curNavItem.empty() && QuickView::IsDocumentPath(curNavItem)) {
+        g_pdfAutoEnteredBookHost.clear();
+        const std::wstring physical = FileNavigator::GetPhysicalPath(pane.path);
+        if (_wcsicmp(curNavItem.c_str(), physical.c_str()) == 0 && pane.metadata.PageCount >= 1) {
+            if (nav.EnterMultiPageBookMode(curNavItem, pane.metadata.PageCount, pane.metadata.CurrentPage, true)) {
+                pane.path = nav.GetFile(nav.Index());
+                ApplyBookModeWindowLock(hwnd, true);
+                syncVisibleGallery(nav.Index());
+                g_toolbar.SetBookModeState(true, true, pane.metadata.CurrentPage, pane.metadata.PageCount);
+                g_osd.Show(hwnd, AppStrings::g.Toolbar_Tooltip_BookModeOn, false);
+                RECT rc = GetEffectiveClientRect(hwnd);
+                g_toolbar.UpdateLayout(static_cast<float>(rc.right), static_cast<float>(rc.bottom));
+                RequestRepaint(PaintLayer::All);
+            }
+        } else {
+            nav.Initialize(curNavItem, hwnd, false);
+            LoadImageAsync(hwnd, curNavItem.c_str(), false);
+        }
+        return;
+    }
     if (nav.IsArchiveParentBrowse() || (!curNavItem.empty() && QuickView::IsArchivePath(curNavItem))) {
         if (!curNavItem.empty() && QuickView::IsArchivePath(curNavItem) &&
             _wcsicmp(curNavItem.c_str(), nav.GetBookHostPath().c_str()) != 0) {
@@ -21608,8 +21926,8 @@ void ToggleBookMode(HWND hwnd) {
         return;
     }
 
-    // Multi-size ICO -> enter Multi-Page Mode over embedded icon frames (sorted largest -> smallest)
-    if (pane.metadata.PageCount > 1 && pane.metadata.Format == L"ICO") {
+    // Multi-size ICO/CUR -> enter Multi-Page Mode over embedded frames (sorted largest -> smallest)
+    if (pane.metadata.PageCount > 1 && (pane.metadata.Format == L"ICO" || pane.metadata.Format == L"CUR")) {
         const std::wstring physical = FileNavigator::GetPhysicalPath(pane.path);
         if (_wcsicmp(g_currentIcoHostPath.c_str(), physical.c_str()) != 0 || g_currentIcoEntries.empty()) {
             QuickView::MappedFile mf(physical.c_str());
