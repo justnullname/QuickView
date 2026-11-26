@@ -110,6 +110,7 @@ namespace GeekIcons {
     extern const VectorIcon ImageVector;          // 0xE91B
     extern const VectorIcon AdvancedVector;       // 0xE71C
     extern const VectorIcon AiActionVector;       // AI 3-Star Sparkles (✨)
+    extern const VectorIcon BookVector;           // Open Book (Multi-page / Comic)
 
     // --- Legacy Mapping Aliases (now pointing to Vectors) ---
     inline IconGlyph Open        = &OpenVector;
@@ -187,6 +188,7 @@ namespace GeekIcons {
     inline IconGlyph Image            = &ImageVector;
     inline IconGlyph Advanced         = &AdvancedVector;
     inline IconGlyph Keyboard         = &KeyboardVector;
+    inline IconGlyph Book             = &BookVector;
 
     // Standard Reuse
 } // namespace GeekIcons

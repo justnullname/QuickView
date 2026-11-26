@@ -385,6 +385,12 @@ struct RawImageFrame {
     double dpiX = 96.0;
     double dpiY = 96.0;
 
+    // Multi-page & ICO overview metadata (cached/IPC source of truth)
+    uint32_t pageCount = 1;
+    uint32_t currentPage = 0;
+    bool isIcoOverview = false;
+    std::wstring icoFrameSummary;
+
     // [D2D Native] SVG Specific Data (Used only when format == SVG_XML)
     // Use unique_ptr to ensure zero overhead for non-SVG paths
     struct SvgData {
@@ -494,6 +500,10 @@ struct RawImageFrame {
         sourceFormat.clear();
         dpiX = 96.0;
         dpiY = 96.0;
+        pageCount = 1;
+        currentPage = 0;
+        isIcoOverview = false;
+        icoFrameSummary.clear();
         memoryDeleter.DestroyCtx();
         memoryDeleter.Clear();
         onAuxLayerReady.DestroyCtx();
@@ -582,6 +592,10 @@ struct RawImageFrame {
         copy->srcHeight = srcHeight;
         copy->dpiX = dpiX;
         copy->dpiY = dpiY;
+        copy->pageCount = pageCount;
+        copy->currentPage = currentPage;
+        copy->isIcoOverview = isIcoOverview;
+        copy->icoFrameSummary = icoFrameSummary;
         copy->blendOp = blendOp;
         copy->shaderPayload = shaderPayload;
         copy->frameMeta = frameMeta;
@@ -626,6 +640,10 @@ private:
         srcHeight = other.srcHeight;
         dpiX = other.dpiX;
         dpiY = other.dpiY;
+        pageCount = other.pageCount;
+        currentPage = other.currentPage;
+        isIcoOverview = other.isIcoOverview;
+        icoFrameSummary = std::move(other.icoFrameSummary);
         memoryDeleter = std::move(other.memoryDeleter);
         onAuxLayerReady = std::move(other.onAuxLayerReady);
 
@@ -651,6 +669,10 @@ private:
         other.sourceFileSize = 0;
         other.dpiX = 96.0;
         other.dpiY = 96.0;
+        other.pageCount = 1;
+        other.currentPage = 0;
+        other.isIcoOverview = false;
+        other.icoFrameSummary.clear();
         // other.formatDetails / sourceFormat are moved
         other.iccProfile.clear(); // Clear source vector after move
         other.colorInfo = {};

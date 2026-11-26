@@ -146,7 +146,8 @@ static bool DecompressDeflate(const uint8_t* src, size_t srcLen, uint8_t* dst, s
     return false;
 }
 
-static Status ParseTiffIFD(const uint8_t* data, size_t size, TiffImageDesc& desc) {
+static Status ParseTiffIFD(const uint8_t* data, size_t size, TiffImageDesc& desc,
+                           uint32_t targetPage = 0, uint32_t* outTotalPages = nullptr) {
     if (size < 8) return Status::NotTiff;
 
     bool isLE = false;
@@ -191,7 +192,58 @@ static Status ParseTiffIFD(const uint8_t* data, size_t size, TiffImageDesc& desc
         return 0;
     };
 
-    uint32_t ifdOffset = read32(4);
+    // Walk IFD chain with cycle protection (cap at 4096 pages)
+    static constexpr uint32_t kMaxTiffPages = 4096;
+    std::vector<uint32_t> ifdOffsets;
+    uint32_t curIfd = read32(4);
+    uint32_t tort = curIfd;
+    bool tortAdvance = false;
+    while (curIfd != 0 && ifdOffsets.size() < kMaxTiffPages) {
+        if (!CheckRange(curIfd, 1, 2, size)) {
+            if (ifdOffsets.empty()) return Status::Corrupt;
+            break;
+        }
+        const uint16_t cnt = read16(curIfd);
+        const size_t nextOffPos = static_cast<size_t>(curIfd) + 2 + static_cast<size_t>(cnt) * 12;
+        if (!CheckRange(nextOffPos, 1, 4, size)) {
+            if (ifdOffsets.empty()) return Status::Corrupt;
+            break;
+        }
+        ifdOffsets.push_back(curIfd);
+        const uint32_t nextIfd = read32(nextOffPos);
+        if (nextIfd == curIfd) break;
+        if (nextIfd != 0) {
+            // Floyd cycle check alongside linear check for small chains
+            bool seen = false;
+            if (ifdOffsets.size() <= 32) {
+                for (uint32_t prev : ifdOffsets) {
+                    if (prev == nextIfd) { seen = true; break; }
+                }
+            } else if (nextIfd == tort) {
+                seen = true;
+            }
+            if (seen) break;
+            if (tortAdvance && tort != 0 && CheckRange(tort, 1, 2, size)) {
+                const uint16_t tcnt = read16(tort);
+                const size_t tnextPos = static_cast<size_t>(tort) + 2 + static_cast<size_t>(tcnt) * 12;
+                tort = CheckRange(tnextPos, 1, 4, size) ? read32(tnextPos) : 0;
+            }
+            tortAdvance = !tortAdvance;
+        }
+        curIfd = nextIfd;
+    }
+
+    if (ifdOffsets.empty()) {
+        return Status::Corrupt;
+    }
+    if (outTotalPages) {
+        *outTotalPages = static_cast<uint32_t>(ifdOffsets.size());
+    }
+    if (targetPage >= ifdOffsets.size()) {
+        return Status::Corrupt;
+    }
+
+    uint32_t ifdOffset = ifdOffsets[targetPage];
     if (ifdOffset == 0 || !CheckRange(ifdOffset, 1, 2, size)) {
         return Status::Corrupt;
     }
@@ -1145,12 +1197,23 @@ static HRESULT LoadRegionInternal(const uint8_t* data, size_t size,
     return S_OK;
 }
 
+uint32_t GetPageCount(const uint8_t* data, size_t size) noexcept {
+    TiffImageDesc desc;
+    uint32_t totalPages = 0;
+    if (ParseTiffIFD(data, size, desc, 0, &totalPages) == Status::NotTiff) {
+        return 0;
+    }
+    return totalPages > 0 ? totalPages : 1;
+}
+
 HRESULT LoadRegion(const uint8_t* data, size_t size,
                    const QuickView::Codec::DecodeContext& ctx,
                    QuickView::Codec::DecodeResult& result,
-                   int cropX, int cropY, int cropW, int cropH) {
+                   int cropX, int cropY, int cropW, int cropH,
+                   uint32_t pageIndex) {
     TiffImageDesc desc;
-    Status status = ParseTiffIFD(data, size, desc);
+    uint32_t totalPages = 1;
+    Status status = ParseTiffIFD(data, size, desc, pageIndex, &totalPages);
     if (status != Status::Ok) {
         return (status == Status::NotTiff) ? E_NOTIMPL : E_FAIL;
     }
@@ -1160,16 +1223,23 @@ HRESULT LoadRegion(const uint8_t* data, size_t size,
         return (status == Status::Unsupported) ? E_NOTIMPL : E_FAIL;
     }
 
-    return LoadRegionInternal(data, size, desc, ctx, result,
-                              cropX, cropY, cropW, cropH,
-                              nullptr, 0, 0);
+    HRESULT hr = LoadRegionInternal(data, size, desc, ctx, result,
+                                    cropX, cropY, cropW, cropH,
+                                    nullptr, 0, 0);
+    if (SUCCEEDED(hr)) {
+        result.metadata.PageCount = totalPages;
+        result.metadata.CurrentPage = pageIndex;
+    }
+    return hr;
 }
 
 HRESULT Load(const uint8_t* data, size_t size,
              const QuickView::Codec::DecodeContext& ctx,
-             QuickView::Codec::DecodeResult& result) {
+             QuickView::Codec::DecodeResult& result,
+             uint32_t pageIndex) {
     TiffImageDesc desc;
-    Status status = ParseTiffIFD(data, size, desc);
+    uint32_t totalPages = 1;
+    Status status = ParseTiffIFD(data, size, desc, pageIndex, &totalPages);
     if (status != Status::Ok) {
         return (status == Status::NotTiff) ? E_NOTIMPL : E_FAIL;
     }
@@ -1179,21 +1249,28 @@ HRESULT Load(const uint8_t* data, size_t size,
         return (status == Status::Unsupported) ? E_NOTIMPL : E_FAIL;
     }
 
-    return LoadRegionInternal(data, size, desc, ctx, result,
-                              0, 0, static_cast<int>(desc.width), static_cast<int>(desc.height),
-                              nullptr, 0, 0);
+    HRESULT hr = LoadRegionInternal(data, size, desc, ctx, result,
+                                    0, 0, static_cast<int>(desc.width), static_cast<int>(desc.height),
+                                    nullptr, 0, 0);
+    if (SUCCEEDED(hr)) {
+        result.metadata.PageCount = totalPages;
+        result.metadata.CurrentPage = pageIndex;
+    }
+    return hr;
 }
 
 HRESULT LoadDirectToBuffer(const uint8_t* data, size_t size,
                            uint8_t* dstPixels, size_t dstCapacity, int dstStride,
                            QuickView::SimplePredicate checkCancel,
-                           QuickView::Codec::DecodeResult& result) {
+                           QuickView::Codec::DecodeResult& result,
+                           uint32_t pageIndex) {
     if (!data || !dstPixels || dstCapacity == 0) {
         return E_INVALIDARG;
     }
 
     TiffImageDesc desc;
-    Status status = ParseTiffIFD(data, size, desc);
+    uint32_t totalPages = 1;
+    Status status = ParseTiffIFD(data, size, desc, pageIndex, &totalPages);
     if (status != Status::Ok) {
         return (status == Status::NotTiff) ? E_NOTIMPL : E_FAIL;
     }
@@ -1206,9 +1283,14 @@ HRESULT LoadDirectToBuffer(const uint8_t* data, size_t size,
     QuickView::Codec::DecodeContext ctx;
     ctx.checkCancel = checkCancel;
 
-    return LoadRegionInternal(data, size, desc, ctx, result,
-                              0, 0, static_cast<int>(desc.width), static_cast<int>(desc.height),
-                              dstPixels, dstCapacity, dstStride);
+    HRESULT hr = LoadRegionInternal(data, size, desc, ctx, result,
+                                    0, 0, static_cast<int>(desc.width), static_cast<int>(desc.height),
+                                    dstPixels, dstCapacity, dstStride);
+    if (SUCCEEDED(hr)) {
+        result.metadata.PageCount = totalPages;
+        result.metadata.CurrentPage = pageIndex;
+    }
+    return hr;
 }
 
 } // namespace QuickView::MiniTiff

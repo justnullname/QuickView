@@ -32,23 +32,29 @@ enum class Status : uint8_t {
     OutOfMemory
 };
 
+// Fast IFD chain scan to count pages in a TIFF buffer (loop-guarded, capped at 4096).
+uint32_t GetPageCount(const uint8_t* data, size_t size) noexcept;
+
 // Main entry point for ImageLoader.cpp
 HRESULT Load(const uint8_t* data, size_t size,
              const QuickView::Codec::DecodeContext& ctx,
-             QuickView::Codec::DecodeResult& result);
+             QuickView::Codec::DecodeResult& result,
+             uint32_t pageIndex = 0);
 
 // Entry point for Region ROI decoding
 HRESULT LoadRegion(const uint8_t* data, size_t size,
                    const QuickView::Codec::DecodeContext& ctx,
                    QuickView::Codec::DecodeResult& result,
-                   int cropX, int cropY, int cropW, int cropH);
+                   int cropX, int cropY, int cropW, int cropH,
+                   uint32_t pageIndex = 0);
 
 // Direct decode full image into a caller-owned BGRA8 buffer (e.g. MasterBackingStore MMF view).
 // Uses exact dstStride (if 0, width * 4 packed) and skips redundant zero-fill on full overwrite.
 HRESULT LoadDirectToBuffer(const uint8_t* data, size_t size,
                            uint8_t* dstPixels, size_t dstCapacity, int dstStride,
                            QuickView::SimplePredicate checkCancel,
-                           QuickView::Codec::DecodeResult& result);
+                           QuickView::Codec::DecodeResult& result,
+                           uint32_t pageIndex = 0);
 
 // Internal helper for Phase 3 CMYK to BGRA conversion
 void ConvertCmykToBgra(const uint8_t* src, uint8_t* dst, int width, int samples);

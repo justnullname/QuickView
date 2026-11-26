@@ -539,6 +539,29 @@ TEST(HotkeyCaptureTest, PureEscapeCanBeReboundToExitWhenMissing) {
     EXPECT_FALSE(ShouldCancelHotkeyCaptureOnCombo(config.HotkeyRules, HotkeyAction::Exit, shiftEsc));
 }
 
+TEST(HotkeyTest, BookModeAndMultiPageBindingsAndGestures) {
+    EXPECT_EQ(HotkeyActionToString(HotkeyAction::ToggleBookMode), L"ToggleBookMode");
+    EXPECT_EQ(StringToHotkeyAction(L"ToggleBookMode"), HotkeyAction::ToggleBookMode);
+
+    AppConfig config;
+    const auto combos = config.GetCombosForAction(HotkeyAction::ToggleBookMode);
+    ASSERT_FALSE(combos.empty());
+    bool hasBackspace = false;
+    for (const auto& c : combos) {
+        if (c.virtualKey == VK_BACK && c.modifiers == 0) {
+            hasBackspace = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(hasBackspace);
+
+    // Wheel triggers accept NextFrameOrPage / PrevFrameOrPage; click triggers accept ToggleBookMode
+    EXPECT_TRUE(IsMouseTriggerActionCompatible(MouseTrigger::VerticalWheel, MouseActionTarget::NextFrameOrPage));
+    EXPECT_TRUE(IsMouseTriggerActionCompatible(MouseTrigger::HorizontalWheel, MouseActionTarget::PrevFrameOrPage));
+    EXPECT_TRUE(IsMouseTriggerActionCompatible(MouseTrigger::XButton1Click, MouseActionTarget::ToggleBookMode));
+    EXPECT_FALSE(IsMouseTriggerActionCompatible(MouseTrigger::LeftDrag, MouseActionTarget::ToggleBookMode));
+}
+
 
 
 

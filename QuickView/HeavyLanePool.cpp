@@ -2082,6 +2082,20 @@ tile_decode_done: ; // [P14] Jump target for fast path (skip legacy TJ decode)
                 if (!evt.metadata.hdrMetadata.isValid && evt.rawFrame->hdrMetadata.isValid) {
                     evt.metadata.hdrMetadata = evt.rawFrame->hdrMetadata;
                 }
+                if (evt.rawFrame->pageCount <= 1 && evt.metadata.PageCount > 1) {
+                    evt.rawFrame->pageCount = evt.metadata.PageCount;
+                    evt.rawFrame->currentPage = evt.metadata.CurrentPage;
+                    evt.rawFrame->isIcoOverview = evt.metadata.IsIcoOverview;
+                } else if (evt.rawFrame->pageCount > 1 && evt.metadata.PageCount <= 1) {
+                    evt.metadata.PageCount = evt.rawFrame->pageCount;
+                    evt.metadata.CurrentPage = evt.rawFrame->currentPage;
+                    evt.metadata.IsIcoOverview = evt.rawFrame->isIcoOverview;
+                }
+                if (evt.rawFrame->icoFrameSummary.empty() && !evt.metadata.IcoFrameSummary.empty()) {
+                    evt.rawFrame->icoFrameSummary = evt.metadata.IcoFrameSummary;
+                } else if (evt.metadata.IcoFrameSummary.empty() && !evt.rawFrame->icoFrameSummary.empty()) {
+                    evt.metadata.IcoFrameSummary = evt.rawFrame->icoFrameSummary;
+                }
             }
             if (evt.metadata.ColorSpace.empty() && !evt.metadata.iccProfileData.empty()) {
                 evt.metadata.ColorSpace = CImageLoader::ParseICCProfileName(evt.metadata.iccProfileData.data(), evt.metadata.iccProfileData.size());
@@ -3416,6 +3430,15 @@ HRESULT HeavyLanePool::LaunchDecodeWorker(
     if (header->originalWidth > 0 && header->originalHeight > 0) {
         outFrame.srcWidth  = static_cast<int>(header->originalWidth);
         outFrame.srcHeight = static_cast<int>(header->originalHeight);
+    }
+    const uint32_t hdrPages = (header->pageCount > 1) ? header->pageCount : 1u;
+    outFrame.pageCount     = hdrPages;
+    outFrame.currentPage   = (header->currentPage < hdrPages) ? header->currentPage : 0u;
+    outFrame.isIcoOverview = (header->isIcoOverview != 0);
+    if (outMeta.PageCount <= 1 && hdrPages > 1) {
+        outMeta.PageCount     = hdrPages;
+        outMeta.CurrentPage   = outFrame.currentPage;
+        outMeta.IsIcoOverview = outFrame.isIcoOverview;
     }
 
     {

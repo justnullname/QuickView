@@ -841,3 +841,51 @@ TEST(ColorPipelineTests, LiveDecodeWorkerUntaggedSdrPreservesUnknownPrimaries) {
     EXPECT_EQ(res.header.colorPrimaries, static_cast<uint8_t>(QuickView::ColorPrimaries::Unknown));
     EXPECT_EQ(res.header.iccBytes, 0u);
 }
+
+TEST(ColorPipelineTests, LiveDecodeWorkerMultiPageJpegTiffPropagatesPageCountAndIndex) {
+    wchar_t exeBuf[MAX_PATH] = {};
+    DWORD exeLen = GetModuleFileNameW(nullptr, exeBuf, MAX_PATH);
+    ASSERT_GT(exeLen, 0u);
+    std::filesystem::path exeDir = std::filesystem::path(exeBuf).parent_path();
+    std::filesystem::path workerExe = exeDir / L"QuickView.exe";
+    if (!std::filesystem::exists(workerExe)) {
+        GTEST_SKIP() << "QuickView.exe not present next to test binary";
+    }
+
+    const std::filesystem::path sourceDir = std::filesystem::path(__FILE__).parent_path();
+    const std::filesystem::path candidates[] = {
+        std::filesystem::current_path() / "Local-Files" / "test_img" / "tif" / "multipage_tif_example2.tif",
+        sourceDir.parent_path() / "Local-Files" / "test_img" / "tif" / "multipage_tif_example2.tif",
+    };
+    std::filesystem::path assetPath;
+    for (const auto& c : candidates) {
+        std::error_code ec;
+        if (std::filesystem::exists(c, ec)) {
+            assetPath = c;
+            break;
+        }
+    }
+    if (assetPath.empty()) {
+        GTEST_SKIP() << "multipage_tif_example2.tif fixture not found";
+    }
+
+    // 1. Open physical TIFF path (page 0)
+    LiveWorkerOutput res0;
+    ASSERT_NO_FATAL_FAILURE(ExecuteDecodeWorkerSubprocess(
+        workerExe, assetPath, L"mp_tiff0", 1903, 899, 4ull, &res0));
+    EXPECT_EQ(res0.exitCode, 0u);
+    EXPECT_EQ(static_cast<HRESULT>(res0.header.hr), S_OK);
+    EXPECT_EQ(res0.header.pageCount, 10u);
+    EXPECT_EQ(res0.header.currentPage, 0u);
+
+    // 2. Open page 3 via virtual multi-page path (matching FileNavigator::MakeMultiPagePath format)
+    const std::filesystem::path page3Path(assetPath.wstring() + L"|3|Page 4");
+    LiveWorkerOutput res3;
+    ASSERT_NO_FATAL_FAILURE(ExecuteDecodeWorkerSubprocess(
+        workerExe, page3Path, L"mp_tiff3", 1903, 899, 4ull, &res3));
+    EXPECT_EQ(res3.exitCode, 0u);
+    EXPECT_EQ(static_cast<HRESULT>(res3.header.hr), S_OK);
+    EXPECT_EQ(res3.header.pageCount, 10u);
+    EXPECT_EQ(res3.header.currentPage, 3u);
+    EXPECT_NE(res0.pixelBytes, res3.pixelBytes);
+}

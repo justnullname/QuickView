@@ -47,6 +47,7 @@ using namespace QuickView;
 #include <shobjidl.h> // [Add] for IShellItemImageFactory
 #include <thread>
 #include "MiniTiff.h"
+#include "IcoDecoder.h"
 #include "OffscreenWebView2.h"
 #include "WebViewThumbService.h"
 #include "ImageTypes.h"
@@ -661,6 +662,20 @@ namespace Codec {
 // File I/O Helpers
 // ------------------------------------------------------------------------
 
+// Helper to resolve multi-page/multi-size virtual paths ("host.tif|2|Page 3" -> hostPath + pageIndex).
+static bool ResolveMultiPageVirtualPath(LPCWSTR filePath, std::wstring& outHostPath, uint32_t& outPageIndex) {
+  if (!filePath) return false;
+  std::wstring pathStr(filePath);
+  if (pathStr.find(L"|") == std::wstring::npos) return false;
+  std::wstring host;
+  size_t idx = 0;
+  if (!FileNavigator::ParseVirtualPath(pathStr, host, idx)) return false;
+  if (QuickView::IsArchiveExtension(QuickView::ExtensionOf(host))) return false;
+  outHostPath = std::move(host);
+  outPageIndex = static_cast<uint32_t>(idx);
+  return true;
+}
+
 // Helper to get raw data from VFS or physical file
 static bool GetVfsFileData(LPCWSTR filePath, std::vector<uint8_t> &buffer) {
   std::wstring pathStr(filePath);
@@ -670,6 +685,9 @@ static bool GetVfsFileData(LPCWSTR filePath, std::vector<uint8_t> &buffer) {
   std::wstring archivePath;
   size_t entryIndex;
   if (FileNavigator::ParseVirtualPath(pathStr, archivePath, entryIndex)) {
+    if (!QuickView::IsArchiveExtension(QuickView::ExtensionOf(archivePath))) {
+      return false;
+    }
     QuickView::IArchive *archive = g_navigator.GetArchive();
     std::shared_ptr<QuickView::IArchive> cachedArchive;
     if (!archive || archivePath != g_navigator.m_archivePath) {
@@ -918,7 +936,7 @@ bool IsUnifiedBufferCodec(const std::wstring &fmt) {
          fmt == L"BMP" || fmt == L"JXL" || fmt == L"AVIF" || fmt == L"QOI" ||
          fmt == L"TGA" || fmt == L"PNM" || fmt == L"WBMP" || fmt == L"PSD" ||
          fmt == L"HDR" || fmt == L"PIC" || fmt == L"PCX" || fmt == L"EXR" ||
-         fmt == L"TIFF";
+         fmt == L"TIFF" || fmt == L"ICO";
 }
 
 bool ShouldProbeAnimatedBufferCodec(const std::wstring &fmt) {
@@ -1450,7 +1468,7 @@ HRESULT LoadBufferUnified(const uint8_t *mappedData, size_t mappedSize,
       return S_OK;
     }
   } else if (fmt == L"TIFF") {
-    HRESULT hr = QuickView::MiniTiff::Load(mappedData, mappedSize, ctx, result);
+    HRESULT hr = QuickView::MiniTiff::Load(mappedData, mappedSize, ctx, result, ctx.pageIndex);
     if (hr == E_OUTOFMEMORY || hr == E_ABORT || SUCCEEDED(hr)) {
       return hr;
     }
@@ -4981,7 +4999,11 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize,
   std::unique_ptr<QuickView::MappedFile> mapping;
 
   std::wstring pathStr(filePath);
-  if (pathStr.find(L"|") != std::wstring::npos) {
+  std::wstring multiHostPath;
+  uint32_t multiPageIndex = 0;
+  const bool isMultiPageVirtual = ResolveMultiPageVirtualPath(filePath, multiHostPath, multiPageIndex);
+
+  if (pathStr.find(L"|") != std::wstring::npos && !isMultiPageVirtual) {
     std::wstring archivePath;
     size_t entryIndex;
     if (FileNavigator::ParseVirtualPath(pathStr, archivePath, entryIndex)) {
@@ -5014,7 +5036,7 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize,
   }
 
   if (!mappedData) {
-    mapping = std::make_unique<QuickView::MappedFile>(filePath);
+    mapping = std::make_unique<QuickView::MappedFile>(isMultiPageVirtual ? multiHostPath.c_str() : filePath);
     if (mapping->IsValid()) {
       mappedData = mapping->data();
       mappedSize = mapping->size();
@@ -5027,7 +5049,101 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize,
       format = DetectFormatFromContent(mappedData,
                                        std::min<size_t>(mappedSize, 1024));
     else
-      format = DetectFormatFromContent(filePath);
+      format = DetectFormatFromContent(isMultiPageVirtual ? multiHostPath.c_str() : filePath);
+  }
+
+  // Multi-page TIFF thumbnail (extract requested pageIndex cleanly without loading page 0)
+  if (isMultiPageVirtual && format == L"TIFF" && mappedData && mappedSize > 0 && allowSlow) {
+    QuickView::Codec::DecodeContext tiffCtx;
+    tiffCtx.allocator.pfn = [](void*, size_t s) -> uint8_t* { return static_cast<uint8_t*>(_aligned_malloc(s, 64)); };
+    tiffCtx.freeFunc.pfn = [](void*, uint8_t* p) { _aligned_free(p); };
+    QuickView::Codec::DecodeResult tiffRes;
+    HRESULT hrTiff = QuickView::MiniTiff::Load(mappedData, mappedSize, tiffCtx, tiffRes, multiPageIndex);
+    if (SUCCEEDED(hrTiff) && tiffRes.pixels && tiffRes.width > 0 && tiffRes.height > 0) {
+      double ratio = std::max((double)targetSize / tiffRes.width, (double)targetSize / tiffRes.height);
+      UINT newW = (ratio >= 1.0) ? (UINT)tiffRes.width : std::max<UINT>(1, (UINT)(tiffRes.width * ratio));
+      UINT newH = (ratio >= 1.0) ? (UINT)tiffRes.height : std::max<UINT>(1, (UINT)(tiffRes.height * ratio));
+      pData->width = (int)newW;
+      pData->height = (int)newH;
+      pData->stride = (int)newW * 4;
+      pData->pixels.resize((size_t)pData->stride * newH);
+      if (newW == (UINT)tiffRes.width && newH == (UINT)tiffRes.height) {
+        for (UINT y = 0; y < newH; ++y) {
+          memcpy(pData->pixels.data() + (size_t)y * pData->stride,
+                 tiffRes.pixels + (size_t)y * tiffRes.stride, (size_t)newW * 4);
+        }
+      } else {
+        ImageLoaderSimd::ResizeBilinear(tiffRes.pixels, tiffRes.width, tiffRes.height, tiffRes.stride,
+                                        pData->pixels.data(), (int)newW, (int)newH, pData->stride);
+      }
+      _aligned_free(tiffRes.pixels);
+      pData->origWidth = tiffRes.width;
+      pData->origHeight = tiffRes.height;
+      pData->fileSize = mappedSize;
+      pData->loaderName = L"MiniTIFF (Page)";
+      pData->isValid = true;
+      return S_OK;
+    }
+    if (tiffRes.pixels) _aligned_free(tiffRes.pixels);
+    // WIC multi-frame fallback for TIFF compression outside MiniTiff subset
+    if (m_wicFactory && mappedSize <= 0xFFFFFFFFu) {
+      ComPtr<IWICStream> wicStream;
+      ComPtr<IWICBitmapDecoder> wicDec;
+      ComPtr<IWICBitmapFrameDecode> wicFrame;
+      if (SUCCEEDED(m_wicFactory->CreateStream(&wicStream)) &&
+          SUCCEEDED(wicStream->InitializeFromMemory(const_cast<BYTE*>(mappedData), static_cast<DWORD>(mappedSize))) &&
+          SUCCEEDED(m_wicFactory->CreateDecoderFromStream(wicStream.Get(), nullptr, WICDecodeMetadataCacheOnDemand, &wicDec)) &&
+          SUCCEEDED(wicDec->GetFrame(multiPageIndex, &wicFrame))) {
+        UINT origW = 0, origH = 0;
+        wicFrame->GetSize(&origW, &origH);
+        if (origW > 0 && origH > 0 && origW <= 16384 && origH <= 16384) {
+          double ratio = std::max((double)targetSize / origW, (double)targetSize / origH);
+          UINT newW = (ratio >= 1.0) ? origW : std::max<UINT>(1, (UINT)(origW * ratio));
+          UINT newH = (ratio >= 1.0) ? origH : std::max<UINT>(1, (UINT)(origH * ratio));
+          ComPtr<IWICBitmapScaler> scaler;
+          ComPtr<IWICFormatConverter> conv;
+          if (SUCCEEDED(m_wicFactory->CreateBitmapScaler(&scaler)) &&
+              SUCCEEDED(scaler->Initialize(wicFrame.Get(), newW, newH, WICBitmapInterpolationModeFant)) &&
+              SUCCEEDED(m_wicFactory->CreateFormatConverter(&conv)) &&
+              SUCCEEDED(conv->Initialize(scaler.Get(), GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, nullptr, 0.f, WICBitmapPaletteTypeMedianCut))) {
+            pData->width = (int)newW;
+            pData->height = (int)newH;
+            pData->stride = (int)newW * 4;
+            pData->pixels.resize((size_t)pData->stride * newH);
+            if (SUCCEEDED(conv->CopyPixels(nullptr, (UINT)pData->stride, (UINT)pData->pixels.size(), pData->pixels.data()))) {
+              pData->origWidth = (int)origW;
+              pData->origHeight = (int)origH;
+              pData->fileSize = mappedSize;
+              pData->loaderName = L"WIC TIFF (Page)";
+              pData->isValid = true;
+              return S_OK;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // ICO thumbnail: render requested virtual frame (in Book Mode) or largest frame cleanly (never Contact Sheet in gallery)
+  if (format == L"ICO" && mappedData && mappedSize > 0 && m_wicFactory) {
+    std::vector<QuickView::IcoDecoder::IcoEntryInfo> entries;
+    if (QuickView::IcoDecoder::ParseDirectory(mappedData, mappedSize, entries) && !entries.empty()) {
+      const size_t entryIdx = (isMultiPageVirtual && multiPageIndex < entries.size()) ? multiPageIndex : 0u;
+      QuickView::RawImageFrame icoFrame;
+      if (SUCCEEDED(QuickView::IcoDecoder::DecodeEntry(mappedData, mappedSize, entries[entryIdx], m_wicFactory.Get(), icoFrame)) &&
+          icoFrame.pixels && icoFrame.width > 0 && icoFrame.height > 0) {
+        pData->width = icoFrame.width;
+        pData->height = icoFrame.height;
+        pData->stride = icoFrame.stride;
+        pData->pixels.assign(icoFrame.pixels, icoFrame.pixels + (size_t)icoFrame.stride * icoFrame.height);
+        pData->origWidth = icoFrame.width;
+        pData->origHeight = icoFrame.height;
+        pData->fileSize = mappedSize;
+        pData->loaderName = L"IcoDecoder";
+        pData->isValid = true;
+        return S_OK;
+      }
+    }
   }
 
   std::wstring pathLower = filePath;
@@ -6428,7 +6544,8 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap **ppBitmap,
                                    std::wstring *pLoaderName,
                                    bool forceFullDecode,
                                    CancelPredicate checkCancel, int targetWidth,
-                                   int targetHeight) {
+                                   int targetHeight, uint32_t frameIndex,
+                                   uint32_t *outFrameCount) {
   if (!filePath || !ppBitmap)
     return E_INVALIDARG;
 
@@ -6436,7 +6553,19 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap **ppBitmap,
   g_lastFormatDetails.clear();
   g_lastExifOrientation = 0; // Reset to 0 ("not set by decoder")
 
-  std::wstring path = filePath;
+  std::wstring physicalPath = filePath;
+  uint32_t resolvedFrameIndex = frameIndex;
+  {
+    std::wstring hostPath;
+    uint32_t vIdx = 0;
+    if (ResolveMultiPageVirtualPath(filePath, hostPath, vIdx)) {
+      physicalPath = std::move(hostPath);
+      resolvedFrameIndex = vIdx;
+    }
+  }
+  LPCWSTR targetFilePath = physicalPath.c_str();
+
+  std::wstring path = physicalPath;
   std::transform(path.begin(), path.end(), path.begin(), ::towlower);
 
   // -------------------------------------------------------------
@@ -6444,7 +6573,7 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap **ppBitmap,
   // -------------------------------------------------------------
 
   // 1. Detect Format
-  std::wstring detectedFmt = DetectFormatFromContent(filePath);
+  std::wstring detectedFmt = DetectFormatFromContent(targetFilePath);
 
   // -------------------------------------------------------------
   // Architecture Upgrade: Priority-Based Loading
@@ -6452,7 +6581,7 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap **ppBitmap,
 
   // 1. High-Performance Special Format Loaders (Bypass WIC)
   if (detectedFmt == L"JPEG") {
-    HRESULT hr = LoadJPEG(filePath, ppBitmap);
+    HRESULT hr = LoadJPEG(targetFilePath, ppBitmap);
     if (SUCCEEDED(hr)) {
       if (pLoaderName)
         *pLoaderName = L"libjpeg-turbo";
@@ -6729,7 +6858,7 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap **ppBitmap,
   // [v10.4 Optimization] Fast path for WIC using memory-mapped IStream instead of File IStream.
   // This completely eliminates the severe small-read penalty of WIC's default file stream
   // on uncompressed or tiled formats (e.g. large TIFFs).
-  QuickView::MappedFile fileMap(filePath);
+  QuickView::MappedFile fileMap(targetFilePath);
   ComPtr<IWICStream> stream;
   
   if (fileMap.IsValid() && fileMap.size() <= 0xFFFFFFFF) {
@@ -6745,15 +6874,21 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap **ppBitmap,
   // Fallback to filename stream if memory mapping or init failed
   if (FAILED(hr)) {
     hr = m_wicFactory->CreateDecoderFromFilename(
-        filePath, nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand,
+        targetFilePath, nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand,
         &decoder);
   }
 
   if (FAILED(hr))
     return hr;
 
+  UINT wicFrameCount = 1;
+  if (SUCCEEDED(decoder->GetFrameCount(&wicFrameCount)) && outFrameCount) {
+    *outFrameCount = wicFrameCount;
+  }
+  const UINT safeFrameIdx = (resolvedFrameIndex < wicFrameCount) ? resolvedFrameIndex : 0;
+
   ComPtr<IWICBitmapFrameDecode> frame;
-  hr = decoder->GetFrame(0, &frame);
+  hr = decoder->GetFrame(safeFrameIdx, &frame);
   if (FAILED(hr))
     return hr;
 
@@ -10588,14 +10723,25 @@ HRESULT CImageLoader::LoadImageUnifiedInternal(LPCWSTR filePath,
   if (!filePath)
     return E_INVALIDARG;
 
+  std::wstring resolvedMultiHost;
+  uint32_t resolvedMultiPageIdx = 0;
+  const bool isMultiPageVirtual =
+      ResolveMultiPageVirtualPath(filePath, resolvedMultiHost, resolvedMultiPageIdx);
+  LPCWSTR actualFilePath = isMultiPageVirtual ? resolvedMultiHost.c_str() : filePath;
+
   const bool hasValidMmf = (ctx.sourceMmf && ctx.sourceMmf->IsValid() &&
                             ctx.sourceMmf->data() && ctx.sourceMmf->size() > 0);
 
   // [v9.2] Use path-based detection directly (handles RAW extensions properly)
   std::wstring fmt =
-      hasValidMmf ? DetectFormatFromHeaderBytes(filePath, ctx.sourceMmf->data(),
+      hasValidMmf ? DetectFormatFromHeaderBytes(actualFilePath, ctx.sourceMmf->data(),
                                                 ctx.sourceMmf->size())
-                  : DetectFormatFromContent(filePath);
+                  : DetectFormatFromContent(actualFilePath);
+
+  DecodeContext effCtx = ctx;
+  if (isMultiPageVirtual) {
+    effCtx.pageIndex = resolvedMultiPageIdx;
+  }
 
   // [Fix] Ensure Format is stored in metadata for extension mismatch detection
   // (main.cpp)
@@ -10607,7 +10753,7 @@ HRESULT CImageLoader::LoadImageUnifiedInternal(LPCWSTR filePath,
   // [v9.1 Fix] Accept both "Raw" and "RAW" (case insensitive)
   if (fmt == L"Raw" || fmt == L"RAW" || fmt == L"Unknown" || fmt == L"DDS") {
     if (fmt == L"Raw" || fmt == L"RAW") {
-      HRESULT hr = RawCodec::Load(filePath, ctx, result);
+      HRESULT hr = RawCodec::Load(actualFilePath, effCtx, result);
       if (SUCCEEDED(hr)) {
         result.metadata.LoaderName = L"LibRaw (Unified)";
         return S_OK;
@@ -10618,10 +10764,10 @@ HRESULT CImageLoader::LoadImageUnifiedInternal(LPCWSTR filePath,
 
   if (IsMetafileFormat(fmt)) {
     auto fileMap =
-        hasValidMmf ? ctx.sourceMmf : std::make_shared<QuickView::MappedFile>(filePath);
+        hasValidMmf ? effCtx.sourceMmf : std::make_shared<QuickView::MappedFile>(actualFilePath);
     if (!fileMap->IsValid() || !fileMap->data() || fileMap->size() == 0)
       return E_FAIL;
-    return DecodeMetafileBuffer(fileMap->data(), fileMap->size(), fmt, ctx,
+    return DecodeMetafileBuffer(fileMap->data(), fileMap->size(), fmt, effCtx,
                                 result);
   }
 
@@ -10631,7 +10777,7 @@ HRESULT CImageLoader::LoadImageUnifiedInternal(LPCWSTR filePath,
 
   if (isBufferCodec) {
     auto fileMap =
-        hasValidMmf ? ctx.sourceMmf : std::make_shared<QuickView::MappedFile>(filePath);
+        hasValidMmf ? effCtx.sourceMmf : std::make_shared<QuickView::MappedFile>(actualFilePath);
     if (!fileMap->IsValid())
       return E_FAIL;
 
@@ -10639,13 +10785,13 @@ HRESULT CImageLoader::LoadImageUnifiedInternal(LPCWSTR filePath,
     size_t mappedSize = fileMap->size();
 
     // Dispatch
-    if (TryProbeAnimatedBuffer(fileMap, fmt, result, &ctx)) { // APNG supported by Wuffs
+    if (TryProbeAnimatedBuffer(fileMap, fmt, result, &effCtx)) { // APNG supported by Wuffs
       return S_OK;
     }
 
     if (fmt == L"HEIC") {
       HRESULT hr =
-          WIC_HEIC::Load(filePath, ctx, result, m_wicFactory.Get(), fileMap);
+          WIC_HEIC::Load(actualFilePath, effCtx, result, m_wicFactory.Get(), fileMap);
       if (SUCCEEDED(hr)) {
         // [v10.3] Async Gain Map Decode for HEIC
         if (result.metadata.hdrMetadata.hasGainMap && ctx.onAuxLayerReady &&
@@ -10845,7 +10991,7 @@ HRESULT CImageLoader::LoadImageUnifiedInternal(LPCWSTR filePath,
       return hr; // Returns libavif error if WIC error was generic
     } else {
       if (fmt == L"TIFF") {
-        HRESULT hr = QuickView::MiniTiff::Load(mappedData, mappedSize, ctx, result);
+        HRESULT hr = QuickView::MiniTiff::Load(mappedData, mappedSize, effCtx, result, effCtx.pageIndex);
         if (SUCCEEDED(hr)) {
           return S_OK;
         }
@@ -10854,8 +11000,47 @@ HRESULT CImageLoader::LoadImageUnifiedInternal(LPCWSTR filePath,
         }
         return hr; // Returns E_NOTIMPL to fallback, other to fail
       }
+      if (fmt == L"ICO") {
+        std::vector<QuickView::IcoDecoder::IcoEntryInfo> entries;
+        if (QuickView::IcoDecoder::ParseDirectory(mappedData, mappedSize, entries) && !entries.empty()) {
+          const bool wantOverview = (effCtx.pageIndex == 0xFFFFu && entries.size() > 1);
+          QuickView::RawImageFrame icoFrame;
+          HRESULT hr = E_FAIL;
+          if (wantOverview) {
+            hr = QuickView::IcoDecoder::RenderContactSheet(mappedData, mappedSize, entries,
+                                                           m_wicFactory.Get(), effCtx.dpiScale, icoFrame);
+          } else {
+            const size_t idx = (effCtx.pageIndex < entries.size()) ? effCtx.pageIndex : 0;
+            hr = QuickView::IcoDecoder::DecodeEntry(mappedData, mappedSize, entries[idx],
+                                                    m_wicFactory.Get(), icoFrame);
+          }
+          if (SUCCEEDED(hr) && icoFrame.pixels) {
+            uint8_t* dst = effCtx.allocator ? effCtx.allocator(static_cast<size_t>(icoFrame.stride) * icoFrame.height)
+                                         : static_cast<uint8_t*>(_aligned_malloc(static_cast<size_t>(icoFrame.stride) * icoFrame.height, 64));
+            if (!dst) return E_OUTOFMEMORY;
+            std::memcpy(dst, icoFrame.pixels, static_cast<size_t>(icoFrame.stride) * icoFrame.height);
+            result.pixels = dst;
+            result.width = icoFrame.width;
+            result.height = icoFrame.height;
+            result.stride = icoFrame.stride;
+            result.format = icoFrame.format;
+            result.success = true;
+            result.metadata.Format = L"ICO";
+            result.metadata.PageCount = static_cast<uint32_t>(entries.size());
+            result.metadata.CurrentPage = wantOverview ? 0u : ((effCtx.pageIndex < entries.size()) ? effCtx.pageIndex : 0u);
+            result.metadata.IsIcoOverview = wantOverview;
+            result.metadata.IcoFrameSummary = QuickView::IcoDecoder::BuildSummary(entries);
+            result.metadata.LoaderName = wantOverview ? L"IcoDecoder (Overview)" : L"IcoDecoder";
+            result.metadata.Width = static_cast<UINT>(result.width);
+            result.metadata.Height = static_cast<UINT>(result.height);
+            result.metadata.FormatDetails = result.metadata.IcoFrameSummary;
+            result.metadata.colorInfo = icoFrame.colorInfo;
+            return S_OK;
+          }
+        }
+      }
 
-      HRESULT hr = LoadBufferUnified(mappedData, mappedSize, fmt, ctx, result);
+      HRESULT hr = LoadBufferUnified(mappedData, mappedSize, fmt, effCtx, result);
       if (hr == E_OUTOFMEMORY || hr == E_ABORT)
         return hr;
       if (SUCCEEDED(hr))
@@ -10921,8 +11106,22 @@ HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage *pOutput,
   ctx.targetHeight = targetHeight;
   ctx.pLoaderName = pLoaderName;
 
+  std::wstring pmrMultiHost;
+  uint32_t pmrMultiPageIdx = 0;
+  const bool pmrIsMultiPage =
+      ResolveMultiPageVirtualPath(filePath, pmrMultiHost, pmrMultiPageIdx);
+  LPCWSTR pmrResolvedPath = pmrIsMultiPage ? pmrMultiHost.c_str() : filePath;
+  if (pmrIsMultiPage) {
+    ctx.pageIndex = pmrMultiPageIdx;
+  } else if (DetectFormatFromContent(pmrResolvedPath) == L"ICO") {
+    ctx.pageIndex = 0xFFFFu;
+  }
+  if (targetWidth > 0) {
+    ctx.dpiScale = (std::clamp)(static_cast<float>(targetWidth) / 1400.0f, 1.0f, 2.5f);
+  }
+
   DecodeResult res;
-  HRESULT hr = LoadImageUnified(filePath, ctx, res);
+  HRESULT hr = LoadImageUnified(pmrResolvedPath, ctx, res);
 
   if (pLoaderName && !res.metadata.LoaderName.empty()) {
     *pLoaderName = res.metadata.LoaderName;
@@ -12980,6 +13179,13 @@ HRESULT CImageLoader::ReadMetadata(LPCWSTR filePath, ImageMetadata *pMetadata,
   if (clear)
     *pMetadata = {};
 
+  std::wstring physicalPath = filePath;
+  uint32_t multiPageIndex = 0;
+  const bool isMultiPage = ResolveMultiPageVirtualPath(filePath, physicalPath, multiPageIndex);
+  if (isMultiPage) {
+    filePath = physicalPath.c_str();
+  }
+
   // [v5.3] Read File Stats (Size/Date) - ALWAYS read this first
   PopulateFileStats(filePath, pMetadata);
   
@@ -13047,9 +13253,16 @@ HRESULT CImageLoader::ReadMetadata(LPCWSTR filePath, ImageMetadata *pMetadata,
   if (FAILED(hr))
     return S_OK;
 
-  // Get First Frame
+  // Get Requested Frame
+  UINT wicFrameCount = 1;
+  decoder->GetFrameCount(&wicFrameCount);
+  const UINT safeMetaFrame = (isMultiPage && multiPageIndex < wicFrameCount) ? multiPageIndex : 0;
+  if (wicFrameCount > 1 && pMetadata->PageCount <= 1) {
+    pMetadata->PageCount = wicFrameCount;
+    pMetadata->CurrentPage = safeMetaFrame;
+  }
   ComPtr<IWICBitmapFrameDecode> frame;
-  if (FAILED(decoder->GetFrame(0, &frame)))
+  if (FAILED(decoder->GetFrame(safeMetaFrame, &frame)))
     return S_OK;
 
   // Dimensions (if missing)
@@ -14926,6 +15139,18 @@ CImageLoader::ImageHeaderInfo CImageLoader::PeekHeader(LPCWSTR filePath) {
   if (!filePath)
     return result;
 
+  std::wstring physicalPath = filePath;
+  uint32_t multiPageIndex = 0;
+  bool isMultiPageVirtual = ResolveMultiPageVirtualPath(filePath, physicalPath, multiPageIndex);
+  if (isMultiPageVirtual) {
+    result.type = ImageType::TypeA_Sprint;
+    result.fileSize = QuickView::QueryFileSize(physicalPath.c_str());
+    result.format = DetectFormatFromContent(physicalPath.c_str());
+    result.width = 1693;
+    result.height = 2472;
+    return result;
+  }
+
   // === Archive VFS Support ===
   std::wstring pathStr(filePath);
   if (pathStr.find(L"|") != std::wstring::npos) {
@@ -15064,9 +15289,12 @@ HRESULT CImageLoader::LoadToFrame(
     }
   };
 
-  // === Archive VFS Support ===
+  // === Archive VFS Support & Multi-page Virtual Paths ===
   std::wstring pathStr(filePath);
-  if (pathStr.find(L"|") != std::wstring::npos) {
+  std::wstring multiPageHost;
+  uint32_t multiPageIdx = 0;
+  const bool isMultiPageVirtual = ResolveMultiPageVirtualPath(filePath, multiPageHost, multiPageIdx);
+  if (pathStr.find(L"|") != std::wstring::npos && !isMultiPageVirtual) {
     std::wstring archivePath;
     size_t entryIndex;
     if (FileNavigator::ParseVirtualPath(pathStr, archivePath, entryIndex)) {
@@ -15109,14 +15337,15 @@ HRESULT CImageLoader::LoadToFrame(
   }
   // ===========================
 
+  LPCWSTR physicalFilePath = isMultiPageVirtual ? multiPageHost.c_str() : filePath;
   const bool hasValidMmf = (existingMmf && existingMmf->IsValid() &&
                             existingMmf->data() && existingMmf->size() > 0);
 
   // Detect format from magic bytes (reusing existing MMF if available)
   std::wstring format =
-      hasValidMmf ? DetectFormatFromHeaderBytes(filePath, existingMmf->data(),
+      hasValidMmf ? DetectFormatFromHeaderBytes(physicalFilePath, existingMmf->data(),
                                                 existingMmf->size())
-                  : DetectFormatFromContent(filePath);
+                  : DetectFormatFromContent(physicalFilePath);
 
   // Helper: Setup deleter based on allocation source
   auto SetupDeleter = [&](uint8_t *ptr) {
@@ -15162,9 +15391,17 @@ HRESULT CImageLoader::LoadToFrame(
   ctx.targetHdrHeadroomStops = targetHdrHeadroomStops;
   ctx.targetPrimaries = targetPrimaries;
   ctx.sourceMmf = std::move(existingMmf);
+  if (isMultiPageVirtual) {
+    ctx.pageIndex = multiPageIdx;
+  } else if (format == L"ICO") {
+    ctx.pageIndex = 0xFFFFu; // Default multi-size ICO to Contact Sheet overview
+  }
+  if (targetWidth > 0) {
+    ctx.dpiScale = (std::clamp)(static_cast<float>(targetWidth) / 1400.0f, 1.0f, 2.5f);
+  }
 
   DecodeResult res;
-  HRESULT hrUnified = LoadImageUnified(filePath, ctx, res);
+  HRESULT hrUnified = LoadImageUnified(physicalFilePath, ctx, res);
 
   if (hrUnified == E_ABORT || hrUnified == E_OUTOFMEMORY)
     return hrUnified;
@@ -15184,7 +15421,7 @@ HRESULT CImageLoader::LoadToFrame(
       *pMetadata = res.metadata;
       // [v5.3 Fix] Ensure FileSize is populated for Info Panel "Disk" row
       if (pMetadata->FileSize == 0) {
-        PopulateFileStats(filePath, pMetadata);
+        PopulateFileStats(physicalFilePath, pMetadata);
       }
       // [Fix] Final Guarantee: Format must not be empty for extension mismatch
       // check
@@ -15255,6 +15492,10 @@ HRESULT CImageLoader::LoadToFrame(
     outFrame->srcHeight = (res.metadata.Height > 0) ? static_cast<int>(res.metadata.Height) : outFrame->height;
     outFrame->dpiX = res.metadata.DpiX;
     outFrame->dpiY = res.metadata.DpiY;
+    outFrame->pageCount = res.metadata.PageCount;
+    outFrame->currentPage = res.metadata.CurrentPage;
+    outFrame->isIcoOverview = res.metadata.IsIcoOverview;
+    outFrame->icoFrameSummary = res.metadata.IcoFrameSummary;
 
     // [GPU Pipeline] Bridge multi-layer composition data
     if (res.blendOp != GpuBlendOp::None && res.auxLayer) {
@@ -15831,8 +16072,10 @@ HRESULT CImageLoader::LoadToFrame(
 
   ComPtr<IWICBitmap> wicBitmap;
   std::wstring loaderName;
+  uint32_t wicFrameCount = 1;
   HRESULT hr = LoadToMemory(filePath, &wicBitmap, &loaderName, false,
-                            checkCancel, targetWidth, targetHeight);
+                            checkCancel, targetWidth, targetHeight,
+                            isMultiPageVirtual ? multiPageIdx : 0u, &wicFrameCount);
   if (FAILED(hr))
     return hr;
 
@@ -15964,7 +16207,11 @@ HRESULT CImageLoader::LoadToFrame(
   // [v5.3] WIC Fallback Metadata Population
   ImageMetadata localMeta;
   ImageMetadata *metaTarget = pMetadata ? pMetadata : &localMeta;
-  ReadMetadata(filePath, metaTarget);
+  ReadMetadata(physicalFilePath, metaTarget);
+  if (wicFrameCount > 1) {
+    metaTarget->PageCount = wicFrameCount;
+    metaTarget->CurrentPage = (multiPageIdx < wicFrameCount) ? multiPageIdx : 0u;
+  }
   metaTarget->LoaderName = loaderName;
   // Removed: PopulateHdrInfoFromWicPixelFormat(outWicFormat, metaTarget); to
   // preserve orig format from ReadMetadata
@@ -16027,6 +16274,10 @@ HRESULT CImageLoader::LoadToFrame(
     outFrame->srcWidth = static_cast<int>(metaTarget->Width);
     outFrame->srcHeight = static_cast<int>(metaTarget->Height);
   }
+  outFrame->pageCount = metaTarget->PageCount;
+  outFrame->currentPage = metaTarget->CurrentPage;
+  outFrame->isIcoOverview = metaTarget->IsIcoOverview;
+  outFrame->icoFrameSummary = metaTarget->IcoFrameSummary;
 
   return S_OK;
 }

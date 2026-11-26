@@ -91,6 +91,7 @@ set(QUICKVIEW_SOURCES
     QuickView/MiniTiff.cpp
     QuickView/MiniTiffLzw.cpp
     QuickView/MiniTiffCmyk.cpp
+    QuickView/IcoDecoder.cpp
     QuickView/LosslessTransform.cpp
     QuickView/StbLoader.cpp
     QuickView/TinyExrLoader.cpp
@@ -489,6 +490,7 @@ add_executable(QuickViewTests
     tests/ColorMathTests.cpp
     tests/FileNavigatorTests.cpp
     tests/HotkeyTests.cpp
+    tests/MultiPageTests.cpp
     tests/StringUtilsTests.cpp
     tests/SupportedExtensionsTests.cpp
     tests/MiniTiffTests.cpp
@@ -524,6 +526,7 @@ add_executable(QuickViewTests
     QuickView/MiniTiff.cpp
     QuickView/MiniTiffLzw.cpp
     QuickView/MiniTiffCmyk.cpp
+    QuickView/IcoDecoder.cpp
     QuickView/ColorMath.cpp 
     QuickView/FileNavigator.cpp 
     QuickView/ArchiveVFS.cpp 

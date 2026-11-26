@@ -73,6 +73,11 @@ public:
     // [v5.3] EXIF Orientation (1-8, 1=Normal)
     int ExifOrientation = 1;
 
+    uint32_t PageCount = 1;
+    uint32_t CurrentPage = 0;
+    bool IsIcoOverview = false;
+    std::wstring IcoFrameSummary; // e.g. L"256x256 32bpp PNG" or L"6 sizes (256..16)"
+
     // Decoder Info
     std::wstring LoaderName; // e.g. "TurboJPEG", "libavif"
     DWORD LoadTimeMs = 0;    // Load time in milliseconds
@@ -276,7 +281,8 @@ public:
                        std::wstring *pLoaderName = nullptr,
                        bool forceFullDecode = false,
                        CancelPredicate checkCancel = {}, int targetWidth = 0,
-                       int targetHeight = 0);
+                       int targetHeight = 0, uint32_t frameIndex = 0,
+                       uint32_t *outFrameCount = nullptr);
 
   /// <summary>
   /// NEW: Load image directly into PMR-backed buffer (Zero-Copy for Heavy Lane)
@@ -589,6 +595,8 @@ struct DecodeContext {
 
   std::shared_ptr<QuickView::MappedFile> sourceMmf;
   mutable QuickView::AuxLayerCallback onAuxLayerReady;
+  uint32_t pageIndex = 0;
+  float dpiScale = 1.0f;
 };
 
 struct DecodeResult {

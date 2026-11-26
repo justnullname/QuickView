@@ -379,6 +379,16 @@ void FileNavigator::Initialize(const std::wstring& currentPath, HWND hwnd, bool 
     // VFS State Teardown
     m_archive.reset();
     m_archivePath.clear();
+    m_bookModeActive = false;
+    m_savedFromArchive = false;
+    m_includeArchivesInScan = false;
+    m_bookHostPath.clear();
+    m_savedFolderFiles.clear();
+    m_savedFolderSizes.clear();
+    m_savedFolderIds.clear();
+    m_savedFolderPairedRaws.clear();
+    m_savedFolderIndex = -1;
+    m_savedWatchedDir.clear();
 
     m_files.clear();
     m_sizes.clear();
@@ -401,6 +411,8 @@ void FileNavigator::Initialize(const std::wstring& currentPath, HWND hwnd, bool 
     if (isArchive) {
         // Load from Archive VFS
         m_archivePath = targetPathStr;
+        m_bookModeActive = true;
+        m_bookHostPath = targetPathStr;
         const std::wstring_view archExt = QuickView::ExtensionOf(targetPathStr);
         if (QuickView::ExtEqualsIgnoreCase(archExt, L".cbr") || QuickView::ExtEqualsIgnoreCase(archExt, L".rar")) {
             m_archive = std::make_unique<QuickView::RarArchive>(m_archivePath);
@@ -1198,7 +1210,9 @@ bool FileNavigator::CollectFolderEntries(const std::wstring& dir, std::vector<So
 
         const std::wstring_view name(ffd.cFileName);
         const std::wstring_view ext = QuickView::ExtensionOf(name);
-        if (!QuickView::IsPlaylistImageExtension(ext)) continue;
+        const bool isImg = QuickView::IsPlaylistImageExtension(ext);
+        const bool isArch = m_includeArchivesInScan && QuickView::IsArchiveExtension(ext);
+        if (!isImg && !isArch) continue;
 
         SortEntry e;
         e.p = QuickView::JoinPath(dir, name);
@@ -1607,6 +1621,182 @@ bool FileNavigator::ParseVirtualPath(const std::wstring& path, std::wstring& out
     }
     outIndex = index;
     return true;
+}
+
+std::wstring FileNavigator::MakeMultiPagePath(const std::wstring& hostPath, uint32_t pageIndex, uint32_t /*totalPages*/) {
+    return hostPath + L"|" + std::to_wstring(pageIndex) + L"|Page " + std::to_wstring(pageIndex + 1);
+}
+
+std::wstring FileNavigator::MakeIcoFramePath(const std::wstring& hostPath, uint32_t frameIndex, uint16_t w, uint16_t h, uint16_t /*bpp*/) {
+    return hostPath + L"|" + std::to_wstring(frameIndex) + L"|" + std::to_wstring(w) + L"x" + std::to_wstring(h);
+}
+
+bool FileNavigator::IsMultiPageVirtualPath(const std::wstring& path) {
+    std::wstring host;
+    size_t idx = 0;
+    if (!ParseVirtualPath(path, host, idx)) return false;
+    return !QuickView::IsArchiveExtension(QuickView::ExtensionOf(host));
+}
+
+std::wstring FileNavigator::GetPhysicalPath(const std::wstring& path) {
+    const size_t pipe = path.find(L'|');
+    if (pipe == std::wstring::npos) return path;
+    return path.substr(0, pipe);
+}
+
+bool FileNavigator::EnterBookModeWithPages(const std::wstring& hostPath, std::vector<std::wstring> pagePaths, uint32_t startPage) {
+    if (hostPath.empty() || pagePaths.size() <= 1 || m_archive) return false;
+    if (m_bookModeActive && _wcsicmp(m_bookHostPath.c_str(), hostPath.c_str()) == 0) {
+        if (m_files.size() == pagePaths.size()) {
+            m_currentIndex = static_cast<int>((std::min<size_t>)(startPage, m_files.size() - 1));
+        }
+        return true;
+    }
+
+    EnsureMaterialized();
+    StopDirectoryWatcher();
+
+    m_savedFolderFiles = m_files;
+    m_savedFolderSizes = m_sizes;
+    m_savedFolderIds = m_ids;
+    m_savedFolderPairedRaws = m_pairedRaws;
+    m_savedFolderIndex = m_currentIndex;
+    m_savedWatchedDir = m_watchedDir;
+
+    m_bookHostPath = hostPath;
+    m_savedFromArchive = false;
+    m_bookModeActive = true;
+
+    const uintmax_t hostSize = QuickView::QueryFileSize(hostPath.c_str());
+    m_files = std::move(pagePaths);
+    m_sizes.assign(m_files.size(), hostSize);
+    m_ids.clear();
+    m_ids.reserve(m_files.size());
+    for (const auto& vp : m_files) {
+        m_ids.push_back(ComputePathHash(vp));
+    }
+    m_pairedRaws.clear();
+    m_currentIndex = static_cast<int>((std::min<size_t>)(startPage, m_files.size() - 1));
+    m_playlistReady = true;
+    m_hitEnd = false;
+    return true;
+}
+
+bool FileNavigator::EnterMultiPageBookMode(const std::wstring& hostPath, uint32_t pageCount, uint32_t startPage) {
+    if (hostPath.empty() || pageCount <= 1 || m_archive) return false;
+    std::vector<std::wstring> pages;
+    pages.reserve(pageCount);
+    for (uint32_t i = 0; i < pageCount; ++i) {
+        pages.push_back(MakeMultiPagePath(hostPath, i, pageCount));
+    }
+    return EnterBookModeWithPages(hostPath, std::move(pages), startPage);
+}
+
+bool FileNavigator::ExitBookMode(std::wstring& outTargetPath) {
+    outTargetPath.clear();
+    if (m_archive) {
+        const std::wstring hostArchive = m_archivePath;
+        const std::wstring parentDir(QuickView::ParentPathView(hostArchive));
+        if (parentDir.empty()) return false;
+
+        StopPairVerification();
+        StopDirectoryWatcher();
+        m_archive.reset();
+        m_archivePath.clear();
+
+        m_bookModeActive = false;
+        m_savedFromArchive = true;
+        m_bookHostPath = hostArchive;
+        m_includeArchivesInScan = true;
+
+        std::vector<SortEntry> entries;
+        CollectFolderEntries(parentDir, entries);
+        bool hasHost = false;
+        for (const auto& e : entries) {
+            if (_wcsicmp(e.p.c_str(), hostArchive.c_str()) == 0) {
+                hasHost = true;
+                break;
+            }
+        }
+        if (!hasHost) {
+            SortEntry e;
+            e.p = hostArchive;
+            e.s = QuickView::QueryFileSize(hostArchive.c_str());
+            e.m = QuickView::QueryFileLastWriteTicks(hostArchive.c_str());
+            const auto ext = QuickView::ExtensionOf(hostArchive);
+            for (wchar_t c : ext) e.t.push_back(QuickView::ToLowerAscii(c));
+            entries.push_back(std::move(e));
+        }
+
+        int sortOrder = g_runtime.SortOrder;
+        bool sortDesc = g_runtime.SortDescending;
+        if (sortOrder == 0) {
+            int mapped = 1;
+            bool mappedDesc = sortDesc;
+            if (ResolveExplorerSortColumn(parentDir, mapped, mappedDesc)) {
+                sortOrder = mapped;
+                sortDesc = mappedDesc;
+            } else {
+                sortOrder = 1;
+            }
+        }
+        SortEntries(entries, sortOrder, sortDesc);
+
+        m_pairedRaws.clear();
+        m_files.clear();
+        m_sizes.clear();
+        m_ids.clear();
+        m_currentIndex = 0;
+        for (size_t i = 0; i < entries.size(); ++i) {
+            m_files.push_back(entries[i].p);
+            m_sizes.push_back(entries[i].s);
+            m_ids.push_back(ComputePathHash(entries[i].p));
+            if (_wcsicmp(entries[i].p.c_str(), hostArchive.c_str()) == 0) {
+                m_currentIndex = static_cast<int>(i);
+            }
+        }
+        m_watchedDir = parentDir;
+        m_playlistReady = true;
+        m_hitEnd = false;
+        outTargetPath = hostArchive;
+        return true;
+    }
+
+    if (!m_bookModeActive) return false;
+
+    const std::wstring host = m_bookHostPath;
+    m_files = std::move(m_savedFolderFiles);
+    m_sizes = std::move(m_savedFolderSizes);
+    m_ids = std::move(m_savedFolderIds);
+    m_pairedRaws = std::move(m_savedFolderPairedRaws);
+    m_watchedDir = std::move(m_savedWatchedDir);
+    m_savedFolderFiles.clear();
+    m_savedFolderSizes.clear();
+    m_savedFolderIds.clear();
+    m_savedFolderPairedRaws.clear();
+
+    m_currentIndex = m_savedFolderIndex;
+    for (size_t i = 0; i < m_files.size(); ++i) {
+        if (_wcsicmp(m_files[i].c_str(), host.c_str()) == 0) {
+            m_currentIndex = static_cast<int>(i);
+            break;
+        }
+    }
+    if (m_currentIndex < 0 && !m_files.empty()) m_currentIndex = 0;
+    m_bookModeActive = false;
+    m_savedFromArchive = false;
+    m_bookHostPath.clear();
+    m_playlistReady = !m_files.empty();
+    m_hitEnd = false;
+    outTargetPath = host;
+    return true;
+}
+
+bool FileNavigator::ReenterArchiveBookMode() {
+    if (!m_savedFromArchive || m_bookHostPath.empty()) return false;
+    std::wstring archiveToOpen = m_bookHostPath;
+    Initialize(archiveToOpen, m_hwnd, false);
+    return (m_archive != nullptr && m_archive->IsValid());
 }
 
 void FileNavigator::ApplyPendingScanResult() {

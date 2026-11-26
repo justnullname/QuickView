@@ -773,3 +773,104 @@ TEST(MiniTiffSecurityTest, BigEndianSingleShortStripOffsetAndByteCountSucceeds) 
     EXPECT_EQ(result.pixels[3], 0xFF); // A
     _aligned_free(result.pixels);
 }
+
+TEST(MiniTiffTest, MultiPageCountAndPageSelection) {
+    auto push16LE = [](std::vector<uint8_t>& buf, uint16_t v) {
+        buf.push_back(static_cast<uint8_t>(v & 0xFF));
+        buf.push_back(static_cast<uint8_t>((v >> 8) & 0xFF));
+    };
+    auto push32LE = [](std::vector<uint8_t>& buf, uint32_t v) {
+        buf.push_back(static_cast<uint8_t>(v & 0xFF));
+        buf.push_back(static_cast<uint8_t>((v >> 8) & 0xFF));
+        buf.push_back(static_cast<uint8_t>((v >> 16) & 0xFF));
+        buf.push_back(static_cast<uint8_t>((v >> 24) & 0xFF));
+    };
+    auto pushTag = [&](std::vector<uint8_t>& buf, uint16_t tag, uint16_t type, uint32_t count, uint32_t val) {
+        push16LE(buf, tag);
+        push16LE(buf, type);
+        push32LE(buf, count);
+        push32LE(buf, val);
+    };
+
+    // Build a 3-page 1x1 uncompressed RGB TIFF (little-endian) with unique colors per page
+    std::vector<uint8_t> tiff;
+    tiff.push_back('I');
+    tiff.push_back('I');
+    push16LE(tiff, 42);
+    push32LE(tiff, 8); // First IFD at offset 8
+
+    const uint8_t pageColors[3][3] = {
+        { 0x10, 0x20, 0x30 }, // Page 0
+        { 0x40, 0x50, 0x60 }, // Page 1
+        { 0x70, 0x80, 0x90 }, // Page 2
+    };
+    constexpr uint16_t kNumTags = 9;
+    constexpr uint32_t kIfdSize = 2 + kNumTags * 12 + 4; // 114 bytes
+
+    for (uint32_t p = 0; p < 3; ++p) {
+        const uint32_t ifdStart = static_cast<uint32_t>(tiff.size());
+        const uint32_t dataStart = ifdStart + kIfdSize;
+        const uint32_t nextIfd = (p < 2) ? (dataStart + 3) : 0;
+
+        push16LE(tiff, kNumTags);
+        pushTag(tiff, 256, 3, 1, 1);         // Width = 1
+        pushTag(tiff, 257, 3, 1, 1);         // Height = 1
+        pushTag(tiff, 258, 3, 1, 8);         // BitsPerSample = 8
+        pushTag(tiff, 259, 3, 1, 1);         // Compression = None
+        pushTag(tiff, 262, 3, 1, 2);         // Photometric = RGB
+        pushTag(tiff, 273, 4, 1, dataStart); // StripOffsets
+        pushTag(tiff, 277, 3, 1, 3);         // SamplesPerPixel = 3
+        pushTag(tiff, 278, 3, 1, 1);         // RowsPerStrip = 1
+        pushTag(tiff, 279, 4, 1, 3);         // StripByteCounts = 3
+        push32LE(tiff, nextIfd);
+
+        tiff.push_back(pageColors[p][0]);
+        tiff.push_back(pageColors[p][1]);
+        tiff.push_back(pageColors[p][2]);
+    }
+
+    EXPECT_EQ(QuickView::MiniTiff::GetPageCount(tiff.data(), tiff.size()), 3u);
+
+    for (uint32_t p = 0; p < 3; ++p) {
+        auto ctx = MakeTestDecodeContext();
+        QuickView::Codec::DecodeResult result;
+        HRESULT hr = QuickView::MiniTiff::Load(tiff.data(), tiff.size(), ctx, result, p);
+        ASSERT_EQ(hr, S_OK);
+        ASSERT_TRUE(result.success);
+        ASSERT_NE(result.pixels, nullptr);
+        EXPECT_EQ(result.metadata.PageCount, 3u);
+        EXPECT_EQ(result.metadata.CurrentPage, p);
+        // Output is BGRA
+        EXPECT_EQ(result.pixels[0], pageColors[p][2]);
+        EXPECT_EQ(result.pixels[1], pageColors[p][1]);
+        EXPECT_EQ(result.pixels[2], pageColors[p][0]);
+        _aligned_free(result.pixels);
+    }
+}
+
+TEST(MiniTiffTest, CyclicIfdTerminatesSafely) {
+    auto push16LE = [](std::vector<uint8_t>& buf, uint16_t v) {
+        buf.push_back(static_cast<uint8_t>(v & 0xFF));
+        buf.push_back(static_cast<uint8_t>((v >> 8) & 0xFF));
+    };
+    auto push32LE = [](std::vector<uint8_t>& buf, uint32_t v) {
+        buf.push_back(static_cast<uint8_t>(v & 0xFF));
+        buf.push_back(static_cast<uint8_t>((v >> 8) & 0xFF));
+        buf.push_back(static_cast<uint8_t>((v >> 16) & 0xFF));
+        buf.push_back(static_cast<uint8_t>((v >> 24) & 0xFF));
+    };
+    std::vector<uint8_t> tiff;
+    tiff.push_back('I');
+    tiff.push_back('I');
+    push16LE(tiff, 42);
+    push32LE(tiff, 8); // First IFD at offset 8
+    push16LE(tiff, 1); // 1 dummy tag
+    push16LE(tiff, 256);
+    push16LE(tiff, 3);
+    push32LE(tiff, 1);
+    push32LE(tiff, 1);
+    push32LE(tiff, 8); // Next IFD cycles directly back to offset 8!
+
+    const uint32_t pages = QuickView::MiniTiff::GetPageCount(tiff.data(), tiff.size());
+    EXPECT_EQ(pages, 1u);
+}

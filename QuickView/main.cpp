@@ -9,6 +9,7 @@ static constexpr const char* CURRENT_MODULE = "Main";
 #include "PrintManager.h"
 #include "PrintPreviewUI.h"
 #include "ImageLoader.h"
+#include "IcoDecoder.h"
 #include "ImageEngine.h"
 #include "MappedFile.h"
 #include "BootPreloader.h"
@@ -184,6 +185,10 @@ static const wchar_t* g_szClassName = L"QuickViewClass";
 static const wchar_t* g_szWindowTitle = L"QuickView";
 
 void HandleAnimFrameStep(HWND hwnd, bool forward); // [v10.5] fwd decl
+void HandlePageOrFrameStep(HWND hwnd, bool forward);
+void NavigateToMultiPage(HWND hwnd, uint32_t targetPage);
+void SelectIcoFrame(HWND hwnd, int frameIndex);
+void ToggleBookMode(HWND hwnd);
 void PerformAnimSeek(HWND hwnd, float targetProgress);
 void RequestRepaint(QuickView::PaintLayer layer);
 static std::unique_ptr<CRenderEngine> g_renderEngine;
@@ -1020,6 +1025,65 @@ void ApplyFullScreenZoomMode(HWND hwnd) {
     GetPaneContext(PaneSlot::Primary).view.PanY = 0;
 }
 static bool g_isAutoLocked = false;
+static bool g_bookModeWindowLockActive = false;
+static bool g_bookModeSavedLockWindowSize = false;
+static void ApplyBookModeWindowLock(HWND hwnd, bool active);
+static std::wstring g_bookSessionHostPath;
+static int g_bookSessionViewRotation = 0;
+
+static bool IsReadOnlyContainerForTransform(const PaneContext& pane) {
+    return pane.navigator.IsBookModeActive() ||
+           pane.navigator.GetArchive() != nullptr ||
+           FileNavigator::IsMultiPageVirtualPath(pane.path) ||
+           pane.path.find(L'|') != std::wstring::npos ||
+           pane.metadata.PageCount > 1 ||
+           pane.metadata.IsIcoOverview ||
+           (!pane.path.empty() && QuickView::IsArchivePath(pane.path));
+}
+
+static void PopulatePendingRotationSteps(EditState& state, int normalizedDeg) {
+    state.PendingTransforms.clear();
+    if (normalizedDeg == 90) state.PendingTransforms.push_back(TransformType::Rotate90CW);
+    else if (normalizedDeg == 180) state.PendingTransforms.push_back(TransformType::Rotate180);
+    else if (normalizedDeg == 270) state.PendingTransforms.push_back(TransformType::Rotate90CCW);
+}
+
+static void ClearBookSessionViewRotation() {
+    g_bookSessionHostPath.clear();
+    g_bookSessionViewRotation = 0;
+}
+
+static void SyncBookSessionViewRotation(PaneContext& pane, const std::wstring& targetPath) {
+    const std::wstring targetHost = FileNavigator::GetPhysicalPath(targetPath);
+    if ((pane.navigator.IsBookModeActive() || pane.navigator.GetArchive() != nullptr) &&
+        !g_bookSessionHostPath.empty() &&
+        !targetHost.empty() &&
+        _wcsicmp(targetHost.c_str(), g_bookSessionHostPath.c_str()) == 0) {
+        const int norm = ((g_bookSessionViewRotation % 360) + 360) % 360;
+        pane.editState.TotalRotation = norm;
+        pane.editState.FlippedH = false;
+        pane.editState.FlippedV = false;
+        PopulatePendingRotationSteps(pane.editState, norm);
+        pane.editState.IsDirty = false;
+    } else {
+        ClearBookSessionViewRotation();
+    }
+}
+
+static void ApplyBookSessionRotationToLeftPane(PaneContext& leftPane) {
+    if (!g_toolbar.IsBookOrComicMode() || !leftPane.valid) return;
+    const std::wstring leftHost = FileNavigator::GetPhysicalPath(leftPane.path);
+    if (!g_bookSessionHostPath.empty() &&
+        !leftHost.empty() &&
+        _wcsicmp(leftHost.c_str(), g_bookSessionHostPath.c_str()) == 0) {
+        const int norm = ((g_bookSessionViewRotation % 360) + 360) % 360;
+        leftPane.editState.TotalRotation = norm;
+        leftPane.editState.FlippedH = false;
+        leftPane.editState.FlippedV = false;
+        PopulatePendingRotationSteps(leftPane.editState, norm);
+        leftPane.editState.IsDirty = false;
+    }
+}
 
 // [Interpolation] Get best interpolation mode
 static bool IsEffectivelyPixelArtMode(float totalScale, float origW, float origH, double entropy = 8.0, bool hasEntropy = false) {
@@ -3813,6 +3877,107 @@ static bool RestoreNavigatorToSession(HWND hwnd, const GallerySession& s) {
     return false;
 }
 
+static std::vector<QuickView::IcoDecoder::IcoEntryInfo> g_currentIcoEntries;
+static std::wstring g_currentIcoHostPath;
+static int g_currentIcoFrameIdx = -1; // -1 = Contact Sheet Overview
+static std::wstring g_lastMultiPageOsdHost;
+
+static std::wstring FormatDisplayTitleName(const std::wstring& path, const CImageLoader::ImageMetadata& meta) {
+    const std::wstring physical = FileNavigator::GetPhysicalPath(path);
+    const size_t slashPos = physical.find_last_of(L"\\/");
+    std::wstring name = (slashPos == std::wstring::npos) ? physical : physical.substr(slashPos + 1);
+    if (meta.Format == L"ICO" && meta.PageCount > 1) {
+        if (meta.IsIcoOverview) {
+            wchar_t suf[64]{};
+            swprintf_s(suf, L" [All \x00B7 %u sizes]", meta.PageCount);
+            name += suf;
+        } else {
+            wchar_t suf[64]{};
+            swprintf_s(suf, L" [%u/%u \x00B7 %ux%u]", meta.CurrentPage + 1, meta.PageCount, meta.Width, meta.Height);
+            name += suf;
+        }
+    } else if (meta.PageCount > 1) {
+        wchar_t suf[48]{};
+        swprintf_s(suf, L" [Page %u/%u]", meta.CurrentPage + 1, meta.PageCount);
+        name += suf;
+    }
+    return name;
+}
+
+static std::shared_ptr<QuickView::RawImageFrame> DecodeLargestIcoOriginalFrame(const std::wstring& path) {
+    const std::wstring physical = FileNavigator::GetPhysicalPath(path);
+    QuickView::MappedFile mf(physical.c_str());
+    if (!mf.IsValid() || !mf.data() || mf.size() == 0) return nullptr;
+    std::vector<QuickView::IcoDecoder::IcoEntryInfo> entries;
+    if (!QuickView::IcoDecoder::ParseDirectory(mf.data(), mf.size(), entries) || entries.empty()) return nullptr;
+    ComPtr<IWICImagingFactory> wicFactory;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wicFactory)))) {
+        return nullptr;
+    }
+    auto frame = std::make_shared<QuickView::RawImageFrame>();
+    if (FAILED(QuickView::IcoDecoder::DecodeEntry(mf.data(), mf.size(), entries[0], wicFactory.Get(), *frame)) || !frame->pixels) {
+        return nullptr;
+    }
+    return frame;
+}
+
+static void SyncMultiPageAndIcoToolbar(HWND hwnd, const std::wstring& path, const CImageLoader::ImageMetadata& meta, bool isPreview) {
+    auto& nav = GetPaneContext(PaneSlot::Primary).navigator;
+    const bool isArchive = (nav.GetArchive() != nullptr);
+    const bool isArchiveParent = nav.IsArchiveParentBrowse();
+    g_toolbar.SetComicMode(isArchive);
+
+    const std::wstring physical = FileNavigator::GetPhysicalPath(path);
+    const bool onArchiveItem = isArchive || (isArchiveParent && (path.find(L'|') != std::wstring::npos ||
+        (nav.Index() >= 0 && nav.Index() < (int)nav.Count() && QuickView::IsArchivePath(nav.GetFile(nav.Index())))));
+    const bool isMultiPageImage = (!isArchive && meta.PageCount > 1);
+    if (isArchive) {
+        const uint32_t cur = nav.Index() >= 0 ? static_cast<uint32_t>(nav.Index()) : 0u;
+        const uint32_t tot = static_cast<uint32_t>((std::max<size_t>)(1, nav.Count()));
+        g_toolbar.SetBookModeState(true, true, cur, tot);
+        ApplyBookModeWindowLock(hwnd, true);
+    } else if (onArchiveItem) {
+        g_toolbar.SetBookModeState(true, false, 0, 1);
+        ApplyBookModeWindowLock(hwnd, false);
+    } else if (isMultiPageImage) {
+        g_toolbar.SetBookModeState(true, nav.IsBookModeActive(), meta.CurrentPage, meta.PageCount);
+        ApplyBookModeWindowLock(hwnd, nav.IsBookModeActive());
+    } else {
+        g_toolbar.SetBookModeState(false, false, 0, 1);
+        ApplyBookModeWindowLock(hwnd, false);
+    }
+
+    if (!isPreview && meta.Format == L"ICO" && meta.PageCount > 1) {
+        if (_wcsicmp(g_currentIcoHostPath.c_str(), physical.c_str()) != 0 || g_currentIcoEntries.empty()) {
+            QuickView::MappedFile mf(physical.c_str());
+            if (mf.IsValid() && mf.data() && mf.size() > 0) {
+                QuickView::IcoDecoder::ParseDirectory(mf.data(), mf.size(), g_currentIcoEntries);
+                g_currentIcoHostPath = physical;
+            }
+        }
+        g_currentIcoFrameIdx = meta.IsIcoOverview ? -1 : static_cast<int>(meta.CurrentPage);
+    } else if (!isPreview) {
+        g_currentIcoEntries.clear();
+        g_currentIcoHostPath.clear();
+        g_currentIcoFrameIdx = -1;
+    }
+
+    if (!isPreview && !physical.empty() && meta.PageCount > 1 && !isArchive) {
+        if (_wcsicmp(g_lastMultiPageOsdHost.c_str(), physical.c_str()) != 0) {
+            g_lastMultiPageOsdHost = physical;
+            wchar_t osdBuf[96]{};
+            if (meta.Format == L"ICO") {
+                swprintf_s(osdBuf, L"ICO \x00B7 %u sizes (Alt+\u2190/\u2192)", meta.PageCount);
+            } else {
+                swprintf_s(osdBuf, L"TIFF \x00B7 %u / %u (Alt+\u2190/\u2192)", meta.CurrentPage + 1, meta.PageCount);
+            }
+            g_osd.Show(hwnd, osdBuf, false);
+        }
+    } else if (!isPreview && meta.PageCount <= 1 && meta.Format != L"ICO") {
+        g_lastMultiPageOsdHost.clear();
+    }
+}
+
 static void FinishGallery(HWND hwnd, GalleryFinishKind kind, int commitIndex) {
     if (kind == GalleryFinishKind::VisualOnly) {
         return;
@@ -3847,8 +4012,23 @@ static void FinishGallery(HWND hwnd, GalleryFinishKind kind, int commitIndex) {
                     g_compEngine->HideActiveImage();
                 }
                 pane.resource.Reset();
-                pane.navigator.SetIndex(commitIndex);
-                LoadImageAsync(hwnd, resolved.c_str());
+                if (QuickView::IsArchivePath(resolved)) {
+                    pane.navigator.Initialize(resolved, hwnd, false);
+                    g_thumbMgr.ClearCache();
+                    EnsureThumbMgrInitialized(hwnd);
+                    g_gallery.Initialize(&g_thumbMgr, &pane.navigator);
+                    if (pane.navigator.Count() > 0) {
+                        pane.navigator.SetIndex(0);
+                        if (g_gallery.IsVisible()) {
+                            g_gallery.Open(0, g_gallery.GetMode(), g_gallery.IsPinned());
+                        }
+                        const std::wstring firstPage = pane.navigator.GetFile(0);
+                        LoadImageAsync(hwnd, firstPage.c_str());
+                    }
+                } else {
+                    pane.navigator.SetIndex(commitIndex);
+                    LoadImageAsync(hwnd, resolved.c_str());
+                }
             }
         }
         if (g_config.GalleryKeepVisibleOnThumbnailClick && g_gallery.GetMode() != GalleryMode::Hidden) {
@@ -4803,6 +4983,7 @@ static void EnsureWindowSizeForDialog(HWND hwnd) {
 
 bool SaveCurrentImage(bool saveAs) {
     auto& primaryPane = GetPaneContext(PaneSlot::Primary);
+    if (!saveAs && IsReadOnlyContainerForTransform(primaryPane)) return false;
     if (!primaryPane.editState.IsDirty && !saveAs) return true;
     
     std::wstring sourcePath = primaryPane.editState.OriginalFilePath;
@@ -6094,7 +6275,7 @@ void LoadConfig() {
         { L"GeekGlass",L"GlassTintAlpha",             &AppConfig::GlassTintAlpha,             L"0.65",  1.0f,  0.0f },
         { L"GeekGlass",L"GlassSpecularOpacity",       &AppConfig::GlassSpecularOpacity,       L"0.15",  1.0f,  0.0f },
         { L"GeekGlass",L"GlassShadowOpacity",         &AppConfig::GlassShadowOpacity,         L"0.45",  1.0f,  0.0f },
-        { L"GeekGlass",L"GlassOsdOpacity",            &AppConfig::GlassOsdOpacity,            L"15.0",  1.0f,  0.0f },
+        { L"GeekGlass",L"GlassOsdOpacity",            &AppConfig::GlassOsdOpacity,            L"30.0",  1.0f,  0.0f },
         { L"GeekGlass",L"GlassPanelsOpacity",         &AppConfig::GlassPanelsOpacity,         L"45.0",  1.0f,  0.0f },
         { L"GeekGlass",L"GlassModalsOpacity",         &AppConfig::GlassModalsOpacity,         L"75.0",  1.0f,  0.0f },
         { L"GeekGlass",L"GlassMenusOpacity",          &AppConfig::GlassMenusOpacity,          L"85.0",  1.0f,  0.0f },
@@ -6102,7 +6283,7 @@ void LoadConfig() {
         { L"GeekGlass",L"GlassTintAlphaBackup",       &AppConfig::GlassTintAlphaBackup,       L"0.65",  1.0f,  0.0f },
         { L"GeekGlass",L"GlassSpecularOpacityBackup", &AppConfig::GlassSpecularOpacityBackup, L"0.15",  1.0f,  0.0f },
         { L"GeekGlass",L"GlassShadowOpacityBackup",   &AppConfig::GlassShadowOpacityBackup,   L"0.45",  1.0f,  0.0f },
-        { L"GeekGlass",L"GlassOsdOpacityBackup",      &AppConfig::GlassOsdOpacityBackup,      L"15.0",  1.0f,  0.0f },
+        { L"GeekGlass",L"GlassOsdOpacityBackup",      &AppConfig::GlassOsdOpacityBackup,      L"30.0",  1.0f,  0.0f },
         { L"GeekGlass",L"GlassPanelsOpacityBackup",   &AppConfig::GlassPanelsOpacityBackup,   L"45.0",  1.0f,  0.0f },
         { L"GeekGlass",L"GlassModalsOpacityBackup",   &AppConfig::GlassModalsOpacityBackup,   L"55.0",  1.0f,  0.0f },
         { L"GeekGlass",L"GlassMenusOpacityBackup",    &AppConfig::GlassMenusOpacityBackup,    L"15.0",  1.0f,  0.0f },
@@ -6153,7 +6334,7 @@ void LoadConfig() {
     static constexpr IniStrField kStrFields[] = {
         { L"General",  L"LastUpdateChannelCheckVer",  &AppConfig::LastUpdateChannelCheckVer,  L"", 64 },
         { L"Controls", L"FixedZoomLevels",            &AppConfig::FixedZoomLevels,            L"0.05,0.1,0.125,0.166,0.25,0.333,0.5,0.66,1,1.5,2,3,4,5,6,7,8,12,16,32,64,128", 512 },
-        { L"Controls", L"InfoPanelLiteItemsNormal",   &AppConfig::InfoPanelLiteItemsNormal,   L"Zoom,Progress,File,Size,Disk,Format", 256 },
+        { L"Controls", L"InfoPanelLiteItemsNormal",   &AppConfig::InfoPanelLiteItemsNormal,   L"Zoom,Position,File,Size,Disk,Format", 256 },
         { L"Controls", L"InfoPanelLiteItemsCompare",  &AppConfig::InfoPanelLiteItemsCompare,  L"File,Size,Disk,Sharp,Ent,BPP,Date", 256 },
         { L"Controls", L"InfoPanelFullItemsNormal",   &AppConfig::InfoPanelFullItemsNormal,   L"Histogram,File,Position,RAW,Rating,Size,Disk,Date,Camera,Exp,Lens,Focal,Profile,HDR,Flash,W.Bal,Meter,Prog,Program,Format,GPS", 1024 },
         { L"Controls", L"InfoPanelFullItemsCompare",  &AppConfig::InfoPanelFullItemsCompare,  L"Histogram,File,RAW,Rating,Size,Disk,Date,Camera,Exp,Lens,Focal,Profile,HDR,Flash,W.Bal,Meter,Prog,Program,Format,Sharp,Ent,BPP,GPS", 1024 },
@@ -6301,8 +6482,23 @@ void LoadConfig() {
         }
     }
 
-    static constexpr std::wstring_view kAllowedLiteNormal[] = { L"Zoom", L"Progress", L"File", L"Rating", L"Size", L"Disk", L"Date", L"Format", L"Sharp", L"Ent", L"BPP", L"Camera", L"Exp", L"Lens", L"Focal", L"Profile", L"HDR", L"Flash", L"W.Bal", L"Meter", L"Prog", L"Program", L"GPS" };
-    static constexpr std::wstring_view kAllowedLiteCompare[] = { L"Zoom", L"Progress", L"File", L"Rating", L"Size", L"Disk", L"Date", L"Format", L"Sharp", L"Ent", L"BPP", L"Camera", L"Exp", L"Lens", L"Focal", L"Profile", L"HDR", L"Flash", L"W.Bal", L"Meter", L"Prog", L"Program" };
+    auto migrateProgressToPosition = [](std::wstring& csv) {
+        size_t pos = 0;
+        while ((pos = csv.find(L"Progress", pos)) != std::wstring::npos) {
+            const bool leftOk = (pos == 0 || csv[pos - 1] == L',');
+            const size_t endPos = pos + 8;
+            const bool rightOk = (endPos == csv.size() || csv[endPos] == L',');
+            if (leftOk && rightOk) {
+                csv.replace(pos, 8, L"Position");
+            }
+            pos += 8;
+        }
+    };
+    migrateProgressToPosition(g_config.InfoPanelLiteItemsNormal);
+    migrateProgressToPosition(g_config.InfoPanelLiteItemsCompare);
+
+    static constexpr std::wstring_view kAllowedLiteNormal[] = { L"Zoom", L"Position", L"File", L"Rating", L"Size", L"Disk", L"Date", L"Format", L"Sharp", L"Ent", L"BPP", L"Camera", L"Exp", L"Lens", L"Focal", L"Profile", L"HDR", L"Flash", L"W.Bal", L"Meter", L"Prog", L"Program", L"GPS" };
+    static constexpr std::wstring_view kAllowedLiteCompare[] = { L"Zoom", L"Position", L"File", L"Rating", L"Size", L"Disk", L"Date", L"Format", L"Sharp", L"Ent", L"BPP", L"Camera", L"Exp", L"Lens", L"Focal", L"Profile", L"HDR", L"Flash", L"W.Bal", L"Meter", L"Prog", L"Program" };
     g_config.InfoPanelLiteItemsNormal = QuickView::NormalizeCSV(g_config.InfoPanelLiteItemsNormal, kAllowedLiteNormal, 8);
     g_config.InfoPanelLiteItemsCompare = QuickView::NormalizeCSV(g_config.InfoPanelLiteItemsCompare, kAllowedLiteCompare, 8);
 
@@ -6647,7 +6843,7 @@ int GetNavigatorPaneCount() {
     if (!IsCompareModeActive()) {
         return 1;
     }
-    if (g_toolbar.IsComicMode() || AppContext::GetInstance().Compare.mode == ViewMode::CompareSideBySide) {
+    if (g_toolbar.IsBookOrComicMode() || AppContext::GetInstance().Compare.mode == ViewMode::CompareSideBySide) {
         return 2;
     }
     // CompareWipe mode: no minimap
@@ -7097,7 +7293,7 @@ void AdjustWindowToImage(HWND hwnd) {
     }
     s_initialLoadProcessed = true;
 
-    if (g_runtime.LockWindowSize && g_config.KeepWindowSizeOnNav) return;  // Don't auto-resize when locked and requested to keep size
+    if (g_runtime.LockWindowSize && (g_config.KeepWindowSizeOnNav || GetPaneContext(PaneSlot::Primary).navigator.IsBookModeActive())) return;  // Don't auto-resize when locked or inside Multi-Page Mode
     
     // Note: Removed early return for g_settingsOverlay.IsVisible() because GetMinWindowWidth() 
     // now correctly handles overlay minimums. This allows the window to resize to fit larger 
@@ -8495,18 +8691,21 @@ void SyncDCompState([[maybe_unused]] HWND hwnd, float winW, float winH, [[maybe_
 // [Fix] Draw Internal Background (Grid/Color) explicitly.
 
 void PerformTransform(HWND hwnd, TransformType type) {
-    bool isLeft = IsCompareModeActive() && (AppContext::GetInstance().Compare.selectedPane == ComparePane::Left);
-    EditState& state = isLeft ? GetPaneContext(PaneSlot::Left).editState : GetPaneContext(PaneSlot::Primary).editState;
-    std::wstring& path = isLeft ? GetPaneContext(PaneSlot::Left).path : GetPaneContext(PaneSlot::Primary).path;
+    const bool isDualPageBook = IsCompareModeActive() && g_toolbar.IsBookOrComicMode();
+    bool isLeft = isDualPageBook ? false : (IsCompareModeActive() && (AppContext::GetInstance().Compare.selectedPane == ComparePane::Left));
+    PaneContext& pane = isLeft ? GetPaneContext(PaneSlot::Left) : GetPaneContext(PaneSlot::Primary);
+    EditState& state = pane.editState;
+    std::wstring& path = pane.path;
 
     if (path.empty()) return;
     if (state.OriginalFilePath.empty()) {
         state.OriginalFilePath = path;
     }
+    const bool isViewOnly = IsReadOnlyContainerForTransform(pane);
     
     // 1. Update State
     state.PendingTransforms.push_back(type);
-    state.IsDirty = true;
+    state.IsDirty = !isViewOnly;
     
     // 2. Update Counters (for OSD display only)
     if (type == TransformType::Rotate90CW) state.TotalRotation = (state.TotalRotation + 90) % 360;
@@ -8514,6 +8713,21 @@ void PerformTransform(HWND hwnd, TransformType type) {
     else if (type == TransformType::Rotate180) state.TotalRotation = (state.TotalRotation + 180) % 360;
     else if (type == TransformType::FlipHorizontal) state.FlippedH = !state.FlippedH;
     else if (type == TransformType::FlipVertical) state.FlippedV = !state.FlippedV;
+
+    if (isViewOnly && !isLeft && (pane.navigator.IsBookModeActive() || pane.navigator.GetArchive() != nullptr)) {
+        g_bookSessionHostPath = FileNavigator::GetPhysicalPath(path);
+        g_bookSessionViewRotation = ((state.TotalRotation % 360) + 360) % 360;
+    }
+    if (isDualPageBook) {
+        auto& leftPane = GetPaneContext(PaneSlot::Left);
+        if (leftPane.valid) {
+            leftPane.editState.TotalRotation = state.TotalRotation;
+            leftPane.editState.FlippedH = state.FlippedH;
+            leftPane.editState.FlippedV = state.FlippedV;
+            leftPane.editState.PendingTransforms = state.PendingTransforms;
+            leftPane.editState.IsDirty = false;
+        }
+    }
     
     // If in Crop Mode or HasCrop, rotate the crop selection coordinates in uncropped 1x visual space
     if (g_cropState.IsActive || state.HasCrop) {
@@ -8628,9 +8842,26 @@ void PerformTransform(HWND hwnd, TransformType type) {
     if (isNeutral) {
         state.IsDirty = false;
         state.PendingTransforms.clear(); // Clear stack as we are back to start
+        if (isViewOnly && !isLeft && (pane.navigator.IsBookModeActive() || pane.navigator.GetArchive() != nullptr)) {
+            ClearBookSessionViewRotation();
+        }
+        if (isDualPageBook) {
+            auto& leftPane = GetPaneContext(PaneSlot::Left);
+            if (leftPane.valid) {
+                leftPane.editState.TotalRotation = 0;
+                leftPane.editState.FlippedH = false;
+                leftPane.editState.FlippedV = false;
+                leftPane.editState.PendingTransforms.clear();
+                leftPane.editState.IsDirty = false;
+            }
+        }
         
         msg = AppStrings::g.OSD_Restored;
         color = D2D1::ColorF(D2D1::ColorF::LightGreen);
+    } else if (isViewOnly) {
+        std::wstring actionName = GetLocalizedTransformName(type);
+        msg = actionName + L" (View)";
+        color = D2D1::ColorF(0.62f, 0.85f, 1.0f);
     } else {
         // Active Transform
         std::wstring actionName = GetLocalizedTransformName(type); 
@@ -8919,6 +9150,10 @@ static int RunDecodeWorker(int argc, LPWSTR* argv) {
 
         header->payloadBytes     = committedPayloadBytes;
         header->iccBytes         = writtenIccBytes;
+        const uint32_t outPages  = (meta.PageCount > 1) ? meta.PageCount : rawFrame.pageCount;
+        header->pageCount        = (outPages > 1) ? outPages : 1u;
+        header->currentPage      = (meta.PageCount > 1) ? meta.CurrentPage : rawFrame.currentPage;
+        header->isIcoOverview    = (meta.IsIcoOverview || rawFrame.isIcoOverview) ? 1u : 0u;
         hr = S_OK;
     } while (false);
 
@@ -9460,13 +9695,14 @@ static bool TryPresentBootPreloadedFrame(HWND hwnd, const std::wstring& initialI
     g_compEngine->Commit();
 
     wchar_t titleBuf[2048];
-    std::wstring titleName = initialImagePath.substr(initialImagePath.find_last_of(L"\\/") + 1);
+    std::wstring titleName = FormatDisplayTitleName(initialImagePath, primaryPane.metadata);
     const bool navHasPairedRaw = primaryPane.navigator.HasPairedRaw(bootId);
     if (const auto* pairedRaw = primaryPane.navigator.GetPairedRaw(bootId)) {
         titleName += L" (" + FileNavigator::PairedRawLabel(*pairedRaw) + L")";
     }
     g_toolbar.SetRawState(QuickView::IsRawPath(initialImagePath) || navHasPairedRaw,
                           g_runtime.ForceRawDecode, navHasPairedRaw);
+    SyncMultiPageAndIcoToolbar(hwnd, initialImagePath, primaryPane.metadata, false);
     swprintf_s(titleBuf, L"%s - %s", titleName.c_str(), g_szWindowTitle);
     SetWindowTextW(hwnd, titleBuf);
 
@@ -10507,6 +10743,47 @@ void SetLockWindowSize(HWND hwnd, bool locked) {
     RequestRepaint(PaintLayer::All);
 }
 
+static void ApplyBookModeWindowLock(HWND hwnd, bool active) {
+    bool targetLocked = false;
+    if (active) {
+        if (g_bookModeWindowLockActive) return;
+        g_bookModeSavedLockWindowSize = g_runtime.LockWindowSize;
+        g_bookModeWindowLockActive = true;
+        targetLocked = true;
+    } else {
+        if (!g_bookModeWindowLockActive) return;
+        targetLocked = g_bookModeSavedLockWindowSize;
+        g_bookModeWindowLockActive = false;
+    }
+    if (g_runtime.LockWindowSize == targetLocked) return;
+
+    if (!GetPaneContext(PaneSlot::Primary).resource) {
+        g_runtime.LockWindowSize = targetLocked;
+        g_toolbar.SetLockState(targetLocked);
+        return;
+    }
+
+    RECT rcClient{};
+    GetClientRect(hwnd, &rcClient);
+    const float winW = (float)rcClient.right;
+    const float winH = (float)rcClient.bottom;
+    const float galleryH = (g_gallery.IsPinned() && g_gallery.IsVisible()) ? g_gallery.GetVisualHeight(winH) : 0.0f;
+    float effWinH = winH - galleryH;
+    if (effWinH < 1.0f) effWinH = 1.0f;
+
+    const VisualState vs = GetVisualState();
+    const float currentTotalScale = GetCurrentTotalScale(hwnd);
+
+    g_runtime.LockWindowSize = targetLocked;
+    g_toolbar.SetLockState(targetLocked);
+
+    const float newBaseFit = ComputeBaseFitScaleForVisual(vs, winW, effWinH);
+    if (newBaseFit > 0.0001f) {
+        GetPaneContext(PaneSlot::Primary).view.Zoom = currentTotalScale / newBaseFit;
+    }
+    SyncDCompState(hwnd, winW, winH, false);
+}
+
 // [AI Inpaint] Trigger Selection Inpainting
 static void TriggerInpaintCurrentSelection(HWND hwnd) {
     if (!g_cropState.IsActive || g_cropState.Mode != RegionInteractionMode::AiInpaint) return;
@@ -10931,6 +11208,12 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
                 std::lock_guard<std::mutex> lock(g_animatorMutex);
                 opts.SourceFrame = pane.resource.animator->SeekToFrame(pane.resource.frameMeta.index);
             }
+            if (!opts.SourceFrame && pane.metadata.IsIcoOverview) {
+                opts.SourceFrame = DecodeLargestIcoOriginalFrame(targetPath);
+                if (opts.SourceFrame) {
+                    opts.InputPath = FileNavigator::GetPhysicalPath(targetPath);
+                }
+            }
 
             g_pendingClipboard.filePath = targetPath;
             g_pendingClipboard.options = opts;
@@ -10988,6 +11271,14 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
                 int targetH = 0;
                 GetExportBaseVisualDimensions(pane, targetW, targetH);
                 auto customFrame = pane.editState.HasModifiedFrame ? pane.currentFrame : nullptr;
+                if (!customFrame && pane.metadata.IsIcoOverview) {
+                    customFrame = DecodeLargestIcoOriginalFrame(targetPath);
+                    if (customFrame) {
+                        targetW = customFrame->width;
+                        targetH = customFrame->height;
+                        targetPath = FileNavigator::GetPhysicalPath(targetPath);
+                    }
+                }
                 QuickView::ExportPanel::GetInstance().Show(hwnd, targetW, targetH, targetPath, QuickView::PendingAction::None, activeSlot, customFrame);
                 RequestRepaint(PaintLayer::All);
             }
@@ -12109,6 +12400,15 @@ static bool ExecuteMouseActionTarget(HWND hwnd, MouseActionTarget action, POINT 
         return true;
     case MouseActionTarget::ToggleWheelPanMode:
         ExecuteToggleWheelPanMode(hwnd);
+        return true;
+    case MouseActionTarget::NextFrameOrPage:
+        HandlePageOrFrameStep(hwnd, true);
+        return true;
+    case MouseActionTarget::PrevFrameOrPage:
+        HandlePageOrFrameStep(hwnd, false);
+        return true;
+    case MouseActionTarget::ToggleBookMode:
+        ToggleBookMode(hwnd);
         return true;
     case MouseActionTarget::ViewPan:
         if (ViewPan_IsActive()) {
@@ -14846,7 +15146,7 @@ case WM_DESTROY: {
                   
                   bool isCompare = IsCompareModeActive();
                   int numPanes = 1;
-                  if (isCompare && g_toolbar.IsComicMode()) numPanes = 2;
+                  if (isCompare && g_toolbar.IsBookOrComicMode()) numPanes = 2;
                   else if (isCompare && AppContext::GetInstance().Compare.mode == ViewMode::CompareSideBySide) numPanes = 2;
                   
                   float vpW = winW;
@@ -15344,11 +15644,15 @@ SKIP_EDGE_NAV:;
           if (g_isDraggingAnimSeek) {
               float prog = 0;
               if (g_toolbar.GetAnimSeekTarget(prog)) {
-                  static DWORD lastSeekTime = 0;
-                  DWORD curTime = GetTickCount();
-                  if (curTime - lastSeekTime >= 33) {
-                      PerformAnimSeek(hwnd, prog);
-                      lastSeekTime = curTime;
+                  if (GetPaneContext(PaneSlot::Primary).resource.animator) {
+                      static DWORD lastSeekTime = 0;
+                      DWORD curTime = GetTickCount();
+                      if (curTime - lastSeekTime >= 33) {
+                          PerformAnimSeek(hwnd, prog);
+                          lastSeekTime = curTime;
+                      } else {
+                          g_toolbar.SetAnimProgress(prog);
+                      }
                   } else {
                       g_toolbar.SetAnimProgress(prog);
                   }
@@ -16540,13 +16844,18 @@ SKIP_EDGE_NAV:;
         if (g_toolbar.IsVisible() && g_toolbar.HitTest((float)pt.x, (float)pt.y)) {
             ToolbarButtonID tbId = ToolbarButtonID::None;
             if (g_toolbar.OnClick((float)pt.x, (float)pt.y, tbId)) {
-                if (tbId == ToolbarButtonID::AnimSeek) {
+                if (tbId == ToolbarButtonID::AnimSeek || tbId == ToolbarButtonID::PageSeek) {
                     g_isDraggingAnimSeek = true;
                     g_toolbar.SetDraggingProgress(true);
                     SetCapture(hwnd);
                     float prog = 0;
                     if (g_toolbar.GetAnimSeekTarget(prog)) {
-                        PerformAnimSeek(hwnd, prog);
+                        if (tbId == ToolbarButtonID::AnimSeek) {
+                            PerformAnimSeek(hwnd, prog);
+                        } else {
+                            g_toolbar.SetAnimProgress(prog);
+                            RequestRepaint(PaintLayer::Static);
+                        }
                     }
                 }
             }
@@ -16966,6 +17275,21 @@ SKIP_EDGE_NAV:;
                 case ToolbarButtonID::RotateR: PerformTransform(hwnd, TransformType::Rotate90CW); break;
                 case ToolbarButtonID::FlipH:   PerformTransform(hwnd, TransformType::FlipHorizontal); break;
                 case ToolbarButtonID::LockSize: SendMessage(hwnd, WM_COMMAND, IDM_LOCK_WINDOW_SIZE, 0); break;
+                case ToolbarButtonID::BookMode: ToggleBookMode(hwnd); break;
+                case ToolbarButtonID::PageSeek: {
+                    if (g_isDraggingAnimSeek) {
+                        g_isDraggingAnimSeek = false;
+                        g_toolbar.SetDraggingProgress(false);
+                        ReleaseCapture();
+                        g_toolbarHideDeadlineMs = GetTickCount64() + 800;
+                        SyncToolbarTimer(hwnd);
+                    }
+                    uint32_t targetPage = 0;
+                    if (g_toolbar.GetPageSeekTarget(targetPage)) {
+                        NavigateToMultiPage(hwnd, targetPage);
+                    }
+                    break;
+                }
                 case ToolbarButtonID::Exif:    SendMessage(hwnd, WM_COMMAND, IDM_SHOW_INFO_PANEL, 0); break;
                 case ToolbarButtonID::RawToggle: {
                     // [Refactor] Use Centralized Command Handler (same as Menu)
@@ -17424,6 +17748,11 @@ SKIP_EDGE_NAV:;
             if (delta != 0.0f && CheckUnsavedChanges(hwnd, pending)) {
                 Navigate(hwnd, direction);
             }
+        } else if (gestureHWheel == MouseActionTarget::NextFrameOrPage || gestureHWheel == MouseActionTarget::PrevFrameOrPage) {
+            if (delta != 0.0f) {
+                const bool forward = (gestureHWheel == MouseActionTarget::NextFrameOrPage) ? (delta > 0.0f) : (delta < 0.0f);
+                HandlePageOrFrameStep(hwnd, forward);
+            }
         } else {
             POINT pt;
             GetCursorPos(&pt);
@@ -17567,6 +17896,13 @@ SKIP_EDGE_NAV:;
         bool isLockZoom = (wheelAct == MouseActionTarget::LockWindowZoomWheel);
         bool isZoomWheel = (wheelAct == MouseActionTarget::Zoom) || isLockZoom;
         if (!shouldNavigate && !isZoomWheel) {
+            if (wheelAct == MouseActionTarget::NextFrameOrPage || wheelAct == MouseActionTarget::PrevFrameOrPage) {
+                if (delta != 0.0f) {
+                    const bool forward = (wheelAct == MouseActionTarget::NextFrameOrPage) ? (delta < 0.0f) : (delta > 0.0f);
+                    HandlePageOrFrameStep(hwnd, forward);
+                }
+                return 0;
+            }
             POINT mousePt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
             ScreenToClient(hwnd, &mousePt);
             ExecuteMouseActionTarget(hwnd, wheelAct, mousePt);
@@ -18412,6 +18748,7 @@ void ProcessEngineEvents(HWND hwnd) {
                 pane.CmsModeOverride = g_runtime.CmsModeOverride;
                 pane.EnableSoftProofing = g_runtime.EnableSoftProofing;
                 pane.SoftProofProfilePath = g_runtime.SoftProofProfilePath;
+                ApplyBookSessionRotationToLeftPane(pane);
                 
                 g_isLeftPaneDecoding = false;
                 
@@ -18737,7 +19074,15 @@ void ProcessEngineEvents(HWND hwnd) {
                             prevMeta.iccProfileData.end());
                     }
 
-                    // 7. Preserve same-image async metadata & telemetry (histogram/sharpness/entropy)
+                    // 7. Preserve same-image async metadata & telemetry (histogram/sharpness/entropy/multipage)
+                    if (finalMetadata.PageCount <= 1 && prevMeta.PageCount > 1) {
+                        finalMetadata.PageCount = prevMeta.PageCount;
+                        finalMetadata.CurrentPage = prevMeta.CurrentPage;
+                        finalMetadata.IsIcoOverview = prevMeta.IsIcoOverview;
+                    }
+                    if (finalMetadata.IcoFrameSummary.empty() && !prevMeta.IcoFrameSummary.empty()) {
+                        finalMetadata.IcoFrameSummary = prevMeta.IcoFrameSummary;
+                    }
                     if (prevMeta.IsFullMetadataLoaded) finalMetadata.IsFullMetadataLoaded = true;
                     if (finalMetadata.LoaderName.empty() && !prevMeta.LoaderName.empty()) finalMetadata.LoaderName = prevMeta.LoaderName;
                     if (finalMetadata.HistL.empty() && !prevMeta.HistL.empty()) {
@@ -18823,7 +19168,8 @@ void ProcessEngineEvents(HWND hwnd) {
                     g_toolbar.SetExtensionWarning(false);
                 }
                 
-                // Refresh Layout to recalculate Warning Icon bounds
+                // Refresh Layout to recalculate Warning Icon / Book / Page / ICO bounds
+                SyncMultiPageAndIcoToolbar(hwnd, GetPaneContext(PaneSlot::Primary).path, GetPaneContext(PaneSlot::Primary).metadata, isPreview);
                 RECT rc = GetEffectiveClientRect(hwnd);
                 g_toolbar.UpdateLayout((float)rc.right, (float)rc.bottom);
 
@@ -18831,9 +19177,11 @@ void ProcessEngineEvents(HWND hwnd) {
                 // (never re-reset during Phase1 -> Preview -> Full quality upgrades of the same image).
                 const bool isFirstPresentationReset = g_needsInitialPresentationReset && !g_preserveViewStateOnNextLoad;
                 if (isFirstPresentationReset) {
-                    GetPaneContext(PaneSlot::Primary).editState.Reset();
-                    GetPaneContext(PaneSlot::Primary).editState.OriginalFilePath = GetPaneContext(PaneSlot::Primary).path;
-                    GetPaneContext(PaneSlot::Primary).view.Reset();
+                    auto& primaryPane = GetPaneContext(PaneSlot::Primary);
+                    primaryPane.editState.Reset();
+                    primaryPane.editState.OriginalFilePath = primaryPane.path;
+                    SyncBookSessionViewRotation(primaryPane, primaryPane.path);
+                    primaryPane.view.Reset();
                     g_needsInitialPresentationReset = false;
                 }
 
@@ -18858,12 +19206,11 @@ void ProcessEngineEvents(HWND hwnd) {
                 // UI Text Logic
                 wchar_t titleBuf[2048];
                 if (isPreview) {
-                    swprintf_s(titleBuf, L"Loading... %s - %s",
-                        evt.filePath.substr(evt.filePath.find_last_of(L"\\/") + 1).c_str(),
-                        g_szWindowTitle);
+                    const std::wstring dispName = FormatDisplayTitleName(evt.filePath, GetPaneContext(PaneSlot::Primary).metadata);
+                    swprintf_s(titleBuf, L"Loading... %s - %s", dispName.c_str(), g_szWindowTitle);
                 } else {
                      // [RAW+JPEG Pairing] Flag the hidden RAW in the title, e.g. "IMG_001.JPG (+CR3)"
-                     std::wstring titleName = evt.filePath.substr(evt.filePath.find_last_of(L"\\/") + 1);
+                     std::wstring titleName = FormatDisplayTitleName(evt.filePath, GetPaneContext(PaneSlot::Primary).metadata);
                      if (const auto* pairedRaw = GetPaneContext(PaneSlot::Primary).navigator.GetPairedRaw(FileNavigator::PathToImageID(evt.filePath))) {
                          titleName += L" (" + FileNavigator::PairedRawLabel(*pairedRaw) + L")";
                      }
@@ -19101,6 +19448,17 @@ void ProcessEngineEvents(HWND hwnd) {
                  // [v6.3] Propagate Format Details & Format
                  if (!evt.metadata.FormatDetails.empty()) GetPaneContext(PaneSlot::Primary).metadata.FormatDetails = evt.metadata.FormatDetails;
                  if (!evt.metadata.Format.empty()) GetPaneContext(PaneSlot::Primary).metadata.Format = evt.metadata.Format;
+                 bool multiPageUpdated = false;
+                 if (evt.metadata.PageCount > primaryMeta.PageCount) {
+                     primaryMeta.PageCount = evt.metadata.PageCount;
+                     primaryMeta.CurrentPage = evt.metadata.CurrentPage;
+                     primaryMeta.IsIcoOverview = evt.metadata.IsIcoOverview;
+                     multiPageUpdated = true;
+                 }
+                 if (primaryMeta.IcoFrameSummary.empty() && !evt.metadata.IcoFrameSummary.empty()) {
+                     primaryMeta.IcoFrameSummary = evt.metadata.IcoFrameSummary;
+                     multiPageUpdated = true;
+                 }
                  
                  // GPS (Atomic update)
                  if (evt.metadata.HasGPS) {
@@ -19141,6 +19499,20 @@ void ProcessEngineEvents(HWND hwnd) {
                  if (evt.metadata.LastWriteTime.dwLowDateTime != 0) GetPaneContext(PaneSlot::Primary).metadata.LastWriteTime = evt.metadata.LastWriteTime;
 
                  GetPaneContext(PaneSlot::Primary).metadata.IsFullMetadataLoaded = true;
+
+                 if (multiPageUpdated && !IsCompareModeActive()) {
+                     const auto& curPane = GetPaneContext(PaneSlot::Primary);
+                     SyncMultiPageAndIcoToolbar(hwnd, curPane.path, curPane.metadata, false);
+                     RECT rc = GetEffectiveClientRect(hwnd);
+                     g_toolbar.UpdateLayout(static_cast<float>(rc.right), static_cast<float>(rc.bottom));
+                     std::wstring titleName = FormatDisplayTitleName(curPane.path, curPane.metadata);
+                     if (const auto* pairedRaw = curPane.navigator.GetPairedRaw(FileNavigator::PathToImageID(curPane.path))) {
+                         titleName += L" (" + FileNavigator::PairedRawLabel(*pairedRaw) + L")";
+                     }
+                     wchar_t titleBuf[2048];
+                     swprintf_s(titleBuf, L"%s - %s", titleName.c_str(), g_szWindowTitle);
+                     SetWindowTextW(hwnd, titleBuf);
+                 }
                  
                  // Refresh UI layers
                  RequestRepaint(PaintLayer::Static | PaintLayer::Dynamic);
@@ -19410,9 +19782,11 @@ static bool ApplyPhase1PlaceholderFrame(
     GetPaneContext(PaneSlot::Primary).resource.Reset();
     GetPaneContext(PaneSlot::Primary).resource.bitmap = bitmap;
     if (g_needsInitialPresentationReset && !g_preserveViewStateOnNextLoad) {
-        GetPaneContext(PaneSlot::Primary).editState.Reset();
-        GetPaneContext(PaneSlot::Primary).editState.OriginalFilePath = path;
-        GetPaneContext(PaneSlot::Primary).view.Reset();
+        auto& primaryPane = GetPaneContext(PaneSlot::Primary);
+        primaryPane.editState.Reset();
+        primaryPane.editState.OriginalFilePath = path;
+        SyncBookSessionViewRotation(primaryPane, path);
+        primaryPane.view.Reset();
         g_needsInitialPresentationReset = false;
     }
     g_isBlurry = true;
@@ -19436,8 +19810,9 @@ static bool ApplyPhase1PlaceholderFrame(
     }
 
     wchar_t titleBuf[2048];
-    const size_t namePos = path.find_last_of(L"\\/");
-    const wchar_t* name = (namePos == std::wstring::npos) ? path.c_str() : path.c_str() + namePos + 1;
+    const std::wstring physicalName = FileNavigator::GetPhysicalPath(path);
+    const size_t namePos = physicalName.find_last_of(L"\\/");
+    const wchar_t* name = (namePos == std::wstring::npos) ? physicalName.c_str() : physicalName.c_str() + namePos + 1;
     swprintf_s(titleBuf, L"Loading... %s - %s", name, g_szWindowTitle);
     SetWindowTextW(hwnd, titleBuf);
 
@@ -19781,6 +20156,7 @@ void StartNavigation(HWND hwnd, std::wstring path, [[maybe_unused]] bool showOSD
     // If IsDirty is true, we are likely reloading the TempFile, so we must PRESERVE OriginalFilePath.
     if (!GetPaneContext(PaneSlot::Primary).editState.IsDirty) {
         GetPaneContext(PaneSlot::Primary).editState.OriginalFilePath = path;
+        SyncBookSessionViewRotation(GetPaneContext(PaneSlot::Primary), path);
     }
     
  // [Fix] Reliable Titan Detection
@@ -20021,7 +20397,7 @@ void NavigateEdge(HWND hwnd, bool toLast) {
     if (GetPaneContext(PaneSlot::Primary).navigator.Count() <= 0) return;
     if (!CheckUnsavedChanges(hwnd)) return;
 
-    if (IsCompareModeActive() && g_toolbar.IsComicMode()) {
+    if (IsCompareModeActive() && g_toolbar.IsBookOrComicMode()) {
         int targetRightIndex = toLast ? (int)GetPaneContext(PaneSlot::Primary).navigator.Count() - 1 : 0;
 
         int nextRightIndex = (targetRightIndex + 1) & ~1;
@@ -20177,7 +20553,7 @@ void Navigate(HWND hwnd, int direction) {
         return;
     }
 
-    if (IsCompareModeActive() && g_toolbar.IsComicMode()) {
+    if (IsCompareModeActive() && g_toolbar.IsBookOrComicMode()) {
         int currentIndex = GetPaneContext(PaneSlot::Primary).navigator.Index();
 
         if (direction > 0) {
@@ -20297,6 +20673,26 @@ void Navigate(HWND hwnd, int direction) {
     }
 
     if (!path.empty()) {
+        if (QuickView::IsArchivePath(path)) {
+            auto& pane = GetPaneContext(PaneSlot::Primary);
+            pane.navigator.Initialize(path, hwnd, false);
+            g_thumbMgr.ClearCache();
+            if (g_thumbMgrInitialized) {
+                g_gallery.Initialize(&g_thumbMgr, &pane.navigator);
+            }
+            if (pane.navigator.Count() > 0) {
+                pane.navigator.SetIndex(0);
+                if (g_gallery.IsVisible()) {
+                    g_gallery.Open(0, g_gallery.GetMode(), g_gallery.IsPinned());
+                }
+                const std::wstring firstPage = pane.navigator.GetFile(0);
+                QuickView::BrowseDirection browseDir = (direction > 0)
+                    ? QuickView::BrowseDirection::FORWARD
+                    : QuickView::BrowseDirection::BACKWARD;
+                LoadImageAsync(hwnd, firstPage, true, browseDir);
+            }
+            return;
+        }
         // [Visual Continuity] Do NOT reset editState or view here.
         // View and edit state are atomically reset in ProcessEngineEvents upon new image presentation,
         // preventing the resident image from snapping/flipping orientation while background decode runs.
@@ -21051,6 +21447,230 @@ void HandleAnimFrameStep(HWND hwnd, bool forward) {
     }
 }
 
+void NavigateToMultiPage(HWND hwnd, uint32_t targetPage) {
+    auto& pane = GetPaneContext(PaneSlot::Primary);
+    if (pane.path.empty() || pane.metadata.PageCount <= 1) return;
+    if (targetPage >= pane.metadata.PageCount) {
+        targetPage = pane.metadata.PageCount - 1;
+    }
+    g_toolbar.SetBookModeState(
+        g_toolbar.IsBookModeAvailable(),
+        g_toolbar.IsBookModeActive(),
+        targetPage,
+        pane.metadata.PageCount);
+    RequestRepaint(PaintLayer::Static | PaintLayer::Dynamic);
+    if (pane.metadata.Format == L"ICO") {
+        if (pane.navigator.IsBookModeActive() && pane.navigator.GetArchive() == nullptr) {
+            pane.navigator.SetIndex(static_cast<int>(targetPage));
+        }
+        SelectIcoFrame(hwnd, static_cast<int>(targetPage));
+        return;
+    }
+    if (targetPage == pane.metadata.CurrentPage && FileNavigator::IsMultiPageVirtualPath(pane.path)) {
+        return;
+    }
+    const std::wstring physical = FileNavigator::GetPhysicalPath(pane.path);
+    const std::wstring targetPath = FileNavigator::MakeMultiPagePath(physical, targetPage, pane.metadata.PageCount);
+    if (pane.navigator.IsBookModeActive() && pane.navigator.GetArchive() == nullptr) {
+        pane.navigator.SetIndex(static_cast<int>(targetPage));
+    }
+    const QuickView::BrowseDirection dir = (targetPage >= pane.metadata.CurrentPage)
+        ? QuickView::BrowseDirection::FORWARD
+        : QuickView::BrowseDirection::BACKWARD;
+    LoadImageAsync(hwnd, targetPath, true, dir);
+}
+
+void SelectIcoFrame(HWND hwnd, int frameIndex) {
+    auto& pane = GetPaneContext(PaneSlot::Primary);
+    if (pane.path.empty()) return;
+    const std::wstring physical = FileNavigator::GetPhysicalPath(pane.path);
+    if (frameIndex < 0) {
+        LoadImageAsync(hwnd, physical, false);
+        return;
+    }
+    uint16_t w = 0, h = 0, bpp = 0;
+    if (frameIndex < static_cast<int>(g_currentIcoEntries.size())) {
+        w = g_currentIcoEntries[frameIndex].width;
+        h = g_currentIcoEntries[frameIndex].height;
+        bpp = g_currentIcoEntries[frameIndex].bpp;
+    }
+    const std::wstring vpath = FileNavigator::MakeIcoFramePath(
+        physical, static_cast<uint32_t>(frameIndex), w, h, bpp);
+    LoadImageAsync(hwnd, vpath, false);
+}
+
+void HandlePageOrFrameStep(HWND hwnd, bool forward) {
+    auto& pane = GetPaneContext(PaneSlot::Primary);
+    if (pane.resource.animator && pane.resource.animator->GetTotalFrames() > 1) {
+        HandleAnimFrameStep(hwnd, forward);
+        return;
+    }
+    if (pane.metadata.PageCount <= 1) return;
+    const int total = static_cast<int>(pane.metadata.PageCount);
+    if (pane.metadata.Format == L"ICO") {
+        const int cur = pane.metadata.IsIcoOverview ? -1 : static_cast<int>(pane.metadata.CurrentPage);
+        int next = forward ? (cur + 1) : (cur - 1);
+        if (next >= total) next = -1;
+        else if (next < -1) next = total - 1;
+        SelectIcoFrame(hwnd, next);
+        return;
+    }
+    const int cur = static_cast<int>(pane.metadata.CurrentPage);
+    int next = forward ? (cur + 1) : (cur - 1);
+    if (next >= total || next < 0) {
+        if (!g_runtime.NavLoop) {
+            g_osd.Show(hwnd, std::wstring(forward ? AppStrings::g.OSD_LastImage : AppStrings::g.OSD_FirstImage), false);
+            return;
+        }
+        next = (next < 0) ? (total - 1) : 0;
+    }
+    NavigateToMultiPage(hwnd, static_cast<uint32_t>(next));
+}
+
+void ToggleBookMode(HWND hwnd) {
+    if (!CheckUnsavedChanges(hwnd)) return;
+    auto& pane = GetPaneContext(PaneSlot::Primary);
+    auto& nav = pane.navigator;
+
+    auto syncVisibleGallery = [&](int targetIdx) {
+        EnsureThumbMgrInitialized(hwnd);
+        g_thumbMgr.ClearCache();
+        g_gallery.Initialize(&g_thumbMgr, &nav);
+        if (g_gallery.IsVisible()) {
+            g_gallery.Open((std::max)(targetIdx, 0), g_gallery.GetMode(), g_gallery.IsPinned());
+        }
+    };
+
+    if (nav.IsBookModeActive()) {
+        const bool wasArchive = (nav.GetArchive() != nullptr);
+        const bool wasIco = (!wasArchive && pane.metadata.Format == L"ICO");
+        if (IsCompareModeActive()) {
+            AppContext::GetInstance().CompareCtrl->ExitMode(hwnd);
+        }
+        std::wstring targetPath;
+        if (!nav.ExitBookMode(targetPath)) return;
+
+        ClearBookSessionViewRotation();
+        pane.editState.TotalRotation = 0;
+        pane.editState.FlippedH = false;
+        pane.editState.FlippedV = false;
+        pane.editState.PendingTransforms.clear();
+        pane.editState.IsDirty = false;
+
+        g_toolbar.SetComicMode(false);
+        ApplyBookModeWindowLock(hwnd, false);
+        nav.EnsureMaterialized();
+        syncVisibleGallery(nav.Index());
+
+        g_toolbar.SetBookModeState(
+            true, false,
+            wasArchive ? 0u : pane.metadata.CurrentPage,
+            wasArchive ? 1u : pane.metadata.PageCount);
+        if (wasIco && !targetPath.empty()) {
+            // Return from single-frame ICO inspection back to Contact Sheet overview in folder mode
+            LoadImageAsync(hwnd, targetPath.c_str(), false);
+        } else {
+            AdjustWindowToImage(hwnd);
+        }
+        g_osd.Show(hwnd, AppStrings::g.Toolbar_Tooltip_BookModeOff, false);
+        RECT rc = GetEffectiveClientRect(hwnd);
+        g_toolbar.UpdateLayout(static_cast<float>(rc.right), static_cast<float>(rc.bottom));
+        RequestRepaint(PaintLayer::All);
+        return;
+    }
+
+    // Check archive parent browse or currently selected archive
+    const std::wstring curNavItem = (nav.Index() >= 0 && nav.Index() < static_cast<int>(nav.Count()))
+        ? nav.GetFile(nav.Index())
+        : std::wstring{};
+    if (nav.IsArchiveParentBrowse() || (!curNavItem.empty() && QuickView::IsArchivePath(curNavItem))) {
+        if (!curNavItem.empty() && QuickView::IsArchivePath(curNavItem) &&
+            _wcsicmp(curNavItem.c_str(), nav.GetBookHostPath().c_str()) != 0) {
+            nav.Initialize(curNavItem, hwnd, false);
+        } else if (!nav.ReenterArchiveBookMode() && !curNavItem.empty() && QuickView::IsArchivePath(curNavItem)) {
+            nav.Initialize(curNavItem, hwnd, false);
+        }
+        if (nav.GetArchive() != nullptr) {
+            g_toolbar.SetComicMode(true);
+            ApplyBookModeWindowLock(hwnd, true);
+            syncVisibleGallery(nav.Index());
+            const uint32_t cur = nav.Index() >= 0 ? static_cast<uint32_t>(nav.Index()) : 0u;
+            const uint32_t tot = static_cast<uint32_t>((std::max<size_t>)(1, nav.Count()));
+            g_toolbar.SetBookModeState(true, true, cur, tot);
+            if (pane.path.find(L'|') == std::wstring::npos && nav.Count() > 0) {
+                LoadImageAsync(hwnd, nav.GetFile(static_cast<int>(cur)).c_str(), false);
+            }
+            g_osd.Show(hwnd, AppStrings::g.Toolbar_Tooltip_BookModeOn, false);
+            RECT rc = GetEffectiveClientRect(hwnd);
+            g_toolbar.UpdateLayout(static_cast<float>(rc.right), static_cast<float>(rc.bottom));
+            RequestRepaint(PaintLayer::All);
+        }
+        return;
+    }
+
+    // Multi-size ICO -> enter Multi-Page Mode over embedded icon frames (sorted largest -> smallest)
+    if (pane.metadata.PageCount > 1 && pane.metadata.Format == L"ICO") {
+        const std::wstring physical = FileNavigator::GetPhysicalPath(pane.path);
+        if (_wcsicmp(g_currentIcoHostPath.c_str(), physical.c_str()) != 0 || g_currentIcoEntries.empty()) {
+            QuickView::MappedFile mf(physical.c_str());
+            if (mf.IsValid() && mf.data() && mf.size() > 0) {
+                QuickView::IcoDecoder::ParseDirectory(mf.data(), mf.size(), g_currentIcoEntries);
+                g_currentIcoHostPath = physical;
+            }
+        }
+        if (g_currentIcoEntries.size() > 1) {
+            std::vector<std::wstring> pagePaths;
+            pagePaths.reserve(g_currentIcoEntries.size());
+            for (size_t i = 0; i < g_currentIcoEntries.size(); ++i) {
+                const auto& e = g_currentIcoEntries[i];
+                pagePaths.push_back(FileNavigator::MakeIcoFramePath(
+                    physical, static_cast<uint32_t>(i), e.width, e.height, e.bpp));
+            }
+            const uint32_t frameCount = static_cast<uint32_t>(pagePaths.size());
+            const uint32_t startPage = pane.metadata.IsIcoOverview
+                ? 0u
+                : (std::min)(pane.metadata.CurrentPage, frameCount - 1);
+            if (nav.EnterBookModeWithPages(physical, std::move(pagePaths), startPage)) {
+                ApplyBookModeWindowLock(hwnd, true);
+                syncVisibleGallery(nav.Index());
+                g_toolbar.SetBookModeState(true, true, startPage, frameCount);
+                if (pane.metadata.IsIcoOverview || !FileNavigator::IsMultiPageVirtualPath(pane.path)) {
+                    LoadImageAsync(hwnd, nav.GetFile(static_cast<int>(startPage)).c_str(), false);
+                } else {
+                    pane.path = nav.GetFile(nav.Index());
+                }
+                g_osd.Show(hwnd, AppStrings::g.Toolbar_Tooltip_BookModeOn, false);
+                RECT rc = GetEffectiveClientRect(hwnd);
+                g_toolbar.UpdateLayout(static_cast<float>(rc.right), static_cast<float>(rc.bottom));
+                RequestRepaint(PaintLayer::All);
+            }
+        }
+        return;
+    }
+
+    // Multi-page image (TIFF) -> enter Multi-Page Mode
+    if (pane.metadata.PageCount > 1) {
+        const std::wstring physical = FileNavigator::GetPhysicalPath(pane.path);
+        const int preEnterRot = ((pane.editState.TotalRotation % 360) + 360) % 360;
+        if (nav.EnterMultiPageBookMode(physical, pane.metadata.PageCount, pane.metadata.CurrentPage)) {
+            pane.path = nav.GetFile(nav.Index());
+            if (preEnterRot != 0) {
+                g_bookSessionHostPath = physical;
+                g_bookSessionViewRotation = preEnterRot;
+            } else {
+                ClearBookSessionViewRotation();
+            }
+            ApplyBookModeWindowLock(hwnd, true);
+            syncVisibleGallery(nav.Index());
+            g_toolbar.SetBookModeState(true, true, pane.metadata.CurrentPage, pane.metadata.PageCount);
+            g_osd.Show(hwnd, AppStrings::g.Toolbar_Tooltip_BookModeOn, false);
+            RECT rc = GetEffectiveClientRect(hwnd);
+            g_toolbar.UpdateLayout(static_cast<float>(rc.right), static_cast<float>(rc.bottom));
+            RequestRepaint(PaintLayer::All);
+        }
+    }
+}
+
 
 void PerformAnimSeek(HWND hwnd, float targetProgress) {
     if (!GetPaneContext(PaneSlot::Primary).resource.animator) return;
@@ -21144,6 +21764,11 @@ static bool ApplyTransformsToFile(const std::wstring& filePath, const std::vecto
 static void UndoLastMemoryTransform(HWND hwnd, EditState& state) {
     if (state.PendingTransforms.empty()) return;
     
+    const bool isDualPageBook = IsCompareModeActive() && g_toolbar.IsBookOrComicMode();
+    const bool isLeft = (&state == &GetPaneContext(PaneSlot::Left).editState);
+    PaneContext& pane = isLeft ? GetPaneContext(PaneSlot::Left) : GetPaneContext(PaneSlot::Primary);
+    const bool isViewOnly = IsReadOnlyContainerForTransform(pane);
+
     TransformType type = state.PendingTransforms.back();
     state.PendingTransforms.pop_back();
     
@@ -21153,7 +21778,26 @@ static void UndoLastMemoryTransform(HWND hwnd, EditState& state) {
     else if (type == TransformType::FlipHorizontal) state.FlippedH = !state.FlippedH;
     else if (type == TransformType::FlipVertical) state.FlippedV = !state.FlippedV;
     
-    state.IsDirty = !state.PendingTransforms.empty();
+    const bool isNeutral = (state.TotalRotation % 360 == 0) && !state.FlippedH && !state.FlippedV;
+    state.IsDirty = !isViewOnly && !state.PendingTransforms.empty();
+    if (isViewOnly && (isDualPageBook || (!isLeft && (pane.navigator.IsBookModeActive() || pane.navigator.GetArchive() != nullptr)))) {
+        if (isNeutral) {
+            ClearBookSessionViewRotation();
+        } else {
+            g_bookSessionHostPath = FileNavigator::GetPhysicalPath(pane.path);
+            g_bookSessionViewRotation = ((state.TotalRotation % 360) + 360) % 360;
+        }
+    }
+    if (isDualPageBook) {
+        PaneContext& peerPane = isLeft ? GetPaneContext(PaneSlot::Primary) : GetPaneContext(PaneSlot::Left);
+        if (!isLeft ? peerPane.valid : !peerPane.path.empty()) {
+            peerPane.editState.TotalRotation = state.TotalRotation;
+            peerPane.editState.FlippedH = state.FlippedH;
+            peerPane.editState.FlippedV = state.FlippedV;
+            peerPane.editState.PendingTransforms = state.PendingTransforms;
+            peerPane.editState.IsDirty = false;
+        }
+    }
     
     if (IsCompareModeActive()) {
         MarkCompareDirty();
@@ -21168,7 +21812,9 @@ static void UndoLastMemoryTransform(HWND hwnd, EditState& state) {
     }
     
     std::wstring msg = AppStrings::g.OSD_Restored;
-    if (state.IsDirty) {
+    D2D1_COLOR_F osdColor = isNeutral ? D2D1::ColorF(D2D1::ColorF::LightGreen)
+                                      : (isViewOnly ? D2D1::ColorF(0.62f, 0.85f, 1.0f) : state.GetQualityColor());
+    if (!isNeutral || state.IsDirty) {
         msg = L"Undo: ";
         if (type == TransformType::Rotate90CW) msg += AppStrings::g.Action_RotateCW;
         else if (type == TransformType::Rotate90CCW) msg += AppStrings::g.Action_RotateCCW;
@@ -21176,7 +21822,7 @@ static void UndoLastMemoryTransform(HWND hwnd, EditState& state) {
         else if (type == TransformType::FlipHorizontal) msg += AppStrings::g.Action_FlipH;
         else if (type == TransformType::FlipVertical) msg += AppStrings::g.Action_FlipV;
     }
-    g_osd.Show(hwnd, msg, false, false, state.GetQualityColor());
+    g_osd.Show(hwnd, msg, false, false, osdColor);
 }
 
 // [RAW+JPEG Pairing] Enter compare mode with the two files of one pair side
@@ -21309,7 +21955,7 @@ static void RefreshCurrentPairIndicators(HWND hwnd) {
             RefreshCompareRawUI(hwnd);
         } else {
             // Rebuild the title the way the load pipeline writes it.
-            std::wstring titleName = cur.substr(cur.find_last_of(L"\\/") + 1);
+            std::wstring titleName = FormatDisplayTitleName(cur, pane.metadata);
             if (const auto* pairedRaw = pane.navigator.GetPairedRaw(FileNavigator::PathToImageID(cur))) {
                 titleName += L" (" + FileNavigator::PairedRawLabel(*pairedRaw) + L")";
             }
@@ -21690,16 +22336,16 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
 
     switch (action) {
     case HotkeyAction::NavNext:
-        if (alt && GetPaneContext(PaneSlot::Primary).resource.animator) {
-            HandleAnimFrameStep(hwnd, true);
+        if (alt) {
+            HandlePageOrFrameStep(hwnd, true);
         } else if (CheckUnsavedChanges(hwnd, QuickView::PendingAction::NavigateNext)) {
             Navigate(hwnd, 1);
         }
         return true;
 
     case HotkeyAction::NavPrev:
-        if (alt && GetPaneContext(PaneSlot::Primary).resource.animator) {
-            HandleAnimFrameStep(hwnd, false);
+        if (alt) {
+            HandlePageOrFrameStep(hwnd, false);
         } else if (CheckUnsavedChanges(hwnd, QuickView::PendingAction::NavigatePrev)) {
             Navigate(hwnd, -1);
         }
@@ -21901,15 +22547,15 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
     }
 
     case HotkeyAction::AnimNextFrame:
-        if (GetPaneContext(PaneSlot::Primary).resource.animator) {
-            HandleAnimFrameStep(hwnd, true);
-        }
+        HandlePageOrFrameStep(hwnd, true);
         return true;
 
     case HotkeyAction::AnimPrevFrame:
-        if (GetPaneContext(PaneSlot::Primary).resource.animator) {
-            HandleAnimFrameStep(hwnd, false);
-        }
+        HandlePageOrFrameStep(hwnd, false);
+        return true;
+
+    case HotkeyAction::ToggleBookMode:
+        ToggleBookMode(hwnd);
         return true;
 
     case HotkeyAction::ToggleGallery:

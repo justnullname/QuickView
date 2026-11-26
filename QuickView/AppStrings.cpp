@@ -115,6 +115,8 @@ static constexpr char kBlob_EN[] =
     /* Toolbar_Tooltip_FlipH */ "Flip Horizontal (H)\0"
     /* Toolbar_Tooltip_Lock */ "Lock Window (Temp)\0"
     /* Toolbar_Tooltip_Unlock */ "Unlock Window\0"
+    /* Toolbar_Tooltip_BookModeOn */ "Multi-Page Mode: ON — Nav & Gallery target inner pages (Click/Hotkey for folder)\0"
+    /* Toolbar_Tooltip_BookModeOff */ "Multi-Page Mode: OFF — Switch Nav & Gallery to inner pages\0"
     /* Toolbar_Tooltip_Gallery */ "Gallery (T)\0"
     /* Toolbar_Tooltip_Info */ "Info Panel\0"
     /* Toolbar_Tooltip_RawPreview */ "RAW: Preview (Click for Full)\0"
@@ -156,8 +158,8 @@ static constexpr char kBlob_EN[] =
     /* Toolbar_Tooltip_CompareExit */ "Exit Compare\0"
     /* Toolbar_Tooltip_AnimPlay */ "Play Animation\0"
     /* Toolbar_Tooltip_AnimPause */ "Pause Animation\0"
-    /* Toolbar_Tooltip_AnimPrev */ "Previous Frame\0"
-    /* Toolbar_Tooltip_AnimNext */ "Next Frame\0"
+    /* Toolbar_Tooltip_AnimPrev */ "Previous Frame / Page\0"
+    /* Toolbar_Tooltip_AnimNext */ "Next Frame / Page\0"
     /* Toolbar_Tooltip_AnimDirtyOn */ "Dirty Rect Debug: ON\0"
     /* Toolbar_Tooltip_AnimDirtyOff */ "Dirty Rect Debug: OFF\0"
     /* Toolbar_Tooltip_AnimSpeed */ "Animation Speed\0"
@@ -883,6 +885,8 @@ static constexpr char kBlob_CN[] =
     /* Toolbar_Tooltip_FlipH */ "水平翻转 (H)\0"
     /* Toolbar_Tooltip_Lock */ "锁定窗口(临时)\0"
     /* Toolbar_Tooltip_Unlock */ "解锁窗口\0"
+    /* Toolbar_Tooltip_BookModeOn */ "多页模式: 开 — 导航与画廊当前针对内页，点击或按快捷键切回文件目录\0"
+    /* Toolbar_Tooltip_BookModeOff */ "多页模式: 关 — 点击将导航与画廊切换至内页浏览\0"
     /* Toolbar_Tooltip_Gallery */ "缩略图 (T)\0"
     /* Toolbar_Tooltip_Info */ "信息面板\0"
     /* Toolbar_Tooltip_RawPreview */ "RAW: 快速预览 (点击切换完整)\0"
@@ -924,8 +928,8 @@ static constexpr char kBlob_CN[] =
     /* Toolbar_Tooltip_CompareExit */ "退出对比\0"
     /* Toolbar_Tooltip_AnimPlay */ "播放动画\0"
     /* Toolbar_Tooltip_AnimPause */ "暂停动画\0"
-    /* Toolbar_Tooltip_AnimPrev */ "上一帧\0"
-    /* Toolbar_Tooltip_AnimNext */ "下一帧\0"
+    /* Toolbar_Tooltip_AnimPrev */ "上一帧/页\0"
+    /* Toolbar_Tooltip_AnimNext */ "下一帧/页\0"
     /* Toolbar_Tooltip_AnimDirtyOn */ "脏矩形调试: 开\0"
     /* Toolbar_Tooltip_AnimDirtyOff */ "脏矩形调试: 关\0"
     /* Toolbar_Tooltip_AnimSpeed */ "动画速度调节\0"
@@ -1651,6 +1655,8 @@ static constexpr char kBlob_TW[] =
     /* Toolbar_Tooltip_FlipH */ "水平翻轉 (H)\0"
     /* Toolbar_Tooltip_Lock */ "鎖定視窗(臨時)\0"
     /* Toolbar_Tooltip_Unlock */ "解鎖視窗\0"
+    /* Toolbar_Tooltip_BookModeOn */ "多頁模式: 開 — 導覽與畫廊目前針對內頁，點擊或按快捷鍵切回檔案目錄\0"
+    /* Toolbar_Tooltip_BookModeOff */ "多頁模式: 關 — 點擊將導覽與畫廊切換至內頁瀏覽\0"
     /* Toolbar_Tooltip_Gallery */ "縮圖 (T)\0"
     /* Toolbar_Tooltip_Info */ "資訊面板\0"
     /* Toolbar_Tooltip_RawPreview */ "RAW: 快速預覽 (點選切換完整)\0"
@@ -1692,8 +1698,8 @@ static constexpr char kBlob_TW[] =
     /* Toolbar_Tooltip_CompareExit */ "退出對比\0"
     /* Toolbar_Tooltip_AnimPlay */ "播放動畫\0"
     /* Toolbar_Tooltip_AnimPause */ "暫停動畫\0"
-    /* Toolbar_Tooltip_AnimPrev */ "上一幀\0"
-    /* Toolbar_Tooltip_AnimNext */ "下一幀\0"
+    /* Toolbar_Tooltip_AnimPrev */ "上一幀/頁\0"
+    /* Toolbar_Tooltip_AnimNext */ "下一幀/頁\0"
     /* Toolbar_Tooltip_AnimDirtyOn */ "髒矩形偵錯: 開\0"
     /* Toolbar_Tooltip_AnimDirtyOff */ "髒矩形偵錯: 關\0"
     /* Toolbar_Tooltip_AnimSpeed */ "動畫速度調節\0"
@@ -2419,6 +2425,8 @@ static constexpr char kBlob_JA[] =
     /* Toolbar_Tooltip_FlipH */ "左右反転 (H)\0"
     /* Toolbar_Tooltip_Lock */ "ウィンドウを固定 (一時)\0"
     /* Toolbar_Tooltip_Unlock */ "ウィンドウの固定を解除\0"
+    /* Toolbar_Tooltip_BookModeOn */ "複数ページモード: オン — ナビとギャラリーは内ページ対象 (クリック/キーでフォルダへ)\0"
+    /* Toolbar_Tooltip_BookModeOff */ "複数ページモード: オフ — ナビとギャラリーを内ページ表示へ切替\0"
     /* Toolbar_Tooltip_Gallery */ "ギャラリー (T)\0"
     /* Toolbar_Tooltip_Info */ "情報パネル\0"
     /* Toolbar_Tooltip_RawPreview */ "RAW : プレビュー (クリックで完全デコード)\0"
@@ -2460,8 +2468,8 @@ static constexpr char kBlob_JA[] =
     /* Toolbar_Tooltip_CompareExit */ "比較モードを終了\0"
     /* Toolbar_Tooltip_AnimPlay */ "アニメーションを再生\0"
     /* Toolbar_Tooltip_AnimPause */ "アニメーションを一時停止\0"
-    /* Toolbar_Tooltip_AnimPrev */ "前のフレーム\0"
-    /* Toolbar_Tooltip_AnimNext */ "次のフレーム\0"
+    /* Toolbar_Tooltip_AnimPrev */ "前のフレーム/ページ\0"
+    /* Toolbar_Tooltip_AnimNext */ "次のフレーム/ページ\0"
     /* Toolbar_Tooltip_AnimDirtyOn */ "更新領域デバッグ : オン\0"
     /* Toolbar_Tooltip_AnimDirtyOff */ "更新領域デバッグ : オフ\0"
     /* Toolbar_Tooltip_AnimSpeed */ "アニメーション速度\0"
@@ -3187,6 +3195,8 @@ static constexpr char kBlob_RU[] =
     /* Toolbar_Tooltip_FlipH */ "Отразить по горизонтали (H)\0"
     /* Toolbar_Tooltip_Lock */ "Заблокировать окно (временно)\0"
     /* Toolbar_Tooltip_Unlock */ "Разблокировать окно\0"
+    /* Toolbar_Tooltip_BookModeOn */ "Многостраничный режим: ВКЛ — навигация и галерея по страницам (клик/клавиша для папки)\0"
+    /* Toolbar_Tooltip_BookModeOff */ "Многостраничный режим: ВЫКЛ — переключить навигацию и галерею на страницы\0"
     /* Toolbar_Tooltip_Gallery */ "Галерея (T)\0"
     /* Toolbar_Tooltip_Info */ "Информационная панель\0"
     /* Toolbar_Tooltip_RawPreview */ "RAW: Предпросмотр (щелчок - полное)\0"
@@ -3228,8 +3238,8 @@ static constexpr char kBlob_RU[] =
     /* Toolbar_Tooltip_CompareExit */ "Выйти из сравнения\0"
     /* Toolbar_Tooltip_AnimPlay */ "Воспроизвести анимацию\0"
     /* Toolbar_Tooltip_AnimPause */ "Приостановить анимацию\0"
-    /* Toolbar_Tooltip_AnimPrev */ "Предыдущий кадр\0"
-    /* Toolbar_Tooltip_AnimNext */ "Следующий кадр\0"
+    /* Toolbar_Tooltip_AnimPrev */ "Предыдущий кадр / стр.\0"
+    /* Toolbar_Tooltip_AnimNext */ "Следующий кадр / стр.\0"
     /* Toolbar_Tooltip_AnimDirtyOn */ "Отладка вид. обл.: ДА\0"
     /* Toolbar_Tooltip_AnimDirtyOff */ "Отладка вид. обл.: НЕТ\0"
     /* Toolbar_Tooltip_AnimSpeed */ "Скорость анимации\0"
@@ -3955,6 +3965,8 @@ static constexpr char kBlob_DE[] =
     /* Toolbar_Tooltip_FlipH */ "Horizontal spiegeln (H)\0"
     /* Toolbar_Tooltip_Lock */ "Fenster sperren (temp)\0"
     /* Toolbar_Tooltip_Unlock */ "Fenster entsperren\0"
+    /* Toolbar_Tooltip_BookModeOn */ "Mehrseitenmodus: EIN — Navigation & Galerie zeigen Seiten (Klick/Taste für Ordner)\0"
+    /* Toolbar_Tooltip_BookModeOff */ "Mehrseitenmodus: AUS — Navigation & Galerie auf innere Seiten umschalten\0"
     /* Toolbar_Tooltip_Gallery */ "Galerie (T)\0"
     /* Toolbar_Tooltip_Info */ "Info-Panel\0"
     /* Toolbar_Tooltip_RawPreview */ "RAW: Vorschau (Klick für Voll)\0"
@@ -3996,8 +4008,8 @@ static constexpr char kBlob_DE[] =
     /* Toolbar_Tooltip_CompareExit */ "Vergleich beenden\0"
     /* Toolbar_Tooltip_AnimPlay */ "Animation abspielen\0"
     /* Toolbar_Tooltip_AnimPause */ "Animation pausieren\0"
-    /* Toolbar_Tooltip_AnimPrev */ "Vorheriger Frame\0"
-    /* Toolbar_Tooltip_AnimNext */ "Nächster Frame\0"
+    /* Toolbar_Tooltip_AnimPrev */ "Vorheriger Frame / Seite\0"
+    /* Toolbar_Tooltip_AnimNext */ "Nächster Frame / Seite\0"
     /* Toolbar_Tooltip_AnimDirtyOn */ "Dirty Rect Debug: AN\0"
     /* Toolbar_Tooltip_AnimDirtyOff */ "Dirty Rect Debug: AUS\0"
     /* Toolbar_Tooltip_AnimSpeed */ "Animationsgeschwindigkeit\0"
@@ -4723,6 +4735,8 @@ static constexpr char kBlob_ES[] =
     /* Toolbar_Tooltip_FlipH */ "Voltear horizontal (H)\0"
     /* Toolbar_Tooltip_Lock */ "Bloquear ventana (temporal)\0"
     /* Toolbar_Tooltip_Unlock */ "Desbloquear ventana\0"
+    /* Toolbar_Tooltip_BookModeOn */ "Modo multipágina: ACTIVADO — Navegación y galería muestran páginas (clic/tecla para carpeta)\0"
+    /* Toolbar_Tooltip_BookModeOff */ "Modo multipágina: DESACTIVADO — Cambiar navegación y galería a páginas internas\0"
     /* Toolbar_Tooltip_Gallery */ "Galería (T)\0"
     /* Toolbar_Tooltip_Info */ "Panel de información\0"
     /* Toolbar_Tooltip_RawPreview */ "RAW: Vista previa (Clic para completo)\0"
@@ -4764,8 +4778,8 @@ static constexpr char kBlob_ES[] =
     /* Toolbar_Tooltip_CompareExit */ "Salir de comparación\0"
     /* Toolbar_Tooltip_AnimPlay */ "Reproducir animación\0"
     /* Toolbar_Tooltip_AnimPause */ "Pausar animación\0"
-    /* Toolbar_Tooltip_AnimPrev */ "Marco anterior\0"
-    /* Toolbar_Tooltip_AnimNext */ "Marco siguiente\0"
+    /* Toolbar_Tooltip_AnimPrev */ "Marco / Página anterior\0"
+    /* Toolbar_Tooltip_AnimNext */ "Marco / Página siguiente\0"
     /* Toolbar_Tooltip_AnimDirtyOn */ "Depuración de Dirty Rect: ACTIVADO\0"
     /* Toolbar_Tooltip_AnimDirtyOff */ "Depuración de Dirty Rect: DESACTIVADO\0"
     /* Toolbar_Tooltip_AnimSpeed */ "Velocidad de animación\0"
@@ -5491,6 +5505,8 @@ static constexpr char kBlob_FR[] =
     /* Toolbar_Tooltip_FlipH */ "Flip Horizontal (H)\0"
     /* Toolbar_Tooltip_Lock */ "Lock Window (Temp)\0"
     /* Toolbar_Tooltip_Unlock */ "Unlock Window\0"
+    /* Toolbar_Tooltip_BookModeOn */ "Mode multipage : ACTIVÉ — Navigation et galerie ciblent les pages (clic/touche pour dossier)\0"
+    /* Toolbar_Tooltip_BookModeOff */ "Mode multipage : DÉSACTIVÉ — Basculer navigation et galerie vers les pages internes\0"
     /* Toolbar_Tooltip_Gallery */ "Gallery (T)\0"
     /* Toolbar_Tooltip_Info */ "Info Panel\0"
     /* Toolbar_Tooltip_RawPreview */ "RAW: Preview (Click for Full)\0"
@@ -5532,8 +5548,8 @@ static constexpr char kBlob_FR[] =
     /* Toolbar_Tooltip_CompareExit */ "Exit Compare\0"
     /* Toolbar_Tooltip_AnimPlay */ "Play Animation\0"
     /* Toolbar_Tooltip_AnimPause */ "Pause Animation\0"
-    /* Toolbar_Tooltip_AnimPrev */ "Previous Frame\0"
-    /* Toolbar_Tooltip_AnimNext */ "Next Frame\0"
+    /* Toolbar_Tooltip_AnimPrev */ "Previous Frame / Page\0"
+    /* Toolbar_Tooltip_AnimNext */ "Next Frame / Page\0"
     /* Toolbar_Tooltip_AnimDirtyOn */ "Dirty Rect Debug: ON\0"
     /* Toolbar_Tooltip_AnimDirtyOff */ "Dirty Rect Debug: OFF\0"
     /* Toolbar_Tooltip_AnimSpeed */ "Vitesse d'animation\0"
@@ -6398,6 +6414,20 @@ std::wstring GetHotkeyActionName(HotkeyAction action) {
     case HotkeyAction::AnimPrevFrame:
         raw = AppStrings::g.Toolbar_Tooltip_AnimPrev;
         break;
+    case HotkeyAction::ToggleBookMode: {
+        needsCleaning = false;
+        raw = PickLang({
+            L"Toggle Multi-Page Mode (Inner Pages / Folder)",
+            L"切换多页模式 (内页 / 目录)",
+            L"切換多頁模式 (內頁 / 目錄)",
+            L"複数ページモード切替 (ページ / フォルダ)",
+            L"Многостраничный режим (страницы / папка)",
+            L"Mehrseitenmodus umschalten (Seiten / Ordner)",
+            L"Alternar modo multipágina (páginas / carpeta)",
+            L"Basculer mode multipage (pages / dossier)"
+        });
+        break;
+    }
     case HotkeyAction::ToggleGallery:
         raw = AppStrings::g.Context_HUDGallery;
         break;
@@ -6704,6 +6734,9 @@ std::wstring GetMouseActionTargetName(::MouseActionTarget action) {
     case MouseActionTarget::Loupe:            return GetHotkeyActionName(HotkeyAction::Loupe);
     case MouseActionTarget::ToggleWheelSwapMode: return GetHotkeyActionName(HotkeyAction::ToggleWheelSwapMode);
     case MouseActionTarget::ToggleWheelPanMode:  return GetHotkeyActionName(HotkeyAction::ToggleWheelPanMode);
+    case MouseActionTarget::NextFrameOrPage:     return GetHotkeyActionName(HotkeyAction::AnimNextFrame);
+    case MouseActionTarget::PrevFrameOrPage:     return GetHotkeyActionName(HotkeyAction::AnimPrevFrame);
+    case MouseActionTarget::ToggleBookMode:      return GetHotkeyActionName(HotkeyAction::ToggleBookMode);
     case MouseActionTarget::PanVertical: {
         return PickLang({
             L"Pan Image Vertically",

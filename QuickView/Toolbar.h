@@ -5,51 +5,7 @@
 #include <cstdint>
 #include "GeekGlass.h"
 #include "GeekIconLibrary.h"
-
-// IDs for button actions
-enum class ToolbarButtonID {
-    None,
-    Prev, Next, 
-    RotateL, RotateR, FlipH, 
-    LockSize, Gallery, 
-    Exif, RawToggle, FixExtension,
-    GamutWarning,
-    Pin,
-    CompareToggle,
-    CompareOpen,
-    CompareSwap,
-    CompareLayout,
-    CompareInfo,
-    CompareRawToggle,
-    CompareDelete,
-    CompareZoomIn,
-    CompareZoomOut,
-    CompareSyncZoom,
-    CompareSyncPan,
-    CompareSave,
-    CompareExit,
-    // Animation mode
-    AnimPlayPause,
-    AnimPrevFrame,
-    AnimNextFrame,
-    AnimDirtyRect,
-    AnimSpeedUp,
-    AnimSpeedDown,
-    AnimSeek,
-    // Overlay (Tracing) mode
-    OverlayAlphaUp,
-    OverlayAlphaDown,
-    OverlayPassthrough,
-    OverlayExit,
-    // Slideshow mode
-    SlideshowImmersiveToggle,
-    SlideshowExit,
-    // Crop mode
-    CropCopy,
-    CropApply,
-    CropSave,
-    CropCancel
-};
+#include "ToolbarVisibility.h"
 
 struct ToolbarButton {
     ToolbarButtonID id;
@@ -84,6 +40,21 @@ public:
         if (m_animProgressHover) { outProgress = m_animSeekHoverProgress; return true; }
         return false;
     }
+    bool GetPageSeekTarget(uint32_t& outPage) const;
+    const std::vector<ToolbarButton>& GetButtonsForTest() const { return m_buttons; }
+    static bool IsButtonVisibleInMode(
+        ToolbarButtonID id,
+        bool cropMode,
+        bool overlayMode,
+        bool slideshowMode,
+        bool compareMode,
+        bool animMode,
+        bool comicOrBookMode,
+        bool bookModeAvailable,
+        bool isButtonEnabled = true,
+        bool isButtonWarning = false,
+        bool compareHasAnim = false,
+        bool isDirty = false);
     
     bool IsVisible() const { return m_opacity > 0.0f; }
     bool GetTargetVisible() const { return m_targetVisible; }
@@ -120,6 +91,16 @@ public:
     bool IsCompareMode() const { return m_compareMode; }
     void SetComicMode(bool enabled) { m_comicMode = enabled; }
     bool IsComicMode() const { return m_comicMode; }
+    bool IsBookOrComicMode() const { return m_comicMode || m_bookModeActive; }
+    bool HasPageScrubber() const {
+        return (m_pageTotal > 1) && !m_animMode && !m_slideshowMode && !m_cropMode && !m_overlayMode &&
+               (!m_compareMode || m_comicMode || m_bookModeActive);
+    }
+    void SetBookModeState(bool available, bool active, uint32_t currentPage, uint32_t totalPages);
+    bool IsBookModeAvailable() const { return m_bookModeAvailable; }
+    bool IsBookModeActive() const { return m_bookModeActive; }
+    uint32_t GetCurrentPage() const { return m_pageCurrent; }
+    uint32_t GetTotalPages() const { return m_pageTotal; }
     void SetCompareSyncStates(bool syncZoom, bool syncPan);
     void SetCompareInfoState(bool active);
     void SetCompareRawState(bool anyRaw, bool selectedIsRaw, bool isFullDecode);
@@ -182,6 +163,10 @@ private:
     bool m_compareMode = false;
     bool m_compareHasAnim = false;
     bool m_comicMode = false;
+    bool m_bookModeAvailable = false;
+    bool m_bookModeActive = false;
+    uint32_t m_pageCurrent = 0;
+    uint32_t m_pageTotal = 1;
     bool m_animMode = false;
     bool m_slideshowMode = false;
     bool m_animPlaying = true;

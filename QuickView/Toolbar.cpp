@@ -30,6 +30,7 @@ Toolbar::Toolbar() {
       {ToolbarButtonID::FlipH, Icons::Flip, {}, true},
 
       {ToolbarButtonID::LockSize, Icons::Lock, {}, true, false},
+      {ToolbarButtonID::BookMode, Icons::Book, {}, false, false},
       {ToolbarButtonID::Gallery, Icons::Gallery, {}, true},
 
       {ToolbarButtonID::Exif, Icons::Info, {}, true, false},
@@ -76,6 +77,52 @@ Toolbar::Toolbar() {
 }
 
 Toolbar::~Toolbar() {}
+
+bool Toolbar::IsButtonVisibleInMode(
+    ToolbarButtonID id,
+    bool cropMode,
+    bool overlayMode,
+    bool slideshowMode,
+    bool compareMode,
+    bool animMode,
+    bool comicOrBookMode,
+    bool bookModeAvailable,
+    bool isButtonEnabled,
+    bool isButtonWarning,
+    bool compareHasAnim,
+    bool isDirty) {
+  return IsToolbarButtonVisibleInMode(
+      id, cropMode, overlayMode, slideshowMode, compareMode, animMode,
+      comicOrBookMode, bookModeAvailable, isButtonEnabled, isButtonWarning,
+      compareHasAnim, isDirty, g_config.ShowDirtyRectButton);
+}
+
+bool Toolbar::GetPageSeekTarget(uint32_t& outPage) const {
+  if (m_pageTotal <= 1 || !m_animProgressHover) return false;
+  const float clamped = std::clamp(m_animSeekHoverProgress, 0.0f, 1.0f);
+  uint32_t page = static_cast<uint32_t>(std::roundf(clamped * static_cast<float>(m_pageTotal - 1)));
+  if (page >= m_pageTotal) page = m_pageTotal - 1;
+  outPage = page;
+  return true;
+}
+
+void Toolbar::SetBookModeState(bool available, bool active, uint32_t currentPage, uint32_t totalPages) {
+  m_bookModeAvailable = available;
+  m_bookModeActive = available && active;
+  m_pageCurrent = currentPage;
+  m_pageTotal = totalPages > 0 ? totalPages : 1;
+  if (!m_animMode && !m_isDraggingProgress) {
+    m_animProgress = (m_pageTotal > 1)
+        ? static_cast<float>((std::min<uint32_t>)(m_pageCurrent, m_pageTotal - 1)) / static_cast<float>(m_pageTotal - 1)
+        : 0.0f;
+  }
+  for (auto& btn : m_buttons) {
+    if (btn.id == ToolbarButtonID::BookMode) {
+      btn.isEnabled = available;
+      btn.isToggled = m_bookModeActive;
+    }
+  }
+}
 
 void Toolbar::SetUIScale(float scale) {
   if (scale < 0.75f)
@@ -169,23 +216,6 @@ void Toolbar::UpdateLayout(float winW, float winH) {
     return id == ToolbarButtonID::Pin;
   };
 
-  auto isOverlayButton = [](ToolbarButtonID id) {
-    return id == ToolbarButtonID::OverlayAlphaUp ||
-           id == ToolbarButtonID::OverlayAlphaDown ||
-           id == ToolbarButtonID::OverlayPassthrough ||
-           id == ToolbarButtonID::OverlayExit;
-  };
-
-  auto isAnimButton = [](ToolbarButtonID id) {
-    if (id == ToolbarButtonID::AnimPlayPause ||
-        id == ToolbarButtonID::AnimPrevFrame ||
-        id == ToolbarButtonID::AnimNextFrame ||
-        id == ToolbarButtonID::AnimDirtyRect) {
-        return true;
-    }
-    return false;
-  };
-
   auto isCropButton = [](ToolbarButtonID id) {
     return id == ToolbarButtonID::RotateL ||
            id == ToolbarButtonID::RotateR ||
@@ -214,6 +244,7 @@ void Toolbar::UpdateLayout(float winW, float winH) {
       {ToolbarButtonID::Pin},
       {ToolbarButtonID::FlipH},
       {ToolbarButtonID::LockSize},
+      {ToolbarButtonID::BookMode},
       {ToolbarButtonID::Gallery},
       {ToolbarButtonID::CompareToggle},
       {ToolbarButtonID::Exif},
@@ -247,7 +278,8 @@ void Toolbar::UpdateLayout(float winW, float winH) {
   };
   static constexpr ResponsiveHideGroup kComicHideOrder[] = {
       {ToolbarButtonID::Pin},
-      {ToolbarButtonID::LockSize},
+      {ToolbarButtonID::BookMode},
+      {ToolbarButtonID::RotateL, ToolbarButtonID::RotateR},
       {ToolbarButtonID::Gallery},
       {ToolbarButtonID::CompareToggle},
       {ToolbarButtonID::Exif},
@@ -274,6 +306,7 @@ void Toolbar::UpdateLayout(float winW, float winH) {
   };
 
   // Select the appropriate hide table for the current mode
+  const bool comicOrBookActive = m_comicMode || m_bookModeActive;
   const ResponsiveHideGroup* hideOrder = kNormalHideOrder;
   int hideOrderCount = (int)std::size(kNormalHideOrder);
   if (m_cropMode) {
@@ -285,15 +318,15 @@ void Toolbar::UpdateLayout(float winW, float winH) {
   } else if (m_slideshowMode) {
       hideOrder = kSlideshowHideOrder;
       hideOrderCount = (int)std::size(kSlideshowHideOrder);
+  } else if (comicOrBookActive) {
+      hideOrder = kComicHideOrder;
+      hideOrderCount = (int)std::size(kComicHideOrder);
   } else if (m_compareMode) {
       hideOrder = kCompareHideOrder;
       hideOrderCount = (int)std::size(kCompareHideOrder);
   } else if (m_animMode) {
       hideOrder = kAnimHideOrder;
       hideOrderCount = (int)std::size(kAnimHideOrder);
-  } else if (m_comicMode) {
-      hideOrder = kComicHideOrder;
-      hideOrderCount = (int)std::size(kComicHideOrder);
   }
 
   // Helper: check if a button ID is in the responsive hidden set
@@ -312,86 +345,31 @@ void Toolbar::UpdateLayout(float winW, float winH) {
     if (btn.id == ToolbarButtonID::Gallery && (winH < 450.0f || winW < 600.0f)) {
       return false;
     }
-    auto isSlideshowButton = [](ToolbarButtonID id) {
-      return id == ToolbarButtonID::SlideshowImmersiveToggle ||
-             id == ToolbarButtonID::SlideshowExit ||
-             id == ToolbarButtonID::AnimPrevFrame ||
-             id == ToolbarButtonID::AnimPlayPause ||
-             id == ToolbarButtonID::AnimNextFrame;
-    };
-
-    auto isSlideshowOnlyButton = [](ToolbarButtonID id) {
-      return id == ToolbarButtonID::SlideshowImmersiveToggle ||
-             id == ToolbarButtonID::SlideshowExit;
-    };
-    if (isSlideshowOnlyButton(btn.id) && !m_slideshowMode) {
+    if (btn.id == ToolbarButtonID::PageSeek) {
       return false;
     }
-
     if (m_slideshowMode) {
-      // White-list slideshow controls (play group, immersive toggle, exit, gallery, exif, pin)
-      if (isSlideshowButton(btn.id) || btn.id == ToolbarButtonID::Gallery || btn.id == ToolbarButtonID::Exif || btn.id == ToolbarButtonID::Pin) {
-        return btn.isEnabled;
-      }
-      return false;
+      return IsButtonVisibleInMode(btn.id, false, false, true, false, false, false, m_bookModeAvailable, btn.isEnabled, btn.isWarning, m_compareHasAnim, false);
     }
-
     if (m_overlayMode) {
-      if (isOverlayButton(btn.id)) return true;
-      if (btn.id == ToolbarButtonID::CompareZoomIn || btn.id == ToolbarButtonID::CompareZoomOut || btn.id == ToolbarButtonID::LockSize) return true;
-      if (isAlwaysVisible(btn.id)) return true;
-      return false;
+      return IsButtonVisibleInMode(btn.id, false, true, false, false, false, false, m_bookModeAvailable, btn.isEnabled, btn.isWarning, m_compareHasAnim, false);
     }
-    if (m_compareMode) {
-      if (btn.id == ToolbarButtonID::AnimPlayPause) return m_compareHasAnim;
-      if (!isCompareButton(btn.id) && !isAlwaysVisible(btn.id)) return false;
-      if (btn.id == ToolbarButtonID::CompareRawToggle && !btn.isWarning) return false;
-      if (btn.id == ToolbarButtonID::CompareSave) {
-        auto& primaryPane = GetPaneContext(PaneSlot::Primary);
-        auto& leftPane = GetPaneContext(PaneSlot::Left);
-        bool hasCrop = primaryPane.editState.HasCrop || leftPane.editState.HasCrop || g_cropState.IsActive;
-        bool hasSr = (primaryPane.metadata.HasSr && primaryPane.metadata.SrScale > 1.0f) ||
-                     (primaryPane.resource.promotedSrBitmap != nullptr) ||
-                     (primaryPane.resource.currentSrLevel > 1.001f) ||
-                     (leftPane.metadata.HasSr && leftPane.metadata.SrScale > 1.0f);
-        bool isDirty = primaryPane.editState.IsDirty || leftPane.editState.IsDirty;
-        return hasCrop || hasSr || isDirty;
-      }
-      return true;
+    if (m_compareMode && !comicOrBookActive) {
+      auto& primaryPane = GetPaneContext(PaneSlot::Primary);
+      auto& leftPane = GetPaneContext(PaneSlot::Left);
+      bool hasCrop = primaryPane.editState.HasCrop || leftPane.editState.HasCrop || g_cropState.IsActive;
+      bool hasSr = (primaryPane.metadata.HasSr && primaryPane.metadata.SrScale > 1.0f) ||
+                   (primaryPane.resource.promotedSrBitmap != nullptr) ||
+                   (primaryPane.resource.currentSrLevel > 1.001f) ||
+                   (leftPane.metadata.HasSr && leftPane.metadata.SrScale > 1.0f);
+      bool isDirty = hasCrop || hasSr || primaryPane.editState.IsDirty || leftPane.editState.IsDirty;
+      return IsButtonVisibleInMode(btn.id, false, false, false, true, false, false, m_bookModeAvailable, btn.isEnabled, btn.isWarning, m_compareHasAnim, isDirty);
     }
-    if (m_animMode || m_slideshowMode) {
-      if (btn.id == ToolbarButtonID::AnimDirtyRect) return m_animMode && g_config.ShowDirtyRectButton;
-      if (btn.id == ToolbarButtonID::Prev || btn.id == ToolbarButtonID::Next || btn.id == ToolbarButtonID::Exif || btn.id == ToolbarButtonID::LockSize) return true;
-      if (isAnimButton(btn.id)) return true;
-      if (isAlwaysVisible(btn.id)) return true;
-      return false;
+    if (m_animMode && !comicOrBookActive) {
+      return IsButtonVisibleInMode(btn.id, false, false, false, m_compareMode, true, false, m_bookModeAvailable, btn.isEnabled, btn.isWarning, m_compareHasAnim, false);
     }
-    if (m_comicMode) {
-      // In comic mode, we hide rotate and flip, raw, extension fix, and gamut warning
-      if (btn.id == ToolbarButtonID::RotateL || btn.id == ToolbarButtonID::RotateR || btn.id == ToolbarButtonID::FlipH) return false;
-      if (btn.id == ToolbarButtonID::RawToggle || btn.id == ToolbarButtonID::FixExtension || btn.id == ToolbarButtonID::GamutWarning) return false;
-      if (isCompareButton(btn.id)) return false;
-      if (isAnimButton(btn.id) || isOverlayButton(btn.id)) return false;
-      return true;
-    }
-
-    if (isCompareButton(btn.id) || isAnimButton(btn.id) || isOverlayButton(btn.id))
-      return false;
-    if (btn.id == ToolbarButtonID::CropApply || btn.id == ToolbarButtonID::CropCopy || btn.id == ToolbarButtonID::CropCancel)
-      return false;
-    if (btn.id == ToolbarButtonID::CropSave) {
-      // In normal mode, only show Save button when image has unsaved edits/crop
-      return GetPaneContext(PaneSlot::Primary).editState.IsDirty;
-    }
-    if (btn.id == ToolbarButtonID::RawToggle && !btn.isEnabled)
-      return false;
-    if (btn.id == ToolbarButtonID::CompareRawToggle && !btn.isWarning)
-      return false;
-    if (btn.id == ToolbarButtonID::FixExtension && !btn.isWarning)
-      return false;
-    if (btn.id == ToolbarButtonID::GamutWarning && !btn.isEnabled)
-      return false;
-    return true;
+    const bool isDirty = GetPaneContext(PaneSlot::Primary).editState.IsDirty;
+    return IsButtonVisibleInMode(btn.id, false, false, false, m_compareMode, false, comicOrBookActive, m_bookModeAvailable, btn.isEnabled, btn.isWarning, m_compareHasAnim, isDirty);
   };
 
   // Helper: calculate total toolbar width for the current visible button set
@@ -473,9 +451,15 @@ void Toolbar::UpdateLayout(float winW, float winH) {
   bool stepInserted = false;
   bool speedInserted = false;
   
-  if (m_animMode) {
-      // Expand upwards to capture pointer tip and frame text, contract downwards to avoid buttons (+2.0f)
+  const bool hasPageScrubber = HasPageScrubber();
+  if (m_animMode || hasPageScrubber) {
+      // Expand upwards to capture pointer tip and frame/page text, contract downwards to avoid buttons (+2.0f)
       m_animProgressRect = D2D1::RectF(m_bgRect.rect.left + 20.0f * m_uiScale, m_bgRect.rect.top - 28.0f * m_uiScale, m_bgRect.rect.right - 20.0f * m_uiScale, m_bgRect.rect.top + 2.0f * m_uiScale);
+  }
+  if (hasPageScrubber && !m_isDraggingProgress) {
+      m_animProgress = (m_pageTotal > 1)
+          ? static_cast<float>(std::min<uint32_t>(m_pageCurrent, m_pageTotal - 1)) / static_cast<float>(m_pageTotal - 1)
+          : 0.0f;
   }
 
   for (auto &btn : m_buttons) {
@@ -559,6 +543,9 @@ const wchar_t *GetTooltipText(const ToolbarButton &btn) {
   case ToolbarButtonID::LockSize:
     return btn.isToggled ? AppStrings::g.Toolbar_Tooltip_Unlock
                          : AppStrings::g.Toolbar_Tooltip_Lock;
+  case ToolbarButtonID::BookMode:
+    return btn.isToggled ? AppStrings::g.Toolbar_Tooltip_BookModeOn
+                         : AppStrings::g.Toolbar_Tooltip_BookModeOff;
   case ToolbarButtonID::Gallery:
     return AppStrings::g.Toolbar_Tooltip_Gallery;
   case ToolbarButtonID::Exif:
@@ -583,7 +570,7 @@ const wchar_t *GetTooltipText(const ToolbarButton &btn) {
     return btn.isToggled ? AppStrings::g.Toolbar_Tooltip_Unpin
                          : AppStrings::g.Toolbar_Tooltip_Pin;
   case ToolbarButtonID::CompareToggle:
-    if (g_navigator.GetArchive() != nullptr) {
+    if (g_navigator.GetArchive() != nullptr || g_navigator.IsBookModeActive()) {
       return btn.isToggled ? AppStrings::g.Toolbar_Tooltip_SinglePage : AppStrings::g.Toolbar_Tooltip_DualPage;
     }
     return btn.isToggled ? AppStrings::g.Toolbar_Tooltip_NormalMode : AppStrings::g.Toolbar_Tooltip_CompareMode;
@@ -676,7 +663,8 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
     params.contentBounds.right += shadowMargin;
     params.contentBounds.bottom += shadowMargin;
 
-    if (m_animMode) {
+    const bool hasPageScrubber = HasPageScrubber();
+    if (m_animMode || hasPageScrubber) {
       params.contentBounds.top -= 10.0f * m_uiScale; // Extra room for progress bar
     }
     params.opacity = m_opacity;
@@ -729,8 +717,8 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
         pRT->FillRoundedRectangle(m_bgRect, m_brushBg.Get());
     }
     
-    // [v10.5] Animation Progress Bar - dynamic placement and thickness
-    if (m_animMode && m_animProgress >= 0.0f) {
+    // [v10.5] Animation / Multi-page Progress Bar - dynamic placement and thickness
+    if ((m_animMode || hasPageScrubber) && m_animProgress >= 0.0f) {
       float barLeft = m_bgRect.rect.left + 20.0f * m_uiScale;
       float barRight = m_bgRect.rect.right - 20.0f * m_uiScale;
       float barY = m_bgRect.rect.top - 1.0f * m_uiScale; // Draw outside the background rectangle
@@ -748,9 +736,10 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
       m_brushWork->SetColor(D2D1::ColorF(0.3f, 0.3f, 0.4f, 0.3f));
       pRT->FillRoundedRectangle(D2D1::RoundedRect(trackRect, cornerRadius, cornerRadius), m_brushWork.Get());
       
-      // Fill (theme accent when playing, caution orange when paused)
+      // Fill (theme accent when playing or in page mode, caution orange when animation paused)
+      const bool barAccentActive = hasPageScrubber || m_animPlaying;
       if (fillW > 0.5f) {
-        D2D1_COLOR_F accentColor = m_animPlaying
+        D2D1_COLOR_F accentColor = barAccentActive
           ? D2D1::ColorF(tp.accentFill.r, tp.accentFill.g, tp.accentFill.b, 0.88f)
           : D2D1::ColorF(1.0f, 0.72f, 0.18f, 0.85f); // Caution orange when paused
         m_brushWork->SetColor(accentColor);
@@ -761,7 +750,7 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
         // Playhead dot
         float dotRadius = m_animProgressHover ? 4.0f * m_uiScale : 3.0f * m_uiScale;
         D2D1_ELLIPSE dot = D2D1::Ellipse(D2D1::Point2F(barLeft + fillW, barY), dotRadius, dotRadius);
-        D2D1_COLOR_F dotColor = m_animPlaying
+        D2D1_COLOR_F dotColor = barAccentActive
           ? (m_animProgressHover ? tp.accentText : D2D1::ColorF(tp.accentFill.r, tp.accentFill.g, tp.accentFill.b, 0.95f))
           : D2D1::ColorF(1.0f, 0.72f, 0.18f, 0.95f);
         dotColor.a = 0.95f;
@@ -769,19 +758,21 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
         pRT->FillEllipse(dot, m_brushWork.Get());
       }
       
-      // Frame Index Text (Show on hover)
-      if (m_totalFrames > 1 && m_animProgressHover) {
-        uint32_t displayFrame = m_currentFrame;
+      // Frame/Page Index Text (Show on hover)
+      const uint32_t scrubTotal = m_animMode ? m_totalFrames : m_pageTotal;
+      const uint32_t scrubCur = m_animMode ? m_currentFrame : m_pageCurrent;
+      if (scrubTotal > 1 && m_animProgressHover) {
+        uint32_t displayFrame = scrubCur;
         
-        // When paused, show the frame at the mouse cursor position
-        if (!m_animPlaying) {
+        // Show the frame/page at the mouse cursor position when paused or in page mode
+        if (!m_animPlaying || hasPageScrubber) {
              const float clampedProgress = std::clamp(m_animSeekHoverProgress, 0.0f, 1.0f);
-             displayFrame = static_cast<uint32_t>(std::roundf(clampedProgress * static_cast<float>(m_totalFrames - 1)));
-             if (displayFrame >= m_totalFrames) displayFrame = m_totalFrames - 1;
+             displayFrame = static_cast<uint32_t>(std::roundf(clampedProgress * static_cast<float>(scrubTotal - 1)));
+             if (displayFrame >= scrubTotal) displayFrame = scrubTotal - 1;
         }
 
         wchar_t frameTxt[64];
-        swprintf_s(frameTxt, L"%u / %u", displayFrame + 1, m_totalFrames);
+        swprintf_s(frameTxt, L"%u / %u", displayFrame + 1, scrubTotal);
         
         // Draw text centered above the progress bar with a transparent background
         if (m_textFormatUI && m_dwriteFactory) {
@@ -797,20 +788,20 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
                 
                 D2D1_RECT_F pillRect = D2D1::RectF(pillX, pillY, pillX + pillW, pillY + pillH);
                 
-                // Draw background pill
+                // Draw background pill (use solid tooltip opacity matching standard toolbar tooltips)
                 D2D1_COLOR_F tipBgBase = isLight 
-                    ? D2D1::ColorF(1.0f, 1.0f, 1.0f, g_config.GlassOsdOpacity / 100.0f)
-                    : D2D1::ColorF(0.15f, 0.15f, 0.15f, g_config.GlassOsdOpacity / 100.0f);
+                    ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f)
+                    : D2D1::ColorF(0.15f, 0.15f, 0.15f, 0.95f);
                 m_brushWork->SetColor(tipBgBase);
                 pRT->FillRoundedRectangle(D2D1::RoundedRect(pillRect, 4.0f * m_uiScale, 4.0f * m_uiScale), m_brushWork.Get());
                 
-                // Text color
-                D2D1_COLOR_F textColor = m_animPlaying
-                  ? D2D1::ColorF(tp.accentText.r, tp.accentText.g, tp.accentText.b, 0.95f) // Match active bar
-                  : D2D1::ColorF(1.0f, 0.72f, 0.18f, 0.95f); // Match paused bar
-                  
-                m_brushWork->SetColor(textColor);
-                pRT->DrawText(frameTxt, (UINT32)wcslen(frameTxt), m_textFormatUI.Get(), pillRect, m_brushWork.Get());
+                // Text color follows global theme text/icon brush for crisp contrast on dark and light themes
+                ID2D1Brush* textBrush = m_brushIcon.Get();
+                if (m_animMode && !m_animPlaying) {
+                  m_brushWork->SetColor(D2D1::ColorF(1.0f, 0.72f, 0.18f, 0.96f));
+                  textBrush = m_brushWork.Get();
+                }
+                pRT->DrawText(frameTxt, (UINT32)wcslen(frameTxt), m_textFormatUI.Get(), pillRect, textBrush);
             }
         }
       }
@@ -873,7 +864,6 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
 
       GeekIconRenderer::DrawVectorIcon(pRT, *btn.iconGlyph, iconRect, pBrush);
     }
-
 
     if ((m_compareMode || m_overlayMode) && m_compareStepRect.right > m_compareStepRect.left) {
       D2D1_ROUNDED_RECT stepRect = D2D1::RoundedRect(
@@ -1103,7 +1093,8 @@ bool Toolbar::OnMouseMove(float x, float y) {
   
   bool progHover = false;
   float newSeekHover = m_animSeekHoverProgress;
-  if (m_animMode && m_animProgressRect.right > m_animProgressRect.left) {
+  const bool hasPageScrubber = HasPageScrubber();
+  if ((m_animMode || hasPageScrubber) && m_animProgressRect.right > m_animProgressRect.left) {
       if ((x >= m_animProgressRect.left && x <= m_animProgressRect.right && y >= m_animProgressRect.top && y <= m_animProgressRect.bottom) || m_isDraggingProgress) {
           progHover = true; // Still show hover highlight while dragging
           newSeekHover = (x - m_animProgressRect.left) / (m_animProgressRect.right - m_animProgressRect.left);
@@ -1111,7 +1102,7 @@ bool Toolbar::OnMouseMove(float x, float y) {
       }
   }
   
-  if (progHover != m_animProgressHover || (progHover && !m_animPlaying && fabsf(newSeekHover - m_animSeekHoverProgress) > 0.0001f)) {
+  if (progHover != m_animProgressHover || (progHover && (!m_animPlaying || hasPageScrubber) && fabsf(newSeekHover - m_animSeekHoverProgress) > 0.0001f)) {
       changed = true;
   }
   
@@ -1124,9 +1115,15 @@ bool Toolbar::OnMouseMove(float x, float y) {
 bool Toolbar::OnClick(float x, float y, ToolbarButtonID &outId) {
   if (m_windowTooNarrow || !IsVisible()) return false;
 
+  const bool hasPageScrubber = HasPageScrubber();
+
   // Progress bar click
   if (m_animMode && m_animProgressHover) {
     outId = ToolbarButtonID::AnimSeek;
+    return true;
+  }
+  if (hasPageScrubber && m_animProgressHover) {
+    outId = ToolbarButtonID::PageSeek;
     return true;
   }
 
@@ -1157,6 +1154,10 @@ bool Toolbar::OnClick(float x, float y, ToolbarButtonID &outId) {
       outId = ToolbarButtonID::AnimSeek;
       return true;
     }
+    if (hasPageScrubber && m_animProgressHover) {
+      outId = ToolbarButtonID::PageSeek;
+      return true;
+    }
     for (auto &btn : m_buttons) {
       if (btn.rect.right > 0 && x >= btn.rect.left && x < btn.rect.right && y >= btn.rect.top && y < btn.rect.bottom) {
         outId = btn.id; return true;
@@ -1182,8 +1183,9 @@ bool Toolbar::HitTest(float x, float y) {
   // 1. Standard background capsule
   if (x >= m_bgRect.rect.left && x <= m_bgRect.rect.right && y >= m_bgRect.rect.top && y <= m_bgRect.rect.bottom) return true;
   
-  // 2. Animation progress bar (this area is floating outside the capsule)
-  if (m_animMode) {
+  // 2. Animation / Page progress bar (this area is floating outside the capsule)
+  const bool hasPageScrubber = HasPageScrubber();
+  if (m_animMode || hasPageScrubber) {
       if (x >= m_animProgressRect.left && x <= m_animProgressRect.right && 
           y >= m_animProgressRect.top && y <= m_animProgressRect.bottom) {
           return true;
@@ -1203,7 +1205,8 @@ bool Toolbar::IsPointInTriggerZone(float x, float y, float winW, float winH, boo
   const float right = (std::min)(winW, m_bgRect.rect.right + padX);
 
   float top = expanded ? (m_bgRect.rect.top - 36.0f * s) : (m_bgRect.rect.top - 8.0f * s);
-  if (expanded && m_animMode && m_animProgressRect.bottom > m_animProgressRect.top) {
+  const bool hasPageScrubber = HasPageScrubber();
+  if (expanded && (m_animMode || hasPageScrubber) && m_animProgressRect.bottom > m_animProgressRect.top) {
     top = (std::min)(top, m_animProgressRect.top - 24.0f * s);
   }
   if (!expanded) {

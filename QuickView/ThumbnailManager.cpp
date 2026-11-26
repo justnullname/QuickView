@@ -330,10 +330,11 @@ void ThumbnailManager::QueueRequest(size_t imageId, LPCWSTR path, int priority) 
     t.priorityDistance = priority;
     t.generation = m_currentGeneration;
 
-    // Detect if this is a virtual archive path
+    // Detect if this is a virtual archive path (do not misclassify multi-page TIFF `|` paths as solid archives)
     std::wstring archivePath;
     size_t archiveIndex = 0;
-    if (FileNavigator::ParseVirtualPath(path, archivePath, archiveIndex)) {
+    if (!FileNavigator::IsMultiPageVirtualPath(path) &&
+        FileNavigator::ParseVirtualPath(path, archivePath, archiveIndex)) {
         t.isArchive = true;
         t.archiveIndex = (int)archiveIndex;
         t.archivePathHash = ComputePathHash(archivePath);

@@ -3047,7 +3047,7 @@ void SettingsOverlay::BuildVisualsTab(SettingsTab& tabVisuals) {
     tagCloudNormal.label = AppStrings::g.Settings_Label_ItemsInNormalMode;
     tagCloudNormal.type = OptionType::TagCloud;
     tagCloudNormal.pStrVal = &g_config.InfoPanelLiteItemsNormal;
-    { const std::wstring_view opts[] = { L"Zoom", L"Progress", L"File", L"Rating", L"Size", L"Disk", L"Date", L"Format", L"Sharp", L"Ent", L"BPP", L"Camera", L"Exp", L"Lens", L"Focal", L"Profile", L"HDR", L"Flash", L"W.Bal", L"Meter", L"Prog", L"Program", L"GPS" }; AssignOptions(tagCloudNormal, opts); }
+    { const std::wstring_view opts[] = { L"Zoom", L"Position", L"File", L"Rating", L"Size", L"Disk", L"Date", L"Format", L"Sharp", L"Ent", L"BPP", L"Camera", L"Exp", L"Lens", L"Focal", L"Profile", L"HDR", L"Flash", L"W.Bal", L"Meter", L"Prog", L"Program", L"GPS" }; AssignOptions(tagCloudNormal, opts); }
     tagCloudNormal.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
     tabVisuals.items.push_back(std::move(tagCloudNormal));
 
@@ -3055,7 +3055,7 @@ void SettingsOverlay::BuildVisualsTab(SettingsTab& tabVisuals) {
     tagCloudCompare.label = AppStrings::g.Settings_Label_ItemsInCompareMode;
     tagCloudCompare.type = OptionType::TagCloud;
     tagCloudCompare.pStrVal = &g_config.InfoPanelLiteItemsCompare;
-    { const std::wstring_view opts[] = { L"Zoom", L"Progress", L"File", L"Rating", L"Size", L"Disk", L"Date", L"Format", L"Sharp", L"Ent", L"BPP", L"Camera", L"Exp", L"Lens", L"Focal", L"Profile", L"HDR", L"Flash", L"W.Bal", L"Meter", L"Prog", L"Program" }; AssignOptions(tagCloudCompare, opts); }
+    { const std::wstring_view opts[] = { L"Zoom", L"Position", L"File", L"Rating", L"Size", L"Disk", L"Date", L"Format", L"Sharp", L"Ent", L"BPP", L"Camera", L"Exp", L"Lens", L"Focal", L"Profile", L"HDR", L"Flash", L"W.Bal", L"Meter", L"Prog", L"Program" }; AssignOptions(tagCloudCompare, opts); }
     tagCloudCompare.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
     tabVisuals.items.push_back(std::move(tagCloudCompare));
 
@@ -3435,7 +3435,7 @@ void SettingsOverlay::BuildKeysTab(SettingsTab& tabKeys) {
         HotkeyAction::RotateCW, HotkeyAction::RotateCCW, HotkeyAction::FlipH, HotkeyAction::FlipV
     };
     static constexpr HotkeyAction kAnimActions[] = {
-        HotkeyAction::ToggleAnimation, HotkeyAction::AnimNextFrame, HotkeyAction::AnimPrevFrame
+        HotkeyAction::ToggleAnimation, HotkeyAction::AnimNextFrame, HotkeyAction::AnimPrevFrame, HotkeyAction::ToggleBookMode
     };
     static constexpr HotkeyAction kViewActions[] = {
         HotkeyAction::ToggleGallery, HotkeyAction::ToggleFilmstrip, HotkeyAction::ToggleInfoPanel, HotkeyAction::ToggleExifPanel,
@@ -3485,7 +3485,7 @@ void SettingsOverlay::BuildKeysTab(SettingsTab& tabKeys) {
     appendGroup(L"图片平移", L"Image Panning", kPanActions);
     appendGroup(L"图片缩放", L"Zoom", kZoomActions);
     appendGroup(L"图像变换", L"Transforms", kTransformActions);
-    appendGroup(L"动画控制", L"Animation Control", kAnimActions);
+    appendGroup(L"动画与多页", L"Animation & Pages", kAnimActions);
     appendGroup(L"视图模式", L"View Modes", kViewActions);
     appendGroup(L"星级评分", L"Rating", kRatingActions);
     appendGroup(L"文件操作", L"File Operations", kFileActions);

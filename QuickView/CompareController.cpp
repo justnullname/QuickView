@@ -368,6 +368,15 @@ void CompareController::CaptureCurrentImageAsLeft() {
     GetPaneContext(PaneSlot::Left).CmsModeOverride = g_runtime.CmsModeOverride;
     GetPaneContext(PaneSlot::Left).EnableSoftProofing = g_runtime.EnableSoftProofing;
     GetPaneContext(PaneSlot::Left).SoftProofProfilePath = g_runtime.SoftProofProfilePath;
+    if (g_toolbar.IsBookOrComicMode()) {
+        auto& leftEdit = GetPaneContext(PaneSlot::Left).editState;
+        const auto& primaryEdit = GetPaneContext(PaneSlot::Primary).editState;
+        leftEdit.TotalRotation = primaryEdit.TotalRotation;
+        leftEdit.FlippedH = primaryEdit.FlippedH;
+        leftEdit.FlippedV = primaryEdit.FlippedV;
+        leftEdit.PendingTransforms = primaryEdit.PendingTransforms;
+        leftEdit.IsDirty = false;
+    }
 }
 
 
@@ -536,7 +545,7 @@ void CompareController::EnterMode(HWND hwnd) {
     m_context.Compare.splitRatio = ClampCompareRatio(m_context.Compare.splitRatio);
 
 
-    if (g_toolbar.IsComicMode() && GetPaneContext(PaneSlot::Primary).navigator.Count() > 0) {
+    if (g_toolbar.IsBookOrComicMode() && GetPaneContext(PaneSlot::Primary).navigator.Count() > 0) {
         int currentIndex = GetPaneContext(PaneSlot::Primary).navigator.Index();
 
         // Standard (0,1), (2,3) pairing

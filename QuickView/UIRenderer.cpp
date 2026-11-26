@@ -2869,23 +2869,31 @@ namespace {
         if (key == L"Zoom") {
             return std::to_wstring(GetCurrentZoomPercent()) + L"%";
         }
-        else if (key == L"Progress") {
+        else if (key == L"Position" || key == L"Progress") {
             int idx = -1;
             size_t total = 0;
             std::wstring p = path.empty() ? meta.SourcePath : path;
             if (!p.empty()) {
                 QueryFilePosition(p, idx, total);
             }
+            std::wstring baseStr;
             if (idx >= 0 && total > 0) {
-                return std::to_wstring(idx + 1) + L"/" + std::to_wstring(total);
+                baseStr = std::to_wstring(idx + 1) + L"/" + std::to_wstring(total);
             } else if (g_navigator.Count() > 0) {
-                return std::to_wstring(g_navigator.Index() + 1) + L"/" + std::to_wstring(g_navigator.Count());
+                baseStr = std::to_wstring(g_navigator.Index() + 1) + L"/" + std::to_wstring(g_navigator.Count());
             }
+            if (!g_navigator.IsBookModeActive() && meta.PageCount > 1 && !meta.IsIcoOverview) {
+                std::wstring pageTag = L"P" + std::to_wstring(meta.CurrentPage + 1) + L"/" + std::to_wstring(meta.PageCount);
+                if (!baseStr.empty()) return baseStr + L" (" + pageTag + L")";
+                return pageTag;
+            }
+            if (!baseStr.empty()) return baseStr;
             return std::nullopt;
         }
         else if (key == L"File") {
-            std::wstring p = path.empty() ? meta.SourcePath : path;
-            if (p.empty()) return std::nullopt;
+            std::wstring rawPath = path.empty() ? meta.SourcePath : path;
+            if (rawPath.empty()) return std::nullopt;
+            std::wstring p = FileNavigator::GetPhysicalPath(rawPath);
             std::wstring fname = p.substr(p.find_last_of(L"\\/") + 1);
             std::wstring displayFname;
             if (maxFileW > 0.0f) {
@@ -2893,7 +2901,7 @@ namespace {
             } else {
                 displayFname = fname;
             }
-            if (const auto* pairedRaw = g_navigator.GetPairedRaw(FileNavigator::PathToImageID(p))) {
+            if (const auto* pairedRaw = g_navigator.GetPairedRaw(FileNavigator::PathToImageID(rawPath))) {
                 displayFname += L" (" + FileNavigator::PairedRawLabel(*pairedRaw) + L")";
             }
             // [QVX-SR] Append scale badge for super-resolved images
@@ -2905,6 +2913,11 @@ namespace {
             return displayFname;
         }
         else if (key == L"Size") {
+            if (meta.Format == L"ICO" && meta.IsIcoOverview && meta.PageCount > 1) {
+                wchar_t sz[48];
+                swprintf_s(sz, L"%u sizes", meta.PageCount);
+                return std::wstring(sz);
+            }
             const auto& editState = GetPaneContext(PaneSlot::Primary).editState;
             // [QVX-SR] Use super-resolution dimensions when available
             UINT displayW = (meta.HasSr && meta.SrWidth > 0) ? meta.SrWidth : meta.Width;
@@ -3123,10 +3136,20 @@ namespace {
             return;
         }
         
-        // 2. Parse virtual path if it's within archive
+        // 2. Parse virtual path if it's within archive or multi-page virtual host
+        if (FileNavigator::IsMultiPageVirtualPath(path)) {
+            const std::wstring physical = FileNavigator::GetPhysicalPath(path);
+            int pIdx = g_navigator.FindIndex(physical);
+            if (pIdx != -1) {
+                outIndex = pIdx;
+                outCount = g_navigator.Count();
+                return;
+            }
+        }
         std::wstring archivePath;
         size_t entryIndex = (size_t)-1;
-        if (FileNavigator::ParseVirtualPath(path, archivePath, entryIndex)) {
+        if (!FileNavigator::IsMultiPageVirtualPath(path) &&
+            FileNavigator::ParseVirtualPath(path, archivePath, entryIndex)) {
             if (archivePath == g_navigator.m_archivePath) {
                 outIndex = (int)entryIndex;
                 outCount = g_navigator.Count();
@@ -3135,7 +3158,9 @@ namespace {
         }
         
         // 3. Scan directory (native Win32 FindFirstFileExW)
-        if (!QuickView::IsExistingRegularFile(path.c_str())) return;
+        const std::wstring diskPath = FileNavigator::IsMultiPageVirtualPath(path)
+            ? FileNavigator::GetPhysicalPath(path) : path;
+        if (!QuickView::IsExistingRegularFile(diskPath.c_str())) return;
 
         const std::wstring_view dir = QuickView::ParentPathView(path);
         if (dir.empty()) return;
@@ -3216,6 +3241,11 @@ std::wstring UIRenderer::BuildCompactInfoText(float maxFileW) const {
     CombineHash(stateHash, g_imagePath);
     CombineHash(stateHash, g_navigator.Index());
     CombineHash(stateHash, g_navigator.Count());
+    CombineHash(stateHash, g_navigator.IsBookModeActive());
+    CombineHash(stateHash, g_currentMetadata.CurrentPage);
+    CombineHash(stateHash, g_currentMetadata.PageCount);
+    CombineHash(stateHash, g_currentMetadata.IsIcoOverview);
+    CombineHash(stateHash, g_currentMetadata.IcoFrameSummary);
     CombineHash(stateHash, g_navigator.HasPairedRaw(FileNavigator::PathToImageID(g_imagePath)));
     CombineHash(stateHash, g_config.InfoPanelLiteItemsNormal);
     // [Ratings] Same reason as the full panel: the read lands asynchronously,
@@ -3347,7 +3377,8 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
     if ((imagePath == L"Left" || imagePath == L"Right") && !metadata.SourcePath.empty()) {
         displayPath = metadata.SourcePath;
     }
-    std::wstring filename = displayPath.substr(displayPath.find_last_of(L"\\/") + 1);
+    const std::wstring cleanPath = FileNavigator::GetPhysicalPath(displayPath);
+    std::wstring filename = cleanPath.substr(cleanPath.find_last_of(L"\\/") + 1);
     // [QVX-SR] Append scale badge for super-resolved images
     if (metadata.HasSr && metadata.SrScale > 1.0f) {
         wchar_t srBadge[16];
@@ -3356,16 +3387,42 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
     }
     PushInfoRow(rows, L"\U0001F4C4", L"File", filename, {}, filename, TruncateMode::MiddleEllipsis, true);
 
-    // Position: Folder progress (e.g. 33/999) (Disabled in compare mode via showAdvanced flag)
+    // Position: Folder or Multi-Page progress (e.g. 33/999) (Disabled in compare mode via showAdvanced flag)
     if (!showAdvanced) {
+        std::wstring posMain;
         if (positionIndex >= 0 && positionTotal > 0) {
             wchar_t progBuf[64];
             swprintf_s(progBuf, L"%d/%zu", positionIndex + 1, positionTotal);
-            PushInfoRow(rows, L"\U0001F4C1", L"Position", progBuf);
+            posMain = progBuf;
         } else if (g_navigator.Count() > 0) {
             wchar_t progBuf[64];
             swprintf_s(progBuf, L"%d/%zu", g_navigator.Index() + 1, g_navigator.Count());
-            PushInfoRow(rows, L"\U0001F4C1", L"Position", progBuf);
+            posMain = progBuf;
+        }
+        if (!posMain.empty()) {
+            std::wstring posSub;
+            std::wstring posFull;
+            if (g_navigator.IsBookModeActive()) {
+                posSub = L"Multi-Page";
+                if (metadata.Format == L"ICO" && !metadata.IcoFrameSummary.empty()) {
+                    posFull = metadata.IcoFrameSummary;
+                }
+            } else if (metadata.Format == L"ICO" && metadata.PageCount > 1) {
+                wchar_t subBuf[64];
+                if (metadata.IsIcoOverview) {
+                    swprintf_s(subBuf, L"All \u00B7 %u sizes", metadata.PageCount);
+                } else {
+                    swprintf_s(subBuf, L"P%u/%u", metadata.CurrentPage + 1, metadata.PageCount);
+                }
+                posSub = subBuf;
+                posFull = metadata.IcoFrameSummary;
+            } else if (metadata.PageCount > 1) {
+                wchar_t subBuf[48];
+                swprintf_s(subBuf, L"P%u/%u", metadata.CurrentPage + 1, metadata.PageCount);
+                posSub = subBuf;
+            }
+            PushInfoRow(rows, L"\U0001F4C1", L"Position", posMain, posSub, posFull,
+                        posFull.empty() ? TruncateMode::None : TruncateMode::EndEllipsis);
         }
     }
     
@@ -3470,7 +3527,11 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
             std::swap(displayW, displayH);
         }
     }
-    if (displayW > 0 && displayH > 0) {
+    if (metadata.Format == L"ICO" && metadata.IsIcoOverview && metadata.PageCount > 1) {
+        wchar_t szCount[48];
+        swprintf_s(szCount, L"%u sizes", metadata.PageCount);
+        PushInfoRow(rows, L"\U0001F4D0", L"Size", szCount, {}, metadata.IcoFrameSummary, TruncateMode::EndEllipsis);
+    } else if (displayW > 0 && displayH > 0) {
         UINT64 totalPixels = (UINT64)displayW * displayH;
         double megapixels = totalPixels / 1000000.0;
         wchar_t dimBuf[64];
@@ -4001,6 +4062,11 @@ void UIRenderer::BuildInfoGrid() {
     CombineHash(stateHash, g_imagePath);
     CombineHash(stateHash, g_navigator.Index());
     CombineHash(stateHash, g_navigator.Count());
+    CombineHash(stateHash, g_navigator.IsBookModeActive());
+    CombineHash(stateHash, g_currentMetadata.CurrentPage);
+    CombineHash(stateHash, g_currentMetadata.PageCount);
+    CombineHash(stateHash, g_currentMetadata.IsIcoOverview);
+    CombineHash(stateHash, g_currentMetadata.IcoFrameSummary);
     CombineHash(stateHash, g_navigator.HasPairedRaw(FileNavigator::PathToImageID(g_imagePath)));
     CombineHash(stateHash, g_config.InfoPanelFullItemsNormal);
     CombineHash(stateHash, g_config.InfoPanelFullItemsCompare);

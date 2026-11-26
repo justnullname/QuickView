@@ -145,6 +145,8 @@ namespace AppStrings {
         const wchar_t* Toolbar_Tooltip_FlipH = nullptr;
         const wchar_t* Toolbar_Tooltip_Lock = nullptr;
         const wchar_t* Toolbar_Tooltip_Unlock = nullptr;
+        const wchar_t* Toolbar_Tooltip_BookModeOn = nullptr;
+        const wchar_t* Toolbar_Tooltip_BookModeOff = nullptr;
         const wchar_t* Toolbar_Tooltip_Gallery = nullptr;
         const wchar_t* Toolbar_Tooltip_Info = nullptr;
         const wchar_t* Toolbar_Tooltip_RawPreview = nullptr; // Fast

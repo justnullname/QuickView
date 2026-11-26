@@ -65,6 +65,11 @@ struct DecodeResultHeader {
     float gainMapAlternateHeadroom = 0.0f;
     float gainMapAppliedHeadroom   = 0.0f;
 
+    uint32_t pageCount      = 1;
+    uint32_t currentPage    = 0;
+    uint8_t  isIcoOverview  = 0;
+    uint8_t  reservedMultiPad[3] = {};
+
     // Virtual section layout (SEC_RESERVE + demand commit)
     uint64_t pixelOffset   = 0;
     uint64_t pixelCapacity = 0;

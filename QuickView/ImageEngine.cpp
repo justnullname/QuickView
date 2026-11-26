@@ -352,6 +352,10 @@ bool ImageEngine::TryServeFromCache(
     e.metadata.Format = formatStr;
     e.metadata.FileSize = observedFileSize;
     e.metadata.FormatDetails = cachedFrame->formatDetails;
+    e.metadata.PageCount = cachedFrame->pageCount;
+    e.metadata.CurrentPage = cachedFrame->currentPage;
+    e.metadata.IsIcoOverview = cachedFrame->isIcoOverview;
+    e.metadata.IcoFrameSummary = cachedFrame->icoFrameSummary;
     e.metadata.colorInfo = cachedFrame->colorInfo;
     e.metadata.hdrMetadata = cachedFrame->hdrMetadata;
     if (!e.metadata.HasEmbeddedColorProfile.has_value()) {
@@ -1364,6 +1368,10 @@ void ImageEngine::FastLane::QueueWorker() {
                 e.metadata.FormatDetails = rawFrame.formatDetails;
                 e.metadata.LoaderName = loaderName;
                 e.metadata.FileSize = info.fileSize;
+                e.metadata.PageCount = rawFrame.pageCount;
+                e.metadata.CurrentPage = rawFrame.currentPage;
+                e.metadata.IsIcoOverview = rawFrame.isIcoOverview;
+                e.metadata.IcoFrameSummary = rawFrame.icoFrameSummary;
                 e.metadata.colorInfo = rawFrame.colorInfo;
                 e.metadata.hdrMetadata = rawFrame.hdrMetadata;
 

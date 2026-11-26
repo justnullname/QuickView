@@ -134,6 +134,20 @@ public:
 
     // Parse virtual path avoiding exceptions
     static bool ParseVirtualPath(const std::wstring& path, std::wstring& outArchivePath, size_t& outIndex);
+    static std::wstring MakeMultiPagePath(const std::wstring& hostPath, uint32_t pageIndex, uint32_t totalPages);
+    static std::wstring MakeIcoFramePath(const std::wstring& hostPath, uint32_t frameIndex, uint16_t w, uint16_t h, uint16_t bpp);
+    static bool IsMultiPageVirtualPath(const std::wstring& path);
+    static std::wstring GetPhysicalPath(const std::wstring& path);
+
+    // Book Mode (switch navigator/gallery between inner pages and parent folder)
+    bool IsBookModeActive() const { return m_bookModeActive || (m_archive != nullptr); }
+    bool IsArchiveParentBrowse() const { return m_savedFromArchive; }
+    bool CanToggleBookMode() const { return m_bookModeActive || (m_archive != nullptr) || m_savedFromArchive; }
+    const std::wstring& GetBookHostPath() const { return m_bookHostPath; }
+    bool EnterBookModeWithPages(const std::wstring& hostPath, std::vector<std::wstring> pagePaths, uint32_t startPage);
+    bool EnterMultiPageBookMode(const std::wstring& hostPath, uint32_t pageCount, uint32_t startPage);
+    bool ExitBookMode(std::wstring& outTargetPath);
+    bool ReenterArchiveBookMode();
 
     inline QuickView::IArchive* GetArchive() const { return m_archive.get(); }
     inline const std::vector<std::wstring>& GetAllFiles() const { return m_files; }
@@ -295,8 +309,18 @@ private:
     bool m_hitEnd = false;
     std::wstring m_crossFolderMessage;
 
-    // VFS Support
+    // VFS & Book Mode Support
     std::unique_ptr<QuickView::IArchive> m_archive;
+    bool m_bookModeActive = false;
+    bool m_savedFromArchive = false;
+    std::wstring m_bookHostPath;
+    std::vector<std::wstring> m_savedFolderFiles;
+    std::vector<uintmax_t> m_savedFolderSizes;
+    std::vector<ImageID> m_savedFolderIds;
+    std::unordered_map<ImageID, PairedRaw> m_savedFolderPairedRaws;
+    int m_savedFolderIndex = -1;
+    std::wstring m_savedWatchedDir;
+    bool m_includeArchivesInScan = false;
 
     // [Directory Watcher] Background monitoring state
     HWND m_hwnd = nullptr;

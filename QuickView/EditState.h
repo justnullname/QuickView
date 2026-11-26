@@ -364,6 +364,9 @@ enum class MouseActionTarget : int {
     PanVertical,         // Vertical pan image (wheel triggers)
     PanHorizontal,       // Horizontal pan image (wheel triggers)
     ViewPan,             // RTS-style View Pan mode (drag triggers; bound under Mouse Gestures)
+    NextFrameOrPage,     // Next animation frame or document/ICO page
+    PrevFrameOrPage,     // Previous animation frame or document/ICO page
+    ToggleBookMode,      // Toggle multi-page/comic book mode
     Count
 };
 
@@ -430,6 +433,8 @@ inline bool IsMouseTriggerActionCompatible(MouseTrigger trig, MouseActionTarget 
         case MouseActionTarget::LockWindowZoomWheel:
         case MouseActionTarget::AdjustZoomSpeedWheel:
         case MouseActionTarget::Navigate:
+        case MouseActionTarget::NextFrameOrPage:
+        case MouseActionTarget::PrevFrameOrPage:
             return true;
         default:
             return false;
@@ -610,9 +615,9 @@ struct ThemePreset {
     float menusOpacity;         // Menus Level (0-100)
 };
 
-// Built-in presets (Synchronized defaults: Blur 3px, Tint 65%, Spec 15%, Shadow 45%)
-inline constexpr ThemePreset PRESET_DARK  = { {0.06f, 0.06f, 0.08f, 1.0f}, {0.92f, 0.92f, 0.95f, 1.0f}, {0.0f, 0.6f, 1.0f, 1.0f},  0.65f, 3.0f, 0.15f, 0.45f, 15.0f, 45.0f, 55.0f, 15.0f };
-inline constexpr ThemePreset PRESET_LIGHT = { {0.95f, 0.95f, 0.97f, 1.0f}, {0.1f, 0.1f, 0.12f, 1.0f},  {0.0f, 0.45f, 0.9f, 1.0f}, 0.65f, 3.0f, 0.15f, 0.45f,  8.0f, 40.0f, 40.0f, 15.0f };
+// Built-in presets (Synchronized defaults: Blur 3px, Tint 65%, Spec 15%, Shadow 45%, OSD 30%)
+inline constexpr ThemePreset PRESET_DARK  = { {0.06f, 0.06f, 0.08f, 1.0f}, {0.92f, 0.92f, 0.95f, 1.0f}, {0.0f, 0.6f, 1.0f, 1.0f},  0.65f, 3.0f, 0.15f, 0.45f, 30.0f, 45.0f, 55.0f, 15.0f };
+inline constexpr ThemePreset PRESET_LIGHT = { {0.95f, 0.95f, 0.97f, 1.0f}, {0.1f, 0.1f, 0.12f, 1.0f},  {0.0f, 0.45f, 0.9f, 1.0f}, 0.65f, 3.0f, 0.15f, 0.45f, 30.0f, 40.0f, 40.0f, 15.0f };
 
 // ============================================================================
 // Hotkey Customization System
@@ -637,8 +642,9 @@ enum class HotkeyAction : uint8_t {
     FlipH,             // Flip Horizontal
     FlipV,             // Flip Vertical
     ToggleAnimation,   // Play/Pause Animation
-    AnimNextFrame,     // Animation Next Frame
-    AnimPrevFrame,     // Animation Previous Frame
+    AnimNextFrame,     // Animation Next Frame / Page
+    AnimPrevFrame,     // Animation Previous Frame / Page
+    ToggleBookMode,    // Toggle Book Mode (Multi-page / Archive)
     ToggleGallery,     // Toggle Gallery Overlay
     ToggleFilmstrip,   // Toggle Filmstrip Gallery
     ToggleInfoPanel,   // Toggle Info Panel (Lite)
@@ -716,6 +722,7 @@ inline std::wstring_view HotkeyActionToString(HotkeyAction action) noexcept {
         case HotkeyAction::ToggleAnimation: return L"ToggleAnimation";
         case HotkeyAction::AnimNextFrame: return L"AnimNextFrame";
         case HotkeyAction::AnimPrevFrame: return L"AnimPrevFrame";
+        case HotkeyAction::ToggleBookMode: return L"ToggleBookMode";
         case HotkeyAction::ToggleGallery: return L"ToggleGallery";
         case HotkeyAction::ToggleFilmstrip: return L"ToggleFilmstrip";
         case HotkeyAction::ToggleInfoPanel: return L"ToggleInfoPanel";
@@ -791,6 +798,7 @@ inline HotkeyAction StringToHotkeyAction(std::wstring_view sv) noexcept {
     if (sv == L"ToggleAnimation") return HotkeyAction::ToggleAnimation;
     if (sv == L"AnimNextFrame") return HotkeyAction::AnimNextFrame;
     if (sv == L"AnimPrevFrame") return HotkeyAction::AnimPrevFrame;
+    if (sv == L"ToggleBookMode") return HotkeyAction::ToggleBookMode;
     if (sv == L"ToggleGallery") return HotkeyAction::ToggleGallery;
     if (sv == L"ToggleFilmstrip") return HotkeyAction::ToggleFilmstrip;
     if (sv == L"ToggleInfoPanel") return HotkeyAction::ToggleInfoPanel;
@@ -1159,10 +1167,11 @@ inline std::vector<HotkeyRule> GetDefaultHotkeyRules() {
         { HotkeyAction::FlipH,                    { 'H', 0 } },
         { HotkeyAction::FlipV,                    { 'V', 0 } },
 
-        // Animation (Strictly match b2d9198: Space, Alt+Right, Alt+Left)
+        // Animation / Multi-page (Space, Alt+Right, Alt+Left, Backspace)
         { HotkeyAction::ToggleAnimation,          { VK_SPACE, 0 } },
         { HotkeyAction::AnimNextFrame,            { VK_RIGHT, 4 /* Alt */ } },
         { HotkeyAction::AnimPrevFrame,            { VK_LEFT, 4 /* Alt */ } },
+        { HotkeyAction::ToggleBookMode,           { VK_BACK, 0 } },
 
         // View Modes (Strictly match b2d9198: T, Shift+T, Tab, I, M, F11, Ctrl+F11, F10, S, D)
         { HotkeyAction::ToggleGallery,            { 'T', 0 } },
@@ -1268,7 +1277,7 @@ struct AppConfig {
     float GlassTintAlpha = 0.65f;          // Tint layer opacity (0.05 - 1.0, floor at 5% for safety)
     float GlassSpecularOpacity = 0.15f;    // Diagonal highlight intensity (0.0 - 0.5)
     float GlassShadowOpacity = 0.45f;      // Drop shadow intensity (0.0 - 1.0)
-    float GlassOsdOpacity = 15.0f;         // OSD Level (0-100 %)
+    float GlassOsdOpacity = 30.0f;         // OSD Level (0-100 %)
     float GlassPanelsOpacity = 45.0f;      // Toolbar & Panels Level (0-100 %)
     float GlassModalsOpacity = 55.0f;      // Modals & Settings Level (0-100 %)
     float GlassMenusOpacity = 15.0f;       // Context Menus Level (0-100 %)
@@ -1279,7 +1288,7 @@ struct AppConfig {
     float GlassTintAlphaBackup = 0.65f;
     float GlassSpecularOpacityBackup = 0.15f;
     float GlassShadowOpacityBackup = 0.45f;
-    float GlassOsdOpacityBackup = 15.0f;
+    float GlassOsdOpacityBackup = 30.0f;
     float GlassPanelsOpacityBackup = 45.0f;
     float GlassModalsOpacityBackup = 55.0f;
     float GlassMenusOpacityBackup = 15.0f;
@@ -1577,7 +1586,7 @@ struct AppConfig {
     std::wstring FixedZoomLevels = L"0.05,0.1,0.125,0.166,0.25,0.333,0.5,0.66,1,1.5,2,3,4,5,6,7,8,12,16,32,64,128";
     
     // --- Customizable Info Panel Lite ---
-    std::wstring InfoPanelLiteItemsNormal = L"Zoom,Progress,File,Size,Disk,Format";
+    std::wstring InfoPanelLiteItemsNormal = L"Zoom,Position,File,Size,Disk,Format";
     std::wstring InfoPanelLiteItemsCompare = L"File,Size,Disk,Sharp,Ent,BPP,Date";
     std::wstring InfoPanelFullItemsNormal = L"Histogram,File,Position,RAW,Rating,Size,Disk,Date,Camera,Exp,Lens,Focal,Profile,HDR,Flash,W.Bal,Meter,Prog,Program,Format,GPS";
     std::wstring InfoPanelFullItemsCompare = L"Histogram,File,RAW,Rating,Size,Disk,Date,Camera,Exp,Lens,Focal,Profile,HDR,Flash,W.Bal,Meter,Prog,Program,Format,Sharp,Ent,BPP,GPS";
