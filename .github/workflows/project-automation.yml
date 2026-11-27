@@ -222,7 +222,7 @@ jobs:
               }
             }
 
-            // Rule B: Push commits referencing #123 -> mark status: implemented + Project Done
+            // Rule B: Push commits referencing #123 -> mark status: implemented + Project Implemented
             else if (eventName === 'push') {
               const commits = context.payload.commits || [];
               const referenced = new Set();
@@ -255,8 +255,8 @@ jobs:
                 if (isPrerelease) {
                   await syncIssueLabels(
                     issue,
-                    [LABELS.preRelease],
-                    [LABELS.implemented, LABELS.inProgress, LABELS.blocked]
+                    [LABELS.implemented, LABELS.preRelease],
+                    [LABELS.inProgress, LABELS.blocked]
                   );
                   await addIssueToProjectAndSetStatus(issue.node_id, 'Implemented');
                   const { data: comments } = await github.rest.issues.listComments({
@@ -279,8 +279,8 @@ jobs:
                 } else {
                   await syncIssueLabels(
                     issue,
-                    [LABELS.released],
-                    [LABELS.preRelease, LABELS.implemented, LABELS.inProgress, LABELS.blocked]
+                    [LABELS.implemented, LABELS.released],
+                    [LABELS.preRelease, LABELS.inProgress, LABELS.blocked]
                   );
                   await addIssueToProjectAndSetStatus(issue.node_id, 'Done');
                   if (issue.state !== 'closed') {
