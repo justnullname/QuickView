@@ -1,43 +1,37 @@
 #pragma once
 // ============================================================================
-// PluginHost.h - Lightweight In-Process Host Manager for QuickView Plugins
+// PluginHost.h - Universal Multi-Plugin Host Coordinator (QVX v3)
 // ============================================================================
-// High-performance, zero-overhead loader and lifecycle coordinator for QVX plugins.
-// Features:
-// 1. 2-microsecond hot-path file existence check via GetFileAttributesW.
-// 2. Pure C ABI binding with C++23 zero-cost wrappers.
-// 3. Thread-safe context caching and graceful fallback to built-in shaders.
-// 4. Data-driven dynamic parameter manifest reflection & ini persistence.
-// 5. Zero dynamic allocation on critical path.
+// Zero-bloat, data-driven host for QVX v3 plugins:
+// 1. Cold boot uses static manifest.json scanning via PluginRegistry (0 LoadLibrary).
+// 2. Lazy-loads plugins only upon inspection/execution, injecting QVX_HostServices.
+// 3. Safe in-process DLL lifetime: never calls FreeLibrary on active GPU/AI DLLs;
+//    updates/uninstalls retire locked binaries to *.pending_delete cleanly.
+// 4. Generic preset, dynamic parameter, and multi-archive asset management.
 // ============================================================================
 
-#include "qvx.h"
-#include "qvx_sr.h"
+#include "PluginRegistry.h"
+#include "abi/qvx_core.h"
+#include "abi/qvx_processor.h"
+#include "abi/qvx_shell_ext.h"
 #include <windows.h>
 #include <d3d11.h>
-#include <string>
-#include <vector>
+#include <atomic>
+#include <condition_variable>
+#include <cstdint>
 #include <memory>
 #include <mutex>
-#include <condition_variable>
-#include <atomic>
-#include <span>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 namespace QuickView {
 
 enum class PluginInstallState {
-    NotInstalled,    // Plugin binary not found in plugins/ directory
-    UpdateAvailable, // Installed but version does not match host's target version
-    Installed        // Installed and up-to-date
-};
-
-struct PluginCandidate {
-    std::wstring filePath;
-    std::string pluginId;
-    std::string pluginName;
-    std::string versionStr;
-    uint32_t supportedInterfaces = 0;
-    bool isLoaded = false;
+    NotInstalled,
+    UpdateAvailable,
+    Installed
 };
 
 struct RemotePluginItem {
@@ -45,39 +39,51 @@ struct RemotePluginItem {
     std::string name;
     std::string version;
     std::string author;
-    std::string interfaceName;
+    std::string category;
+    std::string abiVersion;
     std::string description;
+    std::vector<std::string> extensions;
     std::string downloadUrl;
     std::string fileName;
     uint64_t fileSize = 0;
     std::string sha256;
     std::string minAppVersion;
+    std::string storeProductId;
 };
 
-struct SrModelEntry {
-    std::string modelId;
+struct PluginPresetEntry {
+    std::string presetId;
     std::string displayName;
     std::string description;
-    float scale = 2.0f;
+    std::string requiredAssetId;
+    float scale = 1.0f;
     bool isHdrCapable = false;
+    bool outputHasAlpha = false;
     bool isInstalled = true;
-    uint64_t fileSizeBytes = 0;
-    std::string downloadUrl;
-    std::string sha256;
+    bool isDynamicAuto = false;
+    bool defaultCompareMode = false;
     uint32_t preferredTileSize = 0;
     uint32_t defaultDebounceMs = 150;
-    bool defaultCompareMode = false;
+    uint32_t maxInputDim = 0;
+    uint64_t maxInputPixels = 0;
+    uint64_t assetSizeBytes = 0;
+    std::string assetDownloadUrl;
+    std::string assetSha256;
 };
 
-struct SrParamOption {
+using SrModelEntry = PluginPresetEntry;
+
+struct PluginParamOption {
     int32_t value = 0;
     std::string label;
 };
 
-struct SrParamEntry {
+struct PluginParamEntry {
     std::string id;
     std::string label;
     std::string tooltip;
+    std::string group;
+    std::string visibleForPreset;
     QVX_ParamType type = QVX_PARAM_TYPE_BOOL;
 
     bool defaultBool = false;
@@ -92,9 +98,25 @@ struct SrParamEntry {
     std::string formatStr;
 
     int32_t enumDefault = 0;
-    std::vector<SrParamOption> enumOptions;
+    std::vector<PluginParamOption> enumOptions;
 
-    float currentValue = 0.0f;
+    std::string stringDefault;
+    uint32_t stringMaxLen = 256;
+
+    float currentNumber = 0.0f;
+    std::string currentString;
+};
+
+struct PluginAssetEntry {
+    std::string assetId;
+    std::string displayName;
+    std::string description;
+    std::string extractSubdir;
+    std::string downloadUrl;
+    std::string sha256;
+    uint64_t fileSizeBytes = 0;
+    bool isInstalled = false;
+    bool isRequired = false;
 };
 
 class PluginHost {
@@ -104,102 +126,132 @@ public:
         return s_instance;
     }
 
-    // --- Configuration & Ini Persistence ---
+    using DownloadProgressCallback = void (*)(float progress, bool finished, bool success, void* userData);
+    using ManifestCallback = void (*)(const std::vector<RemotePluginItem>& items, void* userData);
+    using UINotifyCallback = void (*)(void* userData);
+
+    // --- Static Registry Discovery (0 LoadLibrary) ---
+    void RefreshRegistry(const std::wstring& customRoot = L"");
+    std::vector<PluginRecord> GetInstalledPlugins() const;
+    bool FindInstalledPlugin(std::string_view pluginId, PluginRecord& outRecord) const;
+
+    // --- Configuration & INI Persistence ---
     void LoadConfig(const wchar_t* iniPath);
     void SaveConfig(const wchar_t* iniPath) const;
+    void ResetToDefaults();
 
-    // --- Plugin Lifecycle & Version State ---
+    // --- Universal Multi-Plugin State & Reflection ---
+    bool IsPluginEnabled(std::string_view pluginId) const;
+    void SetPluginEnabled(const std::string& pluginId, bool enable);
+
+    std::string GetPluginActivePreset(std::string_view pluginId) const;
+    void SetPluginActivePreset(const std::string& pluginId, const std::string& presetId);
+
+    std::vector<PluginPresetEntry> GetPluginPresets(const std::string& pluginId);
+    std::vector<PluginParamEntry> GetPluginParams(const std::string& pluginId);
+    std::vector<PluginAssetEntry> GetPluginAssets(const std::string& pluginId);
+
+    float GetPluginParamNumber(std::string_view pluginId, std::string_view paramId, float defaultVal = 0.0f) const;
+    void SetPluginParamNumber(const std::string& pluginId, const std::string& paramId, float val);
+
+    std::string GetPluginParamString(std::string_view pluginId, std::string_view paramId, std::string_view defaultVal = {}) const;
+    void SetPluginParamString(const std::string& pluginId, const std::string& paramId, const std::string& val);
+
+    void SetLanguage(const std::string& langCode);
+    std::string GetLanguage() const;
+
+    // --- Universal Package & Asset Management ---
+    std::wstring GetWritablePluginsDirectory() const;
+    std::wstring GetWritablePluginDataDirectory(std::string_view pluginId) const;
+    void OpenPluginDataDirectory(std::string_view pluginId) const;
+
+    bool DownloadPluginPackage(
+        const std::string& pluginId,
+        const std::wstring& fileName,
+        const std::string& downloadUrl,
+        const std::string& expectedSha256,
+        DownloadProgressCallback onProgress,
+        void* userData = nullptr
+    );
+    bool DownloadPluginAsset(
+        const std::string& pluginId,
+        const std::string& assetId,
+        DownloadProgressCallback onProgress,
+        void* userData = nullptr
+    );
+    bool UninstallPlugin(const std::string& pluginId);
+
+    static std::string CalculateSHA256(const std::wstring& filePath);
+    static int ComparePluginVersions(std::string_view a, std::string_view b) noexcept {
+        return PluginRegistry::CompareVersions(a, b);
+    }
+
+    // --- Generic Image Processor Execution ---
+    bool EnsureProcessorContext(const std::string& pluginId, ID3D11Device* pDevice);
+    int32_t ExecuteImageProcessorGpu(
+        const std::string& pluginId,
+        ID3D11Device* pDevice,
+        ID3D11Texture2D* inTexture,
+        uint32_t inWidth, uint32_t inHeight,
+        ID3D11Texture2D* outTexture,
+        uint32_t outWidth, uint32_t outHeight,
+        QVX_CancelPredicate checkCancel = nullptr,
+        void* cancelUserData = nullptr,
+        QVX_ProgressCallback onProgress = nullptr,
+        void* progressUserData = nullptr
+    );
+    void ReleasePluginContext(std::string_view pluginId);
+
+    // --- Generic Shell Extension Services (QVX_IFACE_SHELL_EXT) ---
+    void SetInProcThumbLookupCallback(QVX_InProcThumbLookupFn fn, void* userData);
+    QVX_ShellRegState GetShellExtRegistrationState(const std::string& pluginId);
+    bool SyncShellExtRegistration(const std::string& pluginId);
+    bool RefreshShellExtCache(const std::string& pluginId);
+    bool ShouldWarmupSystemThumbCache(std::wstring_view filePath);
+
+    // --- Remote Marketplace ---
+    void FetchRemoteManifestAsync(ManifestCallback callback, void* userData = nullptr);
+    std::vector<RemotePluginItem> GetCachedRemoteManifest() const;
+    bool IsFetchingManifest() const;
+    void TriggerManifestFetch();
+    void SetUINotifyCallback(UINotifyCallback cb, void* userData = nullptr);
+    void NotifyUI() const;
+
+    // --- Thin Upscaler Facade (Delegates Generically to Active QVX_PROC_KIND_UPSCALER) ---
+    std::string GetActiveUpscalerPluginId() const;
+    void SetActiveUpscalerPluginId(const std::string& pluginId);
+
     PluginInstallState GetSrPluginInstallState() const;
-    std::string GetInstalledPluginVersion() const;
-    std::string GetTargetPluginVersion() const { return QVX_OFFICIAL_SR_PLUGIN_VERSION; }
-    static int ComparePluginVersions(std::string_view a, std::string_view b) noexcept;
-    static bool IsOfficialSrPluginMatch(std::string_view id, std::string_view fileName) noexcept;
-
-    // --- Super-Resolution Plugin Control ---
     bool IsSrPluginEnabled() const;
     void SetSrPluginEnabled(bool enable);
-
-    std::wstring GetSrPluginPath() const;
-    void SetSrPluginPath(const std::wstring& path);
 
     std::string GetSrModelId() const;
     void SetSrModelId(const std::string& modelId);
 
+    std::vector<PluginPresetEntry> GetCurrentSrModels();
+    float GetCurrentSrModelScale();
+    bool IsCurrentSrPresetDynamicAuto();
+    std::wstring GetModelDisplayName(const std::string& modelId);
+
     bool IsSrAutoTriggerEnabled() const;
     void SetSrAutoTriggerEnabled(bool enable);
-
     bool IsSrOpenInCompareMode() const;
     void SetSrOpenInCompareMode(bool enable);
-
     bool IsSrPromptModelOnHotkey() const;
     void SetSrPromptModelOnHotkey(bool prompt);
-
     int GetSrDebounceDelayMs() const;
     void SetSrDebounceDelayMs(int delayMs);
-
     float GetSrAutoTriggerMaxSourceMp() const;
     void SetSrAutoTriggerMaxSourceMp(float maxMp);
-
     uint32_t GetSrAutoTriggerMaxWidth() const;
     void SetSrAutoTriggerMaxWidth(uint32_t maxW);
-
     uint32_t GetSrAutoTriggerMaxHeight() const;
     void SetSrAutoTriggerMaxHeight(uint32_t maxH);
 
-    // Multi-Language localization propagation to active plugin
-    void SetLanguage(const std::string& langCode);
-
-    // Reset all plugin host settings to defaults
-    void ResetToDefaults();
-
-
-    // VRAM Safety Guard: Check if input image dimensions are safe for AI Super-Resolution
     static constexpr uint32_t MAX_SR_INPUT_DIMENSION = 4096;
-    static constexpr uint64_t MAX_SR_INPUT_PIXELS = 16777216; // 16 MegaPixels
-    bool CanExecuteSrOnDimensions(uint32_t inW, uint32_t inH, std::wstring* outReason = nullptr) const;
-
-    // --- Dynamic Parameter Manifest API ---
-    // Returns the active plugin's exported parameters (reflects QVX_ParamDesc)
-    std::vector<SrParamEntry> GetCurrentSrParams() const;
-    float GetParamValue(const std::string& paramId, float defaultVal = 0.0f) const;
-    void SetParamValue(const std::string& paramId, float val);
-
-    float GetSrDenoise() const noexcept { return GetParamValue("denoise", m_srDenoise); }
-    void SetSrDenoise(float val) noexcept { SetParamValue("denoise", val); }
-    void InvalidateModelCache();
-
-    // --- Dynamic Model Catalog API ---
-    // Returns all supported models declared by the active SR plugin
-    std::vector<SrModelEntry> GetCurrentSrModels() const;
-    float GetCurrentSrModelScale() const;
-    std::wstring GetModelDisplayName(const std::string& modelId) const;
-
-    using DownloadProgressCallback = void (*)(float progress, bool finished, bool success, void* userData);
-
-    // Download / update plugin or model asset into plugins/ directory
-    bool DownloadPlugin(const std::wstring& pluginName, const std::string& downloadUrl, DownloadProgressCallback onProgress, void* userData = nullptr) {
-        return DownloadPlugin(pluginName, downloadUrl, "", onProgress, userData);
-    }
-    bool DownloadPlugin(const std::wstring& pluginName, const std::string& downloadUrl = "", const std::string& expectedSha256 = "", DownloadProgressCallback onProgress = nullptr, void* userData = nullptr);
-
-    bool DownloadModel(const std::wstring& targetRelativePath, const std::string& downloadUrl, DownloadProgressCallback onProgress, void* userData = nullptr) {
-        return DownloadModel(targetRelativePath, downloadUrl, "", onProgress, userData);
-    }
-    bool DownloadModel(const std::wstring& targetRelativePath, const std::string& downloadUrl, const std::string& expectedSha256, DownloadProgressCallback onProgress = nullptr, void* userData = nullptr);
-    std::wstring GetWritablePluginsDirectory() const;
-    std::wstring GetWritableModelsDirectory() const;
-    void OpenModelsDirectory() const;
-    bool UninstallSrPlugin();
-
-    // Fast Win32 Cryptographic SHA-256 calculation for download verification
-    static std::string CalculateSHA256(const std::wstring& filePath);
-
-    std::string GetLastExecutionLog() const;
-    double GetLastDurationMs() const;
+    static constexpr uint64_t MAX_SR_INPUT_PIXELS = 16777216;
+    bool CanExecuteSrOnDimensions(uint32_t inW, uint32_t inH, std::wstring* outReason = nullptr);
     bool EnsureSrContext(ID3D11Device* pDevice);
-
-    // Execute Super-Resolution with GPU VRAM Direct 0-Copy, Cancellation Token & Progress
-    // Returns S_OK (0), E_ABORT (0x80004004), or error code.
     int32_t ExecuteSrUpscaleGpu(
         ID3D11Device* pDevice,
         ID3D11Texture2D* inTexture,
@@ -212,32 +264,9 @@ public:
         void* progressUserData = nullptr
     );
 
-    // Unload active SR plugin and destroy cached GPU context
-    void UnloadSrPlugin();
-
-    // --- Remote Manifest & Market API ---
-    using ManifestCallback = void (*)(const std::vector<RemotePluginItem>& items, void* userData);
-    void FetchRemoteManifestAsync(ManifestCallback callback, void* userData = nullptr);
-    std::vector<RemotePluginItem> GetCachedRemoteManifest() const;
-    bool IsFetchingManifest() const;
-    void TriggerManifestFetch();
-
-    using UINotifyCallback = void (*)(void* userData);
-    void SetUINotifyCallback(UINotifyCallback cb, void* userData = nullptr) {
-        std::lock_guard<std::recursive_mutex> lock(m_srMutex);
-        m_uiNotifyCb = cb;
-        m_uiNotifyUserData = userData;
-    }
-    void NotifyUI() const {
-        std::lock_guard<std::recursive_mutex> lock(m_srMutex);
-        if (m_uiNotifyCb) m_uiNotifyCb(m_uiNotifyUserData);
-    }
-
-    // --- Cold Scanning ---
-    // Discovers all .qvx / .dll files in plugins directory (Called from Settings UI)
-    std::vector<PluginCandidate> ScanPluginsDirectory(const std::wstring& pluginsDir = L"");
-
-    // Explicit unload of all loaded plugins on app exit
+    void InvalidateModelCache();
+    std::string GetLastExecutionLog() const;
+    double GetLastDurationMs() const;
     void Shutdown();
 
 private:
@@ -247,62 +276,97 @@ private:
     PluginHost(const PluginHost&) = delete;
     PluginHost& operator=(const PluginHost&) = delete;
 
-    bool EnsureSrModuleLoaded();
-    std::wstring ResolveEffectiveSrPluginPath(std::wstring* pOutRelativeForIni = nullptr) const;
-    void SyncDynamicParamsToContext();
-    void WaitForInFlightUpscales();
+    struct PluginConfigState {
+        std::string pluginId;
+        bool enabled = false;
+        std::string activePresetId;
+        std::vector<std::pair<std::string, float>> numParams;
+        std::vector<std::pair<std::string, std::string>> strParams;
+    };
 
-    // Active Super-Resolution Plugin State
-    mutable std::recursive_mutex m_srMutex;
+    struct HostServiceContext {
+        std::string pluginDirUtf8;
+        std::string dataDirUtf8;
+    };
+
+    struct LoadedPlugin {
+        std::string pluginId;
+        std::wstring entryFullPath;
+        HMODULE hModule = nullptr;
+        std::unique_ptr<HostServiceContext> serviceCtx;
+        QVX_HostServices services{};
+        const QVX_PluginHeader* header = nullptr;
+        const QVX_Processor_VTable* procVTable = nullptr;
+        const QVX_ShellExt_VTable* shellExtVTable = nullptr;
+        QVX_ProcContext procContext = nullptr;
+        std::string contextPresetId;
+        ID3D11Device* cachedDevice = nullptr;
+        bool retired = false;
+        bool shutdownCalled = false;
+    };
+
+    static const char* QvxHost_GetPluginDir(void* ctx) noexcept;
+    static const char* QvxHost_GetDataDir(void* ctx) noexcept;
+
+    void EnsureRegistryScannedLocked() const;
+    PluginConfigState* FindConfigStateLocked(std::string_view pluginId);
+    const PluginConfigState* FindConfigStateLocked(std::string_view pluginId) const;
+    PluginConfigState& GetOrCreateConfigStateLocked(std::string_view pluginId);
+
+    LoadedPlugin* FindLoadedLocked(std::string_view pluginId, bool includeRetired = false) const;
+    LoadedPlugin* EnsurePluginLoadedLocked(std::string_view pluginId);
+    void SyncConfigToHeaderAndContextLocked(LoadedPlugin& lp);
+    void ReleasePluginContextLocked(LoadedPlugin& lp);
+    void RetirePluginLocked(std::string_view pluginId);
+    void WaitForAllInFlight();
+    void WaitForAllBgTasks();
+    std::string ResolveActiveUpscalerIdLocked() const;
+    std::vector<PluginAssetEntry> CollectAssetsLocked(const PluginRecord& rec, LoadedPlugin* lp);
+
+    mutable std::recursive_mutex m_mutex;
     std::mutex m_inFlightMutex;
     std::condition_variable m_inFlightCv;
-    uint32_t m_inFlightUpscaleCount = 0;
+    uint32_t m_inFlightCount = 0;
+    std::mutex m_bgMutex;
+    std::condition_variable m_bgCv;
+    uint32_t m_bgTaskCount = 0;
+    std::mutex m_downloadMutex;
+    std::vector<std::string> m_activeDownloads;
     std::atomic<bool> m_shuttingDown{false};
+    std::atomic<bool> m_shutdownDone{false};
 
-    mutable bool m_installCacheValid = false;
-    mutable PluginInstallState m_cachedInstallState = PluginInstallState::NotInstalled;
-    mutable std::string m_cachedInstalledVersion;
-    mutable std::wstring m_cachedResolvedPath;
-    mutable bool m_modelsCacheValid = false;
-    mutable std::vector<SrModelEntry> m_cachedSrModels;
+    mutable PluginRegistry m_registry;
+    mutable bool m_registryScanned = false;
+    std::wstring m_customRegistryRoot;
 
-    HMODULE m_hSrModule = nullptr;
-    const QVX_PluginHeader* m_srHeader = nullptr;
-    const QVX_SR_VTable* m_srVTable = nullptr;
-    QVX_SR_Context m_srContext = nullptr;
-    ID3D11Device* m_cachedDevice = nullptr;
+    std::vector<std::unique_ptr<LoadedPlugin>> m_loadedPlugins;
+    std::vector<PluginConfigState> m_configStates;
 
-    // Config settings (Lock-Free Thread-Safe Atomic Storage)
-    std::atomic<bool> m_enableSrPlugin{false};
-    mutable std::wstring m_srPluginPath = L"plugins\\sr\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx";
-    std::string m_srModelId = "realesr-animevideov3-auto";
+    // Active Upscaler behavioral configuration (atomic fast reads)
+    std::string m_activeUpscalerPluginId;
+    std::atomic<bool> m_upscalerFallbackEnabled{false};
+    std::string m_upscalerFallbackPreset;
     std::atomic<bool> m_srAutoTrigger{false};
     std::atomic<bool> m_srOpenInCompareMode{true};
     std::atomic<bool> m_srPromptModelOnHotkey{false};
-    std::atomic<float> m_srDenoise{0.00f};
     std::atomic<int> m_srDebounceDelayMs{150};
     std::atomic<float> m_srAutoTriggerMaxSourceMp{1.0f};
     std::atomic<uint32_t> m_srAutoTriggerMaxWidth{1080};
     std::atomic<uint32_t> m_srAutoTriggerMaxHeight{1080};
     std::string m_currentLanguage = "zh-CN";
 
-    // Dynamic Parameter storage: key -> value
-    std::vector<std::pair<std::string, float>> m_dynamicParams;
-
-    // Cached INI path for automatic parameter persistence
-    std::wstring m_cachedIniPath;
-
     std::string m_lastLog;
     std::atomic<double> m_lastDurationMs{0.0};
 
-    // Remote market cache
     std::vector<RemotePluginItem> m_cachedManifest;
     std::atomic<bool> m_isFetchingManifest{false};
     UINotifyCallback m_uiNotifyCb = nullptr;
     void* m_uiNotifyUserData = nullptr;
+
+    QVX_InProcThumbLookupFn m_inProcThumbLookup = nullptr;
+    void* m_inProcThumbUserData = nullptr;
 };
 
-// Seamless architectural alias
 using PluginManager = PluginHost;
 
 } // namespace QuickView

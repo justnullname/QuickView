@@ -1,0 +1,6 @@
+if(NOT DEFINED IN OR NOT DEFINED OUT OR NOT DEFINED ARCH)
+    message(FATAL_ERROR "StagePluginManifest.cmake requires IN, OUT, and ARCH")
+endif()
+file(READ "${IN}" _content)
+string(REGEX REPLACE "\"arch\"[ \t]*:[ \t]*\"[^\"]*\"" "\"arch\": \"${ARCH}\"" _content "${_content}")
+file(WRITE "${OUT}" "${_content}")

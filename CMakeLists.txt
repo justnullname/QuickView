@@ -128,7 +128,9 @@ set(QUICKVIEW_SOURCES
     QuickView/OffscreenWebView2.cpp
     QuickView/WebContentHost.cpp
     QuickView/WebViewThumbService.cpp
+    QuickView/Plugin/PluginRegistry.cpp
     QuickView/Plugin/PluginHost.cpp
+    QuickView/ThumbWorker.cpp
     QuickView/AiActionManager.cpp
     QuickView/AiActionOverlay.cpp
     
@@ -173,6 +175,7 @@ if(ENABLE_LTO)
     # Pure-cold UI/config/setup translation units: optimize for size (/clang:-Oz).
     # Must skip PCH before target_precompile_headers() so Clang-cl does not reject
     # OptimizationLevel mismatch against the /O2 PCH. UIRenderer.cpp and all hot paths stay at /O2.
+    set_target_properties(QuickView PROPERTIES QUICKVIEW_COLD_OZ 1)
     set(QUICKVIEW_COLD_CXX_SOURCES
         QuickView/SettingsOverlay.cpp
         QuickView/HelpOverlay.cpp
@@ -180,13 +183,16 @@ if(ENABLE_LTO)
         QuickView/FileAssociationManager.cpp
         QuickView/ExportPanel.cpp
         QuickView/PrintPreviewUI.cpp
+        QuickView/Plugin/PluginRegistry.cpp
+        QuickView/Plugin/PluginHost.cpp
+        QuickView/ThumbWorker.cpp
     )
     set_source_files_properties(${QUICKVIEW_COLD_CXX_SOURCES} PROPERTIES
         SKIP_PRECOMPILE_HEADERS ON
-        COMPILE_OPTIONS "/FIpch.h;/clang:-Oz"
+        COMPILE_OPTIONS "$<$<BOOL:$<TARGET_PROPERTY:QUICKVIEW_COLD_OZ>>:/FIpch.h;/clang:-Oz>"
     )
     set_source_files_properties(third_party/yyjson/yyjson.c PROPERTIES
-        COMPILE_OPTIONS "/clang:-Oz"
+        COMPILE_OPTIONS "$<$<BOOL:$<TARGET_PROPERTY:QUICKVIEW_COLD_OZ>>:/clang:-Oz>"
     )
 endif()
 
@@ -440,6 +446,13 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^[Aa][Rr][Mm]64$" OR VCPKG_TARGET_TRIPLET MAT
 endif()
 set(NCNN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/ncnn/${NCNN_ARCH}")
 if(EXISTS "${NCNN_DIR}/include/ncnn")
+    set(_qv_sr_manifest "${CMAKE_CURRENT_SOURCE_DIR}/plugins/sr/sr_ncnn_vulkan/manifest.json")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_qv_sr_manifest}")
+    file(READ "${_qv_sr_manifest}" _qv_sr_manifest_json)
+    string(JSON _qv_sr_version ERROR_VARIABLE _qv_sr_ver_err GET "${_qv_sr_manifest_json}" "version")
+    if(NOT _qv_sr_version OR _qv_sr_ver_err)
+        set(_qv_sr_version "0.3.0")
+    endif()
     add_library(sr_ncnn_vulkan SHARED plugins/sr/sr_ncnn_vulkan/sr_ncnn_vulkan_engine.cpp)
     set_target_properties(sr_ncnn_vulkan PROPERTIES
         SUFFIX ".qvx"
@@ -448,9 +461,9 @@ if(EXISTS "${NCNN_DIR}/include/ncnn")
         RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/plugins/sr/sr_ncnn_vulkan"
         RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/plugins/sr/sr_ncnn_vulkan"
     )
-    target_compile_definitions(sr_ncnn_vulkan PRIVATE UNICODE _UNICODE)
+    target_compile_definitions(sr_ncnn_vulkan PRIVATE UNICODE _UNICODE QVX_BUILDING_PLUGIN QVX_PLUGIN_VERSION_STR="${_qv_sr_version}")
     if(MSVC OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-        target_compile_options(sr_ncnn_vulkan PRIVATE /GS)
+        target_compile_options(sr_ncnn_vulkan PRIVATE /utf-8 /GS)
         target_link_options(sr_ncnn_vulkan PRIVATE /DYNAMICBASE /NXCOMPAT)
     endif()
     target_include_directories(sr_ncnn_vulkan PRIVATE 
@@ -473,6 +486,11 @@ if(EXISTS "${NCNN_DIR}/include/ncnn")
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/plugins/sr/sr_ncnn_vulkan/README.md"
             "${CMAKE_BINARY_DIR}/plugins/sr/sr_ncnn_vulkan/README.md"
+        COMMAND ${CMAKE_COMMAND}
+            -DIN=${CMAKE_CURRENT_SOURCE_DIR}/plugins/sr/sr_ncnn_vulkan/manifest.json
+            -DOUT=${CMAKE_BINARY_DIR}/plugins/sr/sr_ncnn_vulkan/manifest.json
+            -DARCH=${NCNN_ARCH}
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/StagePluginManifest.cmake"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/plugins/plugins_manifest.json"
             "${CMAKE_BINARY_DIR}/plugins/plugins_manifest.json"
@@ -481,6 +499,51 @@ if(EXISTS "${NCNN_DIR}/include/ncnn")
 
     add_dependencies(QuickView sr_ncnn_vulkan)
 endif()
+
+# ============================================================================
+# Shell Extension Plugins (QVX + COM IThumbnailProvider)
+# ============================================================================
+set(_qv_shell_manifest "${CMAKE_CURRENT_SOURCE_DIR}/plugins/shell/qv_shell_thumb/manifest.json")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_qv_shell_manifest}")
+file(READ "${_qv_shell_manifest}" _qv_shell_manifest_json)
+string(JSON _qv_shell_version ERROR_VARIABLE _qv_shell_ver_err GET "${_qv_shell_manifest_json}" "version")
+if(NOT _qv_shell_version OR _qv_shell_ver_err)
+    set(_qv_shell_version "0.3.0")
+endif()
+add_library(qv_shell_thumb SHARED
+    plugins/shell/qv_shell_thumb/qv_shell_thumb.cpp
+    plugins/shell/qv_shell_thumb/qv_shell_thumb.def
+)
+set_target_properties(qv_shell_thumb PROPERTIES
+    SUFFIX ".qvx"
+    MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins/shell/qv_shell_thumb"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/plugins/shell/qv_shell_thumb"
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/plugins/shell/qv_shell_thumb"
+)
+target_compile_definitions(qv_shell_thumb PRIVATE UNICODE _UNICODE QVX_BUILDING_PLUGIN QVX_PLUGIN_VERSION_STR="${_qv_shell_version}")
+if(MSVC OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    target_compile_options(qv_shell_thumb PRIVATE
+        /W4 /WX /utf-8 /Gw /Gy /GR- /EHs-c- /GS
+        /clang:-fno-exceptions /clang:-fno-ident
+        $<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:/clang:-Oz>
+    )
+    target_link_options(qv_shell_thumb PRIVATE
+        /DYNAMICBASE /NXCOMPAT
+        $<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:/OPT:REF;/OPT:ICF>
+    )
+endif()
+target_include_directories(qv_shell_thumb PRIVATE QuickView)
+target_link_libraries(qv_shell_thumb PRIVATE shell32.lib shlwapi.lib ole32.lib propsys.lib advapi32.lib gdi32.lib)
+add_custom_command(TARGET qv_shell_thumb POST_BUILD
+    COMMAND ${CMAKE_COMMAND}
+        -DIN=${CMAKE_CURRENT_SOURCE_DIR}/plugins/shell/qv_shell_thumb/manifest.json
+        -DOUT=${CMAKE_BINARY_DIR}/plugins/shell/qv_shell_thumb/manifest.json
+        -DARCH=${NCNN_ARCH}
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/StagePluginManifest.cmake"
+    COMMENT "Deploying qv_shell_thumb manifest..."
+)
+add_dependencies(QuickView qv_shell_thumb)
 
 # ============================================================================
 # Unit Tests
@@ -503,6 +566,7 @@ add_executable(QuickViewTests
     tests/MetafileCodecTests.cpp
     tests/GeekWidgetsTests.cpp
     tests/PluginHostTests.cpp
+    tests/ShellThumbTests.cpp
     tests/RatingMetadataTests.cpp
     tests/TileJpegTests.cpp
     tests/AiActionManagerTests.cpp
@@ -542,7 +606,9 @@ add_executable(QuickViewTests
     QuickView/AppStrings.cpp
     QuickView/FileAssociationManager.cpp
     QuickView/UpdateManager.cpp
+    QuickView/Plugin/PluginRegistry.cpp
     QuickView/Plugin/PluginHost.cpp
+    QuickView/ThumbWorker.cpp
     QuickView/AsyncJob.cpp
     QuickView/StringUtils.cpp
     third_party/yyjson/yyjson.c
@@ -550,6 +616,9 @@ add_executable(QuickViewTests
 )
 if(TARGET sr_ncnn_vulkan)
     add_dependencies(QuickViewTests sr_ncnn_vulkan)
+endif()
+if(TARGET qv_shell_thumb)
+    add_dependencies(QuickViewTests qv_shell_thumb)
 endif()
 target_precompile_headers(QuickViewTests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:pch.h>)
 target_link_libraries(QuickViewTests PRIVATE 

@@ -172,9 +172,9 @@ public:
   // --- NEW: Raw Thumbnail Data (Zero-Copy flow) ---
   struct ThumbData {
     std::vector<uint8_t> pixels; // Raw BGRA (Compatible with PBGRA/BGRX)
-    int width;
-    int height;
-    int stride;
+    int width = 0;
+    int height = 0;
+    int stride = 0;
     bool isValid = false;
 
     // Metadata for Hover
@@ -183,6 +183,8 @@ public:
     uint64_t fileSize = 0;
     bool isBlurry = true; // Phase 6: Fast Pass (false = Clear, true = Blur)
     bool isFailed = false; // [New] Error Placeholder Strategy
+    bool fromShellCache = false; // True when loaded directly from Windows Shell cache
+    bool isPremultiplied = true; // BGRA pixel premultiplication state
 
 
     // [v3.2] Debug: Record the actual Loader used
@@ -471,7 +473,12 @@ public:
 
   // Core Thumbnail API
   HRESULT LoadThumbnail(LPCWSTR filePath, int targetSize, ThumbData *pData,
-                        bool allowSlow = true);
+                        bool allowSlow = true, bool skipShellCache = false,
+                        CancelPredicate checkCancel = {});
+  HRESULT LoadThumbnailFromMemory(const uint8_t *data, size_t size,
+                                  LPCWSTR extHint, int targetSize,
+                                  ThumbData *pData, bool allowSlow = true,
+                                  CancelPredicate checkCancel = {});
 
   // Direct RAW Loader API
   HRESULT LoadRaw(LPCWSTR filePath, IWICBitmap **ppBitmap, bool forceFullDecode, ImageMetadata* pMetadata = nullptr); // libraw
@@ -483,7 +490,8 @@ public:
                                  ThumbData *pData,
                                  ImageMetadata *pMetadata = nullptr,
                                  bool allowFakeBase = true,
-                                 bool preserveSourceColor = false);
+                                 bool preserveSourceColor = false,
+                                 CancelPredicate checkCancel = {});
   static HRESULT LoadThumbAVIF_Proxy(const uint8_t *data, size_t size,
                                      int targetSize, ThumbData *pData,
                                      bool allowSlow = true,
@@ -497,12 +505,25 @@ public:
                                       ThumbData *pData,
                                       float cropX = 0.0f, float cropY = 0.0f,
                                       float cropW = 0.0f, float cropH = 0.0f,
-                                      float zoomScale = 1.0f);
+                                      float zoomScale = 1.0f,
+                                      bool allowWebViewFallback = true);
 
 private:
   HRESULT LoadImageUnifiedInternal(LPCWSTR filePath,
                                    const QuickView::Codec::DecodeContext &ctx,
                                    QuickView::Codec::DecodeResult &result);
+  HRESULT LoadThumbnailFromMappedBuffer(
+      const uint8_t *mappedData,
+      size_t mappedSize,
+      const ImageHeaderInfo &headerInfo,
+      uint64_t fallbackFileSize,
+      LPCWSTR filePathOrNull,
+      const std::wstring &pathLower,
+      const std::wstring &format,
+      int targetSize,
+      ThumbData *pData,
+      bool allowSlow,
+      CancelPredicate checkCancel = {});
 
   // Windows Shell Thumbnail Extractor
   HRESULT LoadShellThumbnail(LPCWSTR filePath, int targetSize,
@@ -520,6 +541,7 @@ private:
   HRESULT
   LoadThumbJPEGFromMemory(const uint8_t *pBuf, size_t size, int targetSize,
                           ThumbData *pData); // Helper for in-memory buffers
+  HRESULT ExtractRawThumbViaLibRaw(LPCWSTR filePath, int targetSize, ThumbData *pData);
   HRESULT LoadThumbWebPFromMemory(const uint8_t *pBuf, size_t size,
                                   int targetSize,
                                   ThumbData *pData); // Helper for WebP buffers

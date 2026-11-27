@@ -127,9 +127,11 @@ TEST(SupportedExtensionsTest, FilterStringIsWellFormed) {
     EXPECT_NE(filter.find(L"*.pdf"), std::wstring::npos);
     EXPECT_NE(filter.find(L"*.ai"), std::wstring::npos);
     EXPECT_NE(filter.find(L"*.braw"), std::wstring::npos);
-    EXPECT_NE(filter.find(L"All Supported Files"), std::wstring::npos);
-    EXPECT_NE(filter.find(L"Standard Raster"), std::wstring::npos);
-    EXPECT_NE(filter.find(L"Documents, Comics & Archives"), std::wstring::npos);
+    EXPECT_NE(filter.find(L"All Supported Files (*.jpg; "), std::wstring::npos);
+    EXPECT_NE(filter.find(L"Standard Raster (*.jpg; "), std::wstring::npos);
+    EXPECT_NE(filter.find(L"Camera RAW (*.arw; "), std::wstring::npos);
+    EXPECT_NE(filter.find(L"; ...)"), std::wstring::npos);
+    EXPECT_NE(filter.find(L"Documents, Comics & Archives (*.cbz; "), std::wstring::npos);
     ASSERT_GE(filter.size(), 2u);
     EXPECT_EQ(filter[filter.size() - 1], L'\0');
     EXPECT_EQ(filter[filter.size() - 2], L'\0');
@@ -138,10 +140,10 @@ TEST(SupportedExtensionsTest, FilterStringIsWellFormed) {
         L"CustomStd", L"CustomMod", L"CustomPro", L"CustomRaw", L"CustomExtRaw", L"CustomDoc"
     };
     const std::wstring customFilter = GetSupportedExtensionsFilter(customLabels, L"CustomAll", L"CustomAny");
-    EXPECT_NE(customFilter.find(L"CustomAll"), std::wstring::npos);
-    EXPECT_NE(customFilter.find(L"CustomStd"), std::wstring::npos);
-    EXPECT_NE(customFilter.find(L"CustomRaw"), std::wstring::npos);
-    EXPECT_NE(customFilter.find(L"CustomDoc"), std::wstring::npos);
+    EXPECT_NE(customFilter.find(L"CustomAll (*.jpg; "), std::wstring::npos);
+    EXPECT_NE(customFilter.find(L"CustomStd (*.jpg; "), std::wstring::npos);
+    EXPECT_NE(customFilter.find(L"CustomRaw (*.arw; "), std::wstring::npos);
+    EXPECT_NE(customFilter.find(L"CustomDoc (*.cbz; "), std::wstring::npos);
     EXPECT_NE(customFilter.find(L"CustomAny"), std::wstring::npos);
     EXPECT_EQ(customFilter.find(L"Standard Raster"), std::wstring::npos);
 }

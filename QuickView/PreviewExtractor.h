@@ -34,9 +34,19 @@ public:
     // JPEG (Extract EXIF thumbnail from APP1 segment)
     static bool ExtractFromJPEG(const uint8_t* fileData, size_t fileSize, ExtractedData& out);
 
+    // Header-only extraction from disk for huge PSD/PSB files (reads <= 8 MiB resource block)
+    static bool ExtractFromPSDFile(const wchar_t* filePath, std::vector<uint8_t>& outJpeg,
+                                   bool* outIsBgr = nullptr);
+
+    // Header-only EXIF thumbnail extraction for large JPEGs with strict aspect ratio & edge check
+    static bool ExtractFromJPEGHeaderValidated(const wchar_t* filePath, int targetSize,
+                                               std::vector<uint8_t>& outJpeg,
+                                               int& outMainW, int& outMainH,
+                                               int* outMainOrientation = nullptr);
+
 private:
     // TIFF Parsing Helpers
-    static bool ParseTiffIFD(const uint8_t* start, size_t size, size_t offset, bool isLittleEndian, uint64_t& jpegOffset, uint64_t& jpegSize);
+    static bool ParseTiffIFD(const uint8_t* start, size_t size, size_t offset, bool isLittleEndian, uint64_t& jpegOffset, uint64_t& jpegSize, int depth = 0);
     
     // ISOBMFF Parsing Helpers
     static uint32_t ReadU32BE(const uint8_t* p);

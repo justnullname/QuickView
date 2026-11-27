@@ -1,0 +1,5 @@
+EXPORTS
+    qvx_init
+    qvx_shutdown
+    DllGetClassObject PRIVATE
+    DllCanUnloadNow   PRIVATE

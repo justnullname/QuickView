@@ -189,6 +189,7 @@ private:
   int m_cols = 6;
   int m_targetCols = 6;
   float m_preferredCellWidth = 140.0f;
+  int m_appliedThumbTier = 320;
 
   float m_cellHeight = 0.0f;
 

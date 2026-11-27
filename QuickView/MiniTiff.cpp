@@ -576,10 +576,14 @@ static inline void PackStripRowToBgra(
             size_t outX = static_cast<size_t>(x - cropX);
             uint8_t val = srcRow[ux * pixelStride + highByteOffset];
             if (photometric == 0) val = 255 - val;
+            uint8_t a = (samples > 1) ? srcRow[ux * pixelStride + bytesPerSample + highByteOffset] : 255;
+            if (samples > 1 && desc.extraSamples != 1 && a < 255) {
+                val = static_cast<uint8_t>((static_cast<uint32_t>(val) * a + 127u) / 255u);
+            }
             dstRow[outX * 4 + 0] = val;
             dstRow[outX * 4 + 1] = val;
             dstRow[outX * 4 + 2] = val;
-            dstRow[outX * 4 + 3] = (samples > 1) ? srcRow[ux * pixelStride + bytesPerSample + highByteOffset] : 255;
+            dstRow[outX * 4 + 3] = a;
         }
     } else if (photometric == 2) {
         if (bytesPerSample == 2 && samples == 3) {
@@ -1291,6 +1295,432 @@ HRESULT LoadDirectToBuffer(const uint8_t* data, size_t size,
         result.metadata.CurrentPage = pageIndex;
     }
     return hr;
+}
+
+#if defined(__clang__)
+__attribute__((noinline, minsize))
+#endif
+static void ConvertSinglePixelToBgra(
+    const uint8_t* srcPx, uint8_t* dstPx,
+    uint32_t samples, uint32_t bytesPerSample, uint32_t highByteOffset,
+    uint16_t photometric, uint16_t extraSamples, const TiffImageDesc& desc) {
+    if (photometric == 0 || photometric == 1) {
+        uint8_t val = srcPx[highByteOffset];
+        if (photometric == 0) val = 255 - val;
+        uint8_t a = (samples > 1) ? srcPx[bytesPerSample + highByteOffset] : 255;
+        if (samples > 1 && extraSamples != 1 && a < 255) {
+            val = static_cast<uint8_t>((static_cast<uint32_t>(val) * a + 127u) / 255u);
+        }
+        dstPx[0] = val;
+        dstPx[1] = val;
+        dstPx[2] = val;
+        dstPx[3] = a;
+    } else if (photometric == 2) {
+        uint8_t r = srcPx[0 * bytesPerSample + highByteOffset];
+        uint8_t g = srcPx[1 * bytesPerSample + highByteOffset];
+        uint8_t b = srcPx[2 * bytesPerSample + highByteOffset];
+        uint8_t a = (samples >= 4) ? srcPx[3 * bytesPerSample + highByteOffset] : 255;
+        if (samples >= 4 && extraSamples != 1) {
+            r = static_cast<uint8_t>((r * a + 127) / 255);
+            g = static_cast<uint8_t>((g * a + 127) / 255);
+            b = static_cast<uint8_t>((b * a + 127) / 255);
+        }
+        dstPx[0] = b;
+        dstPx[1] = g;
+        dstPx[2] = r;
+        dstPx[3] = a;
+    } else if (photometric == 3 && desc.colorMap.size() >= 768) {
+        const uint8_t idx = srcPx[highByteOffset];
+        dstPx[0] = static_cast<uint8_t>(desc.colorMap[idx + 512] / 256);
+        dstPx[1] = static_cast<uint8_t>(desc.colorMap[idx + 256] / 256);
+        dstPx[2] = static_cast<uint8_t>(desc.colorMap[idx] / 256);
+        dstPx[3] = 255;
+    } else if (photometric == 5) {
+        const uint8_t c = srcPx[0 * bytesPerSample + highByteOffset];
+        const uint8_t m = srcPx[1 * bytesPerSample + highByteOffset];
+        const uint8_t ye = srcPx[2 * bytesPerSample + highByteOffset];
+        const uint8_t k = (samples >= 4) ? srcPx[3 * bytesPerSample + highByteOffset] : 0;
+        dstPx[0] = static_cast<uint8_t>((255 - ye) * (255 - k) / 255);
+        dstPx[1] = static_cast<uint8_t>((255 - m) * (255 - k) / 255);
+        dstPx[2] = static_cast<uint8_t>((255 - c) * (255 - k) / 255);
+        dstPx[3] = 255;
+    }
+}
+
+static void ApplyOrientationToPixels(std::vector<uint8_t>& pixels,
+                                     int& width, int& height, int& stride,
+                                     int& origW, int& origH, uint16_t orientation) {
+    if (orientation < 2 || orientation > 8 || pixels.empty() || width <= 0 || height <= 0) return;
+    const int w = width;
+    const int h = height;
+    const int srcStride = stride;
+    const bool rotate90 = (orientation >= 5 && orientation <= 8);
+    const int newW = rotate90 ? h : w;
+    const int newH = rotate90 ? w : h;
+    const int newStride = newW * 4;
+    std::vector<uint8_t> tmp(static_cast<size_t>(newStride) * newH);
+
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            uint32_t px = 0;
+            std::memcpy(&px, pixels.data() + static_cast<size_t>(y) * srcStride + static_cast<size_t>(x) * 4u, 4u);
+            int nx = x, ny = y;
+            switch (orientation) {
+            case 2: nx = w - 1 - x; ny = y; break;
+            case 3: nx = w - 1 - x; ny = h - 1 - y; break;
+            case 4: nx = x; ny = h - 1 - y; break;
+            case 5: nx = y; ny = x; break;
+            case 6: nx = h - 1 - y; ny = x; break;
+            case 7: nx = h - 1 - y; ny = w - 1 - x; break;
+            case 8: nx = y; ny = w - 1 - x; break;
+            default: break;
+            }
+            std::memcpy(tmp.data() + static_cast<size_t>(ny) * newStride + static_cast<size_t>(nx) * 4u, &px, 4u);
+        }
+    }
+    pixels = std::move(tmp);
+    width = newW;
+    height = newH;
+    stride = newStride;
+    if (rotate90) {
+        std::swap(origW, origH);
+    }
+}
+
+#if defined(__clang__)
+__attribute__((minsize))
+#endif
+HRESULT LoadThumbnailSampled(const uint8_t* data, size_t size,
+                             int targetSize,
+                             CImageLoader::ThumbData* pData,
+                             QuickView::SimplePredicate checkCancel,
+                             uint32_t pageIndex) {
+    if (!data || size < 8 || !pData || targetSize <= 0) return E_INVALIDARG;
+
+    TiffImageDesc desc;
+    uint32_t totalPages = 1;
+    Status status = ParseTiffIFD(data, size, desc, pageIndex, &totalPages);
+    if (status != Status::Ok) {
+        return (status == Status::NotTiff) ? E_NOTIMPL : E_FAIL;
+    }
+    status = CapabilityGate(desc);
+    if (status != Status::Ok) {
+        return (status == Status::Unsupported) ? E_NOTIMPL : E_FAIL;
+    }
+    if (desc.photometric == 3 && desc.colorMap.size() < 768) return E_FAIL;
+
+    const uint32_t samples = desc.samples;
+    const uint32_t bytesPerSample = (desc.bitsPerSample / 8) > 0 ? (desc.bitsPerSample / 8) : 1;
+    const uint32_t highByteOffset = (bytesPerSample == 2) ? (desc.isLE ? 1 : 0) : 0;
+
+    size_t pixelStride = 0;
+    size_t rowBytes = 0;
+    if (!CheckedMul(static_cast<size_t>(samples), static_cast<size_t>(bytesPerSample), pixelStride) ||
+        pixelStride == 0 ||
+        !CheckedMul(static_cast<size_t>(desc.width), pixelStride, rowBytes)) {
+        return E_FAIL;
+    }
+
+    int dstW = static_cast<int>(desc.width);
+    int dstH = static_cast<int>(desc.height);
+    if (dstW > targetSize || dstH > targetSize) {
+        const double scale = (std::min)(
+            static_cast<double>(targetSize) / static_cast<double>(desc.width),
+            static_cast<double>(targetSize) / static_cast<double>(desc.height));
+        dstW = (std::max)(1, static_cast<int>(desc.width * scale + 0.5));
+        dstH = (std::max)(1, static_cast<int>(desc.height * scale + 0.5));
+    }
+
+    const int dstStride = dstW * 4;
+    std::vector<uint8_t> outPixels(static_cast<size_t>(dstStride) * static_cast<size_t>(dstH), 0);
+
+    std::vector<int> srcX(dstW);
+    for (int dx = 0; dx < dstW; ++dx) {
+        srcX[dx] = (std::min)(static_cast<int>(desc.width) - 1,
+                              static_cast<int>((static_cast<double>(dx) + 0.5) * desc.width / dstW));
+    }
+    std::vector<int> srcY(dstH);
+    for (int dy = 0; dy < dstH; ++dy) {
+        srcY[dy] = (std::min)(static_cast<int>(desc.height) - 1,
+                              static_cast<int>((static_cast<double>(dy) + 0.5) * desc.height / dstH));
+    }
+
+    auto decompressUnit = [&](uint64_t offset, uint64_t byteCount, size_t expectedBytes, std::vector<uint8_t>& outBuf) -> const uint8_t* {
+        if (offset > size || byteCount > size - offset) return nullptr;
+        if (desc.compression == 1) {
+            if (expectedBytes > size - offset) return nullptr;
+            return data + offset;
+        }
+        outBuf.resize(expectedBytes);
+        if (desc.compression == 32773) {
+            return DecompressPackBits(data + offset, static_cast<size_t>(byteCount), outBuf.data(), expectedBytes) ? outBuf.data() : nullptr;
+        }
+        if (desc.compression == 5) {
+            return DecompressLzw(data + offset, static_cast<size_t>(byteCount), outBuf.data(), expectedBytes) ? outBuf.data() : nullptr;
+        }
+        if (desc.compression == 8 || desc.compression == 32946) {
+            return DecompressDeflate(data + offset, static_cast<size_t>(byteCount), outBuf.data(), expectedBytes) ? outBuf.data() : nullptr;
+        }
+        return nullptr;
+    };
+
+    if (desc.isTiled) {
+        const uint64_t tilesPerRow64 = 1ULL + (static_cast<uint64_t>(desc.width) - 1ULL) / desc.tileWidth;
+        const uint64_t tilesPerCol64 = 1ULL + (static_cast<uint64_t>(desc.height) - 1ULL) / desc.tileHeight;
+        size_t tilesCountSz = 0;
+        size_t tileRowBytes = 0;
+        size_t tileBytes = 0;
+        if (!CheckedMul(static_cast<size_t>(tilesPerRow64), static_cast<size_t>(tilesPerCol64), tilesCountSz) ||
+            tilesCountSz > static_cast<size_t>((std::numeric_limits<int>::max)()) ||
+            desc.offsets.size() < tilesCountSz || desc.byteCounts.size() < tilesCountSz ||
+            !CheckedMul(static_cast<size_t>(desc.tileWidth), pixelStride, tileRowBytes) ||
+            !CheckedMul(tileRowBytes, static_cast<size_t>(desc.tileHeight), tileBytes) ||
+            tileBytes == 0 || (desc.compression != 1 && tileBytes > kMaxUnitBufferBytes)) {
+            return E_FAIL;
+        }
+        const size_t tilesPerRow = static_cast<size_t>(tilesPerRow64);
+        std::vector<uint8_t> tileScratch;
+        std::vector<uint8_t> rowPredScratch;
+
+        // Group contiguous dstY runs by tile row (ty) and dstX runs by tile col (tx)
+        // so every hit tile is decompressed at most once.
+        for (int dyStart = 0; dyStart < dstH; ) {
+            if (checkCancel && checkCancel()) return E_ABORT;
+            const uint32_t ty = static_cast<uint32_t>(srcY[dyStart]) / desc.tileHeight;
+            int dyEnd = dyStart + 1;
+            while (dyEnd < dstH && (static_cast<uint32_t>(srcY[dyEnd]) / desc.tileHeight) == ty) {
+                ++dyEnd;
+            }
+
+            for (int dxStart = 0; dxStart < dstW; ) {
+                if (checkCancel && (dxStart & 31) == 0 && checkCancel()) return E_ABORT;
+                const uint32_t tx = static_cast<uint32_t>(srcX[dxStart]) / desc.tileWidth;
+                int dxEnd = dxStart + 1;
+                while (dxEnd < dstW && (static_cast<uint32_t>(srcX[dxEnd]) / desc.tileWidth) == tx) {
+                    ++dxEnd;
+                }
+
+                const size_t tIdx = static_cast<size_t>(ty) * tilesPerRow + static_cast<size_t>(tx);
+                if (tIdx >= tilesCountSz) return E_FAIL;
+
+                const uint8_t* tilePtr = decompressUnit(desc.offsets[tIdx], desc.byteCounts[tIdx], tileBytes, tileScratch);
+                if (!tilePtr) return E_FAIL;
+
+                if (desc.predictor == 2 && desc.compression != 1) {
+                    uint8_t* mut = const_cast<uint8_t*>(tilePtr);
+                    for (uint32_t py = 0; py < desc.tileHeight; ++py) {
+                        UndoHorizontalPredictor(mut + static_cast<size_t>(py) * tileRowBytes,
+                                                desc.tileWidth, samples, bytesPerSample, desc.isLE);
+                    }
+                }
+
+                uint32_t cachedPredLocalY = UINT32_MAX;
+                for (int dy = dyStart; dy < dyEnd; ++dy) {
+                    const uint32_t localY = static_cast<uint32_t>(srcY[dy]) % desc.tileHeight;
+                    const uint8_t* rowPtr = tilePtr + static_cast<size_t>(localY) * tileRowBytes;
+                    if (desc.predictor == 2 && desc.compression == 1) {
+                        if (localY != cachedPredLocalY) {
+                            rowPredScratch.assign(rowPtr, rowPtr + tileRowBytes);
+                            UndoHorizontalPredictor(rowPredScratch.data(), desc.tileWidth, samples, bytesPerSample, desc.isLE);
+                            cachedPredLocalY = localY;
+                        }
+                        rowPtr = rowPredScratch.data();
+                    }
+
+                    uint8_t* dstRow = outPixels.data() + static_cast<size_t>(dy) * dstStride;
+                    for (int dx = dxStart; dx < dxEnd; ++dx) {
+                        const uint32_t localX = static_cast<uint32_t>(srcX[dx]) % desc.tileWidth;
+                        const uint8_t* srcPx = rowPtr + static_cast<size_t>(localX) * pixelStride;
+                        ConvertSinglePixelToBgra(srcPx, dstRow + static_cast<size_t>(dx) * 4u,
+                                                 samples, bytesPerSample, highByteOffset,
+                                                 desc.photometric, desc.extraSamples, desc);
+                    }
+                }
+                dxStart = dxEnd;
+            }
+            dyStart = dyEnd;
+        }
+    } else {
+        uint32_t rowsPerStrip = desc.rowsPerStrip;
+        if (rowsPerStrip == 0 || rowsPerStrip > desc.height) rowsPerStrip = desc.height;
+        const uint64_t stripsCount64 = 1ULL + (static_cast<uint64_t>(desc.height) - 1ULL) / rowsPerStrip;
+        if (desc.offsets.size() < stripsCount64 || desc.byteCounts.size() < stripsCount64) return E_FAIL;
+
+        if (desc.compression == 1 || rowsPerStrip <= 64) {
+            // Path A: Random jump-read strips
+            int cachedStrip = -1;
+            int cachedPredSy = -1;
+            std::vector<uint8_t> stripScratch;
+            std::vector<uint8_t> rowPredScratch;
+            const uint8_t* stripPtr = nullptr;
+
+            for (int dy = 0; dy < dstH; ++dy) {
+                if (checkCancel && (dy & 15) == 0 && checkCancel()) return E_ABORT;
+                const int sy = srcY[dy];
+                const int sIdx = sy / static_cast<int>(rowsPerStrip);
+                const int startY = sIdx * static_cast<int>(rowsPerStrip);
+                const int unitH = (std::min)(static_cast<int>(rowsPerStrip), static_cast<int>(desc.height) - startY);
+                size_t stripBytes = 0;
+                if (!CheckedMul(static_cast<size_t>(unitH), rowBytes, stripBytes) || stripBytes == 0) return E_FAIL;
+                if (desc.compression != 1 && stripBytes > kMaxUnitBufferBytes) return E_NOTIMPL;
+
+                if (sIdx != cachedStrip) {
+                    stripPtr = decompressUnit(desc.offsets[sIdx], desc.byteCounts[sIdx], stripBytes, stripScratch);
+                    if (!stripPtr) return E_FAIL;
+                    if (desc.predictor == 2 && desc.compression != 1) {
+                        uint8_t* mut = const_cast<uint8_t*>(stripPtr);
+                        for (int py = 0; py < unitH; ++py) {
+                            UndoHorizontalPredictor(mut + static_cast<size_t>(py) * rowBytes,
+                                                    desc.width, samples, bytesPerSample, desc.isLE);
+                        }
+                    }
+                    cachedStrip = sIdx;
+                    cachedPredSy = -1;
+                }
+
+                const uint8_t* srcRow = stripPtr + static_cast<size_t>(sy - startY) * rowBytes;
+                if (desc.predictor == 2 && desc.compression == 1) {
+                    if (sy != cachedPredSy) {
+                        rowPredScratch.assign(srcRow, srcRow + rowBytes);
+                        UndoHorizontalPredictor(rowPredScratch.data(), desc.width, samples, bytesPerSample, desc.isLE);
+                        cachedPredSy = sy;
+                    }
+                    srcRow = rowPredScratch.data();
+                }
+
+                uint8_t* dstRow = outPixels.data() + static_cast<size_t>(dy) * dstStride;
+                for (int dx = 0; dx < dstW; ++dx) {
+                    const uint8_t* srcPx = srcRow + static_cast<size_t>(srcX[dx]) * pixelStride;
+                    ConvertSinglePixelToBgra(srcPx, dstRow + static_cast<size_t>(dx) * 4u,
+                                             samples, bytesPerSample, highByteOffset,
+                                             desc.photometric, desc.extraSamples, desc);
+                }
+            }
+        } else {
+            // Path B: Single giant compressed strip (avoid huge multi-hundred-MB allocation)
+            int nextDy = 0;
+            if (desc.compression == 8 || desc.compression == 32946) {
+                std::vector<uint8_t> rowBuf(rowBytes);
+                for (uint64_t sIdx = 0; sIdx < stripsCount64 && nextDy < dstH; ++sIdx) {
+                    const int startY = static_cast<int>(sIdx * rowsPerStrip);
+                    const int unitH = (std::min)(static_cast<int>(rowsPerStrip), static_cast<int>(desc.height) - startY);
+                    if (srcY[nextDy] >= startY + unitH) continue;
+
+                    const uint64_t offset = desc.offsets[sIdx];
+                    const uint64_t byteCount = desc.byteCounts[sIdx];
+                    if (offset > size || byteCount > size - offset ||
+                        byteCount > (std::numeric_limits<uInt>::max)()) {
+                        return E_FAIL;
+                    }
+
+                    auto runDeflateStream = [&](int windowBits) -> HRESULT {
+                        z_stream strm{};
+                        if (inflateInit2(&strm, windowBits) != Z_OK) return E_FAIL;
+                        strm.next_in = const_cast<Bytef*>(data + offset);
+                        strm.avail_in = static_cast<uInt>(byteCount);
+                        int curDy = nextDy;
+                        for (int y = 0; y < unitH && curDy < dstH; ++y) {
+                            if (checkCancel && (y & 15) == 0 && checkCancel()) {
+                                inflateEnd(&strm);
+                                return E_ABORT;
+                            }
+                            strm.next_out = rowBuf.data();
+                            strm.avail_out = static_cast<uInt>(rowBytes);
+                            while (strm.avail_out > 0) {
+                                const int ret = inflate(&strm, Z_NO_FLUSH);
+                                if (ret != Z_OK && ret != Z_STREAM_END) {
+                                    inflateEnd(&strm);
+                                    return E_FAIL;
+                                }
+                                if (ret == Z_STREAM_END) break;
+                            }
+                            if (strm.avail_out != 0) {
+                                inflateEnd(&strm);
+                                return E_FAIL;
+                            }
+                            const int absY = startY + y;
+                            if (absY == srcY[curDy]) {
+                                if (desc.predictor == 2) {
+                                    UndoHorizontalPredictor(rowBuf.data(), desc.width, samples, bytesPerSample, desc.isLE);
+                                }
+                                while (curDy < dstH && srcY[curDy] == absY) {
+                                    uint8_t* dstRow = outPixels.data() + static_cast<size_t>(curDy) * dstStride;
+                                    for (int dx = 0; dx < dstW; ++dx) {
+                                        const uint8_t* srcPx = rowBuf.data() + static_cast<size_t>(srcX[dx]) * pixelStride;
+                                        ConvertSinglePixelToBgra(srcPx, dstRow + static_cast<size_t>(dx) * 4u,
+                                                                 samples, bytesPerSample, highByteOffset,
+                                                                 desc.photometric, desc.extraSamples, desc);
+                                    }
+                                    ++curDy;
+                                }
+                            }
+                        }
+                        inflateEnd(&strm);
+                        nextDy = curDy;
+                        return S_OK;
+                    };
+
+                    HRESULT hrStrip = runDeflateStream(15);
+                    if (hrStrip == E_ABORT) return E_ABORT;
+                    if (FAILED(hrStrip)) {
+                        hrStrip = runDeflateStream(-15);
+                        if (FAILED(hrStrip)) return hrStrip;
+                    }
+                }
+            } else {
+                // LZW / PackBits with safe 64 MiB uncompressed strip cap
+                constexpr size_t kSafeStripCap = 64u * 1024u * 1024u;
+                std::vector<uint8_t> stripScratch;
+                for (uint64_t sIdx = 0; sIdx < stripsCount64 && nextDy < dstH; ++sIdx) {
+                    if (checkCancel && checkCancel()) return E_ABORT;
+                    const int startY = static_cast<int>(sIdx * rowsPerStrip);
+                    const int unitH = (std::min)(static_cast<int>(rowsPerStrip), static_cast<int>(desc.height) - startY);
+                    if (srcY[nextDy] >= startY + unitH) continue;
+
+                    size_t stripBytes = 0;
+                    if (!CheckedMul(static_cast<size_t>(unitH), rowBytes, stripBytes) || stripBytes > kSafeStripCap) {
+                        return E_NOTIMPL;
+                    }
+                    const uint8_t* stripPtr = decompressUnit(desc.offsets[sIdx], desc.byteCounts[sIdx], stripBytes, stripScratch);
+                    if (!stripPtr) return E_FAIL;
+                    while (nextDy < dstH && srcY[nextDy] < startY + unitH) {
+                        if (checkCancel && (nextDy & 15) == 0 && checkCancel()) return E_ABORT;
+                        const int localY = srcY[nextDy] - startY;
+                        uint8_t* srcRow = const_cast<uint8_t*>(stripPtr + static_cast<size_t>(localY) * rowBytes);
+                        if (desc.predictor == 2) {
+                            UndoHorizontalPredictor(srcRow, desc.width, samples, bytesPerSample, desc.isLE);
+                        }
+                        uint8_t* dstRow = outPixels.data() + static_cast<size_t>(nextDy) * dstStride;
+                        for (int dx = 0; dx < dstW; ++dx) {
+                            const uint8_t* srcPx = srcRow + static_cast<size_t>(srcX[dx]) * pixelStride;
+                            ConvertSinglePixelToBgra(srcPx, dstRow + static_cast<size_t>(dx) * 4u,
+                                                     samples, bytesPerSample, highByteOffset,
+                                                     desc.photometric, desc.extraSamples, desc);
+                        }
+                        ++nextDy;
+                    }
+                }
+            }
+        }
+    }
+
+    int origW = static_cast<int>(desc.width);
+    int origH = static_cast<int>(desc.height);
+    int finalStride = dstStride;
+    ApplyOrientationToPixels(outPixels, dstW, dstH, finalStride, origW, origH, desc.orientation);
+
+    pData->pixels = std::move(outPixels);
+    pData->width = dstW;
+    pData->height = dstH;
+    pData->stride = finalStride;
+    pData->origWidth = origW;
+    pData->origHeight = origH;
+    pData->fileSize = size;
+    pData->isValid = true;
+    pData->isPremultiplied = true;
+    pData->isBlurry = (dstW < origW || dstH < origH);
+    pData->loaderName = L"MiniTIFF (Sampled)";
+    return S_OK;
 }
 
 } // namespace QuickView::MiniTiff

@@ -2,8 +2,10 @@
 <Package
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
+  xmlns:desktop2="http://schemas.microsoft.com/appx/manifest/desktop/windows10/2"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
-  IgnorableNamespaces="uap rescap">
+  IgnorableNamespaces="uap com desktop2 rescap">
 
   <Identity
     Name="VivorLoong.QuickView-FastFileViewer"
@@ -49,13 +51,30 @@
           Square310x310Logo="Assets\Square310x310Logo.png" />
       </uap:VisualElements>
       <Extensions>
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <com:SurrogateServer AppId="9f6e1b24-8c5a-4d71-903a-6b1d2e8f7c40">
+              <com:Class Id="8b4f2a19-6e3c-4d7a-9c51-2e7a9f0b4d31" Path="plugins\shell\qv_shell_thumb\qv_shell_thumb.qvx" ThreadingModel="Both" />
+            </com:SurrogateServer>
+          </com:ComServer>
+        </com:Extension>
         <uap:Extension Category="windows.fileTypeAssociation">
           <uap:FileTypeAssociation Name="quickview-image-assoc">
             <uap:DisplayName>QuickView Image Viewer</uap:DisplayName>
             <uap:Logo>Assets\Square44x44Logo.png</uap:Logo>
             <uap:SupportedFileTypes>
-@FILE_TYPES@
+@FILE_TYPES_NATIVE@
             </uap:SupportedFileTypes>
+          </uap:FileTypeAssociation>
+        </uap:Extension>
+        <uap:Extension Category="windows.fileTypeAssociation">
+          <uap:FileTypeAssociation Name="quickview-image-assoc-thumb">
+            <uap:DisplayName>QuickView Extended Format Viewer</uap:DisplayName>
+            <uap:Logo>Assets\Square44x44Logo.png</uap:Logo>
+            <uap:SupportedFileTypes>
+@FILE_TYPES_THUMB@
+            </uap:SupportedFileTypes>
+            <desktop2:ThumbnailHandler Clsid="8b4f2a19-6e3c-4d7a-9c51-2e7a9f0b4d31" />
           </uap:FileTypeAssociation>
         </uap:Extension>
       </Extensions>

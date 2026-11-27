@@ -74,6 +74,17 @@ struct SettingsItem {
     D2D1_RECT_F interactRect2 = {}; 
     bool isHovered = false;
     bool isHovered2 = false; 
+
+    D2D1_RECT_F headerBtn1Rect = {};
+    D2D1_RECT_F headerBtn2Rect = {};
+    bool headerBtn1Hovered = false;
+    bool headerBtn2Hovered = false;
+    bool headerBtn2Disabled = false;
+    bool headerBtn2Destructive = false;
+    const wchar_t* headerBtn1Tooltip = nullptr;
+    const wchar_t* headerBtn2Tooltip = nullptr;
+    void (*onHeaderBtn1)(SettingsOverlay* overlay, SettingsItem* item) = nullptr;
+    void (*onHeaderBtn2)(SettingsOverlay* overlay, SettingsItem* item) = nullptr;
     
     bool isDisabled = false;
     std::wstring disabledText{}; 
@@ -312,6 +323,7 @@ private:
     float m_dragPanStartOffset = 0.0f;
 
     SettingsItem* m_pHoverTooltipItem = nullptr;
+    const wchar_t* m_pHoverTooltipOverrideText = nullptr;
     float m_lastMouseX = 0.0f;
     float m_lastMouseY = 0.0f;
     bool m_needsLayoutRebuild = false;

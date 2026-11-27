@@ -1,0 +1,20 @@
+{
+  "schema_version": 3,
+  "id": "com.quickview.shell.thumb",
+  "version": "0.3.1",
+  "abi_version": "3.0.0",
+  "author": "QuickView Core Team",
+  "interfaces": ["shell_ext"],
+  "entry": "qv_shell_thumb.qvx",
+  "arch": "x64",
+  "i18n": {
+    "en": {
+      "name": "Windows Explorer Thumbnail Provider",
+      "desc": "Provides high-speed Explorer thumbnails for JXL, AVIF, SVG, PSD, EXR, RAW, and comic archives via pooled QuickView workers."
+    },
+    "zh-CN": {
+      "name": "系统缩略图扩展插件",
+      "desc": "通过池化后台解码进程为资源管理器提供 JXL、AVIF、SVG、PSD、EXR、相机 RAW 与漫画包缩略图。"
+    }
+  }
+}

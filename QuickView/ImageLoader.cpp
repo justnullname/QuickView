@@ -61,6 +61,7 @@ extern FileNavigator& g_navigator;
 static bool ReadFileToVector(LPCWSTR filePath, std::vector<uint8_t> &buffer);
 static std::string_view GetSvgRootTag(std::string_view xml);
 static std::string GetSvgRootAttrVal(const std::string &xml, const char *attr);
+static void ParseSvgDimensions(std::string_view svgContent, float &outW, float &outH);
 
 // [CMS/PMR] Forward declaration
 static bool ReadFileToPMR(LPCWSTR filePath, std::pmr::vector<uint8_t> &buffer,
@@ -863,7 +864,7 @@ static std::wstring DetectFormatFromContent(const uint8_t *magic, size_t size) {
         }
         i++;
       }
-      // Additional context rules for WebP / JXL box
+      // Additional context rules for WebP / JXL box / ICO-CUR vs TGA disambiguation
       if (match) {
         if (wcscmp(sig.name, L"WebP") == 0 &&
             !(magic[0] == 'R' && magic[1] == 'I' && magic[2] == 'F' &&
@@ -873,6 +874,21 @@ static std::wstring DetectFormatFromContent(const uint8_t *magic, size_t size) {
             !(magic[0] == 0x00 && magic[1] == 0x00 && magic[2] == 0x00 &&
               magic[3] == 0x0C))
           match = false;
+        if (wcscmp(sig.name, L"ICO") == 0 || wcscmp(sig.name, L"CUR") == 0) {
+          if (size < 22) {
+            match = false;
+          } else {
+            const uint16_t count = static_cast<uint16_t>(magic[4] | (magic[5] << 8));
+            const uint32_t dataOff = static_cast<uint32_t>(magic[18]) |
+                                     (static_cast<uint32_t>(magic[19]) << 8) |
+                                     (static_cast<uint32_t>(magic[20]) << 16) |
+                                     (static_cast<uint32_t>(magic[21]) << 24);
+            if (count == 0 || count > 256 ||
+                dataOff < 6u + static_cast<uint32_t>(count) * 16u) {
+              match = false;
+            }
+          }
+        }
       }
       if (match)
         return sig.name;
@@ -1087,6 +1103,11 @@ HRESULT DecodeMetafileBuffer(const uint8_t *data, size_t size,
 }
 
 bool PrefersSdrTarget(const QuickView::Codec::DecodeContext &ctx) {
+  // Thumbnails / preview paths always require 8-bit SDR BGRA8888 output
+  // even when user forced AdvancedColorMode == 1 (HDR On) for the main canvas.
+  if (ctx.forcePreview && !ctx.preserveFloat) {
+    return true;
+  }
   // AdvancedColorMode mapping: 0=Off, 1=On, 2=Auto
   // Mode 1 (On):  User explicitly forced HDR → never collapse to SDR
   if (g_config.AdvancedColorMode == 1) {
@@ -4116,6 +4137,17 @@ HRESULT CImageLoader::LoadJPEG(LPCWSTR filePath, IWICBitmap **ppBitmap) {
 static void ApplyOrientationToThumbData(CImageLoader::ThumbData *pData,
                                         int orientation);
 
+static constexpr uint64_t kThumbMaxFullFrameBytes = 256ULL * 1024ULL * 1024ULL;
+
+static bool ExceedsThumbFullFrameBudget(uint32_t w, uint32_t h,
+                                        uint32_t estBytesPerPixel = 4u) noexcept {
+  if (w == 0 || h == 0)
+    return false;
+  const uint64_t bpp = estBytesPerPixel > 0 ? estBytesPerPixel : 4u;
+  return static_cast<uint64_t>(w) * static_cast<uint64_t>(h) >
+         (kThumbMaxFullFrameBytes / bpp);
+}
+
 HRESULT CImageLoader::LoadThumbJPEGFromMemory(const uint8_t *pBuf, size_t size,
                                               int targetSize,
                                               ThumbData *pData) {
@@ -4191,6 +4223,11 @@ HRESULT CImageLoader::LoadThumbJPEGFromMemory(const uint8_t *pBuf, size_t size,
 
   int finalW = TJSCALED(width, chosenFactor);
   int finalH = TJSCALED(height, chosenFactor);
+  if (finalW <= 0 || finalH <= 0 ||
+      ExceedsThumbFullFrameBudget(static_cast<uint32_t>(finalW),
+                                  static_cast<uint32_t>(finalH), 4u)) {
+    return E_FAIL;
+  }
 
   // Decode directly to target buffer
   pData->width = finalW;
@@ -4245,8 +4282,8 @@ static void ApplyOrientationToThumbData(CImageLoader::ThumbData *pData,
         switch (orientation) {
         case 5:
           nx = y;
-          ny = w - 1 - x;
-          break; // Transpose + Flip V
+          ny = x;
+          break; // Transpose (Flip H + Rotate 90 CCW)
         case 6:
           nx = h - 1 - y;
           ny = x;
@@ -4254,10 +4291,10 @@ static void ApplyOrientationToThumbData(CImageLoader::ThumbData *pData,
         case 7:
           nx = h - 1 - y;
           ny = w - 1 - x;
-          break; // Rotate 90 CW + Flip H
+          break; // Transverse (Flip V + Rotate 90 CW)
         case 8:
           nx = y;
-          ny = x;
+          ny = w - 1 - x;
           break; // Rotate 90 CCW
         default:
           nx = x;
@@ -4491,6 +4528,66 @@ static void ResizeBilinearFloatScalar(const float *src, int srcW, int srcH,
   }
 }
 
+static void DownscaleBgra8BoxBilinear(const uint8_t *src, int srcW, int srcH,
+                                     int srcStride, uint8_t *dst, int dstW,
+                                     int dstH, int dstStride) {
+  if (!src || !dst || srcW <= 0 || srcH <= 0 || dstW <= 0 || dstH <= 0)
+    return;
+
+  const uint8_t *curPtr = src;
+  int curW = srcW;
+  int curH = srcH;
+  int curStride = srcStride;
+  std::vector<uint8_t> ping;
+  std::vector<uint8_t> pong;
+  bool usePing = true;
+
+  // Iterative 2x2 premultiplied-safe box halving avoids aliasing and preserves
+  // exact 0 / 255 alpha endpoints before the final SIMD bilinear resample.
+  while (curW >= dstW * 2 && curH >= dstH * 2) {
+    const int nextW = (std::max)(1, curW / 2);
+    const int nextH = (std::max)(1, curH / 2);
+    const int nextStride = CalculateAlignedStride(nextW, 4);
+    std::vector<uint8_t> &outBuf = usePing ? ping : pong;
+    outBuf.resize(static_cast<size_t>(nextStride) * static_cast<size_t>(nextH));
+
+    for (int y = 0; y < nextH; ++y) {
+      const uint8_t *r0 = curPtr + static_cast<size_t>(y * 2) * curStride;
+      const uint8_t *r1 = curPtr + static_cast<size_t>(y * 2 + 1) * curStride;
+      uint8_t *dRow = outBuf.data() + static_cast<size_t>(y) * nextStride;
+      for (int x = 0; x < nextW; ++x) {
+        const size_t x0 = static_cast<size_t>(x * 2) * 4u;
+        const size_t x1 = x0 + 4u;
+        uint8_t *dp = dRow + static_cast<size_t>(x) * 4u;
+        for (size_t c = 0; c < 4u; ++c) {
+          const uint32_t sum = static_cast<uint32_t>(r0[x0 + c]) +
+                               static_cast<uint32_t>(r0[x1 + c]) +
+                               static_cast<uint32_t>(r1[x0 + c]) +
+                               static_cast<uint32_t>(r1[x1 + c]);
+          dp[c] = static_cast<uint8_t>((sum + 2u) >> 2u);
+        }
+      }
+    }
+
+    curPtr = outBuf.data();
+    curW = nextW;
+    curH = nextH;
+    curStride = nextStride;
+    usePing = !usePing;
+  }
+
+  if (curW == dstW && curH == dstH) {
+    const size_t copyBytes = static_cast<size_t>(dstW) * 4u;
+    for (int y = 0; y < dstH; ++y) {
+      memcpy(dst + static_cast<size_t>(y) * dstStride,
+             curPtr + static_cast<size_t>(y) * curStride, copyBytes);
+    }
+  } else {
+    ImageLoaderSimd::ResizeBilinear(curPtr, curW, curH, curStride, dst, dstW,
+                                    dstH, dstStride);
+  }
+}
+
 static HRESULT DownscaleThumbDataIfNeeded(CImageLoader::ThumbData *pData,
                                           int targetSize) {
   if (!pData || !pData->isValid || targetSize <= 0)
@@ -4520,9 +4617,9 @@ static HRESULT DownscaleThumbDataIfNeeded(CImageLoader::ThumbData *pData,
         pData->height, pData->stride, reinterpret_cast<float *>(resized.data()),
         finalW, finalH, finalStride);
   } else {
-    ImageLoaderSimd::ResizeBilinear(
-        pData->pixels.data(), pData->width, pData->height, pData->stride,
-        resized.data(), finalW, finalH, finalStride);
+    DownscaleBgra8BoxBilinear(pData->pixels.data(), pData->width, pData->height,
+                              pData->stride, resized.data(), finalW, finalH,
+                              finalStride);
   }
 
   pData->pixels = std::move(resized);
@@ -4533,7 +4630,9 @@ static HRESULT DownscaleThumbDataIfNeeded(CImageLoader::ThumbData *pData,
   return S_OK;
 }
 
-static HRESULT CopyWicBitmapToThumbData(IWICBitmapSource *source,
+static HRESULT CopyWicBitmapToThumbData(IWICImagingFactory *wicFactory,
+                                        IWICBitmapSource *source,
+                                        int targetSize,
                                         CImageLoader::ThumbData *pData) {
   if (!source || !pData)
     return E_INVALIDARG;
@@ -4544,19 +4643,74 @@ static HRESULT CopyWicBitmapToThumbData(IWICBitmapSource *source,
   if (FAILED(hr) || width == 0 || height == 0)
     return FAILED(hr) ? hr : E_FAIL;
 
+  if (pData->origWidth <= 0 || pData->origHeight <= 0) {
+    pData->origWidth = static_cast<int>(width);
+    pData->origHeight = static_cast<int>(height);
+  }
+
+  WICPixelFormatGUID pf = {};
+  if (FAILED(source->GetPixelFormat(&pf)))
+    return E_FAIL;
+
+  ComPtr<IWICBitmapSource> copySource = source;
+  bool isPremul = IsEqualGUID(pf, GUID_WICPixelFormat32bppPBGRA);
+
+  // Always convert to 32bppPBGRA before scaling or copying into the premultiplied D2D pipeline.
+  if (!isPremul) {
+    if (!wicFactory)
+      return E_FAIL;
+    ComPtr<IWICFormatConverter> converter;
+    hr = wicFactory->CreateFormatConverter(&converter);
+    if (FAILED(hr) || !converter)
+      return FAILED(hr) ? hr : E_FAIL;
+    hr = converter->Initialize(copySource.Get(), GUID_WICPixelFormat32bppPBGRA,
+                               WICBitmapDitherTypeNone, nullptr, 0.0f,
+                               WICBitmapPaletteTypeMedianCut);
+    if (FAILED(hr))
+      return hr;
+    copySource = converter;
+    isPremul = true;
+  }
+
+  if (targetSize > 0 && wicFactory &&
+      (width > static_cast<UINT>(targetSize) ||
+       height > static_cast<UINT>(targetSize))) {
+    const double scaleW = static_cast<double>(targetSize) / width;
+    const double scaleH = static_cast<double>(targetSize) / height;
+    const double scale = (std::min)(scaleW, scaleH);
+    const UINT dstW = (std::max)(1u, static_cast<UINT>(width * scale + 0.5));
+    const UINT dstH = (std::max)(1u, static_cast<UINT>(height * scale + 0.5));
+
+    ComPtr<IWICBitmapScaler> scaler;
+    if (SUCCEEDED(wicFactory->CreateBitmapScaler(&scaler)) && scaler &&
+        SUCCEEDED(scaler->Initialize(copySource.Get(), dstW, dstH,
+                                     WICBitmapInterpolationModeFant))) {
+      copySource = scaler;
+      width = dstW;
+      height = dstH;
+    }
+  }
+
+  if (width == 0 || height == 0 || width > 32768u || height > 32768u ||
+      static_cast<uint64_t>(width) * static_cast<uint64_t>(height) * 4ULL >
+          kThumbMaxFullFrameBytes) {
+    return E_FAIL;
+  }
+
   pData->width = static_cast<int>(width);
   pData->height = static_cast<int>(height);
   pData->stride = static_cast<int>(width) * 4;
   pData->pixels.resize(static_cast<size_t>(pData->stride) * height);
 
-  hr = source->CopyPixels(nullptr, static_cast<UINT>(pData->stride),
-                          static_cast<UINT>(pData->pixels.size()),
-                          pData->pixels.data());
+  hr = copySource->CopyPixels(nullptr, static_cast<UINT>(pData->stride),
+                              static_cast<UINT>(pData->pixels.size()),
+                              pData->pixels.data());
   if (FAILED(hr)) {
     pData->pixels.clear();
     return hr;
   }
 
+  pData->isPremultiplied = isPremul;
   pData->isValid = true;
   return S_OK;
 }
@@ -4571,50 +4725,89 @@ struct JxlThumbSampleCtx {
 static void JxlThumbSampleCallback(void *opaque, size_t x, size_t y,
                                    size_t num_pixels, const void *pixels) {
   auto *ctx = static_cast<JxlThumbSampleCtx *>(opaque);
-  if (!ctx || !ctx->thumb || !ctx->sampleX || !ctx->sampleRows)
+  if (!ctx || !ctx->thumb || !ctx->sampleX || !ctx->sampleRows || num_pixels == 0)
     return;
 
   auto rowIt = ctx->sampleRows->find(static_cast<int>(y));
   if (rowIt == ctx->sampleRows->end())
     return;
 
+  const int xMin = static_cast<int>(x);
+  const int xMax = static_cast<int>(x + num_pixels);
+  const auto itBegin = std::lower_bound(ctx->sampleX->begin(), ctx->sampleX->end(), xMin);
+  const auto itEnd = std::lower_bound(itBegin, ctx->sampleX->end(), xMax);
+  if (itBegin == itEnd)
+    return;
+
+  const int dstXStart = static_cast<int>(itBegin - ctx->sampleX->begin());
+  const int dstXEnd = static_cast<int>(itEnd - ctx->sampleX->begin());
+
   const uint8_t *src = static_cast<const uint8_t *>(pixels);
+  size_t localTouched = 0;
   for (int dstY : rowIt->second) {
     uint8_t *dstRow =
         ctx->thumb->pixels.data() + (size_t)dstY * ctx->thumb->stride;
-    for (int dstX = 0; dstX < ctx->thumb->width; ++dstX) {
-      int srcX = (*ctx->sampleX)[dstX];
-      if (srcX < (int)x || srcX >= (int)(x + num_pixels))
-        continue;
-
-      const uint8_t *s = src + (size_t)(srcX - (int)x) * 4;
+    for (int dstX = dstXStart; dstX < dstXEnd; ++dstX) {
+      const int srcX = (*ctx->sampleX)[dstX];
+      const uint8_t *s = src + static_cast<size_t>(srcX - xMin) * 4u;
       uint8_t r = s[0];
       uint8_t g = s[1];
       uint8_t b = s[2];
       uint8_t a = s[3];
       if (a < 255) {
-        r = (uint8_t)((r * a) / 255);
-        g = (uint8_t)((g * a) / 255);
-        b = (uint8_t)((b * a) / 255);
+        r = static_cast<uint8_t>((r * a + 127) / 255);
+        g = static_cast<uint8_t>((g * a + 127) / 255);
+        b = static_cast<uint8_t>((b * a + 127) / 255);
       }
-      uint8_t *d = dstRow + (size_t)dstX * 4;
+      uint8_t *d = dstRow + static_cast<size_t>(dstX) * 4u;
       d[0] = b;
       d[1] = g;
       d[2] = r;
       d[3] = a;
-      if (ctx->touchedPixels) {
-        ctx->touchedPixels->fetch_add(1, std::memory_order_relaxed);
-      }
+      ++localTouched;
     }
+  }
+  if (localTouched > 0 && ctx->touchedPixels) {
+    ctx->touchedPixels->fetch_add(localTouched, std::memory_order_relaxed);
   }
 }
 
+static bool HasD2dBreakingSvgFeatures(std::string_view xml) noexcept {
+  auto containsCI = [](std::string_view hay, std::string_view needle) -> bool {
+    if (needle.empty() || hay.size() < needle.size())
+      return false;
+    for (size_t i = 0; i + needle.size() <= hay.size(); ++i) {
+      bool ok = true;
+      for (size_t j = 0; j < needle.size(); ++j) {
+        const unsigned char a = static_cast<unsigned char>(hay[i + j]);
+        const unsigned char b = static_cast<unsigned char>(needle[j]);
+        const unsigned char la = (a >= 'A' && a <= 'Z') ? static_cast<unsigned char>(a + 32) : a;
+        const unsigned char lb = (b >= 'A' && b <= 'Z') ? static_cast<unsigned char>(b + 32) : b;
+        if (la != lb) {
+          ok = false;
+          break;
+        }
+      }
+      if (ok)
+        return true;
+    }
+    return false;
+  };
+  return containsCI(xml, "<mask") || containsCI(xml, "<filter");
+}
+
+#if defined(__clang__)
+__attribute__((minsize))
+#endif
 static HRESULT LoadThumbJXL_Sampled(const uint8_t *pFile, size_t fileSize,
                                     int targetSize,
                                     CImageLoader::ThumbData *pData,
-                                    CImageLoader::ImageMetadata *pMetadata) {
+                                    CImageLoader::ImageMetadata *pMetadata,
+                                    CImageLoader::CancelPredicate checkCancel = {}) {
   if (!pFile || fileSize == 0 || !pData)
     return E_INVALIDARG;
+  if (checkCancel && checkCancel())
+    return E_ABORT;
 
   JxlDecoder *dec = JxlDecoderCreate(NULL);
   if (!dec)
@@ -4633,11 +4826,12 @@ static HRESULT LoadThumbJXL_Sampled(const uint8_t *pFile, size_t fileSize,
     return cleanup(E_FAIL);
   }
 
-  const int events =
-      JXL_DEC_BASIC_INFO | JXL_DEC_FULL_IMAGE | JXL_DEC_COLOR_ENCODING;
+  const int events = JXL_DEC_BASIC_INFO | JXL_DEC_COLOR_ENCODING |
+                     JXL_DEC_FRAME_PROGRESSION | JXL_DEC_FULL_IMAGE;
   if (JXL_DEC_SUCCESS != JxlDecoderSubscribeEvents(dec, events)) {
     return cleanup(E_FAIL);
   }
+  JxlDecoderSetProgressiveDetail(dec, JxlProgressiveDetail::kDC);
 
   if (JXL_DEC_SUCCESS != JxlDecoderSetInput(dec, pFile, fileSize)) {
     return cleanup(E_FAIL);
@@ -4651,8 +4845,11 @@ static HRESULT LoadThumbJXL_Sampled(const uint8_t *pFile, size_t fileSize,
   JxlThumbSampleCtx sampleCtx = {};
   std::atomic<size_t> touchedPixels{0};
   bool callbackSet = false;
+  int origW = 0, origH = 0, dstW = 0, dstH = 0;
 
   for (;;) {
+    if (checkCancel && checkCancel())
+      return cleanup(E_ABORT);
     JxlDecoderStatus status = JxlDecoderProcessInput(dec);
     if (status == JXL_DEC_ERROR)
       return cleanup(E_FAIL);
@@ -4663,9 +4860,18 @@ static HRESULT LoadThumbJXL_Sampled(const uint8_t *pFile, size_t fileSize,
       if (JXL_DEC_SUCCESS != JxlDecoderGetBasicInfo(dec, &info)) {
         return cleanup(E_FAIL);
       }
-      
-      
-      // Note: do NOT set HasEmbeddedColorProfile from uses_original_profile.
+      if (info.xsize == 0 || info.ysize == 0 ||
+          info.xsize > 262144u || info.ysize > 262144u) {
+        return cleanup(E_FAIL);
+      }
+      // Hard memory-budget circuit breaker before registering output callback so
+      // libjxl never allocates multi-GB internal float buffers for giant images.
+      if (ExceedsThumbFullFrameBudget(info.xsize, info.ysize, 8u)) {
+        return cleanup(E_FAIL);
+      }
+
+      origW = static_cast<int>(info.xsize);
+      origH = static_cast<int>(info.ysize);
 
       JxlColorEncoding colorEncoding = {};
       colorEncoding.color_space = JXL_COLOR_SPACE_RGB;
@@ -4675,13 +4881,12 @@ static HRESULT LoadThumbJXL_Sampled(const uint8_t *pFile, size_t fileSize,
       colorEncoding.rendering_intent = JXL_RENDERING_INTENT_PERCEPTUAL;
       JxlDecoderSetOutputColorProfile(dec, &colorEncoding, NULL, 0);
 
-      int origW = static_cast<int>(info.xsize);
-      int origH = static_cast<int>(info.ysize);
-      int dstW = origW;
-      int dstH = origH;
-      if (targetSize > 0 && (origW > targetSize || origH > targetSize)) {
-        float ratio = (origW >= origH) ? ((float)targetSize / (float)origW)
-                                       : ((float)targetSize / (float)origH);
+      const int effTarget = (targetSize > 0) ? targetSize : 256;
+      dstW = origW;
+      dstH = origH;
+      if (origW > effTarget || origH > effTarget) {
+        float ratio = (origW >= origH) ? ((float)effTarget / (float)origW)
+                                       : ((float)effTarget / (float)origH);
         dstW = (std::max)(1, (int)std::lround(origW * ratio));
         dstH = (std::max)(1, (int)std::lround(origH * ratio));
       }
@@ -4723,6 +4928,18 @@ static HRESULT LoadThumbJXL_Sampled(const uint8_t *pFile, size_t fileSize,
         return cleanup(E_FAIL);
       }
       callbackSet = true;
+    } else if (status == JXL_DEC_FRAME_PROGRESSION) {
+      const size_t downRatio = JxlDecoderGetIntendedDownsamplingRatio(dec);
+      if (callbackSet && downRatio >= 1 && downRatio <= 16) {
+        const int effMax =
+            (std::max)(origW, origH) / static_cast<int>(downRatio);
+        const int minWant = (std::min)((std::max)(dstW, dstH), 128);
+        if (effMax >= minWant && JXL_DEC_SUCCESS == JxlDecoderFlushImage(dec) &&
+            touchedPixels.load(std::memory_order_relaxed) > 0) {
+          pData->loaderName = L"libjxl (Sampled DC)";
+          break;
+        }
+      }
     } else if (status == JXL_DEC_COLOR_ENCODING) {
       if (pMetadata) {
         // Always extract ICC profile
@@ -4773,7 +4990,8 @@ HRESULT CImageLoader::RasterizeSvgToPixels(const uint8_t *xmlData, size_t xmlSiz
                                            CImageLoader::ThumbData *pData,
                                            float cropX, float cropY,
                                            float cropW, float cropH,
-                                           float zoomScale) {
+                                           float zoomScale,
+                                           bool allowWebViewFallback) {
   if (!pData || !xmlData || xmlSize == 0)
     return E_INVALIDARG;
 
@@ -4801,14 +5019,28 @@ HRESULT CImageLoader::RasterizeSvgToPixels(const uint8_t *xmlData, size_t xmlSiz
   const UINT outW = (UINT)(std::max)(1, (int)std::lround(renderW * scale));
   const UINT outH = (UINT)(std::max)(1, (int)std::lround(renderH * scale));
 
-  // 1. Check if SVG requires WebView2 rendering (complex CSS, foreignObject, web fonts, animations)
-  if (QuickView::OffscreenWebView2::NeedsFallback(std::string_view(reinterpret_cast<const char*>(xmlData), xmlSize))) {
+  bool webViewTried = false;
+  auto tryWebViewFallback = [&]() -> bool {
+    if (!allowWebViewFallback || webViewTried || hasCrop)
+      return false;
+    webViewTried = true;
     std::vector<uint8_t> xmlVec(xmlData, xmlData + xmlSize);
     int webTarget = (targetSize > 0) ? targetSize : (int)(std::max)(outW, outH);
-    if (SUCCEEDED(WebViewThumbService::Instance().RasterizeSvgToThumb(
-            xmlVec, safeW, safeH, webTarget, pData)) &&
-        pData->isValid) {
+    return SUCCEEDED(WebViewThumbService::Instance().RasterizeSvgToThumb(
+               xmlVec, safeW, safeH, webTarget, pData, false, 6000u)) &&
+           pData->isValid;
+  };
+
+  // 1. Check if SVG requires WebView2 rendering (complex CSS, foreignObject, mask, filter, animations)
+  const std::string_view xmlSv(reinterpret_cast<const char *>(xmlData), xmlSize);
+  if (QuickView::OffscreenWebView2::NeedsFallback(xmlSv)) {
+    if (tryWebViewFallback()) {
       return S_OK;
+    }
+    // Never fall back to Direct2D when <mask> or <filter> is present: D2D ignores them
+    // and draws completely garbled overlapping blobs (e.g. gemini.svg).
+    if (HasD2dBreakingSvgFeatures(xmlSv)) {
+      return E_FAIL;
     }
   }
 
@@ -4905,44 +5137,182 @@ HRESULT CImageLoader::RasterizeSvgToPixels(const uint8_t *xmlData, size_t xmlSiz
   ComPtr<ID2D1SvgDocument> svgDoc;
   hr = d2dContext5->CreateSvgDocument(stream.Get(), D2D1::SizeF(safeW, safeH),
                                       &svgDoc);
+  auto trySanitizedFallback = [&]() -> bool {
+    std::string sanitized(reinterpret_cast<const char *>(xmlData), xmlSize);
+    bool changed = false;
+    auto stripElements = [&](const char *tagName) {
+      const std::string openPat = std::string("<") + tagName;
+      const std::string closePat = std::string("</") + tagName + ">";
+      size_t searchPos = 0;
+      for (;;) {
+        const size_t start = sanitized.find(openPat, searchPos);
+        if (start == std::string::npos)
+          break;
+        const size_t nextIdx = start + openPat.size();
+        if (nextIdx >= sanitized.size() ||
+            !(sanitized[nextIdx] == '>' || sanitized[nextIdx] == '/' ||
+              std::isspace(static_cast<unsigned char>(sanitized[nextIdx])))) {
+          searchPos = nextIdx;
+          continue;
+        }
+        const size_t openEnd = sanitized.find('>', nextIdx);
+        if (openEnd == std::string::npos)
+          break;
+        if (sanitized[openEnd - 1] == '/') {
+          sanitized.erase(start, (openEnd + 1) - start);
+        } else {
+          const size_t closeStart = sanitized.find(closePat, openEnd + 1);
+          if (closeStart == std::string::npos)
+            break;
+          sanitized.erase(start, (closeStart + closePat.size()) - start);
+        }
+        searchPos = start;
+        changed = true;
+      }
+    };
+    stripElements("foreignObject");
+    stripElements("style");
+    stripElements("marker");
+
+    const size_t svgOpen = sanitized.find("<svg");
+    if (svgOpen != std::string::npos) {
+      size_t svgClose = sanitized.find('>', svgOpen);
+      if (svgClose != std::string::npos) {
+        auto replacePctAttr = [&](const char *attrName, float pxVal) {
+          const size_t nameLen = strlen(attrName);
+          size_t pos = sanitized.find(attrName, svgOpen);
+          while (pos != std::string::npos && pos + nameLen + 3 < svgClose) {
+            const bool isBoundary =
+                (pos > svgOpen) &&
+                std::isspace(static_cast<unsigned char>(sanitized[pos - 1]));
+            if (isBoundary && sanitized[pos + nameLen] == '=') {
+              const char q = sanitized[pos + nameLen + 1];
+              if (q == '"' || q == '\'') {
+                const size_t valStart = pos + nameLen + 2;
+                const size_t valEnd = sanitized.find(q, valStart);
+                if (valEnd != std::string::npos && valEnd < svgClose) {
+                  std::string_view val(sanitized.data() + valStart, valEnd - valStart);
+                  if (val.find('%') != std::string_view::npos) {
+                    char buf[32];
+                    const int len = snprintf(buf, sizeof(buf), "%.0f", pxVal);
+                    if (len > 0) {
+                      sanitized.replace(valStart, valEnd - valStart, buf, static_cast<size_t>(len));
+                      svgClose = sanitized.find('>', svgOpen);
+                      changed = true;
+                    }
+                  }
+                }
+                break;
+              }
+            }
+            pos = sanitized.find(attrName, pos + 1);
+          }
+        };
+        replacePctAttr("width", safeW);
+        replacePctAttr("height", safeH);
+      }
+    }
+
+    auto tryCreateFromXml = [&](const std::string &xml) -> bool {
+      HGLOBAL hSanMem = GlobalAlloc(GMEM_MOVEABLE, xml.size());
+      if (!hSanMem)
+        return false;
+      void *sanPtr = GlobalLock(hSanMem);
+      if (!sanPtr) {
+        GlobalFree(hSanMem);
+        return false;
+      }
+      memcpy(sanPtr, xml.data(), xml.size());
+      GlobalUnlock(hSanMem);
+      ComPtr<IStream> sanStream;
+      if (FAILED(CreateStreamOnHGlobal(hSanMem, TRUE, &sanStream))) {
+        GlobalFree(hSanMem);
+        return false;
+      }
+      svgDoc.Reset();
+      return SUCCEEDED(d2dContext5->CreateSvgDocument(
+                 sanStream.Get(), D2D1::SizeF(safeW, safeH), &svgDoc)) &&
+             svgDoc != nullptr;
+    };
+
+    if (changed && tryCreateFromXml(sanitized))
+      return true;
+
+    // Stage 2: strip inline style="" and marker-* attributes for stubborn Mermaid SVGs
+    bool stage2Changed = false;
+    auto stripAttr = [&](const char *attrName) {
+      const size_t nameLen = strlen(attrName);
+      size_t pos = 0;
+      while ((pos = sanitized.find(attrName, pos)) != std::string::npos) {
+        const bool isBoundary =
+            (pos > 0) &&
+            std::isspace(static_cast<unsigned char>(sanitized[pos - 1]));
+        if (isBoundary && pos + nameLen + 2 < sanitized.size() &&
+            sanitized[pos + nameLen] == '=') {
+          const char q = sanitized[pos + nameLen + 1];
+          if (q == '"' || q == '\'') {
+            const size_t valEnd = sanitized.find(q, pos + nameLen + 2);
+            if (valEnd != std::string::npos) {
+              sanitized.erase(pos - 1, (valEnd + 1) - (pos - 1));
+              stage2Changed = true;
+              continue;
+            }
+          }
+        }
+        pos += nameLen;
+      }
+    };
+    stripAttr("style");
+    stripAttr("marker-end");
+    stripAttr("marker-start");
+    stripAttr("marker-mid");
+    return stage2Changed && tryCreateFromXml(sanitized);
+  };
   if (FAILED(hr)) {
-    // Direct2D SVG creation failed - fallback to WebView2 offscreen rasterizer
-    std::vector<uint8_t> xmlVec(xmlData, xmlData + xmlSize);
-    int webTarget = (targetSize > 0) ? targetSize : (int)(std::max)(outW, outH);
-    if (SUCCEEDED(WebViewThumbService::Instance().RasterizeSvgToThumb(
-            xmlVec, safeW, safeH, webTarget, pData)) &&
-        pData->isValid) {
+    // Direct2D SVG creation failed - fallback to WebView2 offscreen rasterizer (once max)
+    if (tryWebViewFallback()) {
       return S_OK;
     }
-    return hr;
+    if (!trySanitizedFallback()) {
+      return hr;
+    }
+    hr = S_OK;
   }
+
+  auto applySvgTransform = [&]() {
+    if (hasCrop) {
+      // True Vector Sub-Region: Translate to crop origin, then scale to target dimensions
+      d2dContext5->SetTransform(
+          D2D1::Matrix3x2F::Translation(-cropX, -cropY) *
+          D2D1::Matrix3x2F::Scale((float)outW / renderW, (float)outH / renderH));
+    } else {
+      d2dContext5->SetTransform(
+          D2D1::Matrix3x2F::Scale((float)outW / safeW, (float)outH / safeH));
+    }
+  };
 
   d2dContext5->SetTarget(targetBitmap.Get());
   d2dContext5->BeginDraw();
   d2dContext5->Clear(D2D1::ColorF(0, 0, 0, 0));
-
-  if (hasCrop) {
-    // True Vector Sub-Region: Translate to crop origin, then scale to target dimensions
-    d2dContext5->SetTransform(
-        D2D1::Matrix3x2F::Translation(-cropX, -cropY) *
-        D2D1::Matrix3x2F::Scale((float)outW / renderW, (float)outH / renderH));
-  } else {
-    d2dContext5->SetTransform(
-        D2D1::Matrix3x2F::Scale((float)outW / safeW, (float)outH / safeH));
-  }
-
+  applySvgTransform();
   d2dContext5->DrawSvgDocument(svgDoc.Get());
   hr = d2dContext5->EndDraw();
   if (FAILED(hr)) {
-    // Direct2D SVG drawing failed - fallback to WebView2 offscreen rasterizer
-    std::vector<uint8_t> xmlVec(xmlData, xmlData + xmlSize);
-    int webTarget = (targetSize > 0) ? targetSize : (int)(std::max)(outW, outH);
-    if (SUCCEEDED(WebViewThumbService::Instance().RasterizeSvgToThumb(
-            xmlVec, safeW, safeH, webTarget, pData)) &&
-        pData->isValid) {
+    // Direct2D SVG drawing failed - fallback to WebView2 offscreen rasterizer (once max)
+    if (tryWebViewFallback()) {
       return S_OK;
     }
-    return hr;
+    if (trySanitizedFallback()) {
+      d2dContext5->SetTarget(targetBitmap.Get());
+      d2dContext5->BeginDraw();
+      d2dContext5->Clear(D2D1::ColorF(0, 0, 0, 0));
+      applySvgTransform();
+      d2dContext5->DrawSvgDocument(svgDoc.Get());
+      hr = d2dContext5->EndDraw();
+    }
+    if (FAILED(hr)) {
+      return hr;
+    }
   }
 
   D3D11_TEXTURE2D_DESC stagingDesc = texDesc;
@@ -4984,21 +5354,966 @@ HRESULT CImageLoader::RasterizeSvgToPixels(const uint8_t *xmlData, size_t xmlSiz
 static HRESULT RasterizeSvgThumbnail(const std::vector<uint8_t> &xmlData,
                                      float viewBoxW, float viewBoxH,
                                      int targetSize,
-                                     CImageLoader::ThumbData *pData) {
+                                     CImageLoader::ThumbData *pData,
+                                     bool allowWebViewFallback = true) {
   if (xmlData.empty()) return E_INVALIDARG;
-  return CImageLoader::RasterizeSvgToPixels(xmlData.data(), xmlData.size(), viewBoxW, viewBoxH, targetSize, pData);
+  return CImageLoader::RasterizeSvgToPixels(xmlData.data(), xmlData.size(), viewBoxW, viewBoxH, targetSize, pData,
+                                            0.0f, 0.0f, 0.0f, 0.0f, 1.0f, allowWebViewFallback);
+}
+
+#if defined(__clang__)
+__attribute__((minsize))
+#endif
+static bool ReadPrefixBytesFromFile(LPCWSTR filePath, DWORD maxBytes,
+                                    std::vector<uint8_t> &out) {
+  out.clear();
+  if (!filePath || !filePath[0] || maxBytes == 0)
+    return false;
+  HANDLE hFile = CreateFileW(
+      filePath, GENERIC_READ,
+      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+      OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+  if (hFile == INVALID_HANDLE_VALUE)
+    return false;
+  out.resize(maxBytes);
+  DWORD total = 0;
+  while (total < maxBytes) {
+    DWORD chunk = 0;
+    if (!ReadFile(hFile, out.data() + total, maxBytes - total, &chunk, nullptr)) {
+      CloseHandle(hFile);
+      out.clear();
+      return false;
+    }
+    if (chunk == 0)
+      break;
+    total += chunk;
+  }
+  CloseHandle(hFile);
+  out.resize(total);
+  return total > 0;
+}
+
+#if defined(__clang__)
+__attribute__((minsize))
+#endif
+static HRESULT LoadThumbPNG_Streaming(LPCWSTR filePath, int targetSize,
+                                      CImageLoader::ThumbData *pData,
+                                      CImageLoader::CancelPredicate checkCancel) {
+  if (!filePath || !pData)
+    return E_INVALIDARG;
+  HANDLE hFileRaw = CreateFileW(
+      filePath, GENERIC_READ,
+      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+      OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+  if (hFileRaw == INVALID_HANDLE_VALUE)
+    return E_FAIL;
+
+  struct HandleGuard {
+    HANDLE h = INVALID_HANDLE_VALUE;
+    ~HandleGuard() {
+      if (h != INVALID_HANDLE_VALUE)
+        CloseHandle(h);
+    }
+  } hg{hFileRaw};
+
+  auto readExact = [&](void *dst, DWORD bytes) -> bool {
+    uint8_t *p = static_cast<uint8_t *>(dst);
+    DWORD done = 0;
+    while (done < bytes) {
+      DWORD got = 0;
+      if (!ReadFile(hg.h, p + done, bytes - done, &got, nullptr) || got == 0)
+        return false;
+      done += got;
+    }
+    return true;
+  };
+  auto readBE32 = [](const uint8_t *b) -> uint32_t {
+    return (static_cast<uint32_t>(b[0]) << 24) |
+           (static_cast<uint32_t>(b[1]) << 16) |
+           (static_cast<uint32_t>(b[2]) << 8) | static_cast<uint32_t>(b[3]);
+  };
+
+  LARGE_INTEGER liSize{};
+  GetFileSizeEx(hg.h, &liSize);
+  const uint64_t fileSize =
+      (liSize.QuadPart > 0) ? static_cast<uint64_t>(liSize.QuadPart) : 0ULL;
+  // Reject oversized PNG payloads before allocating zlib inflate state or scanlines.
+  if (fileSize > 256ULL * 1024ULL * 1024ULL)
+    return E_FAIL;
+
+  uint8_t sig[8]{};
+  if (!readExact(sig, 8))
+    return E_FAIL;
+  static constexpr uint8_t kPngSig[8] = {0x89, 0x50, 0x4E, 0x47,
+                                         0x0D, 0x0A, 0x1A, 0x0A};
+  if (memcmp(sig, kPngSig, 8) != 0)
+    return E_FAIL;
+
+  bool haveIhdr = false;
+  uint32_t width = 0, height = 0;
+  uint8_t bitDepth = 0, colorType = 0, compression = 0, filterMethod = 0,
+          interlace = 0;
+  uint32_t channels = 0;
+  uint32_t bytesPerPixel = 0;
+  size_t rawRowBytes = 0;
+  int dstW = 0, dstH = 0;
+
+  std::vector<uint8_t> palette(256u * 3u, 0);
+  uint32_t paletteEntries = 0;
+  std::vector<uint8_t> paletteAlpha(256u, 255);
+  bool hasTrnsKey = false;
+  uint16_t trnsKeyR = 0, trnsKeyG = 0, trnsKeyB = 0;
+
+  std::vector<int> srcX;
+  std::vector<int> srcY;
+  std::vector<uint8_t> outPixels;
+  std::vector<uint8_t> rawRow;
+  std::vector<uint8_t> prevRow;
+  std::vector<uint8_t> currRow;
+
+  struct ZGuard {
+    z_stream strm{};
+    bool active = false;
+    ~ZGuard() {
+      if (active)
+        inflateEnd(&strm);
+    }
+  } zg;
+
+  size_t rowPos = 0;
+  uint32_t curRow = 0;
+  int nextDy = 0;
+  bool streamEnded = false;
+  std::vector<uint8_t> inBuf(131072);
+
+  for (;;) {
+    if (checkCancel && checkCancel())
+      return E_ABORT;
+
+    uint8_t chunkHdr[8]{};
+    if (!readExact(chunkHdr, 8))
+      break;
+    const uint32_t chunkLen = readBE32(chunkHdr);
+    const uint32_t chunkType = readBE32(chunkHdr + 4);
+
+    constexpr uint32_t kIHDR = 0x49484452u;
+    constexpr uint32_t kPLTE = 0x504C5445u;
+    constexpr uint32_t kTRNS = 0x74524E53u;
+    constexpr uint32_t kIDAT = 0x49444154u;
+    constexpr uint32_t kIEND = 0x49454E44u;
+
+    if (chunkType == kIHDR) {
+      if (haveIhdr || chunkLen < 13 || chunkLen > 64)
+        return E_FAIL;
+      uint8_t ihdr[64]{};
+      if (!readExact(ihdr, chunkLen))
+        return E_FAIL;
+      uint8_t crc[4]{};
+      if (!readExact(crc, 4))
+        return E_FAIL;
+
+      width = readBE32(ihdr);
+      height = readBE32(ihdr + 4);
+      bitDepth = ihdr[8];
+      colorType = ihdr[9];
+      compression = ihdr[10];
+      filterMethod = ihdr[11];
+      interlace = ihdr[12];
+      if (width == 0 || height == 0 || width > 250000u || height > 250000u)
+        return E_FAIL;
+      if (compression != 0 || filterMethod != 0 || interlace != 0)
+        return E_NOTIMPL;
+      if (bitDepth != 8 && bitDepth != 16)
+        return E_NOTIMPL;
+      if (colorType == 0)
+        channels = 1;
+      else if (colorType == 2)
+        channels = 3;
+      else if (colorType == 3 && bitDepth == 8)
+        channels = 1;
+      else if (colorType == 4)
+        channels = 2;
+      else if (colorType == 6)
+        channels = 4;
+      else
+        return E_NOTIMPL;
+
+      bytesPerPixel = channels * (bitDepth == 16 ? 2u : 1u);
+      const uint64_t rawImageBytes =
+          static_cast<uint64_t>(width) * static_cast<uint64_t>(height) *
+          static_cast<uint64_t>(bytesPerPixel);
+      if (rawImageBytes > 512ULL * 1024ULL * 1024ULL)
+        return E_FAIL;
+      const uint64_t rowBytes64 =
+          1ULL + static_cast<uint64_t>(width) * bytesPerPixel;
+      if (rowBytes64 > 16ULL * 1024ULL * 1024ULL)
+        return E_FAIL;
+      rawRowBytes = static_cast<size_t>(rowBytes64);
+
+      const int req = (targetSize > 0) ? targetSize : 256;
+      const double scale = (std::min)(
+          1.0, (std::min)(static_cast<double>(req) / width,
+                          static_cast<double>(req) / height));
+      dstW = (std::max)(1, static_cast<int>(width * scale + 0.5));
+      dstH = (std::max)(1, static_cast<int>(height * scale + 0.5));
+      if (width <= static_cast<uint32_t>(req) &&
+          height <= static_cast<uint32_t>(req)) {
+        dstW = static_cast<int>(width);
+        dstH = static_cast<int>(height);
+      }
+      srcX.resize(static_cast<size_t>(dstW));
+      srcY.resize(static_cast<size_t>(dstH));
+      for (int dx = 0; dx < dstW; ++dx) {
+        srcX[dx] = static_cast<int>(
+            (std::min)(static_cast<uint64_t>(width - 1),
+                       (static_cast<uint64_t>(dx) * width) / dstW));
+      }
+      for (int dy = 0; dy < dstH; ++dy) {
+        srcY[dy] = static_cast<int>(
+            (std::min)(static_cast<uint64_t>(height - 1),
+                       (static_cast<uint64_t>(dy) * height) / dstH));
+      }
+      outPixels.assign(static_cast<size_t>(dstW) * dstH * 4u, 0);
+      rawRow.assign(rawRowBytes, 0);
+      prevRow.assign(rawRowBytes - 1, 0);
+      currRow.assign(rawRowBytes - 1, 0);
+
+      if (inflateInit(&zg.strm) != Z_OK)
+        return E_FAIL;
+      zg.active = true;
+      haveIhdr = true;
+    } else if (chunkType == kPLTE && haveIhdr && chunkLen <= 768 &&
+               (chunkLen % 3) == 0) {
+      if (chunkLen > 0 && !readExact(palette.data(), chunkLen))
+        return E_FAIL;
+      paletteEntries = chunkLen / 3u;
+      uint8_t crc[4]{};
+      if (!readExact(crc, 4))
+        return E_FAIL;
+    } else if (chunkType == kTRNS && haveIhdr && chunkLen <= 256) {
+      uint8_t tbuf[256]{};
+      if (chunkLen > 0 && !readExact(tbuf, chunkLen))
+        return E_FAIL;
+      uint8_t crc[4]{};
+      if (!readExact(crc, 4))
+        return E_FAIL;
+      if (colorType == 3) {
+        for (uint32_t i = 0; i < chunkLen; ++i)
+          paletteAlpha[i] = tbuf[i];
+      } else if (colorType == 0 && chunkLen >= 2) {
+        hasTrnsKey = true;
+        trnsKeyR = static_cast<uint16_t>((tbuf[0] << 8) | tbuf[1]);
+      } else if (colorType == 2 && chunkLen >= 6) {
+        hasTrnsKey = true;
+        trnsKeyR = static_cast<uint16_t>((tbuf[0] << 8) | tbuf[1]);
+        trnsKeyG = static_cast<uint16_t>((tbuf[2] << 8) | tbuf[3]);
+        trnsKeyB = static_cast<uint16_t>((tbuf[4] << 8) | tbuf[5]);
+      }
+    } else if (chunkType == kIDAT && haveIhdr) {
+      uint32_t remaining = chunkLen;
+      while (remaining > 0 && !streamEnded && nextDy < dstH) {
+        const DWORD toRead =
+            static_cast<DWORD>((std::min)(remaining, static_cast<uint32_t>(inBuf.size())));
+        if (!readExact(inBuf.data(), toRead))
+          return E_FAIL;
+        remaining -= toRead;
+
+        zg.strm.next_in = inBuf.data();
+        zg.strm.avail_in = toRead;
+        bool pump = true;
+        while (pump && !streamEnded && curRow < height && nextDy < dstH) {
+          zg.strm.next_out = rawRow.data() + rowPos;
+          zg.strm.avail_out = static_cast<uInt>(rawRowBytes - rowPos);
+          const int ret = inflate(&zg.strm, Z_NO_FLUSH);
+          if (ret == Z_BUF_ERROR && zg.strm.avail_in == 0)
+            break;
+          if (ret != Z_OK && ret != Z_STREAM_END)
+            return E_FAIL;
+          const bool filledRow = (zg.strm.avail_out == 0);
+          rowPos = rawRowBytes - zg.strm.avail_out;
+          if (rowPos == rawRowBytes) {
+            if ((curRow & 15u) == 0u && checkCancel && checkCancel())
+              return E_ABORT;
+
+            const uint8_t ftype = rawRow[0];
+            if (ftype > 4)
+              return E_FAIL;
+            const size_t dataBytes = rawRowBytes - 1;
+            memcpy(currRow.data(), rawRow.data() + 1, dataBytes);
+            if (ftype != 0) {
+              ImageLoaderSimd::PngUnfilterRow(
+                  ftype, currRow.data(), prevRow.data(), dataBytes,
+                  static_cast<int>(bytesPerPixel));
+            }
+            const uint8_t *dst = currRow.data();
+
+            while (nextDy < dstH && srcY[nextDy] == static_cast<int>(curRow)) {
+              uint8_t *outRow =
+                  outPixels.data() + static_cast<size_t>(nextDy) * dstW * 4u;
+              const size_t step16 = (bitDepth == 16) ? 2u : 1u;
+              for (int dx = 0; dx < dstW; ++dx) {
+                const uint8_t *px =
+                    dst + static_cast<size_t>(srcX[dx]) * bytesPerPixel;
+                uint8_t r = 0, g = 0, b = 0, a = 255;
+                if (colorType == 0) {
+                  r = g = b = px[0];
+                  if (hasTrnsKey) {
+                    const uint16_t v =
+                        (bitDepth == 16)
+                            ? static_cast<uint16_t>((px[0] << 8) | px[1])
+                            : static_cast<uint16_t>(px[0]);
+                    if (v == trnsKeyR)
+                      a = 0;
+                  }
+                } else if (colorType == 2) {
+                  r = px[0];
+                  g = px[1 * step16];
+                  b = px[2 * step16];
+                  if (hasTrnsKey) {
+                    const uint16_t rv =
+                        (bitDepth == 16)
+                            ? static_cast<uint16_t>((px[0] << 8) | px[1])
+                            : static_cast<uint16_t>(px[0]);
+                    const uint16_t gv =
+                        (bitDepth == 16)
+                            ? static_cast<uint16_t>((px[2] << 8) | px[3])
+                            : static_cast<uint16_t>(px[1]);
+                    const uint16_t bv =
+                        (bitDepth == 16)
+                            ? static_cast<uint16_t>((px[4] << 8) | px[5])
+                            : static_cast<uint16_t>(px[2]);
+                    if (rv == trnsKeyR && gv == trnsKeyG && bv == trnsKeyB)
+                      a = 0;
+                  }
+                } else if (colorType == 3) {
+                  const uint8_t idx = px[0];
+                  if (idx < paletteEntries) {
+                    r = palette[idx * 3u + 0];
+                    g = palette[idx * 3u + 1];
+                    b = palette[idx * 3u + 2];
+                    a = paletteAlpha[idx];
+                  } else {
+                    a = 0;
+                  }
+                } else if (colorType == 4) {
+                  r = g = b = px[0];
+                  a = px[1 * step16];
+                } else if (colorType == 6) {
+                  r = px[0];
+                  g = px[1 * step16];
+                  b = px[2 * step16];
+                  a = px[3 * step16];
+                }
+                if (a < 255) {
+                  b = static_cast<uint8_t>((static_cast<uint32_t>(b) * a + 127u) /
+                                           255u);
+                  g = static_cast<uint8_t>((static_cast<uint32_t>(g) * a + 127u) /
+                                           255u);
+                  r = static_cast<uint8_t>((static_cast<uint32_t>(r) * a + 127u) /
+                                           255u);
+                }
+                uint8_t *outPx = outRow + static_cast<size_t>(dx) * 4u;
+                outPx[0] = b;
+                outPx[1] = g;
+                outPx[2] = r;
+                outPx[3] = a;
+              }
+              ++nextDy;
+            }
+
+            prevRow.swap(currRow);
+            rowPos = 0;
+            ++curRow;
+          }
+          if (ret == Z_STREAM_END) {
+            streamEnded = true;
+            break;
+          }
+          pump = (zg.strm.avail_in > 0 || filledRow) && (ret == Z_OK);
+        }
+      }
+      if (nextDy >= dstH || streamEnded)
+        break;
+      uint8_t crc[4]{};
+      if (!readExact(crc, 4))
+        break;
+    } else if (chunkType == kIEND) {
+      break;
+    } else {
+      LARGE_INTEGER dist{};
+      dist.QuadPart = static_cast<LONGLONG>(chunkLen) + 4LL;
+      if (!SetFilePointerEx(hg.h, dist, nullptr, FILE_CURRENT))
+        return E_FAIL;
+    }
+  }
+
+  if (!haveIhdr || nextDy < dstH)
+    return E_FAIL;
+
+  pData->pixels = std::move(outPixels);
+  pData->width = dstW;
+  pData->height = dstH;
+  pData->stride = dstW * 4;
+  pData->origWidth = static_cast<int>(width);
+  pData->origHeight = static_cast<int>(height);
+  pData->fileSize = fileSize;
+  pData->isValid = true;
+  pData->isPremultiplied = true;
+  pData->isBlurry =
+      (dstW < static_cast<int>(width) || dstH < static_cast<int>(height));
+  pData->loaderName = L"Streaming PNG";
+  return S_OK;
+}
+
+#if defined(__clang__)
+__attribute__((minsize))
+#endif
+HRESULT CImageLoader::ExtractRawThumbViaLibRaw(LPCWSTR filePath, int targetSize,
+                                               ThumbData *pData) {
+  if (!filePath || !filePath[0] || !pData)
+    return E_INVALIDARG;
+  std::unique_ptr<LibRaw> rawPtr(new (std::nothrow) LibRaw());
+  if (!rawPtr)
+    return E_OUTOFMEMORY;
+  if (rawPtr->open_file(filePath) != LIBRAW_SUCCESS)
+    return E_FAIL;
+  if (rawPtr->unpack_thumb() != LIBRAW_SUCCESS)
+    return E_FAIL;
+  libraw_processed_image_t *thumb = rawPtr->dcraw_make_mem_thumb();
+  if (!thumb)
+    return E_FAIL;
+
+  auto mapFlipToExif = [](int flip) -> int {
+    switch (flip) {
+    case 3:
+      return 3;
+    case 5:
+      return 8;
+    case 6:
+      return 6;
+    default:
+      return 1;
+    }
+  };
+  const int exifOrient = mapFlipToExif(rawPtr->imgdata.sizes.flip);
+  const int rawW = static_cast<int>(rawPtr->imgdata.sizes.raw_width);
+  const int rawH = static_cast<int>(rawPtr->imgdata.sizes.raw_height);
+
+  HRESULT hr = E_FAIL;
+  if (thumb->type == LIBRAW_IMAGE_JPEG && thumb->data_size > 0) {
+    hr = LoadThumbJPEGFromMemory(reinterpret_cast<const uint8_t *>(thumb->data),
+                                 thumb->data_size, targetSize, pData);
+    if (SUCCEEDED(hr) && pData->isValid) {
+      if (exifOrient > 1 &&
+          ReadJpegExifOrientation(reinterpret_cast<const uint8_t *>(thumb->data),
+                                  thumb->data_size) <= 1) {
+        ApplyOrientationToThumbData(pData, exifOrient);
+      }
+      DownscaleThumbDataIfNeeded(pData, targetSize);
+      if (rawW > 0 && rawH > 0) {
+        const bool rot90 = (exifOrient >= 5 && exifOrient <= 8);
+        pData->origWidth = rot90 ? rawH : rawW;
+        pData->origHeight = rot90 ? rawW : rawH;
+      }
+      pData->loaderName = L"LibRaw Thumb";
+      pData->isPremultiplied = false;
+    }
+  } else if (thumb->type == LIBRAW_IMAGE_BITMAP && thumb->bits == 8 &&
+             thumb->colors == 3 && thumb->width > 0 && thumb->height > 0) {
+    const int w = thumb->width;
+    const int h = thumb->height;
+    const int stride = w * 4;
+    pData->width = w;
+    pData->height = h;
+    pData->stride = stride;
+    pData->pixels.resize(static_cast<size_t>(stride) * h);
+    ImageLoaderSimd::ConvertRGBToBGRA(
+        reinterpret_cast<const uint8_t *>(thumb->data), pData->pixels.data(), w,
+        h, stride);
+    pData->isValid = true;
+    pData->isPremultiplied = true;
+    if (exifOrient > 1) {
+      ApplyOrientationToThumbData(pData, exifOrient);
+    }
+    DownscaleThumbDataIfNeeded(pData, targetSize);
+    const bool rot90 = (exifOrient >= 5 && exifOrient <= 8);
+    pData->origWidth = rawW > 0 ? (rot90 ? rawH : rawW) : pData->width;
+    pData->origHeight = rawH > 0 ? (rot90 ? rawW : rawH) : pData->height;
+    pData->loaderName = L"LibRaw ThumbBmp";
+    hr = S_OK;
+  }
+  rawPtr->dcraw_clear_mem(thumb);
+  return hr;
+}
+
+HRESULT CImageLoader::LoadThumbnailFromMappedBuffer(
+    const uint8_t *mappedData,
+    size_t mappedSize,
+    const ImageHeaderInfo &headerInfo,
+    uint64_t fallbackFileSize,
+    LPCWSTR filePathOrNull,
+    const std::wstring &pathLower,
+    const std::wstring &format,
+    int targetSize,
+    ThumbData *pData,
+    bool allowSlow,
+    CancelPredicate checkCancel) {
+  if (!pData)
+    return E_INVALIDARG;
+
+  auto tryEmbeddedPreview = [&](const wchar_t *loaderName,
+                                auto extractor) -> bool {
+    if (!mappedData || mappedSize == 0)
+      return false;
+    PreviewExtractor::ExtractedData exData;
+    if (!extractor(mappedData, mappedSize, exData) || !exData.IsValid()) {
+      return false;
+    }
+    if (FAILED(LoadThumbJPEGFromMemory(exData.pData, exData.size, targetSize,
+                                       pData)) ||
+        !pData->isValid) {
+      return false;
+    }
+    PopulateThumbOriginalInfo(headerInfo, static_cast<uint64_t>(mappedSize),
+                              pData);
+    const int embeddedOri = ReadJpegExifOrientation(exData.pData, exData.size);
+    if (embeddedOri <= 1 && headerInfo.exifOrientation >= 2 &&
+        headerInfo.exifOrientation <= 8) {
+      ApplyOrientationToThumbData(pData, headerInfo.exifOrientation);
+    }
+    pData->loaderName = loaderName;
+    pData->isBlurry = false;
+    pData->isPremultiplied = false;
+    return true;
+  };
+
+  if (format == L"RAW" &&
+      tryEmbeddedPreview(L"RAW Preview", PreviewExtractor::ExtractFromRAW)) {
+    return S_OK;
+  }
+  if (format == L"RAW" && filePathOrNull &&
+      SUCCEEDED(ExtractRawThumbViaLibRaw(filePathOrNull, targetSize, pData)) &&
+      pData->isValid) {
+    if (pData->fileSize == 0)
+      pData->fileSize = fallbackFileSize;
+    return S_OK;
+  }
+  if (format == L"TIFF" &&
+      tryEmbeddedPreview(L"TIFF Preview", PreviewExtractor::ExtractFromTIFF)) {
+    return S_OK;
+  }
+  if (format == L"TIFF" && mappedData && mappedSize > 0 &&
+      (mappedSize > 8ULL * 1024ULL * 1024ULL ||
+       static_cast<uint64_t>(headerInfo.width) *
+               static_cast<uint64_t>(headerInfo.height) >
+           16000000ULL)) {
+    HRESULT hrTiff = QuickView::MiniTiff::LoadThumbnailSampled(
+        mappedData, mappedSize, targetSize, pData, checkCancel);
+    if (hrTiff == E_ABORT)
+      return E_ABORT;
+    if (SUCCEEDED(hrTiff) && pData->isValid) {
+      DownscaleThumbDataIfNeeded(pData, targetSize);
+      PopulateThumbOriginalInfo(headerInfo, fallbackFileSize, pData);
+      return S_OK;
+    }
+  }
+  if ((format == L"HEIC" || pathLower.ends_with(L".heic") ||
+       pathLower.ends_with(L".heif") || pathLower.ends_with(L".hif"))) {
+    if (tryEmbeddedPreview(L"HEIC Preview", PreviewExtractor::ExtractFromHEIC)) {
+      return S_OK;
+    }
+    // Circuit breaker: reject giant HEICs (>64 MP) without embedded preview before WIC HEIF
+    // explodes commit memory (e.g. 122 MP tiled HEIC consumes >12 GB in WIC).
+    if (ExceedsThumbFullFrameBudget(headerInfo.width, headerInfo.height, 4u)) {
+      return E_FAIL;
+    }
+  }
+  if ((format == L"PSD" || pathLower.ends_with(L".psb")) &&
+      tryEmbeddedPreview(L"PSD Preview", PreviewExtractor::ExtractFromPSD)) {
+    return S_OK;
+  }
+
+  if ((format == L"AVIF" || format == L"HEIC" ||
+       pathLower.ends_with(L".avif") || pathLower.ends_with(L".avifs") ||
+       pathLower.ends_with(L".heic") || pathLower.ends_with(L".heif") ||
+       pathLower.ends_with(L".hif")) &&
+      mappedData && mappedSize > 0) {
+    CImageLoader::ImageMetadata meta;
+    HRESULT hr = CImageLoader::LoadThumbAVIF_Proxy(mappedData, mappedSize, targetSize, pData,
+                                                   allowSlow, &meta);
+    if (SUCCEEDED(hr) && pData->isValid) {
+      DownscaleThumbDataIfNeeded(pData, targetSize);
+      if (meta.Width > 0 && meta.Height > 0) {
+        pData->origWidth = meta.Width;
+        pData->origHeight = meta.Height;
+      }
+      pData->fileSize =
+          meta.FileSize > 0 ? meta.FileSize : static_cast<uint64_t>(mappedSize);
+      pData->loaderName = format == L"HEIC" ? L"libavif/HEIF" : L"libavif";
+      pData->isPremultiplied = true;
+      return S_OK;
+    }
+  }
+
+  if ((format == L"JXL" || pathLower.ends_with(L".jxl")) && mappedData &&
+      mappedSize > 0) {
+    CImageLoader::ImageMetadata meta;
+    // Try safe 1:8 DC / preview extraction first; never allocate multi-GB full frames.
+    HRESULT hr = CImageLoader::LoadThumbJXL_DC(mappedData, mappedSize, pData, &meta,
+                                               false, false, checkCancel);
+    if (hr == E_ABORT)
+      return E_ABORT;
+    if (SUCCEEDED(hr) && pData->isValid) {
+      const bool isFakeThumb =
+          pData->width <= 1 && pData->height <= 1 &&
+          pData->pixels.size() == 4 &&
+          std::all_of(pData->pixels.begin(), pData->pixels.end(),
+                      [](uint8_t v) { return v == 0; });
+      if (isFakeThumb || pData->loaderName.contains(L"Fake Base")) {
+        pData->isValid = false;
+        pData->pixels.clear();
+        hr = E_FAIL;
+      }
+    }
+    const uint32_t jxlW = (headerInfo.width > 0)
+        ? static_cast<uint32_t>(headerInfo.width)
+        : static_cast<uint32_t>(meta.Width);
+    const uint32_t jxlH = (headerInfo.height > 0)
+        ? static_cast<uint32_t>(headerInfo.height)
+        : static_cast<uint32_t>(meta.Height);
+    const bool jxlWithinBudget = !ExceedsThumbFullFrameBudget(jxlW, jxlH, 8u);
+    if (SUCCEEDED(hr) && pData->isValid) {
+      const int origMax = (std::max)(static_cast<int>(meta.Width),
+                                     static_cast<int>(meta.Height));
+      const int dcMax = (std::max)(pData->width, pData->height);
+      const int minDesired = (std::min)(targetSize > 0 ? targetSize : 256, 256);
+      if (allowSlow && jxlWithinBudget && origMax >= minDesired && dcMax < minDesired) {
+        ThumbData sampled;
+        CImageLoader::ImageMetadata sampledMeta;
+        if (SUCCEEDED(LoadThumbJXL_Sampled(mappedData, mappedSize, targetSize,
+                                           &sampled, &sampledMeta, checkCancel)) &&
+            sampled.isValid) {
+          *pData = std::move(sampled);
+          pData->isPremultiplied = true;
+          PopulateThumbOriginalInfo(headerInfo, static_cast<uint64_t>(mappedSize),
+                                    pData);
+          return S_OK;
+        }
+      }
+
+      DownscaleThumbDataIfNeeded(pData, targetSize);
+      if (meta.Width > 0 && meta.Height > 0) {
+        pData->origWidth = meta.Width;
+        pData->origHeight = meta.Height;
+      }
+      pData->isPremultiplied = true;
+      PopulateThumbOriginalInfo(headerInfo, static_cast<uint64_t>(mappedSize),
+                                pData);
+      return S_OK;
+    }
+    if (allowSlow && jxlWithinBudget) {
+      pData->isValid = false;
+      pData->pixels.clear();
+      hr = LoadThumbJXL_Sampled(mappedData, mappedSize, targetSize, pData,
+                                &meta, checkCancel);
+      if (hr == E_ABORT)
+        return E_ABORT;
+      if (SUCCEEDED(hr) && pData->isValid) {
+        pData->isPremultiplied = true;
+        PopulateThumbOriginalInfo(headerInfo, static_cast<uint64_t>(mappedSize),
+                                  pData);
+        return S_OK;
+      }
+    }
+    return E_FAIL;
+  }
+
+  if (format == L"SVG") {
+    using namespace QuickView;
+    if (filePathOrNull) {
+      std::unique_ptr<RawImageFrame> pFrame(new (std::nothrow) RawImageFrame());
+      if (!pFrame)
+        return E_OUTOFMEMORY;
+
+      HRESULT hr = LoadToFrame(filePathOrNull, pFrame.get(), nullptr, targetSize,
+                               targetSize, &pData->loaderName, {}, {});
+      if (SUCCEEDED(hr) && pFrame->svg &&
+          (pFrame->IsSvg() || pFrame->IsWebView())) {
+        // Complex SVG (WebView): CapturePreview via shared/STA offscreen WebView2.
+        if (pFrame->IsWebView()) {
+          // Prefer unmodified raw XML when available (non-gzipped) so CSS/styles stay intact.
+          std::vector<uint8_t> rawSvgVec;
+          const std::vector<uint8_t> *webXml = &pFrame->svg->xmlData;
+          if (mappedData && mappedSize > 0 &&
+              !(mappedSize >= 2 && mappedData[0] == 0x1F && mappedData[1] == 0x8B)) {
+            rawSvgVec.assign(mappedData, mappedData + mappedSize);
+            webXml = &rawSvgVec;
+          }
+          hr = WebViewThumbService::Instance().RasterizeSvgToThumb(
+              *webXml, pFrame->svg->viewBoxW, pFrame->svg->viewBoxH,
+              targetSize, pData, false, 6000u);
+          if (FAILED(hr) || !pData->isValid) {
+            pData->isValid = false;
+            pData->pixels.clear();
+            const std::string_view sv(reinterpret_cast<const char *>(webXml->data()), webXml->size());
+            if (HasD2dBreakingSvgFeatures(sv)) {
+              return E_FAIL;
+            }
+            hr = RasterizeSvgThumbnail(*webXml, pFrame->svg->viewBoxW,
+                                       pFrame->svg->viewBoxH, targetSize, pData, false);
+          }
+        } else {
+          hr = RasterizeSvgThumbnail(pFrame->svg->xmlData, pFrame->svg->viewBoxW,
+                                     pFrame->svg->viewBoxH, targetSize, pData, true);
+        }
+      } else if (SUCCEEDED(hr) && pFrame->pixels && pFrame->width > 0 &&
+                 pFrame->height > 0) {
+        pData->width = pFrame->width;
+        pData->height = pFrame->height;
+        pData->stride = pFrame->stride;
+        pData->pixels.resize(static_cast<size_t>(pFrame->stride) *
+                             pFrame->height);
+        memcpy(pData->pixels.data(), pFrame->pixels, pData->pixels.size());
+        pData->isValid = true;
+        pData->isBlurry = false;
+      }
+      if (SUCCEEDED(hr) && pData->isValid) {
+        pData->isPremultiplied = true;
+        PopulateThumbOriginalInfo(headerInfo, fallbackFileSize, pData);
+        return S_OK;
+      }
+      pData->isValid = false;
+      pData->pixels.clear();
+      return E_FAIL;
+    }
+    if (mappedData && mappedSize > 0) {
+      std::vector<uint8_t> inflated;
+      const uint8_t *xmlPtr = mappedData;
+      size_t xmlLen = mappedSize;
+      if (mappedSize >= 2 && mappedData[0] == 0x1F && mappedData[1] == 0x8B) {
+        if (!InflateGzip(mappedData, mappedSize, inflated) || inflated.empty()) {
+          return E_FAIL;
+        }
+        xmlPtr = inflated.data();
+        xmlLen = inflated.size();
+      }
+      float svgW = 512.0f, svgH = 512.0f;
+      ParseSvgDimensions(std::string_view(reinterpret_cast<const char *>(xmlPtr), xmlLen), svgW, svgH);
+      HRESULT hr = CImageLoader::RasterizeSvgToPixels(
+          xmlPtr, xmlLen, svgW, svgH, targetSize, pData);
+      if (SUCCEEDED(hr) && pData->isValid) {
+        pData->origWidth = static_cast<int>(std::lround(svgW));
+        pData->origHeight = static_cast<int>(std::lround(svgH));
+        pData->loaderName = L"Direct2D SVG";
+        pData->isPremultiplied = true;
+        PopulateThumbOriginalInfo(headerInfo, fallbackFileSize, pData);
+        return S_OK;
+      }
+    }
+    return E_FAIL;
+  }
+
+  // 1. Unified Codec Dispatch (Primary)
+  if (checkCancel && checkCancel())
+    return E_ABORT;
+
+  const uint32_t unifiedEstBpp =
+      (format == L"AVIF" || format == L"EXR" ||
+       format == L"HDR" || format == L"PNG")
+          ? 8u
+          : 4u;
+  const bool headerOverBudget =
+      ExceedsThumbFullFrameBudget(headerInfo.width, headerInfo.height, unifiedEstBpp);
+
+  QuickView::Codec::DecodeContext ctx;
+  ctx.forcePreview = true;
+  ctx.targetWidth = targetSize;
+  ctx.targetHeight = targetSize;
+  ctx.checkCancel = checkCancel;
+  ctx.allocator.ctx = nullptr;
+  ctx.allocator.pfn = [](void *, size_t s) -> uint8_t * {
+    return static_cast<uint8_t *>(_aligned_malloc(s, 64));
+  };
+  ctx.freeFunc.ctx = nullptr;
+  ctx.freeFunc.pfn = [](void *, uint8_t *p) {
+    if (p)
+      _aligned_free(p);
+  };
+  std::wstring loaderName;
+  ctx.pLoaderName = &loaderName;
+
+  // Giant JPEGs without EXIF thumbnails can still decode cleanly via TurboJPEG 1/8 DCT scaling.
+  if (headerOverBudget &&
+      (format == L"JPEG" || pathLower.ends_with(L".jpg") ||
+       pathLower.ends_with(L".jpeg") || pathLower.ends_with(L".jpe") ||
+       pathLower.ends_with(L".jfif")) &&
+      mappedData && mappedSize > 0) {
+    if (SUCCEEDED(LoadThumbJPEGFromMemory(mappedData, mappedSize, targetSize, pData)) &&
+        pData->isValid) {
+      DownscaleThumbDataIfNeeded(pData, targetSize);
+      PopulateThumbOriginalInfo(headerInfo, fallbackFileSize, pData);
+      pData->loaderName = L"TurboJPEG (1/8 Scaled)";
+      pData->isPremultiplied = false;
+      return S_OK;
+    }
+  }
+
+  QuickView::Codec::DecodeResult res;
+  HRESULT hr = E_FAIL;
+  if (!headerOverBudget) {
+    if (mappedData && mappedSize > 0) {
+      hr = LoadBufferUnified(mappedData, mappedSize, format, ctx, res);
+    }
+    // LoadBufferUnified does not handle container-based WIC formats like HEIC;
+    // fall back to LoadImageUnified (WIC_HEIC::Load) when a file path is available.
+    if (FAILED(hr) && filePathOrNull && format == L"HEIC") {
+      hr = LoadImageUnified(filePathOrNull, ctx, res);
+    } else if (FAILED(hr) && !(mappedData && mappedSize > 0) && filePathOrNull) {
+      hr = LoadImageUnified(filePathOrNull, ctx, res);
+    }
+  }
+
+  const bool unifiedFormatSupported =
+      (res.format == QuickView::PixelFormat::BGRA8888 && res.stride >= res.width * 4) ||
+      (res.format == QuickView::PixelFormat::R16G16B16A16_UNORM && res.stride >= res.width * 8);
+  if (SUCCEEDED(hr) && res.pixels && res.width > 0 && res.height > 0 && unifiedFormatSupported) {
+    if (res.format == QuickView::PixelFormat::BGRA8888) {
+      const size_t copyBytes =
+          static_cast<size_t>(res.stride) * static_cast<size_t>(res.height);
+      pData->pixels.resize(copyBytes);
+      memcpy(pData->pixels.data(), res.pixels, copyBytes);
+      pData->stride = res.stride;
+    } else {
+      const int dstStride = res.width * 4;
+      pData->pixels.resize(static_cast<size_t>(dstStride) * static_cast<size_t>(res.height));
+      for (int y = 0; y < res.height; ++y) {
+        const uint16_t* srcRow = reinterpret_cast<const uint16_t*>(
+            res.pixels + static_cast<size_t>(y) * res.stride);
+        uint8_t* dstRow = pData->pixels.data() + static_cast<size_t>(y) * dstStride;
+        for (int x = 0; x < res.width; ++x) {
+          dstRow[x * 4 + 0] = static_cast<uint8_t>(srcRow[x * 4 + 2] >> 8);
+          dstRow[x * 4 + 1] = static_cast<uint8_t>(srcRow[x * 4 + 1] >> 8);
+          dstRow[x * 4 + 2] = static_cast<uint8_t>(srcRow[x * 4 + 0] >> 8);
+          dstRow[x * 4 + 3] = static_cast<uint8_t>(srcRow[x * 4 + 3] >> 8);
+        }
+      }
+      pData->stride = dstStride;
+    }
+    ctx.freeFunc(res.pixels);
+    res.pixels = nullptr;
+
+    pData->width = res.width;
+    pData->height = res.height;
+    pData->isValid = true;
+    pData->isPremultiplied = true;
+    pData->loaderName = loaderName.empty() ? L"Unified" : loaderName;
+
+    pData->origWidth =
+        (res.metadata.Width > 0) ? res.metadata.Width : res.width;
+    pData->origHeight =
+        (res.metadata.Height > 0) ? res.metadata.Height : res.height;
+    pData->fileSize = res.metadata.FileSize;
+
+    if (pData->fileSize == 0 && filePathOrNull) {
+      WIN32_FILE_ATTRIBUTE_DATA fad;
+      if (GetFileAttributesExW(filePathOrNull, GetFileExInfoStandard, &fad)) {
+        pData->fileSize =
+            (static_cast<uint64_t>(fad.nFileSizeHigh) << 32) | fad.nFileSizeLow;
+      }
+    }
+    PopulateThumbOriginalInfo(headerInfo, fallbackFileSize, pData);
+    const int exifOri = (res.metadata.ExifOrientation >= 2 && res.metadata.ExifOrientation <= 8)
+                            ? res.metadata.ExifOrientation
+                            : headerInfo.exifOrientation;
+    if (exifOri >= 2 && exifOri <= 8) {
+      ApplyOrientationToThumbData(pData, exifOri);
+    }
+    DownscaleThumbDataIfNeeded(pData, targetSize);
+    return S_OK;
+  }
+
+  if (res.pixels) {
+    ctx.freeFunc(res.pixels);
+    res.pixels = nullptr;
+  }
+
+  if (hr == E_ABORT)
+    return E_ABORT;
+
+  if (!allowSlow)
+    return E_FAIL; // Scout gives up
+
+  // 2. Full compatibility fallback through the main loader chain (guarded by 256 MiB pixel budget).
+  const uint32_t wicEstBpp =
+      (format == L"AVIF" || format == L"EXR" ||
+       format == L"HDR" || format == L"PNG")
+          ? 8u
+          : 4u;
+  if (ExceedsThumbFullFrameBudget(headerInfo.width, headerInfo.height, wicEstBpp)) {
+    return E_FAIL;
+  }
+
+  if (filePathOrNull) {
+    ComPtr<IWICBitmap> wicBitmap;
+    std::wstring wicLoader;
+    HRESULT wicHr = LoadToMemory(filePathOrNull, &wicBitmap, &wicLoader, false, checkCancel,
+                                 targetSize, targetSize);
+    if (SUCCEEDED(wicHr) && wicBitmap) {
+      HRESULT copyHr = CopyWicBitmapToThumbData(m_wicFactory.Get(), wicBitmap.Get(),
+                                                targetSize, pData);
+      if (SUCCEEDED(copyHr)) {
+        pData->loaderName = wicLoader.empty() ? L"WIC Thumbnail" : wicLoader;
+        PopulateThumbOriginalInfo(headerInfo, fallbackFileSize, pData);
+        pData->isBlurry = (pData->origWidth > pData->width ||
+                           pData->origHeight > pData->height);
+        return S_OK;
+      }
+    }
+  } else if (m_wicFactory && mappedData && mappedSize > 0 && mappedSize <= 0xFFFFFFFFu) {
+    ComPtr<IWICStream> wicStream;
+    ComPtr<IWICBitmapDecoder> wicDec;
+    ComPtr<IWICBitmapFrameDecode> wicFrame;
+    if (SUCCEEDED(m_wicFactory->CreateStream(&wicStream)) &&
+        SUCCEEDED(wicStream->InitializeFromMemory(const_cast<BYTE*>(mappedData), static_cast<DWORD>(mappedSize))) &&
+        SUCCEEDED(m_wicFactory->CreateDecoderFromStream(wicStream.Get(), nullptr, WICDecodeMetadataCacheOnDemand, &wicDec)) &&
+        SUCCEEDED(wicDec->GetFrame(0, &wicFrame))) {
+      UINT origW = 0, origH = 0;
+      if (SUCCEEDED(wicFrame->GetSize(&origW, &origH)) && origW > 0 && origH > 0 &&
+          origW <= 32768 && origH <= 32768 &&
+          !ExceedsThumbFullFrameBudget(origW, origH, wicEstBpp) &&
+          SUCCEEDED(CopyWicBitmapToThumbData(m_wicFactory.Get(), wicFrame.Get(),
+                                             targetSize, pData))) {
+        pData->origWidth = static_cast<int>(origW);
+        pData->origHeight = static_cast<int>(origH);
+        pData->fileSize = fallbackFileSize;
+        pData->loaderName = L"WIC Stream Thumbnail";
+        pData->isBlurry = (pData->origWidth > pData->width || pData->origHeight > pData->height);
+        return S_OK;
+      }
+    }
+  }
+
+  return E_FAIL;
 }
 
 HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize,
-                                    ThumbData *pData, bool allowSlow) {
+                                    ThumbData *pData, bool allowSlow,
+                                    bool skipShellCache,
+                                    CancelPredicate checkCancel) {
   if (!filePath || !pData)
     return E_INVALIDARG;
+  if (checkCancel && checkCancel())
+    return E_ABORT;
   pData->isValid = false;
+  pData->fromShellCache = false;
+  pData->isPremultiplied = true;
   pData->pixels.clear();
 
   // 0. Highest Priority: Windows Shell Thumbnail Cache (Insanely fast for
-  // pre-cached heavy RAWs)
-  if (SUCCEEDED(LoadShellThumbnail(filePath, targetSize, pData))) {
+  // pre-cached heavy RAWs; bypassed inside --thumb-worker to avoid recursion).
+  if (!skipShellCache && SUCCEEDED(LoadShellThumbnail(filePath, targetSize, pData))) {
+    pData->fromShellCache = true;
+    pData->isPremultiplied = true;
     return S_OK;
   }
   const ImageHeaderInfo headerInfo = PeekHeader(filePath);
@@ -5030,17 +6345,19 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize,
       if (archive && archive->IsValid() &&
           entryIndex < archive->GetEntryCount()) {
         const auto &entry = archive->GetEntry(entryIndex);
-        extractedData.resize(entry.uncompSize);
-        size_t written = archive->ExtractEntry(entryIndex, extractedData.data(),
-                                               extractedData.size());
-        if (written > 0) {
-          mappedData = extractedData.data();
-          mappedSize = written;
-          QV_LOG("LoadThumbnail_Extracted",
-                 TraceLoggingUInt64(mappedSize, "Size"));
-        } else {
-          QV_LOG("LoadThumbnail_ExtractFailed",
-                 TraceLoggingWideString(archivePath.c_str(), "Archive"));
+        if (entry.uncompSize > 0 && entry.uncompSize <= 64ULL * 1024ULL * 1024ULL) {
+          extractedData.resize(static_cast<size_t>(entry.uncompSize));
+          size_t written = archive->ExtractEntry(entryIndex, extractedData.data(),
+                                                 extractedData.size());
+          if (written > 0) {
+            mappedData = extractedData.data();
+            mappedSize = written;
+            QV_LOG("LoadThumbnail_Extracted",
+                   TraceLoggingUInt64(mappedSize, "Size"));
+          } else {
+            QV_LOG("LoadThumbnail_ExtractFailed",
+                   TraceLoggingWideString(archivePath.c_str(), "Archive"));
+          }
         }
       }
     }
@@ -5048,8 +6365,12 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize,
 
   const wchar_t* thumbTargetPath = isMultiPageVirtual ? multiHostPath.c_str() : filePath;
   if (pathStr.find(L"|") == std::wstring::npos || isMultiPageVirtual) {
+    const bool checkPdfMagic =
+        (headerInfo.format == L"PDF") ||
+        headerInfo.format.empty() ||
+        (headerInfo.format == L"Unknown");
     if (QuickView::IsDocumentPath(thumbTargetPath) ||
-        DetectFormatFromContent(thumbTargetPath) == L"PDF") {
+        (checkPdfMagic && DetectFormatFromContent(thumbTargetPath) == L"PDF")) {
       QuickView::RawImageFrame pdfThumb;
       if (SUCCEEDED(QuickView::PdfDecoder::RenderPage(
               thumbTargetPath, isMultiPageVirtual ? multiPageIndex : 0u,
@@ -5065,9 +6386,195 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize,
         pData->fileSize = fallbackFileSize;
         pData->loaderName = L"Windows.Data.Pdf";
         pData->isValid = true;
+        pData->isPremultiplied = true;
         return S_OK;
       }
       return E_FAIL;
+    }
+  }
+
+  if (pathStr.find(L"|") == std::wstring::npos && !isMultiPageVirtual) {
+    const std::wstring_view rawExt = QuickView::ExtensionOf(pathStr);
+    if (QuickView::ExtEqualsIgnoreCase(rawExt, L".cbz") ||
+        QuickView::ExtEqualsIgnoreCase(rawExt, L".cbr")) {
+      if (auto arc = QuickView::IArchive::OpenCached(pathStr); arc && arc->IsValid()) {
+        size_t bestIdx = SIZE_MAX;
+        std::wstring bestName;
+        const size_t cnt = arc->GetEntryCount();
+        for (size_t i = 0; i < cnt; ++i) {
+          if (checkCancel && checkCancel())
+            return E_ABORT;
+          const auto &ent = arc->GetEntry(i);
+          if (ent.uncompSize == 0 ||
+              ent.uncompSize > 64ULL * 1024ULL * 1024ULL)
+            continue;
+          std::wstring ename = arc->GetEntryName(i);
+          if (!QuickView::IsSupportedExtension(QuickView::ExtensionOf(ename)))
+            continue;
+          if (bestIdx == SIZE_MAX || _wcsicmp(ename.c_str(), bestName.c_str()) < 0) {
+            bestIdx = i;
+            bestName = std::move(ename);
+          }
+        }
+        if (bestIdx != SIZE_MAX) {
+          const auto &ent = arc->GetEntry(bestIdx);
+          std::vector<uint8_t> coverBuf(static_cast<size_t>(ent.uncompSize));
+          const size_t got =
+              arc->ExtractEntry(bestIdx, coverBuf.data(), coverBuf.size());
+          if (got > 0 &&
+              SUCCEEDED(LoadThumbnailFromMemory(coverBuf.data(), got,
+                                                bestName.c_str(), targetSize,
+                                                pData, allowSlow, checkCancel)) &&
+              pData->isValid) {
+            if (fallbackFileSize > 0)
+              pData->fileSize = fallbackFileSize;
+            if (pData->loaderName.empty())
+              pData->loaderName = L"Archive Cover";
+            return S_OK;
+          }
+        }
+      }
+      return E_FAIL;
+    }
+
+    // Zero-full-map fast paths for large local images (> 8..32 MiB)
+    std::wstring fastFmt = headerInfo.format;
+    if (fastFmt.empty() || fastFmt == L"Unknown")
+      fastFmt = DetectFormatFromContent(filePath);
+    const uint64_t fsize =
+        (fallbackFileSize > 0)
+            ? fallbackFileSize
+            : static_cast<uint64_t>(QuickView::QueryFileSize(filePath));
+
+    if ((fastFmt == L"PSD" || QuickView::ExtEqualsIgnoreCase(rawExt, L".psd") ||
+         QuickView::ExtEqualsIgnoreCase(rawExt, L".psb")) &&
+        fsize > 8ULL * 1024ULL * 1024ULL) {
+      std::vector<uint8_t> psdJpeg;
+      bool psdThumbIsBgr = false;
+      if (PreviewExtractor::ExtractFromPSDFile(filePath, psdJpeg, &psdThumbIsBgr) &&
+          SUCCEEDED(LoadThumbJPEGFromMemory(psdJpeg.data(), psdJpeg.size(),
+                                            targetSize, pData)) &&
+          pData->isValid) {
+        if (psdThumbIsBgr) {
+          for (int py = 0; py < pData->height; ++py) {
+            uint8_t* row = pData->pixels.data() + static_cast<size_t>(py) * pData->stride;
+            for (int px = 0; px < pData->width; ++px) {
+              std::swap(row[static_cast<size_t>(px) * 4u + 0u],
+                        row[static_cast<size_t>(px) * 4u + 2u]);
+            }
+          }
+        }
+        DownscaleThumbDataIfNeeded(pData, targetSize);
+        pData->loaderName = L"PSD Preview (Header)";
+        pData->isBlurry = false;
+        pData->isPremultiplied = false;
+        PopulateThumbOriginalInfo(headerInfo, fsize, pData);
+        return S_OK;
+      }
+    } else if ((fastFmt == L"GIF" || QuickView::ExtEqualsIgnoreCase(rawExt, L".gif")) &&
+               fsize > 8ULL * 1024ULL * 1024ULL) {
+      QuickView::MappedFile gifMap(filePath);
+      const uint8_t* gifPtr = nullptr;
+      size_t gifSpan = 0;
+      std::vector<uint8_t> gifPrefix;
+      if (gifMap.IsValid() && gifMap.size() >= 10) {
+        gifPtr = gifMap.data();
+        gifSpan = (std::min)(gifMap.size(), static_cast<size_t>(8u * 1024u * 1024u));
+      } else if (ReadPrefixBytesFromFile(filePath, 1024u * 1024u, gifPrefix) && gifPrefix.size() >= 10) {
+        gifPtr = gifPrefix.data();
+        gifSpan = gifPrefix.size();
+      }
+      if (gifPtr && gifSpan >= 10) {
+        const uint32_t gifHdrW = static_cast<uint32_t>(gifPtr[6] | (gifPtr[7] << 8));
+        const uint32_t gifHdrH = static_cast<uint32_t>(gifPtr[8] | (gifPtr[9] << 8));
+        if (gifHdrW > 0 && gifHdrH > 0 && !ExceedsThumbFullFrameBudget(gifHdrW, gifHdrH, 4u)) {
+          uint32_t gw = 0, gh = 0;
+          if (WuffsLoader::DecodeGIF(gifPtr, gifSpan, &gw, &gh, pData->pixels, checkCancel) &&
+              gw > 0 && gh > 0 && !pData->pixels.empty()) {
+            pData->width = static_cast<int>(gw);
+            pData->height = static_cast<int>(gh);
+            pData->stride = static_cast<int>(gw * 4u);
+            pData->origWidth = static_cast<int>(gw);
+            pData->origHeight = static_cast<int>(gh);
+            pData->fileSize = fsize;
+            pData->isValid = true;
+            pData->isPremultiplied = true;
+            DownscaleThumbDataIfNeeded(pData, targetSize);
+            pData->loaderName = L"Wuffs GIF (FirstFrame)";
+            return S_OK;
+          }
+          if (checkCancel && checkCancel())
+            return E_ABORT;
+        }
+      }
+    } else if ((fastFmt == L"PNG" || QuickView::ExtEqualsIgnoreCase(rawExt, L".png")) &&
+               (fsize > 16ULL * 1024ULL * 1024ULL ||
+                static_cast<uint64_t>(headerInfo.width) * headerInfo.height >
+                    16000000ULL)) {
+      HRESULT pngHr =
+          LoadThumbPNG_Streaming(filePath, targetSize, pData, checkCancel);
+      if (pngHr == E_ABORT)
+        return E_ABORT;
+      if (SUCCEEDED(pngHr) && pData->isValid) {
+        PopulateThumbOriginalInfo(headerInfo, fsize, pData);
+        return S_OK;
+      }
+      if (!allowSlow || fsize > 128ULL * 1024ULL * 1024ULL ||
+          ExceedsThumbFullFrameBudget(headerInfo.width, headerInfo.height, 8u))
+        return E_FAIL;
+    } else if ((fastFmt == L"JPEG" || QuickView::ExtEqualsIgnoreCase(rawExt, L".jpg") ||
+                QuickView::ExtEqualsIgnoreCase(rawExt, L".jpeg") ||
+                QuickView::ExtEqualsIgnoreCase(rawExt, L".jpe") ||
+                QuickView::ExtEqualsIgnoreCase(rawExt, L".jfif")) &&
+               fsize > 8ULL * 1024ULL * 1024ULL) {
+      std::vector<uint8_t> exifJpeg;
+      int mainW = 0, mainH = 0, mainOri = 1;
+      if (PreviewExtractor::ExtractFromJPEGHeaderValidated(
+              filePath, targetSize, exifJpeg, mainW, mainH, &mainOri) &&
+          SUCCEEDED(LoadThumbJPEGFromMemory(exifJpeg.data(), exifJpeg.size(),
+                                            targetSize, pData)) &&
+          pData->isValid) {
+        if (mainW > 0 && mainH > 0) {
+          pData->origWidth = mainW;
+          pData->origHeight = mainH;
+        }
+        const int embeddedOri = ReadJpegExifOrientation(exifJpeg.data(), exifJpeg.size());
+        if (embeddedOri <= 1 && mainOri >= 2 && mainOri <= 8) {
+          ApplyOrientationToThumbData(pData, mainOri);
+        }
+        DownscaleThumbDataIfNeeded(pData, targetSize);
+        pData->fileSize = fsize;
+        pData->loaderName = L"JPEG EXIF (Validated)";
+        pData->isPremultiplied = false;
+        return S_OK;
+      }
+    } else if ((fastFmt == L"JXL" || QuickView::ExtEqualsIgnoreCase(rawExt, L".jxl")) &&
+               fsize > 32ULL * 1024ULL * 1024ULL) {
+      std::vector<uint8_t> prefix;
+      ImageMetadata jxlMeta;
+      if (ReadPrefixBytesFromFile(filePath, 8u * 1024u * 1024u, prefix) &&
+          SUCCEEDED(LoadThumbJXL_DC(prefix.data(), prefix.size(), pData, &jxlMeta,
+                                    false, false, checkCancel)) &&
+          pData->isValid && !(pData->width <= 1 && pData->height <= 1) &&
+          !pData->loaderName.contains(L"Fake Base")) {
+        DownscaleThumbDataIfNeeded(pData, targetSize);
+        if (jxlMeta.Width > 0 && jxlMeta.Height > 0) {
+          pData->origWidth = jxlMeta.Width;
+          pData->origHeight = jxlMeta.Height;
+        }
+        pData->isPremultiplied = true;
+        PopulateThumbOriginalInfo(headerInfo, fsize, pData);
+        return S_OK;
+      }
+      pData->isValid = false;
+      pData->pixels.clear();
+      const uint64_t jxlPixels = (std::max)(
+          static_cast<uint64_t>(headerInfo.width) * headerInfo.height,
+          static_cast<uint64_t>(jxlMeta.Width) * jxlMeta.Height);
+      if (fsize > 128ULL * 1024ULL * 1024ULL &&
+          (jxlPixels == 0 || jxlPixels > 100000000ULL)) {
+        return E_FAIL;
+      }
     }
   }
 
@@ -5090,13 +6597,31 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize,
 
   // Multi-page TIFF thumbnail (extract requested pageIndex cleanly without loading page 0)
   if (isMultiPageVirtual && format == L"TIFF" && mappedData && mappedSize > 0 && allowSlow) {
+    HRESULT hrTiff = QuickView::MiniTiff::LoadThumbnailSampled(
+        mappedData, mappedSize, targetSize, pData, checkCancel, multiPageIndex);
+    if (hrTiff == E_ABORT) return E_ABORT;
+    if (SUCCEEDED(hrTiff) && pData->isValid) {
+      DownscaleThumbDataIfNeeded(pData, targetSize);
+      pData->fileSize = mappedSize;
+      pData->loaderName = L"MiniTIFF (Page Sampled)";
+      pData->isPremultiplied = true;
+      return S_OK;
+    }
+
     QuickView::Codec::DecodeContext tiffCtx;
+    tiffCtx.checkCancel = checkCancel;
     tiffCtx.allocator.pfn = [](void*, size_t s) -> uint8_t* { return static_cast<uint8_t*>(_aligned_malloc(s, 64)); };
     tiffCtx.freeFunc.pfn = [](void*, uint8_t* p) { _aligned_free(p); };
     QuickView::Codec::DecodeResult tiffRes;
-    HRESULT hrTiff = QuickView::MiniTiff::Load(mappedData, mappedSize, tiffCtx, tiffRes, multiPageIndex);
+    hrTiff = QuickView::MiniTiff::Load(mappedData, mappedSize, tiffCtx, tiffRes, multiPageIndex);
+    if (hrTiff == E_ABORT) {
+      if (tiffRes.pixels) _aligned_free(tiffRes.pixels);
+      return E_ABORT;
+    }
     if (SUCCEEDED(hrTiff) && tiffRes.pixels && tiffRes.width > 0 && tiffRes.height > 0) {
-      double ratio = std::max((double)targetSize / tiffRes.width, (double)targetSize / tiffRes.height);
+      const int reqTiff = (targetSize > 0) ? targetSize : 256;
+      const double ratio = (std::min)(1.0, (std::min)(static_cast<double>(reqTiff) / tiffRes.width,
+                                                      static_cast<double>(reqTiff) / tiffRes.height));
       UINT newW = (ratio >= 1.0) ? (UINT)tiffRes.width : std::max<UINT>(1, (UINT)(tiffRes.width * ratio));
       UINT newH = (ratio >= 1.0) ? (UINT)tiffRes.height : std::max<UINT>(1, (UINT)(tiffRes.height * ratio));
       pData->width = (int)newW;
@@ -5115,9 +6640,13 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize,
       _aligned_free(tiffRes.pixels);
       pData->origWidth = tiffRes.width;
       pData->origHeight = tiffRes.height;
+      if (tiffRes.metadata.ExifOrientation >= 2 && tiffRes.metadata.ExifOrientation <= 8) {
+        ApplyOrientationToThumbData(pData, tiffRes.metadata.ExifOrientation);
+      }
       pData->fileSize = mappedSize;
       pData->loaderName = L"MiniTIFF (Page)";
       pData->isValid = true;
+      pData->isPremultiplied = true;
       return S_OK;
     }
     if (tiffRes.pixels) _aligned_free(tiffRes.pixels);
@@ -5132,8 +6661,11 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize,
           SUCCEEDED(wicDec->GetFrame(multiPageIndex, &wicFrame))) {
         UINT origW = 0, origH = 0;
         wicFrame->GetSize(&origW, &origH);
-        if (origW > 0 && origH > 0 && origW <= 16384 && origH <= 16384) {
-          double ratio = std::max((double)targetSize / origW, (double)targetSize / origH);
+        if (origW > 0 && origH > 0 && origW <= 32768 && origH <= 32768 &&
+            !ExceedsThumbFullFrameBudget(origW, origH, 4u)) {
+          const int reqWic = (targetSize > 0) ? targetSize : 256;
+          const double ratio = (std::min)(1.0, (std::min)(static_cast<double>(reqWic) / origW,
+                                                          static_cast<double>(reqWic) / origH));
           UINT newW = (ratio >= 1.0) ? origW : std::max<UINT>(1, (UINT)(origW * ratio));
           UINT newH = (ratio >= 1.0) ? origH : std::max<UINT>(1, (UINT)(origH * ratio));
           ComPtr<IWICBitmapScaler> scaler;
@@ -5152,6 +6684,7 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize,
               pData->fileSize = mappedSize;
               pData->loaderName = L"WIC TIFF (Page)";
               pData->isValid = true;
+              pData->isPremultiplied = true;
               return S_OK;
             }
           }
@@ -5177,238 +6710,91 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize,
         pData->fileSize = mappedSize;
         pData->loaderName = L"IcoDecoder";
         pData->isValid = true;
+        pData->isPremultiplied = true;
         return S_OK;
       }
     }
   }
 
   std::wstring pathLower = filePath;
-  std::transform(pathLower.begin(), pathLower.end(), pathLower.begin(),
-                 ::towlower);
+  std::transform(pathLower.begin(), pathLower.end(), pathLower.begin(), ::towlower);
 
-  auto tryEmbeddedPreview = [&](const wchar_t *loaderName,
-                                auto extractor) -> bool {
-    if (!mappedData || mappedSize == 0)
-      return false;
-    PreviewExtractor::ExtractedData exData;
-    if (!extractor(mappedData, mappedSize, exData) || !exData.IsValid()) {
-      return false;
-    }
-    if (FAILED(LoadThumbJPEGFromMemory(exData.pData, exData.size, targetSize,
-                                       pData)) ||
-        !pData->isValid) {
-      return false;
-    }
-    pData->loaderName = loaderName;
-    pData->isBlurry = false;
-    PopulateThumbOriginalInfo(headerInfo, static_cast<uint64_t>(mappedSize),
-                              pData);
-    return true;
-  };
+  return LoadThumbnailFromMappedBuffer(
+      mappedData, mappedSize, headerInfo,
+      fallbackFileSize, filePath, pathLower, format, targetSize, pData, allowSlow,
+      checkCancel);
+}
 
-  if (format == L"RAW" &&
-      tryEmbeddedPreview(L"RAW Preview", PreviewExtractor::ExtractFromRAW)) {
-    return S_OK;
+HRESULT CImageLoader::LoadThumbnailFromMemory(const uint8_t *data, size_t size,
+                                              LPCWSTR extHint, int targetSize,
+                                              ThumbData *pData, bool allowSlow,
+                                              CancelPredicate checkCancel) {
+  if (!data || size == 0 || !pData)
+    return E_INVALIDARG;
+  if (checkCancel && checkCancel())
+    return E_ABORT;
+  pData->isValid = false;
+  pData->fromShellCache = false;
+  pData->isPremultiplied = true;
+  pData->pixels.clear();
+
+  std::wstring hintPath = (extHint && extHint[0] != L'\0') ? extHint : L"stream.bin";
+  std::wstring pathLower = hintPath;
+  std::transform(pathLower.begin(), pathLower.end(), pathLower.begin(), ::towlower);
+
+  std::wstring format = DetectFormatFromContent(data, std::min<size_t>(size, 1024));
+  if (format.empty() || format == L"Unknown") {
+    format = DetectFormatFromHeaderBytes(hintPath.c_str(), data, size);
   }
-  if (format == L"TIFF" &&
-      tryEmbeddedPreview(L"TIFF Preview", PreviewExtractor::ExtractFromTIFF)) {
-    return S_OK;
-  }
-  if ((format == L"HEIC" || pathLower.ends_with(L".heic") ||
-       pathLower.ends_with(L".heif") || pathLower.ends_with(L".hif")) &&
-      tryEmbeddedPreview(L"HEIC Preview", PreviewExtractor::ExtractFromHEIC)) {
-    return S_OK;
-  }
-  if ((format == L"PSD" || pathLower.ends_with(L".psb")) &&
-      tryEmbeddedPreview(L"PSD Preview", PreviewExtractor::ExtractFromPSD)) {
-    return S_OK;
+  if (format.empty() || format == L"Unknown") {
+    if (pathLower.ends_with(L".svg") || pathLower.ends_with(L".svgz")) format = L"SVG";
+    else if (pathLower.ends_with(L".psd") || pathLower.ends_with(L".psb")) format = L"PSD";
+    else if (pathLower.ends_with(L".exr")) format = L"EXR";
+    else if (pathLower.ends_with(L".tga") || pathLower.ends_with(L".icb") || pathLower.ends_with(L".vda") || pathLower.ends_with(L".vst")) format = L"TGA";
+    else if (pathLower.ends_with(L".qoi")) format = L"QOI";
+    else if (pathLower.ends_with(L".jxl")) format = L"JXL";
+    else if (pathLower.ends_with(L".avif") || pathLower.ends_with(L".avifs")) format = L"AVIF";
+    else if (pathLower.ends_with(L".heic") || pathLower.ends_with(L".heif") || pathLower.ends_with(L".hif")) format = L"HEIC";
+    else if (pathLower.ends_with(L".ico")) format = L"ICO";
+    else if (pathLower.ends_with(L".cur")) format = L"CUR";
+    else if (QuickView::IsRawExtension(QuickView::ExtensionOf(pathLower))) format = L"RAW";
   }
 
-  if ((format == L"AVIF" || format == L"HEIC" ||
-       pathLower.ends_with(L".avif") || pathLower.ends_with(L".avifs") ||
-       pathLower.ends_with(L".heic") || pathLower.ends_with(L".heif") ||
-       pathLower.ends_with(L".hif")) &&
-      mappedData && mappedSize > 0) {
-    ImageMetadata meta;
-    HRESULT hr = LoadThumbAVIF_Proxy(mappedData, mappedSize, targetSize, pData,
-                                     allowSlow, &meta);
-    if (SUCCEEDED(hr) && pData->isValid) {
-      DownscaleThumbDataIfNeeded(pData, targetSize);
-      if (meta.Width > 0 && meta.Height > 0) {
-        pData->origWidth = meta.Width;
-        pData->origHeight = meta.Height;
-      }
-      pData->fileSize =
-          meta.FileSize > 0 ? meta.FileSize : static_cast<uint64_t>(mappedSize);
-      pData->loaderName = format == L"HEIC" ? L"libavif/HEIF" : L"libavif";
-      return S_OK;
+  ImageHeaderInfo headerInfo;
+  headerInfo.fileSize = size;
+  headerInfo.format = format;
+  if (format != L"RAW") {
+    headerInfo = PeekHeaderFromMemory(hintPath.c_str(), data, size);
+    if (headerInfo.format.empty() || headerInfo.format == L"Unknown") {
+      headerInfo.format = format;
     }
   }
 
-  if ((format == L"JXL" || pathLower.ends_with(L".jxl")) && mappedData &&
-      mappedSize > 0) {
-    ImageMetadata meta;
-    // Gallery thumbnails must never use Titan's transparent fake base.
-    // If a cheap real thumbnail is unavailable, we fall through to the
-    // normal decode path instead of returning an empty/transparent result.
-    HRESULT hr = LoadThumbJXL_DC(mappedData, mappedSize, pData, &meta, false);
-    if (SUCCEEDED(hr) && pData->isValid) {
-      const bool isFakeThumb =
-          pData->width <= 1 && pData->height <= 1 &&
-          pData->pixels.size() == 4 &&
-          std::all_of(pData->pixels.begin(), pData->pixels.end(),
-                      [](uint8_t v) { return v == 0; });
-      if (isFakeThumb || pData->loaderName.contains(L"Fake Base")) {
-        pData->isValid = false;
-        pData->pixels.clear();
-        hr = E_FAIL;
-      }
-    }
-    if (SUCCEEDED(hr) && pData->isValid) {
-      DownscaleThumbDataIfNeeded(pData, targetSize);
-      if (meta.Width > 0 && meta.Height > 0) {
-        pData->origWidth = meta.Width;
-        pData->origHeight = meta.Height;
-      }
-      PopulateThumbOriginalInfo(headerInfo, static_cast<uint64_t>(mappedSize),
-                                pData);
-      return S_OK;
-    }
-    if (allowSlow) {
-      pData->isValid = false;
-      pData->pixels.clear();
-      hr = LoadThumbJXL_Sampled(mappedData, mappedSize, targetSize, pData,
-                                &meta);
-      if (SUCCEEDED(hr) && pData->isValid) {
-        PopulateThumbOriginalInfo(headerInfo, static_cast<uint64_t>(mappedSize),
-                                  pData);
+  if ((format == L"ICO" || format == L"CUR") && m_wicFactory) {
+    std::vector<QuickView::IcoDecoder::IcoEntryInfo> entries;
+    if (QuickView::IcoDecoder::ParseDirectory(data, size, entries) && !entries.empty()) {
+      QuickView::RawImageFrame icoFrame;
+      if (SUCCEEDED(QuickView::IcoDecoder::DecodeEntry(data, size, entries[0], m_wicFactory.Get(), icoFrame)) &&
+          icoFrame.pixels && icoFrame.width > 0 && icoFrame.height > 0) {
+        pData->width = icoFrame.width;
+        pData->height = icoFrame.height;
+        pData->stride = icoFrame.stride;
+        pData->pixels.assign(icoFrame.pixels, icoFrame.pixels + (size_t)icoFrame.stride * icoFrame.height);
+        pData->origWidth = icoFrame.width;
+        pData->origHeight = icoFrame.height;
+        pData->fileSize = size;
+        pData->loaderName = L"IcoDecoder";
+        pData->isValid = true;
+        pData->isPremultiplied = true;
         return S_OK;
       }
     }
-    return E_FAIL;
   }
 
-  if (format == L"SVG") {
-    using namespace QuickView;
-    std::unique_ptr<RawImageFrame> pFrame(new (std::nothrow) RawImageFrame());
-    if (!pFrame)
-      return E_OUTOFMEMORY;
-
-    HRESULT hr = LoadToFrame(filePath, pFrame.get(), nullptr, targetSize,
-                             targetSize, &pData->loaderName, {}, {});
-    if (SUCCEEDED(hr) && pFrame->svg &&
-        (pFrame->IsSvg() || pFrame->IsWebView())) {
-      // Complex SVG (WebView): CapturePreview via shared offscreen WebView2
-      // (gallery + same pipeline as minimap quality). Simple SVG: D2D first.
-      if (pFrame->IsWebView()) {
-        hr = WebViewThumbService::Instance().RasterizeSvgToThumb(
-            pFrame->svg->xmlData, pFrame->svg->viewBoxW, pFrame->svg->viewBoxH,
-            targetSize, pData);
-        if (FAILED(hr) || !pData->isValid) {
-          pData->isValid = false;
-          pData->pixels.clear();
-          hr = RasterizeSvgThumbnail(pFrame->svg->xmlData, pFrame->svg->viewBoxW,
-                                     pFrame->svg->viewBoxH, targetSize, pData);
-        }
-      } else {
-        hr = RasterizeSvgThumbnail(pFrame->svg->xmlData, pFrame->svg->viewBoxW,
-                                   pFrame->svg->viewBoxH, targetSize, pData);
-      }
-    } else if (SUCCEEDED(hr) && pFrame->pixels && pFrame->width > 0 &&
-               pFrame->height > 0) {
-      pData->width = pFrame->width;
-      pData->height = pFrame->height;
-      pData->stride = pFrame->stride;
-      pData->pixels.resize(static_cast<size_t>(pFrame->stride) *
-                           pFrame->height);
-      memcpy(pData->pixels.data(), pFrame->pixels, pData->pixels.size());
-      pData->isValid = true;
-      pData->isBlurry = false;
-    }
-    if (SUCCEEDED(hr) && pData->isValid) {
-      PopulateThumbOriginalInfo(headerInfo, fallbackFileSize, pData);
-      return S_OK;
-    }
-  }
-
-  // 1. Unified Codec Dispatch (Primary)
-  DecodeContext ctx;
-  ctx.forcePreview = true;
-  ctx.targetWidth = targetSize;
-  ctx.targetHeight = targetSize;
-  ctx.allocator.ctx = pData;
-  ctx.allocator.pfn = [](void *c, size_t s) -> uint8_t * {
-    auto *d = static_cast<ThumbData *>(c);
-    d->pixels.resize(s);
-    return d->pixels.data();
-  };
-  ctx.freeFunc.ctx = pData;
-  ctx.freeFunc.pfn = [](void *c, uint8_t *) {
-    static_cast<ThumbData *>(c)->pixels.clear();
-  };
-  std::wstring loaderName;
-  ctx.pLoaderName = &loaderName;
-
-  DecodeResult res;
-  HRESULT hr = E_FAIL;
-  if (mappedData && mappedSize > 0) {
-    hr = LoadBufferUnified(mappedData, mappedSize, format, ctx, res);
-  } else {
-    hr = LoadImageUnified(filePath, ctx, res);
-  }
-
-  if (SUCCEEDED(hr)) {
-    pData->width = res.width;
-    pData->height = res.height;
-    pData->stride = res.stride;
-    pData->isValid = true;
-    pData->loaderName = loaderName.empty() ? L"Unified" : loaderName;
-
-    // [BugFix] Populate original dimensions and file size for Gallery tooltip
-    // Use metadata if available, otherwise use decoded dimensions (for scaled
-    // previews)
-    pData->origWidth =
-        (res.metadata.Width > 0) ? res.metadata.Width : res.width;
-    pData->origHeight =
-        (res.metadata.Height > 0) ? res.metadata.Height : res.height;
-    pData->fileSize = res.metadata.FileSize;
-
-    // If FileSize not populated by codec, get it from file system
-    if (pData->fileSize == 0) {
-      WIN32_FILE_ATTRIBUTE_DATA fad;
-      if (GetFileAttributesExW(filePath, GetFileExInfoStandard, &fad)) {
-        pData->fileSize =
-            (static_cast<uint64_t>(fad.nFileSizeHigh) << 32) | fad.nFileSizeLow;
-      }
-    }
-    DownscaleThumbDataIfNeeded(pData, targetSize);
-    PopulateThumbOriginalInfo(headerInfo, fallbackFileSize, pData);
-    return S_OK;
-  }
-
-  if (hr == E_ABORT)
-    return E_ABORT;
-
-  if (!allowSlow)
-    return E_FAIL; // Scout gives up
-
-  // 2. Full compatibility fallback through the main loader chain.
-  ComPtr<IWICBitmap> wicBitmap;
-  std::wstring wicLoader;
-  HRESULT wicHr = LoadToMemory(filePath, &wicBitmap, &wicLoader, false, {},
-                               targetSize, targetSize);
-  if (SUCCEEDED(wicHr) && wicBitmap) {
-    HRESULT copyHr = CopyWicBitmapToThumbData(wicBitmap.Get(), pData);
-    if (SUCCEEDED(copyHr)) {
-      pData->loaderName = wicLoader.empty() ? L"WIC Thumbnail" : wicLoader;
-      PopulateThumbOriginalInfo(headerInfo, fallbackFileSize, pData);
-      pData->isBlurry = (pData->origWidth > pData->width ||
-                         pData->origHeight > pData->height);
-      return S_OK;
-    }
-  }
-
-  return E_FAIL;
+  return LoadThumbnailFromMappedBuffer(
+      data, size, headerInfo,
+      static_cast<uint64_t>(size), nullptr, pathLower, format, targetSize, pData, allowSlow,
+      checkCancel);
 }
 #if 0  // Debris Deletion Start
 // namespace Debris { HRESULT Garbage() { ...
@@ -8929,8 +10315,12 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
 
   const int origW = decoder->image->width;
   const int origH = decoder->image->height;
+  const bool hasAlpha =
+      (decoder->image->alphaPlane != nullptr) || (decoder->alphaPresent == AVIF_TRUE);
 
-  if (ctx.targetWidth > 0 && ctx.targetHeight > 0 &&
+  // Only scale in YUV space for opaque AVIFs; alpha-bearing AVIFs must be
+  // YUV->RGB premultiplied first to avoid chroma/transparent color bleeding.
+  if (!hasAlpha && ctx.targetWidth > 0 && ctx.targetHeight > 0 &&
       (origW > ctx.targetWidth || origH > ctx.targetHeight)) {
     const double scale =
         (std::min)(static_cast<double>(ctx.targetWidth) / (std::max)(1, origW),
@@ -9240,17 +10630,38 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
     return E_FAIL;
   }
 
-  const int width = rgb.width;
-  const int height = rgb.height;
-  const int stride = static_cast<int>(rgb.rowBytes);
-  uint8_t *pixels = ctx.allocator(static_cast<size_t>(stride) * height);
-  if (!pixels) {
-    avifRGBImageFreePixels(&rgb);
-    avifDecoderDestroy(decoder);
-    return E_OUTOFMEMORY;
+  int width = static_cast<int>(rgb.width);
+  int height = static_cast<int>(rgb.height);
+  int stride = static_cast<int>(rgb.rowBytes);
+  uint8_t *pixels = nullptr;
+  if (hasAlpha && ctx.targetWidth > 0 && ctx.targetHeight > 0 &&
+      (width > ctx.targetWidth || height > ctx.targetHeight)) {
+    const double scale =
+        (std::min)(static_cast<double>(ctx.targetWidth) / (std::max)(1, width),
+                   static_cast<double>(ctx.targetHeight) / (std::max)(1, height));
+    const int scaledW = (std::max)(1, static_cast<int>(width * scale + 0.5));
+    const int scaledH = (std::max)(1, static_cast<int>(height * scale + 0.5));
+    const int scaledStride = CalculateAlignedStride(scaledW, 4);
+    pixels = ctx.allocator(static_cast<size_t>(scaledStride) * scaledH);
+    if (!pixels) {
+      avifRGBImageFreePixels(&rgb);
+      avifDecoderDestroy(decoder);
+      return E_OUTOFMEMORY;
+    }
+    DownscaleBgra8BoxBilinear(rgb.pixels, width, height, stride,
+                              pixels, scaledW, scaledH, scaledStride);
+    width = scaledW;
+    height = scaledH;
+    stride = scaledStride;
+  } else {
+    pixels = ctx.allocator(static_cast<size_t>(stride) * height);
+    if (!pixels) {
+      avifRGBImageFreePixels(&rgb);
+      avifDecoderDestroy(decoder);
+      return E_OUTOFMEMORY;
+    }
+    memcpy(pixels, rgb.pixels, static_cast<size_t>(stride) * height);
   }
-
-  memcpy(pixels, rgb.pixels, static_cast<size_t>(stride) * height);
 
   result.pixels = pixels;
   result.width = width;
@@ -10581,6 +11992,22 @@ static HRESULT Load(LPCWSTR filePath, const DecodeContext &ctx,
     }
   }
 
+  if (!decodeSource && ctx.targetWidth > 0 && ctx.targetHeight > 0 &&
+      (origW > static_cast<UINT>(ctx.targetWidth) || origH > static_cast<UINT>(ctx.targetHeight)) &&
+      !isIntegerHighBitDepth && !isNativeFloatScRgb) {
+    const float scale = (std::min)(static_cast<float>(ctx.targetWidth) / origW,
+                                   static_cast<float>(ctx.targetHeight) / origH);
+    const UINT sw = (std::max)(1u, static_cast<UINT>(origW * scale));
+    const UINT sh = (std::max)(1u, static_cast<UINT>(origH * scale));
+    ComPtr<IWICBitmapScaler> scaler;
+    if (SUCCEEDED(factory->CreateBitmapScaler(&scaler)) &&
+        SUCCEEDED(scaler->Initialize(frame.Get(), sw, sh, WICBitmapInterpolationModeFant))) {
+      decodeSource = scaler;
+      decodeW = sw;
+      decodeH = sh;
+    }
+  }
+
   // If native scale was not used, fall back to full-size frame
   if (!decodeSource) {
     decodeSource = frame;
@@ -10627,8 +12054,12 @@ static HRESULT Load(LPCWSTR filePath, const DecodeContext &ctx,
   if (!pixels)
     return E_OUTOFMEMORY;
 
-  if (FAILED(converter->CopyPixels(nullptr, stride, (UINT)bufSize, pixels)))
+  if (FAILED(converter->CopyPixels(nullptr, stride, (UINT)bufSize, pixels))) {
+    if (ctx.freeFunc.pfn) {
+      ctx.freeFunc(pixels);
+    }
     return E_FAIL;
+  }
 
   result.pixels = pixels;
   result.width = decodeW;
@@ -13815,6 +15246,14 @@ HRESULT CImageLoader::LoadThumbAVIF_Proxy(const uint8_t *data, size_t size,
   // contention/memory). Better to RETURN FAILURE (specifically S_FALSE for
   // 'skipped') to let Heavy Lane start immediately. 50MP = 50,000,000 pixels.
   // 9449*9449 = 89MP.
+  const uint32_t estBpp = (decoder->image->depth > 8) ? 8u : 4u;
+  if (decoder->image->width == 0 || decoder->image->height == 0 ||
+      ExceedsThumbFullFrameBudget(decoder->image->width,
+                                  decoder->image->height,
+                                  estBpp)) {
+    avifDecoderDestroy(decoder);
+    return E_FAIL;
+  }
   uint64_t pixelCount =
       (uint64_t)decoder->image->width * (uint64_t)decoder->image->height;
   if (pixelCount > 40000000 && !allowSlow) { // > 40MP threshold
@@ -13905,12 +15344,15 @@ HRESULT CImageLoader::LoadThumbAVIF_Proxy(const uint8_t *data, size_t size,
     }
   }
 
-  // 5. YUV-Space Downscaling
-  // Calculate target dimensions
+  // 5. Scaling Strategy:
+  // Opaque AVIFs may downscale in YUV space for speed, while alpha-bearing AVIFs
+  // must convert to premultiplied BGRA first to prevent transparent chroma bleed.
   int origW = decoder->image->width;
   int origH = decoder->image->height;
+  const bool hasAlpha =
+      (decoder->image->alphaPlane != nullptr) || (decoder->alphaPresent == AVIF_TRUE);
 
-  if (targetSize > 0 && (origW > targetSize || origH > targetSize)) {
+  if (!hasAlpha && targetSize > 0 && (origW > targetSize || origH > targetSize)) {
     float ratio = 1.0f;
     if (origW > origH) {
       ratio = (float)targetSize / origW;
@@ -13967,15 +15409,19 @@ HRESULT CImageLoader::LoadThumbAVIF_Proxy(const uint8_t *data, size_t size,
   size_t outSize = rgb.rowBytes * rgb.height;
   pData->pixels.assign(rgb.pixels, rgb.pixels + outSize);
   pData->isValid = true;
-  pData->isBlurry =
-      (targetSize > 0); // Blurry if scaled, Clear if full (FastPass)
-  result = AVIF_RESULT_OK;
+  pData->isPremultiplied = true;
 
   // 8. Cleanup
   avifRGBImageFreePixels(&rgb);
   avifDecoderDestroy(decoder);
 
-  return (result == AVIF_RESULT_OK) ? S_OK : E_FAIL;
+  if (hasAlpha && targetSize > 0 &&
+      (pData->width > targetSize || pData->height > targetSize)) {
+    DownscaleThumbDataIfNeeded(pData, targetSize);
+  }
+  pData->isBlurry = (pData->width < origW || pData->height < origH);
+
+  return S_OK;
 }
 
 HRESULT CImageLoader::LoadThumbWebPFromMemory(const uint8_t *data, size_t size,
@@ -14056,9 +15502,12 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t *pFile, size_t fileSize,
                                       ThumbData *pData,
                                       ImageMetadata *pMetadata,
                                       bool allowFakeBase,
-                                      bool preserveSourceColor) {
+                                      bool preserveSourceColor,
+                                      CancelPredicate checkCancel) {
   if (!pFile || fileSize == 0 || !pData)
     return E_INVALIDARG;
+  if (checkCancel && checkCancel())
+    return E_ABORT;
 
   pData->isValid = false;
   pData->colorMeta.Clear();
@@ -14088,6 +15537,7 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t *pFile, size_t fileSize,
   // 2. Setup Input
   if (JXL_DEC_SUCCESS != JxlDecoderSetInput(dec, pFile, fileSize))
     return cleanup(E_FAIL);
+  JxlDecoderCloseInput(dec);
 
   // 3. Subscribe Events
   // Must subscribe to FRAME_PROGRESSION to catch 1:8.
@@ -14116,15 +15566,22 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t *pFile, size_t fileSize,
   bool isProgressive = false;
 
   for (;;) {
+    if (checkCancel && checkCancel())
+      return cleanup(E_ABORT);
     JxlDecoderStatus status = JxlDecoderProcessInput(dec);
 
-    if (status == JXL_DEC_ERROR) {
+    if (status == JXL_DEC_ERROR || status == JXL_DEC_NEED_MORE_INPUT) {
       return cleanup(E_FAIL);
     } else if (status == JXL_DEC_SUCCESS) {
       return cleanup(foundDC ? S_OK : E_FAIL);
     } else if (status == JXL_DEC_BASIC_INFO) {
       if (JXL_DEC_SUCCESS != JxlDecoderGetBasicInfo(dec, &info))
         return cleanup(E_FAIL);
+      // Giant Modular lossless JXLs lack a 1:8 DC pass; bail immediately when fake base is disallowed.
+      if (!allowFakeBase && info.uses_original_profile && !info.have_preview &&
+          ExceedsThumbFullFrameBudget(info.xsize, info.ysize, 8u)) {
+        return cleanup(E_FAIL);
+      }
 
       if (!preserveSourceColor) {
         JxlColorEncoding srgbEncoding = {};
@@ -14175,6 +15632,10 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t *pFile, size_t fileSize,
           downW = 1;
         if (downH == 0)
           downH = 1;
+        if (ExceedsThumbFullFrameBudget(static_cast<uint32_t>(downW),
+                                        static_cast<uint32_t>(downH), 4u)) {
+          return cleanup(E_FAIL);
+        }
 
         size_t bufferSize = downW * downH * 4;
         pData->pixels.resize(bufferSize);
@@ -14856,6 +16317,29 @@ static bool TryParseSvgViewBoxSize(const std::string &vbStr, float *outW,
 }
 
 // Helper: Parse SVG dimensions from memory buffer (Header only)
+static void ParseSvgDimensions(std::string_view svgContent, float &outW, float &outH) {
+  outW = 512.0f;
+  outH = 512.0f;
+  const size_t probeLen = (std::min)(svgContent.size(), static_cast<size_t>(8192));
+  const std::string xmlHead(svgContent.data(), probeLen);
+  float w = 0.0f, h = 0.0f;
+  const std::string wStr = GetSvgRootAttrVal(xmlHead, "width");
+  const std::string hStr = GetSvgRootAttrVal(xmlHead, "height");
+  const bool hasW = TryParseSvgLengthToDip(wStr, &w);
+  const bool hasH = TryParseSvgLengthToDip(hStr, &h);
+  if (hasW && hasH && w > 0.0f && h > 0.0f) {
+    outW = w;
+    outH = h;
+    return;
+  }
+  const std::string vbStr = GetSvgRootAttrVal(xmlHead, "viewBox");
+  float vbW = 0.0f, vbH = 0.0f;
+  if (TryParseSvgViewBoxSize(vbStr, &vbW, &vbH)) {
+    outW = vbW;
+    outH = vbH;
+  }
+}
+
 static bool GetSvgDimensionsFromMemory(const uint8_t *data, size_t size,
                                        uint32_t *width, uint32_t *height) {
   if (!data || size == 0 || !width || !height)

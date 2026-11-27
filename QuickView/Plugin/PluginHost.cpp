@@ -1,30 +1,2266 @@
-#include "PluginHost.h"
 #include "pch.h"
+#include "PluginHost.h"
 #include "AppStrings.h"
 #include "ArchiveVFS.h"
-#include "yyjson.h"
-#include "StringUtils.h"
-#include "SystemInfo.h"
-#include <cwchar>
-#include <cstdlib>
-#include <charconv>
-#include <algorithm>
-#include <thread>
 #include "AsyncJob.h"
-#include <winhttp.h>
-#include <wincrypt.h>
-#include <shlwapi.h>
+#include "StringUtils.h"
+#include "SupportedExtensions.h"
+#include "SystemInfo.h"
+#include "yyjson.h"
+#include <algorithm>
+#include <bit>
+#include <charconv>
+#include <cstdlib>
 #include <shellapi.h>
+#include <shlwapi.h>
+#include <wincrypt.h>
+#include <winhttp.h>
 
 namespace QuickView {
 
-typedef bool (*QVX_InitFn)(const QVX_PluginHeader**);
-typedef void (*QVX_ShutdownFn)(void);
+namespace {
 
-bool PluginHost::IsSrPluginEnabled() const { return m_enableSrPlugin.load(std::memory_order_relaxed); }
-void PluginHost::SetSrPluginEnabled(bool enable) { m_enableSrPlugin.store(enable, std::memory_order_relaxed); }
-std::wstring PluginHost::GetSrPluginPath() const { std::lock_guard<std::recursive_mutex> lock(m_srMutex); return m_srPluginPath; }
-std::string PluginHost::GetSrModelId() const { std::lock_guard<std::recursive_mutex> lock(m_srMutex); return m_srModelId; }
+using QVX_InitFn = bool (*)(const QVX_HostServices*, const QVX_PluginHeader**);
+using QVX_ShutdownFn = void (*)(void);
+
+std::wstring GetCurrentExeFullPath() {
+    wchar_t exePath[MAX_PATH * 2]{};
+    const DWORD len = GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
+    if (len == 0 || len >= std::size(exePath)) return {};
+    return std::wstring(exePath, len);
+}
+
+std::wstring GetExecutableDirectory() {
+    wchar_t exePath[MAX_PATH * 2]{};
+    const DWORD len = GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
+    if (len == 0 || len >= std::size(exePath)) return {};
+    PathRemoveFileSpecW(exePath);
+    return std::wstring(exePath);
+}
+
+std::wstring GetLocalAppDataRoot() {
+    std::wstring localAppData = SystemInfo::GetLocalAppDataDir();
+    if (!localAppData.empty()) return localAppData;
+    wchar_t tempPath[MAX_PATH * 2]{};
+    const DWORD len = GetTempPathW(static_cast<DWORD>(std::size(tempPath)), tempPath);
+    if (len > 0 && len < std::size(tempPath)) {
+        std::wstring result(tempPath, len);
+        while (!result.empty() && (result.back() == L'\\' || result.back() == L'/')) {
+            result.pop_back();
+        }
+        return result;
+    }
+    return {};
+}
+
+bool IsDirectoryWritable(const std::wstring& dirPath) {
+    if (dirPath.empty() || !SystemInfo::EnsureDirectoryRecursive(dirPath)) return false;
+    const std::wstring probe = dirPath + L"\\.qv_write_probe_" + std::to_wstring(GetCurrentProcessId()) + L".tmp";
+    HANDLE hFile = CreateFileW(
+        probe.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, nullptr);
+    if (hFile == INVALID_HANDLE_VALUE) return false;
+    CloseHandle(hFile);
+    return true;
+}
+
+std::string NormalizeUtf8Path(std::wstring_view widePath) {
+    std::string utf8 = WideToUtf8(widePath);
+    while (utf8.size() > 3 && (utf8.back() == '\\' || utf8.back() == '/')) {
+        utf8.pop_back();
+    }
+    return utf8;
+}
+
+void HostSvc_FreeBuffer(void*, uint8_t* ptr) {
+    if (ptr) _aligned_free(ptr);
+}
+
+uint8_t* HostSvc_AllocBuffer(void*, size_t sizeBytes, size_t alignment) {
+    if (sizeBytes == 0) return nullptr;
+    size_t align = std::clamp<size_t>(alignment, 64, 4096);
+    if (!std::has_single_bit(align)) {
+        align = std::bit_ceil(align);
+    }
+    return static_cast<uint8_t*>(_aligned_malloc(sizeBytes, align));
+}
+
+void HostSvc_Log(void*, int32_t level, const char* utf8Msg) {
+    if (!utf8Msg) return;
+    char buf[512];
+    snprintf(buf, sizeof(buf), "[QVX-Plugin:%d] %s\n", level, utf8Msg);
+    OutputDebugStringA(buf);
+}
+
+bool WinHttpDownloadSingleUrl(
+    const std::string& initialUrl,
+    const std::wstring& targetPath,
+    PluginHost::DownloadProgressCallback onProgress,
+    void* userData
+) {
+    if (initialUrl.empty()) return false;
+    std::string currentUrl = initialUrl;
+
+    for (int hop = 0; hop < 8; ++hop) {
+        if (currentUrl.rfind("https://", 0) != 0) return false;
+        const size_t protoPos = currentUrl.find("://");
+        if (protoPos == std::string::npos) return false;
+
+        const std::string domainPath = currentUrl.substr(protoPos + 3);
+        const size_t slashPos = domainPath.find('/');
+        if (slashPos == std::string::npos) return false;
+
+        std::string hostStr = domainPath.substr(0, slashPos);
+        const std::string pathStr = domainPath.substr(slashPos);
+
+        auto isTrustedHost = [](std::string& h) -> bool {
+            for (char& c : h) {
+                if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+            }
+            if (h.ends_with(":443")) {
+                h.resize(h.size() - 4);
+            }
+            if (h.empty() || h.find(':') != std::string::npos) return false;
+            return h == "justnullname.github.io" ||
+                   h == "raw.githubusercontent.com" ||
+                   h == "github.com" ||
+                   h == "objects.githubusercontent.com" ||
+                   h == "codeload.github.com" ||
+                   h == "release-assets.githubusercontent.com" ||
+                   h == "ghfast.top" ||
+                   h == "ghproxy.net" ||
+                   h == "ghproxy.cn" ||
+                   h == "gh-proxy.com" ||
+                   h == "fastly.jsdelivr.net" ||
+                   h == "cdn.jsdelivr.net";
+        };
+        if (!isTrustedHost(hostStr)) return false;
+
+        const std::wstring host = Utf8ToWide(hostStr);
+        const std::wstring path = Utf8ToWide(pathStr);
+        if (host.empty() || path.empty()) return false;
+
+        HINTERNET hSession = WinHttpOpen(L"QuickView/3.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+        if (!hSession) return false;
+        WinHttpSetTimeouts(hSession, 15000, 15000, 15000, 300000);
+
+        HINTERNET hConnect = WinHttpConnect(hSession, host.c_str(), INTERNET_DEFAULT_HTTPS_PORT, 0);
+        if (!hConnect) {
+            WinHttpCloseHandle(hSession);
+            return false;
+        }
+
+        HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
+        if (!hRequest) {
+            WinHttpCloseHandle(hConnect);
+            WinHttpCloseHandle(hSession);
+            return false;
+        }
+
+        DWORD redirectPolicy = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
+        WinHttpSetOption(hRequest, WINHTTP_OPTION_REDIRECT_POLICY, &redirectPolicy, sizeof(redirectPolicy));
+
+        bool success = false;
+        bool redirected = false;
+        if (WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
+            WinHttpReceiveResponse(hRequest, nullptr)) {
+            DWORD statusCode = 0;
+            DWORD dwSize = sizeof(statusCode);
+            WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &dwSize, WINHTTP_NO_HEADER_INDEX);
+
+            if (statusCode == 301 || statusCode == 302 || statusCode == 303 || statusCode == 307 || statusCode == 308) {
+                wchar_t locBuf[4096]{};
+                DWORD locSize = sizeof(locBuf);
+                if (WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_LOCATION, WINHTTP_HEADER_NAME_BY_INDEX, locBuf, &locSize, WINHTTP_NO_HEADER_INDEX)) {
+                    std::string nextUrl = WideToUtf8(locBuf);
+                    if (nextUrl.find("://") == std::string::npos && !nextUrl.empty() && nextUrl[0] == '/') {
+                        nextUrl = "https://" + hostStr + nextUrl;
+                    }
+                    currentUrl = std::move(nextUrl);
+                    redirected = true;
+                }
+            } else if (statusCode == 200) {
+                uint64_t contentLength = 0;
+                bool hasContentLength = false;
+                wchar_t lenBuf[64]{};
+                DWORD lenSize = sizeof(lenBuf);
+                if (WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_CONTENT_LENGTH, WINHTTP_HEADER_NAME_BY_INDEX, lenBuf, &lenSize, WINHTTP_NO_HEADER_INDEX)) {
+                    const std::string lenUtf8 = WideToUtf8(lenBuf);
+                    uint64_t parsedLen = 0;
+                    const auto res = std::from_chars(lenUtf8.data(), lenUtf8.data() + lenUtf8.size(), parsedLen);
+                    if (res.ec == std::errc{}) {
+                        contentLength = parsedLen;
+                        hasContentLength = true;
+                    }
+                }
+
+                const std::wstring parentDir(ParentPathView(targetPath));
+                if (!parentDir.empty()) SystemInfo::EnsureDirectoryRecursive(parentDir);
+
+                HANDLE hFile = CreateFileW(targetPath.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+                if (hFile != INVALID_HANDLE_VALUE) {
+                    DWORD bytesRead = 0;
+                    uint64_t totalDownloaded = 0;
+                    char buffer[65536];
+                    success = true;
+                    while (true) {
+                        if (!WinHttpReadData(hRequest, buffer, sizeof(buffer), &bytesRead)) {
+                            success = false;
+                            break;
+                        }
+                        if (bytesRead == 0) break;
+                        DWORD written = 0;
+                        if (!WriteFile(hFile, buffer, bytesRead, &written, nullptr) || written != bytesRead) {
+                            success = false;
+                            break;
+                        }
+                        totalDownloaded += bytesRead;
+                        if (onProgress) {
+                            const float progress = (hasContentLength && contentLength > 0)
+                                ? (static_cast<float>(totalDownloaded) / static_cast<float>(contentLength))
+                                : 0.5f;
+                            onProgress(progress, false, false, userData);
+                        }
+                    }
+                    CloseHandle(hFile);
+
+                    if (hasContentLength && contentLength > 0 && totalDownloaded != contentLength) {
+                        success = false;
+                    }
+                    if (success && (targetPath.ends_with(L".zip") || currentUrl.find(".zip") != std::string::npos)) {
+                        if (totalDownloaded < 22) {
+                            success = false;
+                        } else {
+                            HANDLE hVerify = CreateFileW(targetPath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+                            if (hVerify != INVALID_HANDLE_VALUE) {
+                                char magic[4]{};
+                                DWORD readMagic = 0;
+                                ReadFile(hVerify, magic, 4, &readMagic, nullptr);
+                                CloseHandle(hVerify);
+                                if (readMagic < 4 || magic[0] != 'P' || magic[1] != 'K') success = false;
+                            }
+                        }
+                    }
+                    if (!success) DeleteFileW(targetPath.c_str());
+                }
+            }
+        }
+
+        WinHttpCloseHandle(hRequest);
+        WinHttpCloseHandle(hConnect);
+        WinHttpCloseHandle(hSession);
+        if (redirected) continue;
+        return success;
+    }
+    return false;
+}
+
+bool WinHttpDownloadFile(
+    const std::string& url,
+    const std::wstring& targetPath,
+    PluginHost::DownloadProgressCallback onProgress = nullptr,
+    void* userData = nullptr
+) {
+    if (url.empty()) return false;
+    std::string rawUrl = url;
+    if (rawUrl.rfind("https://ghfast.top/", 0) == 0) rawUrl = rawUrl.substr(19);
+    else if (rawUrl.rfind("https://ghproxy.net/", 0) == 0) rawUrl = rawUrl.substr(20);
+
+    std::vector<std::string> candidates;
+    if (const size_t pos = rawUrl.find("justnullname.github.io/QuickView/"); pos != std::string::npos) {
+        const std::string suffix = rawUrl.substr(pos + 33);
+        candidates.push_back(rawUrl);
+        candidates.push_back("https://raw.githubusercontent.com/justnullname/QuickView/gh-pages/" + suffix);
+        candidates.push_back("https://ghfast.top/https://raw.githubusercontent.com/justnullname/QuickView/gh-pages/" + suffix);
+        candidates.push_back("https://ghproxy.net/https://raw.githubusercontent.com/justnullname/QuickView/gh-pages/" + suffix);
+    } else if (rawUrl.find("raw.githubusercontent.com") != std::string::npos || rawUrl.find("github.com") != std::string::npos) {
+        candidates.push_back(rawUrl);
+        candidates.push_back("https://ghfast.top/" + rawUrl);
+        candidates.push_back("https://ghproxy.net/" + rawUrl);
+    } else {
+        candidates.push_back(rawUrl);
+    }
+
+    for (const auto& cand : candidates) {
+        if (WinHttpDownloadSingleUrl(cand, targetPath, onProgress, userData)) {
+            if (onProgress) onProgress(1.0f, true, true, userData);
+            return true;
+        }
+    }
+    if (onProgress) onProgress(0.0f, true, false, userData);
+    return false;
+}
+
+void FlattenSingleNestedDirectory(const std::wstring& targetDir, const wchar_t* markerFile = nullptr) {
+    WIN32_FIND_DATAW fd{};
+    HANDLE hFind = FindFirstFileW((targetDir + L"\\*").c_str(), &fd);
+    if (hFind == INVALID_HANDLE_VALUE) return;
+
+    std::vector<std::wstring> subDirs;
+    bool hasTopLevelFile = false;
+    do {
+        if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            subDirs.push_back(fd.cFileName);
+        } else {
+            hasTopLevelFile = true;
+        }
+    } while (FindNextFileW(hFind, &fd));
+    FindClose(hFind);
+
+    if (subDirs.size() != 1) return;
+    if (markerFile && IsExistingRegularFile(JoinPath(targetDir, markerFile).c_str())) return;
+    if (!markerFile && hasTopLevelFile) return;
+
+    const std::wstring nestedDir = JoinPath(targetDir, subDirs.front());
+    if (markerFile && !IsExistingRegularFile(JoinPath(nestedDir, markerFile).c_str())) return;
+
+    auto moveTree = [](auto self, const std::wstring& src, const std::wstring& dst) -> void {
+        SystemInfo::EnsureDirectoryRecursive(dst);
+        WIN32_FIND_DATAW subFd{};
+        HANDLE hSub = FindFirstFileW((src + L"\\*").c_str(), &subFd);
+        if (hSub == INVALID_HANDLE_VALUE) return;
+        do {
+            if (wcscmp(subFd.cFileName, L".") == 0 || wcscmp(subFd.cFileName, L"..") == 0) continue;
+            const std::wstring sPath = JoinPath(src, subFd.cFileName);
+            const std::wstring dPath = JoinPath(dst, subFd.cFileName);
+            if (subFd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+                self(self, sPath, dPath);
+                RemoveDirectoryW(sPath.c_str());
+            } else {
+                SetFileAttributesW(dPath.c_str(), FILE_ATTRIBUTE_NORMAL);
+                MoveFileExW(sPath.c_str(), dPath.c_str(), MOVEFILE_REPLACE_EXISTING);
+            }
+        } while (FindNextFileW(hSub, &subFd));
+        FindClose(hSub);
+    };
+
+    moveTree(moveTree, nestedDir, targetDir);
+    RemoveDirectoryW(nestedDir.c_str());
+}
+
+void RemoveDirectoryTreeBestEffort(const std::wstring& dirPath) {
+    if (!IsExistingDirectory(dirPath.c_str())) return;
+    WIN32_FIND_DATAW fd{};
+    HANDLE hFind = FindFirstFileW((dirPath + L"\\*").c_str(), &fd);
+    if (hFind == INVALID_HANDLE_VALUE) return;
+    do {
+        if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
+        const std::wstring itemPath = JoinPath(dirPath, fd.cFileName);
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            RemoveDirectoryTreeBestEffort(itemPath);
+            RemoveDirectoryW(itemPath.c_str());
+        } else {
+            SetFileAttributesW(itemPath.c_str(), FILE_ATTRIBUTE_NORMAL);
+            if (!DeleteFileW(itemPath.c_str())) {
+                // Defer deletion if a loaded binary is still mapped
+                MoveFileExW(itemPath.c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT);
+            }
+        }
+    } while (FindNextFileW(hFind, &fd));
+    FindClose(hFind);
+    RemoveDirectoryW(dirPath.c_str());
+}
+
+std::wstring SanitizePluginIdForPath(std::string_view pluginId) {
+    std::wstring out;
+    out.reserve(pluginId.size());
+    for (char c : pluginId) {
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-') {
+            out.push_back(static_cast<wchar_t>(c));
+        } else {
+            out.push_back(L'_');
+        }
+    }
+    return out.empty() ? std::wstring(L"plugin") : out;
+}
+
+std::vector<std::string> SplitLines(std::string_view text) {
+    std::vector<std::string> lines;
+    size_t start = 0;
+    while (start <= text.size()) {
+        const size_t nl = text.find('\n', start);
+        std::string_view seg = (nl == std::string_view::npos) ? text.substr(start) : text.substr(start, nl - start);
+        while (!seg.empty() && (seg.back() == '\r' || seg.back() == ' ')) seg.remove_suffix(1);
+        while (!seg.empty() && seg.front() == ' ') seg.remove_prefix(1);
+        if (!seg.empty()) lines.emplace_back(seg);
+        if (nl == std::string_view::npos) break;
+        start = nl + 1;
+    }
+    return lines;
+}
+
+bool IsValidSha256Hex(std::string_view hex) noexcept {
+    if (hex.size() != 64) return false;
+    for (char c : hex) {
+        const bool ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+        if (!ok) return false;
+    }
+    return true;
+}
+
+std::wstring ResolveSafeChildPath(const std::wstring& baseDir, std::wstring_view relPath) {
+    if (baseDir.empty() || relPath.empty()) return {};
+    if (relPath.find(L'\0') != std::wstring_view::npos || relPath.find(L':') != std::wstring_view::npos) return {};
+    if (relPath.front() == L'\\' || relPath.front() == L'/') return {};
+
+    std::wstring rel(relPath);
+    std::replace(rel.begin(), rel.end(), L'/', L'\\');
+    if (rel == L".." || rel.starts_with(L"..\\") || rel.find(L"\\..\\") != std::wstring::npos || rel.ends_with(L"\\..")) {
+        return {};
+    }
+
+    auto canonicalize = [](const std::wstring& p) -> std::wstring {
+        wchar_t buf[MAX_PATH * 4]{};
+        const DWORD len = GetFullPathNameW(p.c_str(), static_cast<DWORD>(std::size(buf)), buf, nullptr);
+        if (len == 0 || len >= std::size(buf)) return {};
+        std::wstring out(buf, len);
+        while (out.size() > 3 && out.back() == L'\\') out.pop_back();
+        return out;
+    };
+
+    const std::wstring baseCanon = canonicalize(baseDir);
+    const std::wstring targetCanon = canonicalize(JoinPath(baseDir, rel));
+    if (baseCanon.empty() || targetCanon.empty() || targetCanon.size() <= baseCanon.size() + 1) return {};
+    if (_wcsnicmp(targetCanon.c_str(), baseCanon.c_str(), baseCanon.size()) != 0 ||
+        targetCanon[baseCanon.size()] != L'\\') {
+        return {};
+    }
+    return targetCanon;
+}
+
+std::atomic<uint64_t> g_pkgVersionSeq{0};
+
+} // namespace
+
+// --- Host Service Static Accessors ---
+const char* PluginHost::QvxHost_GetPluginDir(void* ctx) noexcept {
+    if (!ctx) return "";
+    return static_cast<const HostServiceContext*>(ctx)->pluginDirUtf8.c_str();
+}
+
+const char* PluginHost::QvxHost_GetDataDir(void* ctx) noexcept {
+    if (!ctx) return "";
+    return static_cast<const HostServiceContext*>(ctx)->dataDirUtf8.c_str();
+}
+
+void PluginHost::EnsureRegistryScannedLocked() const {
+    if (!m_registryScanned) {
+        m_registry.Scan(m_customRegistryRoot);
+        m_registryScanned = true;
+    }
+}
+
+void PluginHost::RefreshRegistry(const std::wstring& customRoot) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    m_customRegistryRoot = customRoot;
+    m_registry.Scan(m_customRegistryRoot);
+    m_registryScanned = true;
+}
+
+std::vector<PluginRecord> PluginHost::GetInstalledPlugins() const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    EnsureRegistryScannedLocked();
+    return m_registry.GetAll();
+}
+
+bool PluginHost::FindInstalledPlugin(std::string_view pluginId, PluginRecord& outRecord) const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    EnsureRegistryScannedLocked();
+    if (const PluginRecord* r = m_registry.FindById(pluginId)) {
+        outRecord = *r;
+        return true;
+    }
+    return false;
+}
+
+PluginHost::PluginConfigState* PluginHost::FindConfigStateLocked(std::string_view pluginId) {
+    for (auto& st : m_configStates) {
+        if (st.pluginId == pluginId) return &st;
+    }
+    return nullptr;
+}
+
+const PluginHost::PluginConfigState* PluginHost::FindConfigStateLocked(std::string_view pluginId) const {
+    for (const auto& st : m_configStates) {
+        if (st.pluginId == pluginId) return &st;
+    }
+    return nullptr;
+}
+
+PluginHost::PluginConfigState& PluginHost::GetOrCreateConfigStateLocked(std::string_view pluginId) {
+    if (auto* st = FindConfigStateLocked(pluginId)) return *st;
+    m_configStates.push_back(PluginConfigState{ std::string(pluginId), false, {}, {}, {} });
+    return m_configStates.back();
+}
+
+PluginHost::LoadedPlugin* PluginHost::FindLoadedLocked(std::string_view pluginId, bool includeRetired) const {
+    for (const auto& lp : m_loadedPlugins) {
+        if (lp && lp->pluginId == pluginId && (includeRetired || !lp->retired)) {
+            return lp.get();
+        }
+    }
+    return nullptr;
+}
+
+void PluginHost::WaitForAllInFlight() {
+    std::unique_lock<std::mutex> lock(m_inFlightMutex);
+    m_inFlightCv.wait(lock, [this]() { return m_inFlightCount == 0; });
+}
+
+void PluginHost::WaitForAllBgTasks() {
+    std::unique_lock<std::mutex> lock(m_bgMutex);
+    m_bgCv.wait(lock, [this]() { return m_bgTaskCount == 0; });
+}
+
+void PluginHost::ReleasePluginContextLocked(LoadedPlugin& lp) {
+    if (lp.procVTable && lp.procContext) {
+        WaitForAllInFlight();
+        lp.procVTable->destroy_context(lp.procContext);
+        lp.procContext = nullptr;
+        lp.contextPresetId.clear();
+        lp.cachedDevice = nullptr;
+    }
+}
+
+void PluginHost::RetirePluginLocked(std::string_view pluginId) {
+    for (const auto& lp : m_loadedPlugins) {
+        if (!lp || lp->pluginId != pluginId || lp->retired) continue;
+        if (lp->shellExtVTable && lp->shellExtVTable->struct_size >= sizeof(QVX_ShellExt_VTable) &&
+            lp->shellExtVTable->set_inproc_thumb_provider) {
+            lp->shellExtVTable->set_inproc_thumb_provider(nullptr, nullptr);
+        }
+        ReleasePluginContextLocked(*lp);
+        lp->retired = true;
+        // Rename the mapped DLL so updates/uninstalls never fail with sharing violation
+        // and never crash Vulkan/NCNN static destructors via FreeLibrary.
+        if (!lp->entryFullPath.empty() && IsExistingRegularFile(lp->entryFullPath.c_str())) {
+            const std::wstring pendingPath = lp->entryFullPath + L".pending_delete";
+            SetFileAttributesW(lp->entryFullPath.c_str(), FILE_ATTRIBUTE_NORMAL);
+            if (MoveFileExW(lp->entryFullPath.c_str(), pendingPath.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+                MoveFileExW(pendingPath.c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT);
+            } else {
+                MoveFileExW(lp->entryFullPath.c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT);
+            }
+        }
+    }
+}
+
+void PluginHost::SyncConfigToHeaderAndContextLocked(LoadedPlugin& lp) {
+    if (!lp.header) return;
+    const auto* st = FindConfigStateLocked(lp.pluginId);
+    if (!st) return;
+
+    if (lp.header->set_param_number) {
+        for (const auto& kv : st->numParams) {
+            lp.header->set_param_number(kv.first.c_str(), kv.second);
+        }
+    }
+    if (lp.header->set_param_string) {
+        for (const auto& kv : st->strParams) {
+            lp.header->set_param_string(kv.first.c_str(), kv.second.c_str());
+        }
+    }
+}
+
+PluginHost::LoadedPlugin* PluginHost::EnsurePluginLoadedLocked(std::string_view pluginId) {
+    if (m_shuttingDown.load(std::memory_order_acquire) || pluginId.empty()) return nullptr;
+    if (LoadedPlugin* existing = FindLoadedLocked(pluginId, false)) return existing;
+
+    EnsureRegistryScannedLocked();
+    const PluginRecord* rec = m_registry.FindById(pluginId);
+    if (!rec || rec->entryFullPath.empty() || !IsExistingRegularFile(rec->entryFullPath.c_str())) {
+        return nullptr;
+    }
+
+    HMODULE hMod = LoadLibraryExW(rec->entryFullPath.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+    if (!hMod) {
+        hMod = LoadLibraryW(rec->entryFullPath.c_str());
+    }
+    if (!hMod) return nullptr;
+
+    auto pfnInit = reinterpret_cast<QVX_InitFn>(GetProcAddress(hMod, "qvx_init"));
+    auto pfnShutdown = reinterpret_cast<QVX_ShutdownFn>(GetProcAddress(hMod, "qvx_shutdown"));
+    if (!pfnInit) {
+        FreeLibrary(hMod);
+        return nullptr;
+    }
+
+    auto lp = std::make_unique<LoadedPlugin>();
+    lp->pluginId = rec->id;
+    lp->entryFullPath = rec->entryFullPath;
+    lp->hModule = hMod;
+    lp->serviceCtx = std::make_unique<HostServiceContext>();
+    lp->serviceCtx->pluginDirUtf8 = NormalizeUtf8Path(rec->pluginDir);
+    lp->serviceCtx->dataDirUtf8 = NormalizeUtf8Path(GetWritablePluginDataDirectory(rec->id));
+    if (!lp->serviceCtx->dataDirUtf8.empty()) {
+        SystemInfo::EnsureDirectoryRecursive(Utf8ToWide(lp->serviceCtx->dataDirUtf8));
+    }
+
+    lp->services.struct_size = sizeof(QVX_HostServices);
+    lp->services.abi_version = QVX_ABI_VERSION;
+    lp->services.get_plugin_dir = &PluginHost::QvxHost_GetPluginDir;
+    lp->services.get_data_dir = &PluginHost::QvxHost_GetDataDir;
+    lp->services.alloc_buffer = &HostSvc_AllocBuffer;
+    lp->services.free_buffer = &HostSvc_FreeBuffer;
+    lp->services.log = &HostSvc_Log;
+    lp->services.decode_thumbnail = nullptr;
+    lp->services.host_ctx = lp->serviceCtx.get();
+
+    const QVX_PluginHeader* header = nullptr;
+    const bool initOk = pfnInit(&lp->services, &header);
+    const bool validHeader = initOk && header &&
+        header->struct_size >= sizeof(QVX_PluginHeader) &&
+        ((header->abi_version >> 16) == (QVX_ABI_VERSION >> 16)) &&
+        header->get_interface;
+    if (!validHeader) {
+        if (initOk && pfnShutdown) pfnShutdown();
+        FreeLibrary(hMod);
+        return nullptr;
+    }
+
+    lp->header = header;
+    if (header->supported_interfaces & (1u << QVX_IFACE_IMAGE_PROCESSOR)) {
+        const auto* procVt = static_cast<const QVX_Processor_VTable*>(
+            header->get_interface(QVX_IFACE_IMAGE_PROCESSOR, QVX_PROCESSOR_INTERFACE_VERSION));
+        if (procVt && procVt->struct_size >= sizeof(QVX_Processor_VTable)) {
+            lp->procVTable = procVt;
+        }
+    }
+    if (header->supported_interfaces & (1u << QVX_IFACE_SHELL_EXT)) {
+        lp->shellExtVTable = static_cast<const QVX_ShellExt_VTable*>(
+            header->get_interface(QVX_IFACE_SHELL_EXT, QVX_SHELL_EXT_INTERFACE_VERSION));
+        if (lp->shellExtVTable && lp->shellExtVTable->struct_size >= sizeof(QVX_ShellExt_VTable) &&
+            lp->shellExtVTable->set_inproc_thumb_provider && m_inProcThumbLookup) {
+            lp->shellExtVTable->set_inproc_thumb_provider(m_inProcThumbLookup, m_inProcThumbUserData);
+        }
+    }
+    if (header->set_language && !m_currentLanguage.empty()) {
+        header->set_language(m_currentLanguage.c_str());
+    }
+    SyncConfigToHeaderAndContextLocked(*lp);
+
+    LoadedPlugin* rawPtr = lp.get();
+    m_loadedPlugins.push_back(std::move(lp));
+    return rawPtr;
+}
+
+bool PluginHost::IsPluginEnabled(std::string_view pluginId) const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (const auto* st = FindConfigStateLocked(pluginId)) return st->enabled;
+    return false;
+}
+
+void PluginHost::SetPluginEnabled(const std::string& pluginId, bool enable) {
+    if (pluginId.empty()) return;
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    auto& st = GetOrCreateConfigStateLocked(pluginId);
+    st.enabled = enable;
+    if (!enable) {
+        if (LoadedPlugin* lp = FindLoadedLocked(pluginId)) {
+            if (!SystemInfo::IsPackagedApp() && lp->shellExtVTable && lp->shellExtVTable->unregister_shell) {
+                lp->shellExtVTable->unregister_shell();
+            }
+            ReleasePluginContextLocked(*lp);
+        } else if (!SystemInfo::IsPackagedApp()) {
+            EnsureRegistryScannedLocked();
+            if (const PluginRecord* rec = m_registry.FindById(pluginId)) {
+                if (rec->HasInterface(QVX_IFACE_SHELL_EXT)) {
+                    if (LoadedPlugin* loaded = EnsurePluginLoadedLocked(pluginId)) {
+                        if (loaded->shellExtVTable && loaded->shellExtVTable->unregister_shell) {
+                            loaded->shellExtVTable->unregister_shell();
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        EnsureRegistryScannedLocked();
+        if (const PluginRecord* rec = m_registry.FindById(pluginId)) {
+            if (rec->processorKind == QVX_PROC_KIND_UPSCALER) {
+                m_activeUpscalerPluginId = pluginId;
+            }
+            if (!SystemInfo::IsPackagedApp() && rec->HasInterface(QVX_IFACE_SHELL_EXT)) {
+                if (LoadedPlugin* loaded = EnsurePluginLoadedLocked(pluginId)) {
+                    if (loaded->shellExtVTable && loaded->shellExtVTable->register_shell) {
+                        const std::string hostExeUtf8 = WideToUtf8(GetCurrentExeFullPath());
+                        loaded->shellExtVTable->register_shell(hostExeUtf8.c_str());
+                    }
+                }
+            }
+        }
+    }
+}
+
+std::string PluginHost::GetPluginActivePreset(std::string_view pluginId) const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (const auto* st = FindConfigStateLocked(pluginId)) return st->activePresetId;
+    return {};
+}
+
+void PluginHost::SetPluginActivePreset(const std::string& pluginId, const std::string& presetId) {
+    if (pluginId.empty()) return;
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    auto& st = GetOrCreateConfigStateLocked(pluginId);
+    if (st.activePresetId != presetId) {
+        st.activePresetId = presetId;
+        if (LoadedPlugin* lp = FindLoadedLocked(pluginId)) {
+            ReleasePluginContextLocked(*lp);
+        }
+    }
+}
+
+std::vector<PluginAssetEntry> PluginHost::CollectAssetsLocked(const PluginRecord& rec, LoadedPlugin* lp) {
+    std::vector<PluginAssetEntry> out;
+    if (lp && lp->header && lp->header->get_asset_count && lp->header->get_asset_desc) {
+        const uint32_t count = lp->header->get_asset_count();
+        out.reserve(count);
+        for (uint32_t i = 0; i < count; ++i) {
+            const QVX_AssetDesc* d = lp->header->get_asset_desc(i);
+            if (!d || d->struct_size < sizeof(QVX_AssetDesc) || !d->asset_id) continue;
+            PluginAssetEntry e;
+            e.assetId = d->asset_id;
+            e.displayName = d->display_name ? d->display_name : d->asset_id;
+            e.description = d->description ? d->description : "";
+            e.extractSubdir = d->extract_subdir ? d->extract_subdir : "";
+            e.downloadUrl = d->download_url ? d->download_url : "";
+            e.sha256 = d->sha256 ? d->sha256 : "";
+            e.fileSizeBytes = d->file_size_bytes;
+            e.isInstalled = d->is_installed;
+            e.isRequired = d->is_required;
+            out.push_back(std::move(e));
+        }
+        return out;
+    }
+
+    out.reserve(rec.manifestAssets.size());
+    for (const auto& ma : rec.manifestAssets) {
+        PluginAssetEntry e;
+        e.assetId = ma.id;
+        e.displayName = ma.displayName.empty() ? ma.id : ma.displayName;
+        e.extractSubdir = ma.extractSubdir;
+        e.downloadUrl = ma.downloadUrl;
+        e.sha256 = ma.sha256;
+        e.fileSizeBytes = ma.sizeBytes;
+        e.isRequired = ma.required;
+        out.push_back(std::move(e));
+    }
+    return out;
+}
+
+std::vector<PluginAssetEntry> PluginHost::GetPluginAssets(const std::string& pluginId) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    EnsureRegistryScannedLocked();
+    const PluginRecord* rec = m_registry.FindById(pluginId);
+    if (!rec) return {};
+    LoadedPlugin* lp = EnsurePluginLoadedLocked(pluginId);
+    return CollectAssetsLocked(*rec, lp);
+}
+
+std::vector<PluginPresetEntry> PluginHost::GetPluginPresets(const std::string& pluginId) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    EnsureRegistryScannedLocked();
+    const PluginRecord* rec = m_registry.FindById(pluginId);
+    if (!rec) return {};
+    LoadedPlugin* lp = EnsurePluginLoadedLocked(pluginId);
+    if (!lp || !lp->procVTable || !lp->procVTable->get_preset_count || !lp->procVTable->get_preset_info) {
+        return {};
+    }
+
+    const std::vector<PluginAssetEntry> assets = CollectAssetsLocked(*rec, lp);
+    const uint32_t count = lp->procVTable->get_preset_count();
+    std::vector<PluginPresetEntry> result;
+    result.reserve(count);
+
+    for (uint32_t i = 0; i < count; ++i) {
+        const QVX_ProcPresetInfo* info = lp->procVTable->get_preset_info(i);
+        if (!info || info->struct_size < sizeof(QVX_ProcPresetInfo) || !info->preset_id) continue;
+
+        PluginPresetEntry entry;
+        entry.presetId = info->preset_id;
+        entry.displayName = info->display_name ? info->display_name : info->preset_id;
+        entry.description = info->description ? info->description : "";
+        entry.requiredAssetId = info->required_asset_id ? info->required_asset_id : "";
+        entry.scale = (info->scale_factor > 0.0f) ? info->scale_factor : 1.0f;
+        entry.isHdrCapable = info->is_hdr_capable;
+        entry.outputHasAlpha = info->output_has_alpha;
+        entry.defaultCompareMode = info->default_compare_mode;
+        entry.isDynamicAuto = info->is_dynamic_auto;
+        entry.preferredTileSize = info->preferred_tile_size;
+        entry.defaultDebounceMs = info->default_debounce_ms > 0 ? info->default_debounce_ms : 150;
+        entry.maxInputDim = info->max_input_dim;
+        entry.maxInputPixels = info->max_input_pixels;
+        entry.isInstalled = entry.requiredAssetId.empty();
+
+        if (!entry.requiredAssetId.empty()) {
+            for (const auto& a : assets) {
+                if (a.assetId == entry.requiredAssetId) {
+                    entry.isInstalled = a.isInstalled;
+                    entry.assetSizeBytes = a.fileSizeBytes;
+                    entry.assetDownloadUrl = a.downloadUrl;
+                    entry.assetSha256 = a.sha256;
+                    break;
+                }
+            }
+        }
+        result.push_back(std::move(entry));
+    }
+    return result;
+}
+
+std::vector<PluginParamEntry> PluginHost::GetPluginParams(const std::string& pluginId) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    LoadedPlugin* lp = EnsurePluginLoadedLocked(pluginId);
+    if (!lp || !lp->header || !lp->header->get_param_count || !lp->header->get_param_desc) {
+        return {};
+    }
+
+    const PluginConfigState* st = FindConfigStateLocked(pluginId);
+    const uint32_t count = lp->header->get_param_count();
+    std::vector<PluginParamEntry> result;
+    result.reserve(count);
+
+    for (uint32_t i = 0; i < count; ++i) {
+        const QVX_ParamDesc* pDesc = lp->header->get_param_desc(i);
+        if (!pDesc || pDesc->struct_size < sizeof(QVX_ParamDesc) || !pDesc->id) continue;
+
+        PluginParamEntry entry;
+        entry.id = pDesc->id;
+        entry.label = pDesc->label ? pDesc->label : "";
+        entry.tooltip = pDesc->tooltip ? pDesc->tooltip : "";
+        entry.group = pDesc->group ? pDesc->group : "";
+        entry.visibleForPreset = pDesc->visible_for_preset ? pDesc->visible_for_preset : "";
+        entry.type = pDesc->type;
+
+        float numVal = 0.0f;
+        switch (pDesc->type) {
+            case QVX_PARAM_TYPE_BOOL:
+                entry.defaultBool = pDesc->bool_param.default_val;
+                numVal = entry.defaultBool ? 1.0f : 0.0f;
+                break;
+            case QVX_PARAM_TYPE_INT:
+                entry.intMin = pDesc->int_param.min_val;
+                entry.intMax = pDesc->int_param.max_val;
+                entry.intStep = pDesc->int_param.step;
+                entry.intDefault = pDesc->int_param.default_val;
+                entry.formatStr = pDesc->int_param.format_str ? pDesc->int_param.format_str : "";
+                numVal = static_cast<float>(entry.intDefault);
+                break;
+            case QVX_PARAM_TYPE_FLOAT:
+                entry.floatMin = pDesc->float_param.min_val;
+                entry.floatMax = pDesc->float_param.max_val;
+                entry.floatStep = pDesc->float_param.step;
+                entry.floatDefault = pDesc->float_param.default_val;
+                entry.formatStr = pDesc->float_param.format_str ? pDesc->float_param.format_str : "";
+                numVal = entry.floatDefault;
+                break;
+            case QVX_PARAM_TYPE_ENUM:
+                entry.enumDefault = pDesc->enum_param.default_val;
+                numVal = static_cast<float>(entry.enumDefault);
+                if (pDesc->enum_param.options && pDesc->enum_param.option_count > 0) {
+                    entry.enumOptions.reserve(pDesc->enum_param.option_count);
+                    for (uint32_t j = 0; j < pDesc->enum_param.option_count; ++j) {
+                        const auto& opt = pDesc->enum_param.options[j];
+                        if (opt.label) entry.enumOptions.push_back({ opt.value, opt.label });
+                    }
+                }
+                break;
+            case QVX_PARAM_TYPE_STRING:
+                entry.stringDefault = pDesc->string_param.default_val ? pDesc->string_param.default_val : "";
+                entry.stringMaxLen = pDesc->string_param.max_len > 0 ? pDesc->string_param.max_len : 256;
+                entry.currentString = entry.stringDefault;
+                break;
+        }
+
+        if (st) {
+            if (pDesc->type == QVX_PARAM_TYPE_STRING) {
+                for (const auto& kv : st->strParams) {
+                    if (kv.first == entry.id) { entry.currentString = kv.second; break; }
+                }
+            } else {
+                for (const auto& kv : st->numParams) {
+                    if (kv.first == entry.id) { numVal = kv.second; break; }
+                }
+            }
+        }
+        entry.currentNumber = numVal;
+        result.push_back(std::move(entry));
+    }
+    return result;
+}
+
+float PluginHost::GetPluginParamNumber(std::string_view pluginId, std::string_view paramId, float defaultVal) const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (const auto* st = FindConfigStateLocked(pluginId)) {
+        for (const auto& kv : st->numParams) {
+            if (kv.first == paramId) return kv.second;
+        }
+    }
+    return defaultVal;
+}
+
+void PluginHost::SetPluginParamNumber(const std::string& pluginId, const std::string& paramId, float val) {
+    if (pluginId.empty() || paramId.empty()) return;
+    int32_t (*pfnRegisterShell)(const char*) = nullptr;
+    std::string hostExeUtf8;
+    {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        auto& st = GetOrCreateConfigStateLocked(pluginId);
+        bool updated = false;
+        for (auto& kv : st.numParams) {
+            if (kv.first == paramId) {
+                kv.second = val;
+                updated = true;
+                break;
+            }
+        }
+        if (!updated) st.numParams.emplace_back(paramId, val);
+
+        if (LoadedPlugin* lp = FindLoadedLocked(pluginId)) {
+            if (lp->header && lp->header->set_param_number) {
+                lp->header->set_param_number(paramId.c_str(), val);
+            }
+            if (!SystemInfo::IsPackagedApp() && st.enabled &&
+                lp->shellExtVTable && lp->shellExtVTable->struct_size >= sizeof(QVX_ShellExt_VTable) &&
+                lp->shellExtVTable->register_shell &&
+                (paramId.starts_with("grp_") || paramId == "respect_native_wic")) {
+                pfnRegisterShell = lp->shellExtVTable->register_shell;
+                hostExeUtf8 = WideToUtf8(GetCurrentExeFullPath());
+            }
+        }
+    }
+    if (pfnRegisterShell) {
+        pfnRegisterShell(hostExeUtf8.c_str());
+    }
+}
+
+std::string PluginHost::GetPluginParamString(std::string_view pluginId, std::string_view paramId, std::string_view defaultVal) const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (const auto* st = FindConfigStateLocked(pluginId)) {
+        for (const auto& kv : st->strParams) {
+            if (kv.first == paramId) return kv.second;
+        }
+    }
+    return std::string(defaultVal);
+}
+
+void PluginHost::SetPluginParamString(const std::string& pluginId, const std::string& paramId, const std::string& val) {
+    if (pluginId.empty() || paramId.empty()) return;
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    auto& st = GetOrCreateConfigStateLocked(pluginId);
+    bool updated = false;
+    for (auto& kv : st.strParams) {
+        if (kv.first == paramId) {
+            kv.second = val;
+            updated = true;
+            break;
+        }
+    }
+    if (!updated) st.strParams.emplace_back(paramId, val);
+
+    if (LoadedPlugin* lp = FindLoadedLocked(pluginId)) {
+        if (lp->header && lp->header->set_param_string) {
+            lp->header->set_param_string(paramId.c_str(), val.c_str());
+        }
+    }
+}
+
+void PluginHost::SetLanguage(const std::string& langCode) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    m_currentLanguage = langCode;
+    for (const auto& lp : m_loadedPlugins) {
+        if (lp && !lp->retired && lp->header && lp->header->set_language) {
+            lp->header->set_language(m_currentLanguage.c_str());
+        }
+    }
+}
+
+std::string PluginHost::GetLanguage() const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    return m_currentLanguage;
+}
+
+std::wstring PluginHost::GetWritablePluginsDirectory() const {
+    if (SystemInfo::IsPackagedApp()) return {};
+    const std::wstring exeDir = GetExecutableDirectory();
+    if (!exeDir.empty()) {
+        const std::wstring appPlugins = JoinPath(exeDir, L"plugins");
+        if (IsDirectoryWritable(appPlugins)) return appPlugins;
+    }
+    const std::wstring localRoot = GetLocalAppDataRoot();
+    if (!localRoot.empty()) {
+        const std::wstring localPlugins = JoinPath(JoinPath(localRoot, L"QuickView"), L"plugins");
+        SystemInfo::EnsureDirectoryRecursive(localPlugins);
+        return localPlugins;
+    }
+    return {};
+}
+
+std::wstring PluginHost::GetWritablePluginDataDirectory(std::string_view pluginId) const {
+    const std::wstring safeId = SanitizePluginIdForPath(pluginId);
+    if (!SystemInfo::IsPackagedApp()) {
+        const std::wstring exeDir = GetExecutableDirectory();
+        if (!exeDir.empty()) {
+            const std::wstring portableIni = JoinPath(exeDir, L"QuickView.ini");
+            const std::wstring portableData = JoinPath(exeDir, L"plugins_data");
+            const bool portableMode =
+                (GetFileAttributesW(portableIni.c_str()) != INVALID_FILE_ATTRIBUTES) ||
+                (GetFileAttributesW(portableData.c_str()) != INVALID_FILE_ATTRIBUTES);
+            if (portableMode && IsDirectoryWritable(JoinPath(exeDir, L"plugins"))) {
+                return JoinPath(portableData, safeId);
+            }
+        }
+    }
+    const std::wstring localRoot = GetLocalAppDataRoot();
+    if (localRoot.empty()) return {};
+    return JoinPath(JoinPath(JoinPath(localRoot, L"QuickView"), L"plugins_data"), safeId);
+}
+
+void PluginHost::OpenPluginDataDirectory(std::string_view pluginId) const {
+    auto hasAnyEntry = [](const std::wstring& dir) -> bool {
+        if (dir.empty()) return false;
+        const std::wstring pattern = JoinPath(dir, L"*");
+        WIN32_FIND_DATAW fd{};
+        HANDLE hFind = FindFirstFileW(pattern.c_str(), &fd);
+        if (hFind == INVALID_HANDLE_VALUE) return false;
+        bool found = false;
+        do {
+            if (wcscmp(fd.cFileName, L".") != 0 && wcscmp(fd.cFileName, L"..") != 0) {
+                found = true;
+                break;
+            }
+        } while (FindNextFileW(hFind, &fd));
+        FindClose(hFind);
+        return found;
+    };
+
+    std::wstring pluginDir;
+    bool isImageProcessor = false;
+    {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        EnsureRegistryScannedLocked();
+        if (const PluginRecord* rec = m_registry.FindById(pluginId)) {
+            pluginDir = rec->pluginDir;
+            isImageProcessor = rec->HasInterface(QVX_IFACE_IMAGE_PROCESSOR);
+        }
+    }
+
+    const std::wstring dataDir = GetWritablePluginDataDirectory(pluginId);
+    if (!dataDir.empty() && (isImageProcessor || hasAnyEntry(dataDir))) {
+        SystemInfo::EnsureDirectoryRecursive(dataDir);
+        ShellExecuteW(nullptr, L"open", dataDir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        return;
+    }
+    if (!pluginDir.empty() && GetFileAttributesW(pluginDir.c_str()) != INVALID_FILE_ATTRIBUTES) {
+        ShellExecuteW(nullptr, L"open", pluginDir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        return;
+    }
+    if (!dataDir.empty()) {
+        SystemInfo::EnsureDirectoryRecursive(dataDir);
+        ShellExecuteW(nullptr, L"open", dataDir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    }
+}
+
+std::string PluginHost::CalculateSHA256(const std::wstring& filePath) {
+    HCRYPTPROV hProv = 0;
+    HCRYPTHASH hHash = 0;
+    std::string hashStr;
+    if (!CryptAcquireContextW(&hProv, nullptr, nullptr, PROV_RSA_AES, CRYPT_VERIFYCONTEXT)) return {};
+    if (!CryptCreateHash(hProv, CALG_SHA_256, 0, 0, &hHash)) {
+        CryptReleaseContext(hProv, 0);
+        return {};
+    }
+    HANDLE hFile = CreateFileW(filePath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+    if (hFile != INVALID_HANDLE_VALUE) {
+        std::vector<BYTE> buffer(65536);
+        DWORD bytesRead = 0;
+        while (ReadFile(hFile, buffer.data(), static_cast<DWORD>(buffer.size()), &bytesRead, nullptr) && bytesRead > 0) {
+            if (!CryptHashData(hHash, buffer.data(), bytesRead, 0)) break;
+        }
+        CloseHandle(hFile);
+
+        BYTE rgbHash[32]{};
+        DWORD cbHash = 32;
+        if (CryptGetHashParam(hHash, HP_HASHVAL, rgbHash, &cbHash, 0)) {
+            char hexBuf[65]{};
+            for (DWORD i = 0; i < cbHash; ++i) {
+                sprintf_s(hexBuf + i * 2, 3, "%02x", rgbHash[i]);
+            }
+            hashStr = hexBuf;
+        }
+    }
+    CryptDestroyHash(hHash);
+    CryptReleaseContext(hProv, 0);
+    return hashStr;
+}
+
+bool PluginHost::DownloadPluginPackage(
+    const std::string& pluginId,
+    const std::wstring& fileName,
+    const std::string& downloadUrl,
+    const std::string& expectedSha256,
+    DownloadProgressCallback onProgress,
+    void* userData
+) {
+    if (SystemInfo::IsPackagedApp() || m_shuttingDown.load(std::memory_order_acquire) ||
+        pluginId.empty() || downloadUrl.empty()) {
+        if (onProgress) onProgress(0.0f, true, false, userData);
+        return false;
+    }
+
+#ifndef QUICKVIEW_ALLOW_UNSIGNED_PLUGIN_DEV
+    if (!IsValidSha256Hex(expectedSha256)) {
+        if (onProgress) onProgress(0.0f, true, false, userData);
+        return false;
+    }
+#else
+    if (!expectedSha256.empty() && !IsValidSha256Hex(expectedSha256)) {
+        if (onProgress) onProgress(0.0f, true, false, userData);
+        return false;
+    }
+#endif
+
+    const std::string dlKey = "pkg:" + pluginId;
+    {
+        std::lock_guard<std::mutex> dlLock(m_downloadMutex);
+        if (std::find(m_activeDownloads.begin(), m_activeDownloads.end(), dlKey) != m_activeDownloads.end()) {
+            if (onProgress) onProgress(0.0f, true, false, userData);
+            return false;
+        }
+        m_activeDownloads.push_back(dlKey);
+    }
+    struct ActiveDlGuard {
+        std::mutex& mtx;
+        std::vector<std::string>& list;
+        const std::string& key;
+        ~ActiveDlGuard() {
+            std::lock_guard<std::mutex> l(mtx);
+            std::erase(list, key);
+        }
+    } dlGuard{ m_downloadMutex, m_activeDownloads, dlKey };
+
+    const std::wstring pluginsRoot = GetWritablePluginsDirectory();
+    if (pluginsRoot.empty() || !SystemInfo::EnsureDirectoryRecursive(pluginsRoot)) {
+        if (onProgress) onProgress(0.0f, true, false, userData);
+        return false;
+    }
+
+    const std::wstring safeId = SanitizePluginIdForPath(pluginId);
+    const std::wstring pkgRootDir = ResolveSafeChildPath(pluginsRoot, safeId);
+    if (pkgRootDir.empty() || !SystemInfo::EnsureDirectoryRecursive(pkgRootDir)) {
+        if (onProgress) onProgress(0.0f, true, false, userData);
+        return false;
+    }
+
+    struct StageCtx { DownloadProgressCallback cb; void* ud; } stageCtx{ onProgress, userData };
+    auto stageCb = [](float p, bool finished, bool, void* u) {
+        auto* c = static_cast<StageCtx*>(u);
+        if (c && c->cb && !finished) c->cb(p * 0.9f, false, false, c->ud);
+    };
+
+    const bool isZip = downloadUrl.find(".zip") != std::string::npos || fileName.ends_with(L".zip");
+    bool ok = false;
+
+    if (isZip) {
+        if (!fileName.empty() && ResolveSafeChildPath(pkgRootDir, fileName).empty()) {
+            if (onProgress) onProgress(0.0f, true, false, userData);
+            return false;
+        }
+        const uint64_t seq = g_pkgVersionSeq.fetch_add(1, std::memory_order_relaxed);
+        const std::wstring verDirName = L"pkg_" + std::to_wstring(GetTickCount64()) + L"_" + std::to_wstring(seq);
+        const std::wstring destDir = JoinPath(pkgRootDir, verDirName);
+        const std::wstring tempZip = JoinPath(pluginsRoot, L"temp_pkg_" + safeId + L"_" + std::to_wstring(seq) + L".zip");
+
+        if (WinHttpDownloadFile(downloadUrl, tempZip, onProgress ? stageCb : nullptr, onProgress ? &stageCtx : nullptr)) {
+            if (!expectedSha256.empty() && _stricmp(CalculateSHA256(tempZip).c_str(), expectedSha256.c_str()) != 0) {
+                DeleteFileW(tempZip.c_str());
+                if (onProgress) onProgress(0.0f, true, false, userData);
+                return false;
+            }
+            if (onProgress) onProgress(0.95f, false, false, userData);
+
+            SystemInfo::EnsureDirectoryRecursive(destDir);
+            ok = IArchive::ExtractZipToDirectory(tempZip, destDir);
+            DeleteFileW(tempZip.c_str());
+            if (ok) {
+                FlattenSingleNestedDirectory(destDir, L"manifest.json");
+                {
+                    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+                    RetirePluginLocked(pluginId);
+                }
+                // Best-effort cleanup of older sibling installs while keeping the new version dir intact.
+                WIN32_FIND_DATAW fd{};
+                HANDLE hFind = FindFirstFileW((pkgRootDir + L"\\*").c_str(), &fd);
+                if (hFind != INVALID_HANDLE_VALUE) {
+                    do {
+                        if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
+                        if (_wcsicmp(fd.cFileName, verDirName.c_str()) == 0) continue;
+                        const std::wstring oldPath = JoinPath(pkgRootDir, fd.cFileName);
+                        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+                            RemoveDirectoryTreeBestEffort(oldPath);
+                        } else {
+                            SetFileAttributesW(oldPath.c_str(), FILE_ATTRIBUTE_NORMAL);
+                            if (!DeleteFileW(oldPath.c_str())) {
+                                MoveFileExW(oldPath.c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT);
+                            }
+                        }
+                    } while (FindNextFileW(hFind, &fd));
+                    FindClose(hFind);
+                }
+            } else {
+                RemoveDirectoryTreeBestEffort(destDir);
+            }
+        }
+    } else {
+        const std::wstring destFile = ResolveSafeChildPath(pkgRootDir, fileName);
+        if (destFile.empty()) {
+            if (onProgress) onProgress(0.0f, true, false, userData);
+            return false;
+        }
+        const std::wstring tempFile = destFile + L".tmp";
+        if (WinHttpDownloadFile(downloadUrl, tempFile, onProgress ? stageCb : nullptr, onProgress ? &stageCtx : nullptr)) {
+            if (!expectedSha256.empty() && _stricmp(CalculateSHA256(tempFile).c_str(), expectedSha256.c_str()) != 0) {
+                DeleteFileW(tempFile.c_str());
+                if (onProgress) onProgress(0.0f, true, false, userData);
+                return false;
+            }
+            {
+                std::lock_guard<std::recursive_mutex> lock(m_mutex);
+                RetirePluginLocked(pluginId);
+            }
+            ok = (MoveFileExW(tempFile.c_str(), destFile.c_str(), MOVEFILE_REPLACE_EXISTING) != FALSE);
+        }
+    }
+
+    if (ok) {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        m_registry.Scan(m_customRegistryRoot);
+        m_registryScanned = true;
+    }
+    if (onProgress) onProgress(ok ? 1.0f : 0.0f, true, ok, userData);
+    return ok;
+}
+
+bool PluginHost::DownloadPluginAsset(
+    const std::string& pluginId,
+    const std::string& assetId,
+    DownloadProgressCallback onProgress,
+    void* userData
+) {
+    if (m_shuttingDown.load(std::memory_order_acquire) || pluginId.empty() || assetId.empty()) {
+        if (onProgress) onProgress(0.0f, true, false, userData);
+        return false;
+    }
+
+    const std::string dlKey = "asset:" + pluginId + ":" + assetId;
+    {
+        std::lock_guard<std::mutex> dlLock(m_downloadMutex);
+        if (std::find(m_activeDownloads.begin(), m_activeDownloads.end(), dlKey) != m_activeDownloads.end()) {
+            if (onProgress) onProgress(0.0f, true, false, userData);
+            return false;
+        }
+        m_activeDownloads.push_back(dlKey);
+    }
+    struct ActiveDlGuard {
+        std::mutex& mtx;
+        std::vector<std::string>& list;
+        const std::string& key;
+        ~ActiveDlGuard() {
+            std::lock_guard<std::mutex> l(mtx);
+            std::erase(list, key);
+        }
+    } dlGuard{ m_downloadMutex, m_activeDownloads, dlKey };
+
+    PluginAssetEntry targetAsset;
+    bool found = false;
+    {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        const auto assets = GetPluginAssets(pluginId);
+        for (const auto& a : assets) {
+            if (a.assetId == assetId) {
+                targetAsset = a;
+                found = true;
+                break;
+            }
+        }
+        if (found) {
+            if (LoadedPlugin* lp = FindLoadedLocked(pluginId)) {
+                ReleasePluginContextLocked(*lp);
+            }
+        }
+    }
+
+    if (!found || targetAsset.downloadUrl.empty()) {
+        if (onProgress) onProgress(0.0f, true, false, userData);
+        return false;
+    }
+
+    const std::wstring baseDataDir = GetWritablePluginDataDirectory(pluginId);
+    if (baseDataDir.empty()) {
+        if (onProgress) onProgress(0.0f, true, false, userData);
+        return false;
+    }
+    std::wstring subRel = Utf8ToWide(targetAsset.extractSubdir);
+    std::replace(subRel.begin(), subRel.end(), L'/', L'\\');
+    const std::wstring extractDir = subRel.empty() ? baseDataDir : ResolveSafeChildPath(baseDataDir, subRel);
+    if (extractDir.empty() || !SystemInfo::EnsureDirectoryRecursive(extractDir)) {
+        if (onProgress) onProgress(0.0f, true, false, userData);
+        return false;
+    }
+
+    const std::vector<std::string> urls = SplitLines(targetAsset.downloadUrl);
+    if (urls.empty()) {
+        if (onProgress) onProgress(0.0f, true, false, userData);
+        return false;
+    }
+    const std::vector<std::string> shaLines = SplitLines(targetAsset.sha256);
+    if (!shaLines.empty()) {
+        if (shaLines.size() != urls.size()) {
+            if (onProgress) onProgress(0.0f, true, false, userData);
+            return false;
+        }
+        for (const auto& s : shaLines) {
+            if (!IsValidSha256Hex(s)) {
+                if (onProgress) onProgress(0.0f, true, false, userData);
+                return false;
+            }
+        }
+    }
+
+    bool allOk = true;
+    for (size_t i = 0; i < urls.size(); ++i) {
+        const std::wstring tempZip = JoinPath(extractDir, L".tmp_asset_" + std::to_wstring(i) + L".zip");
+        struct SubCtx {
+            DownloadProgressCallback cb;
+            void* ud;
+            size_t idx;
+            size_t total;
+        } subCtx{ onProgress, userData, i, urls.size() };
+
+        auto subProg = [](float p, bool finished, bool, void* u) {
+            auto* s = static_cast<SubCtx*>(u);
+            if (s && s->cb && !finished) {
+                const float overall = (static_cast<float>(s->idx) + p) / static_cast<float>(s->total) * 0.9f;
+                s->cb(overall, false, false, s->ud);
+            }
+        };
+
+        if (!WinHttpDownloadFile(urls[i], tempZip, onProgress ? subProg : nullptr, onProgress ? &subCtx : nullptr)) {
+            allOk = false;
+            break;
+        }
+        if (!shaLines.empty() &&
+            _stricmp(CalculateSHA256(tempZip).c_str(), shaLines[i].c_str()) != 0) {
+            DeleteFileW(tempZip.c_str());
+            allOk = false;
+            break;
+        }
+        const bool extOk = IArchive::ExtractZipToDirectory(tempZip, extractDir);
+        DeleteFileW(tempZip.c_str());
+        if (!extOk) {
+            allOk = false;
+            break;
+        }
+        FlattenSingleNestedDirectory(extractDir);
+    }
+
+    if (allOk) {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        if (LoadedPlugin* lp = FindLoadedLocked(pluginId)) {
+            if (lp->header && lp->header->notify_assets_changed) {
+                lp->header->notify_assets_changed();
+            }
+        }
+    }
+
+    if (onProgress) onProgress(allOk ? 1.0f : 0.0f, true, allOk, userData);
+    return allOk;
+}
+
+bool PluginHost::UninstallPlugin(const std::string& pluginId) {
+    if (SystemInfo::IsPackagedApp() || pluginId.empty()) return false;
+
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    EnsureRegistryScannedLocked();
+    const PluginRecord* rec = m_registry.FindById(pluginId);
+    if (!rec || rec->sourceKind == PluginSourceKind::MsixBundled) return false;
+
+    auto canonicalizeDir = [](const std::wstring& p) -> std::wstring {
+        if (p.empty()) return {};
+        wchar_t buf[MAX_PATH * 4]{};
+        const DWORD len = GetFullPathNameW(p.c_str(), static_cast<DWORD>(std::size(buf)), buf, nullptr);
+        if (len == 0 || len >= std::size(buf)) return {};
+        std::wstring out(buf, len);
+        while (out.size() > 3 && out.back() == L'\\') out.pop_back();
+        return out;
+    };
+    auto isStrictDescendant = [](const std::wstring& child, const std::wstring& parent) -> bool {
+        if (child.empty() || parent.empty() || child.size() <= parent.size() + 1) return false;
+        return _wcsnicmp(child.c_str(), parent.c_str(), parent.size()) == 0 && child[parent.size()] == L'\\';
+    };
+
+    const std::wstring pluginDir = canonicalizeDir(rec->pluginDir);
+    if (pluginDir.empty()) return false;
+
+    const std::wstring writableRoot = canonicalizeDir(GetWritablePluginsDirectory());
+    const std::wstring customRoot = canonicalizeDir(m_customRegistryRoot);
+    const std::wstring exePlugins = canonicalizeDir(JoinPath(GetExecutableDirectory(), L"plugins"));
+    const std::wstring localAppPlugins = canonicalizeDir(JoinPath(JoinPath(GetLocalAppDataRoot(), L"QuickView"), L"plugins"));
+
+    const bool insideKnownRoot =
+        isStrictDescendant(pluginDir, writableRoot) ||
+        isStrictDescendant(pluginDir, customRoot) ||
+        isStrictDescendant(pluginDir, exePlugins) ||
+        isStrictDescendant(pluginDir, localAppPlugins);
+    if (!insideKnownRoot) return false;
+
+    for (const auto& other : m_registry.GetAll()) {
+        if (other.id == pluginId) continue;
+        const std::wstring otherDir = canonicalizeDir(other.pluginDir);
+        if (!otherDir.empty() && (_wcsicmp(otherDir.c_str(), pluginDir.c_str()) == 0 ||
+                                  isStrictDescendant(otherDir, pluginDir))) {
+            return false;
+        }
+    }
+
+    const std::wstring dataDir = GetWritablePluginDataDirectory(pluginId);
+
+    if (rec->HasInterface(QVX_IFACE_SHELL_EXT)) {
+        if (LoadedPlugin* lp = EnsurePluginLoadedLocked(pluginId)) {
+            if (lp->shellExtVTable && lp->shellExtVTable->struct_size >= sizeof(QVX_ShellExt_VTable) &&
+                lp->shellExtVTable->unregister_shell) {
+                lp->shellExtVTable->unregister_shell();
+            }
+        }
+    }
+
+    RetirePluginLocked(pluginId);
+    if (auto* st = FindConfigStateLocked(pluginId)) st->enabled = false;
+    if (m_activeUpscalerPluginId == pluginId) m_activeUpscalerPluginId.clear();
+
+    RemoveDirectoryTreeBestEffort(pluginDir);
+
+    // If pluginDir was a versioned leaf plugins/<id>/pkg_*, clean up the parent <id> dir if now empty.
+    const std::wstring parentDir(ParentPathView(pluginDir));
+    if (!parentDir.empty() &&
+        (_wcsicmp(parentDir.c_str(), writableRoot.c_str()) != 0) &&
+        (_wcsicmp(parentDir.c_str(), customRoot.c_str()) != 0) &&
+        (_wcsicmp(parentDir.c_str(), exePlugins.c_str()) != 0) &&
+        (_wcsicmp(parentDir.c_str(), localAppPlugins.c_str()) != 0)) {
+        WIN32_FIND_DATAW fd{};
+        HANDLE hCheck = FindFirstFileW((parentDir + L"\\*").c_str(), &fd);
+        bool hasContent = false;
+        if (hCheck != INVALID_HANDLE_VALUE) {
+            do {
+                if (wcscmp(fd.cFileName, L".") != 0 && wcscmp(fd.cFileName, L"..") != 0) {
+                    hasContent = true;
+                    break;
+                }
+            } while (FindNextFileW(hCheck, &fd));
+            FindClose(hCheck);
+        }
+        if (!hasContent) {
+            RemoveDirectoryW(parentDir.c_str());
+        }
+    }
+
+    if (!dataDir.empty() && _wcsicmp(dataDir.c_str(), pluginDir.c_str()) != 0) {
+        RemoveDirectoryTreeBestEffort(dataDir);
+    }
+
+    m_registry.Scan(m_customRegistryRoot);
+    m_registryScanned = true;
+    return true;
+}
+
+void PluginHost::ResetToDefaults() {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    for (auto& lp : m_loadedPlugins) {
+        if (lp && !lp->retired) ReleasePluginContextLocked(*lp);
+    }
+    m_configStates.clear();
+    m_activeUpscalerPluginId.clear();
+    m_upscalerFallbackEnabled.store(false, std::memory_order_relaxed);
+    m_upscalerFallbackPreset.clear();
+    m_srAutoTrigger.store(false, std::memory_order_relaxed);
+    m_srOpenInCompareMode.store(true, std::memory_order_relaxed);
+    m_srPromptModelOnHotkey.store(false, std::memory_order_relaxed);
+    m_srDebounceDelayMs.store(150, std::memory_order_relaxed);
+    m_srAutoTriggerMaxSourceMp.store(1.0f, std::memory_order_relaxed);
+    m_srAutoTriggerMaxWidth.store(1080u, std::memory_order_relaxed);
+    m_srAutoTriggerMaxHeight.store(1080u, std::memory_order_relaxed);
+}
+
+void PluginHost::LoadConfig(const wchar_t* iniPath) {
+    if (!iniPath || iniPath[0] == L'\0') return;
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    EnsureRegistryScannedLocked();
+
+    auto parseFloatVal = [](std::wstring_view w, float def) -> float {
+        const std::string utf8 = WideToUtf8(w);
+        if (utf8.empty()) return def;
+        float v = def;
+        const auto res = std::from_chars(utf8.data(), utf8.data() + utf8.size(), v);
+        return (res.ec == std::errc{}) ? v : def;
+    };
+    auto parseIntVal = [](std::wstring_view w, int def) -> int {
+        const std::string utf8 = WideToUtf8(w);
+        if (utf8.empty()) return def;
+        int v = def;
+        const auto res = std::from_chars(utf8.data(), utf8.data() + utf8.size(), v);
+        return (res.ec == std::errc{}) ? v : def;
+    };
+    auto readFloat = [&](const wchar_t* sec, const wchar_t* key, float def) -> float {
+        wchar_t buf[64]{};
+        const DWORD len = GetPrivateProfileStringW(sec, key, L"", buf, 64, iniPath);
+        if (len == 0) return def;
+        return parseFloatVal(std::wstring_view(buf, len), def);
+    };
+    auto readIniSectionBuf = [iniPath](const wchar_t* sectionName, std::vector<wchar_t>& outBuf) -> DWORD {
+        size_t cap = 8192;
+        while (cap <= 262144) {
+            outBuf.assign(cap, L'\0');
+            const DWORD chars = sectionName
+                ? GetPrivateProfileSectionW(sectionName, outBuf.data(), static_cast<DWORD>(cap), iniPath)
+                : GetPrivateProfileSectionNamesW(outBuf.data(), static_cast<DWORD>(cap), iniPath);
+            if (chars < cap - 2 || cap == 262144) {
+                return chars;
+            }
+            cap *= 2;
+        }
+        return 0;
+    };
+
+    wchar_t upscalerBuf[128]{};
+    const int debounceCheck = static_cast<int>(GetPrivateProfileIntW(L"Plugins", L"UpscalerDebounceMs", -1, iniPath));
+    const bool hasPluginsSection = (GetPrivateProfileStringW(L"Plugins", L"ActiveUpscalerPluginId", L"", upscalerBuf, 128, iniPath) > 0) ||
+                                   (debounceCheck >= 0);
+
+    if (hasPluginsSection) {
+        m_activeUpscalerPluginId = WideToUtf8(upscalerBuf);
+        m_upscalerFallbackEnabled.store(GetPrivateProfileIntW(L"Plugins", L"UpscalerFallbackEnabled", 0, iniPath) != 0, std::memory_order_relaxed);
+        wchar_t fallbackPresetBuf[128]{};
+        const DWORD fpLen = GetPrivateProfileStringW(L"Plugins", L"UpscalerFallbackPreset", L"", fallbackPresetBuf, 128, iniPath);
+        m_upscalerFallbackPreset = (fpLen > 0) ? WideToUtf8(std::wstring_view(fallbackPresetBuf, fpLen)) : std::string();
+        m_srAutoTrigger.store(GetPrivateProfileIntW(L"Plugins", L"UpscalerAutoTrigger", 0, iniPath) != 0, std::memory_order_relaxed);
+        m_srOpenInCompareMode.store(GetPrivateProfileIntW(L"Plugins", L"UpscalerOpenInCompare", 1, iniPath) != 0, std::memory_order_relaxed);
+        m_srPromptModelOnHotkey.store(GetPrivateProfileIntW(L"Plugins", L"UpscalerPromptOnHotkey", 0, iniPath) != 0, std::memory_order_relaxed);
+        m_srDebounceDelayMs.store(std::clamp<int>(GetPrivateProfileIntW(L"Plugins", L"UpscalerDebounceMs", 150, iniPath), 0, 5000), std::memory_order_relaxed);
+        m_srAutoTriggerMaxSourceMp.store(std::clamp(readFloat(L"Plugins", L"UpscalerAutoTriggerMaxMp", 1.0f), 0.1f, 16.0f), std::memory_order_relaxed);
+        m_srAutoTriggerMaxWidth.store(static_cast<uint32_t>(std::clamp<int>(GetPrivateProfileIntW(L"Plugins", L"UpscalerAutoTriggerMaxW", 1080, iniPath), 0, 8192)), std::memory_order_relaxed);
+        m_srAutoTriggerMaxHeight.store(static_cast<uint32_t>(std::clamp<int>(GetPrivateProfileIntW(L"Plugins", L"UpscalerAutoTriggerMaxH", 1080, iniPath), 0, 8192)), std::memory_order_relaxed);
+    }
+
+    // Load per-plugin INI sections for all discovered plugins (0 LoadLibrary!)
+    const auto& records = m_registry.GetAll();
+    auto loadPluginSection = [&](const std::string& pluginId, bool allowLegacyKeys) {
+        const std::wstring section = L"Plugin." + Utf8ToWide(pluginId);
+        std::vector<wchar_t> secBuf;
+        const DWORD chars = readIniSectionBuf(section.c_str(), secBuf);
+        if (chars == 0 && !allowLegacyKeys) return;
+
+        auto& st = GetOrCreateConfigStateLocked(pluginId);
+        st.numParams.clear();
+        st.strParams.clear();
+
+        if (chars > 0) {
+            const wchar_t* p = secBuf.data();
+            while (*p) {
+                const std::wstring_view entry(p);
+                const size_t eq = entry.find(L'=');
+                if (eq != std::wstring_view::npos) {
+                    const std::wstring_view key = entry.substr(0, eq);
+                    const std::wstring_view val = entry.substr(eq + 1);
+                    if (key == L"Enabled") {
+                        st.enabled = (parseIntVal(val, 0) != 0);
+                    } else if (key == L"ActivePreset") {
+                        st.activePresetId = WideToUtf8(val);
+                    } else if (key.starts_with(L"Param.")) {
+                        st.numParams.emplace_back(WideToUtf8(key.substr(6)), parseFloatVal(val, 0.0f));
+                    } else if (key.starts_with(L"ParamStr.")) {
+                        st.strParams.emplace_back(WideToUtf8(key.substr(9)), WideToUtf8(val));
+                    } else if (allowLegacyKeys) {
+                        st.numParams.emplace_back(WideToUtf8(key), parseFloatVal(val, 0.0f));
+                    }
+                }
+                p += entry.size() + 1;
+            }
+        }
+    };
+
+    std::vector<std::string> sectionsToLoad;
+    for (const auto& rec : records) {
+        sectionsToLoad.push_back(rec.id);
+    }
+    if (!m_activeUpscalerPluginId.empty() && !m_registry.FindById(m_activeUpscalerPluginId)) {
+        sectionsToLoad.push_back(m_activeUpscalerPluginId);
+    }
+    {
+        std::vector<wchar_t> secNames;
+        const DWORD nChars = readIniSectionBuf(nullptr, secNames);
+        if (nChars > 0) {
+            const wchar_t* p = secNames.data();
+            while (*p) {
+                const std::wstring_view secName(p);
+                if (secName.starts_with(L"Plugin.") && secName.size() > 7) {
+                    std::string id = WideToUtf8(secName.substr(7));
+                    if (std::find(sectionsToLoad.begin(), sectionsToLoad.end(), id) == sectionsToLoad.end()) {
+                        sectionsToLoad.push_back(std::move(id));
+                    }
+                }
+                p += secName.size() + 1;
+            }
+        }
+    }
+    for (const auto& pid : sectionsToLoad) {
+        loadPluginSection(pid, !hasPluginsSection);
+    }
+
+    // Legacy v2 [SuperResolution] one-way migration when [Plugins] is absent
+    if (!hasPluginsSection) {
+        const int legacyEnable = GetPrivateProfileIntW(L"SuperResolution", L"EnableSrPlugin", -1, iniPath);
+        wchar_t legacyModel[128]{};
+        GetPrivateProfileStringW(L"SuperResolution", L"SrModelId", L"", legacyModel, 128, iniPath);
+        const bool hasLegacySection = (legacyEnable >= 0) || (legacyModel[0] != L'\0');
+        if (hasLegacySection) {
+            const int autoTrig = GetPrivateProfileIntW(L"SuperResolution", L"SrAutoTrigger", -1, iniPath);
+            m_srAutoTrigger.store((autoTrig == -1) ? (GetPrivateProfileIntW(L"SuperResolution", L"SrTriggerMode", 0, iniPath) == 1) : (autoTrig != 0), std::memory_order_relaxed);
+            m_srOpenInCompareMode.store(GetPrivateProfileIntW(L"SuperResolution", L"SrOpenInCompareMode", 1, iniPath) != 0, std::memory_order_relaxed);
+            m_srPromptModelOnHotkey.store(GetPrivateProfileIntW(L"SuperResolution", L"SrPromptModelOnHotkey", 0, iniPath) != 0, std::memory_order_relaxed);
+            m_srDebounceDelayMs.store(std::clamp<int>(GetPrivateProfileIntW(L"SuperResolution", L"SrDebounceDelayMs", 150, iniPath), 0, 5000), std::memory_order_relaxed);
+            m_srAutoTriggerMaxSourceMp.store(std::clamp(readFloat(L"SuperResolution", L"SrAutoTriggerMaxSourceMp", 1.0f), 0.1f, 16.0f), std::memory_order_relaxed);
+            m_srAutoTriggerMaxWidth.store(static_cast<uint32_t>(std::clamp<int>(GetPrivateProfileIntW(L"SuperResolution", L"SrAutoTriggerMaxWidth", 1080, iniPath), 0, 8192)), std::memory_order_relaxed);
+            m_srAutoTriggerMaxHeight.store(static_cast<uint32_t>(std::clamp<int>(GetPrivateProfileIntW(L"SuperResolution", L"SrAutoTriggerMaxHeight", 1080, iniPath), 0, 8192)), std::memory_order_relaxed);
+
+            const std::string targetId = ResolveActiveUpscalerIdLocked();
+            if (!targetId.empty()) {
+                m_activeUpscalerPluginId = targetId;
+                auto& st = GetOrCreateConfigStateLocked(targetId);
+                st.enabled = (legacyEnable > 0);
+                if (legacyModel[0] != L'\0') st.activePresetId = WideToUtf8(legacyModel);
+            } else {
+                m_upscalerFallbackEnabled.store(legacyEnable > 0, std::memory_order_relaxed);
+                m_upscalerFallbackPreset = WideToUtf8(legacyModel);
+            }
+        }
+    }
+
+    for (auto& lp : m_loadedPlugins) {
+        if (lp && !lp->retired) {
+            SyncConfigToHeaderAndContextLocked(*lp);
+        }
+    }
+}
+
+void PluginHost::SaveConfig(const wchar_t* iniPath) const {
+    if (!iniPath || iniPath[0] == L'\0') return;
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+
+    std::wstring buf;
+    buf.reserve(1024);
+    auto appendEntry = [&buf](std::wstring_view key, std::wstring_view val) {
+        for (wchar_t c : key) {
+            if (c != L'\r' && c != L'\n' && c != L'\0') buf.push_back(c);
+        }
+        buf.push_back(L'=');
+        for (wchar_t c : val) {
+            if (c != L'\r' && c != L'\n' && c != L'\0') buf.push_back(c);
+        }
+        buf.push_back(L'\0');
+    };
+    auto flushSection = [&buf, iniPath](const wchar_t* section) {
+        buf.push_back(L'\0');
+        if (buf.size() == 1) buf.push_back(L'\0');
+        WritePrivateProfileSectionW(section, buf.data(), iniPath);
+        buf.clear();
+    };
+
+    const std::string activeUpscaler = !m_activeUpscalerPluginId.empty() ? m_activeUpscalerPluginId : ResolveActiveUpscalerIdLocked();
+    appendEntry(L"ActiveUpscalerPluginId", Utf8ToWide(activeUpscaler));
+    appendEntry(L"UpscalerFallbackEnabled", m_upscalerFallbackEnabled.load(std::memory_order_relaxed) ? L"1" : L"0");
+    if (!m_upscalerFallbackPreset.empty()) {
+        appendEntry(L"UpscalerFallbackPreset", Utf8ToWide(m_upscalerFallbackPreset));
+    }
+    appendEntry(L"UpscalerAutoTrigger", m_srAutoTrigger.load(std::memory_order_relaxed) ? L"1" : L"0");
+    appendEntry(L"UpscalerOpenInCompare", m_srOpenInCompareMode.load(std::memory_order_relaxed) ? L"1" : L"0");
+    appendEntry(L"UpscalerPromptOnHotkey", m_srPromptModelOnHotkey.load(std::memory_order_relaxed) ? L"1" : L"0");
+
+    wchar_t numBuf[32];
+    swprintf_s(numBuf, L"%d", m_srDebounceDelayMs.load(std::memory_order_relaxed));
+    appendEntry(L"UpscalerDebounceMs", numBuf);
+    swprintf_s(numBuf, L"%.2f", m_srAutoTriggerMaxSourceMp.load(std::memory_order_relaxed));
+    appendEntry(L"UpscalerAutoTriggerMaxMp", numBuf);
+    swprintf_s(numBuf, L"%u", m_srAutoTriggerMaxWidth.load(std::memory_order_relaxed));
+    appendEntry(L"UpscalerAutoTriggerMaxW", numBuf);
+    swprintf_s(numBuf, L"%u", m_srAutoTriggerMaxHeight.load(std::memory_order_relaxed));
+    appendEntry(L"UpscalerAutoTriggerMaxH", numBuf);
+    flushSection(L"Plugins");
+
+    for (const auto& st : m_configStates) {
+        if (st.pluginId.empty()) continue;
+        appendEntry(L"Enabled", st.enabled ? L"1" : L"0");
+        if (!st.activePresetId.empty()) appendEntry(L"ActivePreset", Utf8ToWide(st.activePresetId));
+        for (const auto& kv : st.numParams) {
+            swprintf_s(numBuf, L"%.4f", kv.second);
+            appendEntry(L"Param." + Utf8ToWide(kv.first), numBuf);
+        }
+        for (const auto& kv : st.strParams) {
+            appendEntry(L"ParamStr." + Utf8ToWide(kv.first), Utf8ToWide(kv.second));
+        }
+        const std::wstring sec = L"Plugin." + Utf8ToWide(st.pluginId);
+        flushSection(sec.c_str());
+    }
+}
+
+bool PluginHost::EnsureProcessorContext(const std::string& pluginId, ID3D11Device* pDevice) {
+    if (pluginId.empty() || !pDevice || m_shuttingDown.load(std::memory_order_acquire)) return false;
+
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (!IsPluginEnabled(pluginId)) return false;
+
+    LoadedPlugin* lp = EnsurePluginLoadedLocked(pluginId);
+    if (!lp || !lp->procVTable || !lp->procVTable->create_context || !lp->procVTable->destroy_context) {
+        return false;
+    }
+
+    std::string targetPreset = GetPluginActivePreset(pluginId);
+    if (targetPreset.empty() && lp->procVTable->get_preset_count && lp->procVTable->get_preset_info) {
+        if (lp->procVTable->get_preset_count() > 0) {
+            if (const QVX_ProcPresetInfo* first = lp->procVTable->get_preset_info(0); first && first->preset_id) {
+                targetPreset = first->preset_id;
+            }
+        }
+    }
+
+    if (lp->procContext && lp->cachedDevice == pDevice && lp->contextPresetId == targetPreset) {
+        return true;
+    }
+
+    ReleasePluginContextLocked(*lp);
+    lp->procContext = lp->procVTable->create_context(pDevice, targetPreset.empty() ? nullptr : targetPreset.c_str());
+    lp->cachedDevice = lp->procContext ? pDevice : nullptr;
+    lp->contextPresetId = lp->procContext ? std::move(targetPreset) : std::string();
+    if (lp->procContext) {
+        SyncConfigToHeaderAndContextLocked(*lp);
+    }
+    return lp->procContext != nullptr;
+}
+
+int32_t PluginHost::ExecuteImageProcessorGpu(
+    const std::string& pluginId,
+    ID3D11Device* pDevice,
+    ID3D11Texture2D* inTexture,
+    uint32_t inWidth, uint32_t inHeight,
+    ID3D11Texture2D* outTexture,
+    uint32_t outWidth, uint32_t outHeight,
+    QVX_CancelPredicate checkCancel,
+    void* cancelUserData,
+    QVX_ProgressCallback onProgress,
+    void* progressUserData
+) {
+    if (pluginId.empty() || !inTexture || !outTexture || inWidth == 0 || inHeight == 0 || outWidth == 0 || outHeight == 0) {
+        return QVX_E_INVALIDARG;
+    }
+
+    const QVX_Processor_VTable* vtable = nullptr;
+    QVX_ProcContext ctx = nullptr;
+    std::string pluginName = pluginId;
+
+    {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        if (m_shuttingDown.load(std::memory_order_acquire) || !EnsureProcessorContext(pluginId, pDevice)) {
+            return QVX_E_FAIL;
+        }
+        LoadedPlugin* lp = FindLoadedLocked(pluginId);
+        if (!lp || !lp->procVTable || !lp->procContext || !lp->procVTable->process_gpu) {
+            return QVX_E_FAIL;
+        }
+        vtable = lp->procVTable;
+        ctx = lp->procContext;
+        if (lp->header && lp->header->plugin_name) pluginName = lp->header->plugin_name;
+
+        std::lock_guard<std::mutex> fl(m_inFlightMutex);
+        ++m_inFlightCount;
+    }
+
+    int32_t result = QVX_E_FAIL;
+    LARGE_INTEGER freq{}, t0{}, t1{};
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&t0);
+
+    {
+        struct InFlightGuard {
+            std::mutex& mtx;
+            std::condition_variable& cv;
+            uint32_t& count;
+            ~InFlightGuard() {
+                {
+                    std::lock_guard<std::mutex> fl(mtx);
+                    if (count > 0) --count;
+                }
+                cv.notify_all();
+            }
+        } guard{ m_inFlightMutex, m_inFlightCv, m_inFlightCount };
+
+        QVX_ProcExecuteParams params{};
+        params.struct_size = sizeof(QVX_ProcExecuteParams);
+        params.in_width = inWidth;
+        params.in_height = inHeight;
+        params.out_width = outWidth;
+        params.out_height = outHeight;
+        params.cancel.check_cancel = checkCancel;
+        params.cancel.user_data = cancelUserData;
+        params.on_progress = onProgress;
+        params.progress_user_data = progressUserData;
+
+        result = vtable->process_gpu(ctx, inTexture, outTexture, &params);
+    }
+
+    QueryPerformanceCounter(&t1);
+    const double durationMs = (freq.QuadPart > 0) ? (t1.QuadPart - t0.QuadPart) * 1000.0 / freq.QuadPart : 0.0;
+    m_lastDurationMs.store(durationMs, std::memory_order_relaxed);
+
+    char logBuf[256];
+    sprintf_s(logBuf, "[QVX-Proc] %s (%ux%u -> %ux%u) took %.2f ms (ret=0x%08X)\n",
+              pluginName.c_str(), inWidth, inHeight, outWidth, outHeight, durationMs, static_cast<uint32_t>(result));
+    {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        m_lastLog = logBuf;
+    }
+    OutputDebugStringA(logBuf);
+    return result;
+}
+
+void PluginHost::ReleasePluginContext(std::string_view pluginId) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (LoadedPlugin* lp = FindLoadedLocked(pluginId)) {
+        ReleasePluginContextLocked(*lp);
+    }
+}
+
+void PluginHost::SetInProcThumbLookupCallback(QVX_InProcThumbLookupFn fn, void* userData) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    m_inProcThumbLookup = fn;
+    m_inProcThumbUserData = userData;
+    for (const auto& lp : m_loadedPlugins) {
+        if (lp && !lp->retired && lp->shellExtVTable && lp->shellExtVTable->set_inproc_thumb_provider) {
+            lp->shellExtVTable->set_inproc_thumb_provider(fn, userData);
+        }
+    }
+}
+
+QVX_ShellRegState PluginHost::GetShellExtRegistrationState(const std::string& pluginId) {
+    if (SystemInfo::IsPackagedApp()) {
+        return QVX_SHELL_REG_MANAGED_BY_MSIX;
+    }
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    LoadedPlugin* lp = EnsurePluginLoadedLocked(pluginId);
+    if (!lp || !lp->shellExtVTable || !lp->shellExtVTable->get_registration_state) {
+        return QVX_SHELL_REG_UNREGISTERED;
+    }
+    int32_t state = QVX_SHELL_REG_UNREGISTERED;
+    const std::string hostExeUtf8 = WideToUtf8(GetCurrentExeFullPath());
+    if (lp->shellExtVTable->get_registration_state(hostExeUtf8.c_str(), &state) == QVX_OK) {
+        return static_cast<QVX_ShellRegState>(state);
+    }
+    return QVX_SHELL_REG_UNREGISTERED;
+}
+
+bool PluginHost::SyncShellExtRegistration(const std::string& pluginId) {
+    if (SystemInfo::IsPackagedApp()) return false;
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    LoadedPlugin* lp = EnsurePluginLoadedLocked(pluginId);
+    if (!lp || !lp->shellExtVTable) return false;
+    const auto* st = FindConfigStateLocked(pluginId);
+    if (st && st->enabled) {
+        if (!lp->shellExtVTable->register_shell) return false;
+        const std::string hostExeUtf8 = WideToUtf8(GetCurrentExeFullPath());
+        return lp->shellExtVTable->register_shell(hostExeUtf8.c_str()) == QVX_OK;
+    }
+    if (!lp->shellExtVTable->unregister_shell) return false;
+    return lp->shellExtVTable->unregister_shell() == QVX_OK;
+}
+
+bool PluginHost::RefreshShellExtCache(const std::string& pluginId) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    LoadedPlugin* lp = EnsurePluginLoadedLocked(pluginId);
+    if (!lp || !lp->shellExtVTable || !lp->shellExtVTable->refresh_shell_cache) return false;
+    return lp->shellExtVTable->refresh_shell_cache() == QVX_OK;
+}
+
+bool PluginHost::ShouldWarmupSystemThumbCache(std::wstring_view filePath) {
+    if (m_shuttingDown.load(std::memory_order_acquire)) return false;
+    const std::wstring_view ext = ExtensionOf(filePath);
+    if (ext.empty() || ext.size() >= 31) return false;
+
+    char extBuf[32]{};
+    size_t extLen = 0;
+    for (wchar_t wc : ext) {
+        if (wc == L'\0' || wc > 0x7Fu) return false;
+        extBuf[extLen++] = static_cast<char>(wc);
+    }
+    extBuf[extLen] = '\0';
+
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    EnsureRegistryScannedLocked();
+    const auto& records = m_registry.GetAll();
+    for (const PluginRecord& rec : records) {
+        if (!rec.HasInterface(QVX_IFACE_SHELL_EXT) || !IsPluginEnabled(rec.id)) continue;
+        LoadedPlugin* lp = EnsurePluginLoadedLocked(rec.id);
+        if (lp && lp->shellExtVTable && lp->shellExtVTable->struct_size >= sizeof(QVX_ShellExt_VTable) &&
+            lp->shellExtVTable->should_warmup_extension) {
+            if (lp->shellExtVTable->should_warmup_extension(extBuf)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+void PluginHost::Shutdown() {
+    m_shuttingDown.store(true, std::memory_order_release);
+    if (m_shutdownDone.exchange(true, std::memory_order_acq_rel)) return;
+
+    // Wait for detached manifest/background workers outside m_mutex so callbacks can complete cleanly.
+    WaitForAllBgTasks();
+
+    struct PendingDestroyCtx {
+        const QVX_Processor_VTable* vtable;
+        QVX_ProcContext ctx;
+    };
+    std::vector<PendingDestroyCtx> pendingContexts;
+    std::vector<QVX_ShutdownFn> pendingShutdowns;
+
+    {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        for (auto& lp : m_loadedPlugins) {
+            if (!lp) continue;
+            if (lp->shellExtVTable && lp->shellExtVTable->struct_size >= sizeof(QVX_ShellExt_VTable) &&
+                lp->shellExtVTable->set_inproc_thumb_provider) {
+                lp->shellExtVTable->set_inproc_thumb_provider(nullptr, nullptr);
+            }
+            if (lp->procVTable && lp->procContext) {
+                pendingContexts.push_back({ lp->procVTable, lp->procContext });
+                lp->procContext = nullptr;
+                lp->contextPresetId.clear();
+                lp->cachedDevice = nullptr;
+            }
+            if (!lp->shutdownCalled && lp->hModule) {
+                lp->shutdownCalled = true;
+                auto pfnShutdown = reinterpret_cast<QVX_ShutdownFn>(GetProcAddress(lp->hModule, "qvx_shutdown"));
+                if (pfnShutdown) pendingShutdowns.push_back(pfnShutdown);
+            }
+        }
+    }
+
+    WaitForAllInFlight();
+    for (const auto& item : pendingContexts) {
+        item.vtable->destroy_context(item.ctx);
+    }
+    for (QVX_ShutdownFn pfnShutdown : pendingShutdowns) {
+        pfnShutdown();
+    }
+    // Intentionally keep GPU/AI HMODULEs mapped until process teardown to avoid driver/static destructor races.
+}
+
+// --- Remote Marketplace ---
+std::vector<RemotePluginItem> PluginHost::GetCachedRemoteManifest() const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (!m_cachedManifest.empty()) return m_cachedManifest;
+
+#if defined(_M_ARM64) || defined(__aarch64__)
+    const char* defaultUrl = "https://justnullname.github.io/QuickView/plugins/sr_ncnn_vulkan_ARM64.zip";
+    const char* defaultFile = "sr_ncnn_vulkan_ARM64.zip";
+#else
+    const char* defaultUrl = "https://justnullname.github.io/QuickView/plugins/sr_ncnn_vulkan_AMD64.zip";
+    const char* defaultFile = "sr_ncnn_vulkan_AMD64.zip";
+#endif
+
+    RemotePluginItem fallback;
+    fallback.id = "com.quickview.sr.ncnn_vulkan";
+    fallback.name = "Real-ESRGAN NCNN Vulkan";
+    fallback.version = "0.3.0";
+    fallback.author = "QuickView Core Team";
+    fallback.category = "image_processor";
+    fallback.abiVersion = "3.0.0";
+    fallback.description = "High-Performance In-Process Vulkan Compute Neural Super-Resolution Engine.";
+    fallback.downloadUrl = defaultUrl;
+    fallback.fileName = defaultFile;
+    fallback.fileSize = 48184000;
+    fallback.minAppVersion = "0.1.0";
+    return { std::move(fallback) };
+}
+
+bool PluginHost::IsFetchingManifest() const { return m_isFetchingManifest.load(std::memory_order_relaxed); }
+
+void PluginHost::SetUINotifyCallback(UINotifyCallback cb, void* userData) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    m_uiNotifyCb = cb;
+    m_uiNotifyUserData = userData;
+}
+
+void PluginHost::NotifyUI() const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (m_uiNotifyCb) m_uiNotifyCb(m_uiNotifyUserData);
+}
+
+void PluginHost::FetchRemoteManifestAsync(ManifestCallback callback, void* userData) {
+    if (m_shuttingDown.load(std::memory_order_acquire)) {
+        if (callback) callback({}, userData);
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> bgLock(m_bgMutex);
+        ++m_bgTaskCount;
+    }
+    QuickView::RunDetached([this, callback, userData]() {
+        struct BgGuard {
+            std::mutex& mtx;
+            std::condition_variable& cv;
+            uint32_t& count;
+            ~BgGuard() {
+                {
+                    std::lock_guard<std::mutex> l(mtx);
+                    if (count > 0) --count;
+                }
+                cv.notify_all();
+            }
+        } bgGuard{ m_bgMutex, m_bgCv, m_bgTaskCount };
+
+        wchar_t tempDir[MAX_PATH]{};
+        GetTempPathW(MAX_PATH, tempDir);
+        const std::wstring tempPath = std::wstring(tempDir) + L"quickview_plugins_manifest_" +
+                                       std::to_wstring(GetCurrentProcessId()) + L"_" +
+                                       std::to_wstring(GetCurrentThreadId()) + L".json.tmp";
+
+        const char* candidates[] = {
+            "https://justnullname.github.io/QuickView/plugins_manifest.json",
+            "https://raw.githubusercontent.com/justnullname/QuickView/gh-pages/plugins_manifest.json"
+        };
+
+        std::vector<RemotePluginItem> items;
+        for (const char* candUrl : candidates) {
+            if (m_shuttingDown.load(std::memory_order_acquire)) break;
+            if (!WinHttpDownloadFile(candUrl, tempPath, nullptr, nullptr)) continue;
+            HANDLE hFile = CreateFileW(tempPath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (hFile == INVALID_HANDLE_VALUE) continue;
+
+            const DWORD sz = GetFileSize(hFile, nullptr);
+            if (sz > 0 && sz < 1024 * 1024) {
+                std::vector<char> buf(sz + 1, 0);
+                DWORD read = 0;
+                ReadFile(hFile, buf.data(), sz, &read, nullptr);
+                CloseHandle(hFile);
+                DeleteFileW(tempPath.c_str());
+
+                yyjson_doc* doc = yyjson_read(buf.data(), read, 0);
+                if (doc) {
+                    yyjson_val* root = yyjson_doc_get_root(doc);
+                    yyjson_val* pluginsArr = yyjson_obj_get(root, "plugins");
+                    if (yyjson_is_arr(pluginsArr)) {
+                        size_t idx = 0, max = 0;
+                        yyjson_val* item = nullptr;
+                        yyjson_arr_foreach(pluginsArr, idx, max, item) {
+                            if (!yyjson_is_obj(item)) continue;
+                            auto readStr = [item](const char* key) -> std::string {
+                                yyjson_val* fv = yyjson_obj_get(item, key);
+                                if (fv && yyjson_is_str(fv)) {
+                                    const char* s = yyjson_get_str(fv);
+                                    return s ? std::string(s) : std::string();
+                                }
+                                return {};
+                            };
+                            RemotePluginItem r;
+                            r.abiVersion = readStr("abi_version");
+                            if (!r.abiVersion.empty() && !r.abiVersion.starts_with("3.")) continue;
+                            r.id = readStr("id");
+                            r.name = readStr("name");
+                            r.version = readStr("version");
+                            r.author = readStr("author");
+                            r.category = readStr("category");
+                            if (r.category.empty()) r.category = readStr("interface");
+                            r.description = readStr("description");
+#if defined(_M_ARM64) || defined(__aarch64__)
+                            r.downloadUrl = readStr("download_url_arm64");
+                            if (r.downloadUrl.empty()) r.downloadUrl = readStr("download_url");
+                            r.fileName = readStr("file_name_arm64");
+                            if (r.fileName.empty()) r.fileName = readStr("file_name");
+                            r.sha256 = readStr("sha256_arm64");
+                            if (r.sha256.empty()) r.sha256 = readStr("sha256");
+#else
+                            r.downloadUrl = readStr("download_url_amd64");
+                            if (r.downloadUrl.empty()) r.downloadUrl = readStr("download_url_x64");
+                            if (r.downloadUrl.empty()) r.downloadUrl = readStr("download_url");
+                            r.fileName = readStr("file_name_amd64");
+                            if (r.fileName.empty()) r.fileName = readStr("file_name");
+                            r.sha256 = readStr("sha256_amd64");
+                            if (r.sha256.empty()) r.sha256 = readStr("sha256");
+#endif
+                            yyjson_val* exts = yyjson_obj_get(item, "extensions");
+                            if (yyjson_is_arr(exts)) {
+                                size_t eIdx = 0, eMax = 0;
+                                yyjson_val* eVal = nullptr;
+                                yyjson_arr_foreach(exts, eIdx, eMax, eVal) {
+                                    if (yyjson_is_str(eVal)) r.extensions.emplace_back(yyjson_get_str(eVal));
+                                }
+                            }
+                            yyjson_val* vSz = yyjson_obj_get(item, "file_size");
+                            if (vSz && yyjson_is_uint(vSz)) r.fileSize = yyjson_get_uint(vSz);
+                            r.minAppVersion = readStr("min_app_version");
+                            r.storeProductId = readStr("store_product_id");
+                            items.push_back(std::move(r));
+                        }
+                    }
+                    yyjson_doc_free(doc);
+                    if (!items.empty()) break;
+                }
+            } else {
+                CloseHandle(hFile);
+                DeleteFileW(tempPath.c_str());
+            }
+        }
+        if (callback) callback(items, userData);
+    });
+}
+
+void PluginHost::TriggerManifestFetch() {
+    if (m_shuttingDown.load(std::memory_order_acquire)) return;
+    {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        if (m_isFetchingManifest.load(std::memory_order_relaxed)) return;
+        m_isFetchingManifest.store(true, std::memory_order_relaxed);
+    }
+    FetchRemoteManifestAsync([](const std::vector<RemotePluginItem>& items, void* ud) {
+        auto* self = static_cast<PluginHost*>(ud);
+        if (!self) return;
+        {
+            std::lock_guard<std::recursive_mutex> lock(self->m_mutex);
+            if (!items.empty()) self->m_cachedManifest = items;
+            self->m_isFetchingManifest.store(false, std::memory_order_relaxed);
+        }
+        if (!self->m_shuttingDown.load(std::memory_order_acquire)) {
+            self->NotifyUI();
+        }
+    }, this);
+}
+
+// --- Thin Upscaler Facade ---
+std::string PluginHost::ResolveActiveUpscalerIdLocked() const {
+    EnsureRegistryScannedLocked();
+    if (!m_activeUpscalerPluginId.empty() && m_registry.FindById(m_activeUpscalerPluginId)) {
+        return m_activeUpscalerPluginId;
+    }
+    for (const auto& rec : m_registry.GetAll()) {
+        if (rec.HasInterface(QVX_IFACE_IMAGE_PROCESSOR) && rec.processorKind == QVX_PROC_KIND_UPSCALER) {
+            return rec.id;
+        }
+    }
+    return {};
+}
+
+std::string PluginHost::GetActiveUpscalerPluginId() const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    return ResolveActiveUpscalerIdLocked();
+}
+
+void PluginHost::SetActiveUpscalerPluginId(const std::string& pluginId) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    m_activeUpscalerPluginId = pluginId;
+}
+
+PluginInstallState PluginHost::GetSrPluginInstallState() const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    const std::string id = ResolveActiveUpscalerIdLocked();
+    if (id.empty()) return PluginInstallState::NotInstalled;
+    const PluginRecord* rec = m_registry.FindById(id);
+    if (!rec) return PluginInstallState::NotInstalled;
+
+    const auto manifest = GetCachedRemoteManifest();
+    for (const auto& rp : manifest) {
+        if (rp.id == rec->id && !rp.version.empty() && !rec->version.empty() &&
+            ComparePluginVersions(rp.version, rec->version) > 0) {
+            return PluginInstallState::UpdateAvailable;
+        }
+    }
+    return PluginInstallState::Installed;
+}
+
+bool PluginHost::IsSrPluginEnabled() const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    const std::string id = ResolveActiveUpscalerIdLocked();
+    if (!id.empty()) return IsPluginEnabled(id);
+    if (!m_activeUpscalerPluginId.empty()) return IsPluginEnabled(m_activeUpscalerPluginId);
+    return m_upscalerFallbackEnabled.load(std::memory_order_relaxed);
+}
+
+void PluginHost::SetSrPluginEnabled(bool enable) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::string id = ResolveActiveUpscalerIdLocked();
+    if (id.empty()) id = m_activeUpscalerPluginId;
+    if (!id.empty()) {
+        SetPluginEnabled(id, enable);
+    } else {
+        m_upscalerFallbackEnabled.store(enable, std::memory_order_relaxed);
+    }
+}
+
+std::string PluginHost::GetSrModelId() const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::string id = ResolveActiveUpscalerIdLocked();
+    if (id.empty()) id = m_activeUpscalerPluginId;
+    if (!id.empty()) return GetPluginActivePreset(id);
+    return m_upscalerFallbackPreset;
+}
+
+void PluginHost::SetSrModelId(const std::string& modelId) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::string id = ResolveActiveUpscalerIdLocked();
+    if (id.empty()) id = m_activeUpscalerPluginId;
+    if (!id.empty()) {
+        SetPluginActivePreset(id, modelId);
+    } else {
+        m_upscalerFallbackPreset = modelId;
+    }
+}
+
+std::vector<PluginPresetEntry> PluginHost::GetCurrentSrModels() {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    const std::string id = ResolveActiveUpscalerIdLocked();
+    if (id.empty()) return {};
+    return GetPluginPresets(id);
+}
+
+float PluginHost::GetCurrentSrModelScale() {
+    const std::string activeId = GetSrModelId();
+    const auto presets = GetCurrentSrModels();
+    for (const auto& p : presets) {
+        if (p.presetId == activeId || (activeId.empty() && &p == &presets.front())) {
+            return (p.scale > 0.0f) ? p.scale : 2.0f;
+        }
+    }
+    return 2.0f;
+}
+
+bool PluginHost::IsCurrentSrPresetDynamicAuto() {
+    const std::string activeId = GetSrModelId();
+    const auto presets = GetCurrentSrModels();
+    for (const auto& p : presets) {
+        if (p.presetId == activeId || (activeId.empty() && &p == &presets.front())) {
+            return p.isDynamicAuto;
+        }
+    }
+    return false;
+}
+
+std::wstring PluginHost::GetModelDisplayName(const std::string& modelId) {
+    const auto presets = GetCurrentSrModels();
+    for (const auto& p : presets) {
+        if (p.presetId == modelId) return Utf8ToWide(p.displayName);
+    }
+    return Utf8ToWide(modelId);
+}
+
 bool PluginHost::IsSrAutoTriggerEnabled() const { return m_srAutoTrigger.load(std::memory_order_relaxed); }
 void PluginHost::SetSrAutoTriggerEnabled(bool enable) { m_srAutoTrigger.store(enable, std::memory_order_relaxed); }
 bool PluginHost::IsSrOpenInCompareMode() const { return m_srOpenInCompareMode.load(std::memory_order_relaxed); }
@@ -39,394 +2275,26 @@ uint32_t PluginHost::GetSrAutoTriggerMaxWidth() const { return m_srAutoTriggerMa
 void PluginHost::SetSrAutoTriggerMaxWidth(uint32_t maxW) { m_srAutoTriggerMaxWidth.store((std::min)(maxW, 8192u), std::memory_order_relaxed); }
 uint32_t PluginHost::GetSrAutoTriggerMaxHeight() const { return m_srAutoTriggerMaxHeight.load(std::memory_order_relaxed); }
 void PluginHost::SetSrAutoTriggerMaxHeight(uint32_t maxH) { m_srAutoTriggerMaxHeight.store((std::min)(maxH, 8192u), std::memory_order_relaxed); }
-std::string PluginHost::GetLastExecutionLog() const { std::lock_guard<std::recursive_mutex> lock(m_srMutex); return m_lastLog; }
-double PluginHost::GetLastDurationMs() const { return m_lastDurationMs.load(std::memory_order_relaxed); }
-bool PluginHost::IsFetchingManifest() const { return m_isFetchingManifest.load(std::memory_order_relaxed); }
 
-void PluginHost::SetSrPluginPath(const std::wstring& path) {
-    std::lock_guard<std::recursive_mutex> lock(m_srMutex);
-    m_srPluginPath = path;
-    m_installCacheValid = false;
-    m_modelsCacheValid = false;
-    UnloadSrPlugin();
-    EnsureSrModuleLoaded();
-}
-
-void PluginHost::InvalidateModelCache() {
-    std::lock_guard<std::recursive_mutex> lock(m_srMutex);
-    m_modelsCacheValid = false;
-    m_installCacheValid = false;
-}
-
-void PluginHost::WaitForInFlightUpscales() {
-    std::unique_lock<std::mutex> lock(m_inFlightMutex);
-    m_inFlightCv.wait(lock, [this]() { return m_inFlightUpscaleCount == 0; });
-}
-
-std::string PluginHost::CalculateSHA256(const std::wstring& filePath) {
-    HCRYPTPROV hProv = 0;
-    HCRYPTHASH hHash = 0;
-    std::string hashStr = "";
-
-    if (!CryptAcquireContextW(&hProv, NULL, NULL, PROV_RSA_AES, CRYPT_VERIFYCONTEXT)) {
-        return "";
-    }
-
-    if (!CryptCreateHash(hProv, CALG_SHA_256, 0, 0, &hHash)) {
-        CryptReleaseContext(hProv, 0);
-        return "";
-    }
-
-    HANDLE hFile = CreateFileW(filePath.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
-    if (hFile != INVALID_HANDLE_VALUE) {
-        constexpr DWORD BUFFER_SIZE = 64 * 1024;
-        std::vector<BYTE> buffer(BUFFER_SIZE);
-        DWORD bytesRead = 0;
-
-        while (ReadFile(hFile, buffer.data(), BUFFER_SIZE, &bytesRead, NULL) && bytesRead > 0) {
-            if (!CryptHashData(hHash, buffer.data(), bytesRead, 0)) {
-                break;
-            }
-        }
-        CloseHandle(hFile);
-
-        BYTE rgbHash[32] = { 0 };
-        DWORD cbHash = 32;
-        if (CryptGetHashParam(hHash, HP_HASHVAL, rgbHash, &cbHash, 0)) {
-            char hexBuf[65] = { 0 };
-            for (DWORD i = 0; i < cbHash; ++i) {
-                sprintf_s(hexBuf + i * 2, 3, "%02x", rgbHash[i]);
-            }
-            hashStr = hexBuf;
-        }
-    }
-
-    CryptDestroyHash(hHash);
-    CryptReleaseContext(hProv, 0);
-    return hashStr;
-}
-
-static std::wstring GetExecutableDirectory() {
-    wchar_t exePath[MAX_PATH * 2]{};
-    DWORD len = GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
-    if (len == 0 || len >= std::size(exePath)) return {};
-    PathRemoveFileSpecW(exePath);
-    return std::wstring(exePath);
-}
-
-static std::wstring GetLocalAppDataRoot() {
-    std::wstring localAppData = SystemInfo::GetLocalAppDataDir();
-    if (!localAppData.empty()) {
-        return localAppData;
-    }
-    wchar_t tempPath[MAX_PATH * 2]{};
-    DWORD len = GetTempPathW(static_cast<DWORD>(std::size(tempPath)), tempPath);
-    if (len > 0 && len < std::size(tempPath)) {
-        std::wstring result(tempPath, len);
-        while (!result.empty() && (result.back() == L'\\' || result.back() == L'/')) {
-            result.pop_back();
-        }
-        return result;
-    }
-    return {};
-}
-
-static bool IsDirectoryWritable(const std::wstring& dirPath) {
-    if (dirPath.empty() || !SystemInfo::EnsureDirectoryRecursive(dirPath)) {
-        return false;
-    }
-    std::wstring probeFile = dirPath + L"\\.qv_write_probe_" + std::to_wstring(GetCurrentProcessId()) + L".tmp";
-    HANDLE hFile = CreateFileW(
-        probeFile.c_str(),
-        GENERIC_WRITE,
-        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-        nullptr,
-        CREATE_ALWAYS,
-        FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE,
-        nullptr
-    );
-    if (hFile == INVALID_HANDLE_VALUE) {
-        return false;
-    }
-    CloseHandle(hFile);
-    return true;
-}
-
-static std::wstring ToRelativeIfUnderExeDir(const std::wstring& fullPath, const std::wstring& exeDir) {
-    if (exeDir.empty() || fullPath.size() <= exeDir.size() + 1) {
-        return fullPath;
-    }
-    if (_wcsnicmp(fullPath.c_str(), exeDir.c_str(), exeDir.size()) == 0 &&
-        (fullPath[exeDir.size()] == L'\\' || fullPath[exeDir.size()] == L'/')) {
-        return fullPath.substr(exeDir.size() + 1);
-    }
-    return fullPath;
-}
-
-int PluginHost::ComparePluginVersions(std::string_view a, std::string_view b) noexcept {
-    auto trimLeading = [](std::string_view& s) {
-        while (!s.empty() && (s.front() == ' ' || s.front() == '\t' || s.front() == 'v' || s.front() == 'V')) {
-            s.remove_prefix(1);
-        }
-    };
-    trimLeading(a);
-    trimLeading(b);
-
-    auto nextPart = [](std::string_view& s) -> int {
-        if (s.empty()) return 0;
-        size_t dot = s.find('.');
-        std::string_view seg = (dot == std::string_view::npos) ? s : s.substr(0, dot);
-        int val = 0;
-        if (!seg.empty()) {
-            std::from_chars(seg.data(), seg.data() + seg.size(), val);
-        }
-        if (dot == std::string_view::npos) {
-            s = {};
-        } else {
-            s.remove_prefix(dot + 1);
-        }
-        return val;
-    };
-
-    while (!a.empty() || !b.empty()) {
-        int ia = nextPart(a);
-        int ib = nextPart(b);
-        if (ia != ib) {
-            return (ia > ib) ? 1 : -1;
-        }
-    }
-    return 0;
-}
-
-bool PluginHost::IsOfficialSrPluginMatch(std::string_view id, std::string_view fileName) noexcept {
-    return id == "com.quickview.sr.ncnn_vulkan" ||
-           id == "sr_ncnn_vulkan" ||
-           fileName.find("sr_ncnn_vulkan") != std::string_view::npos;
-}
-
-std::vector<RemotePluginItem> PluginHost::GetCachedRemoteManifest() const {
-    std::lock_guard<std::recursive_mutex> lock(m_srMutex);
-    if (!m_cachedManifest.empty()) {
-        return m_cachedManifest;
-    }
-
-    // Default built-in manifest fallback to ensure offline / initial launch availability
-#if defined(_M_ARM64) || defined(__aarch64__)
-    const char* defaultPkgUrl = "https://justnullname.github.io/QuickView/plugins/sr_ncnn_vulkan_ARM64.zip";
-    const char* defaultPkgFile = "sr_ncnn_vulkan_ARM64.zip";
-#else
-    const char* defaultPkgUrl = "https://justnullname.github.io/QuickView/plugins/sr_ncnn_vulkan_AMD64.zip";
-    const char* defaultPkgFile = "sr_ncnn_vulkan_AMD64.zip";
-#endif
-
-    std::vector<RemotePluginItem> defaultList;
-    defaultList.push_back({
-        "com.quickview.sr.ncnn_vulkan",
-        "Real-ESRGAN NCNN Vulkan",
-        QVX_OFFICIAL_SR_PLUGIN_VERSION,
-        "QuickView Core Team",
-        "SuperResolution",
-        "High-Performance In-Process Vulkan Compute Neural Super-Resolution Engine (0-Copy, 0 Disk I/O).",
-        defaultPkgUrl,
-        defaultPkgFile,
-        48184000,
-        "",
-        "0.1.0"
-    });
-    return defaultList;
-}
-
-std::wstring PluginHost::ResolveEffectiveSrPluginPath(std::wstring* pOutRelativeForIni) const {
-    std::lock_guard<std::recursive_mutex> lock(m_srMutex);
-    const std::wstring exeDir = GetExecutableDirectory();
-    static constexpr const wchar_t* kDefaultRelPath = L"plugins\\sr\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx";
-
-    auto fileExists = [](const std::wstring& path) -> bool {
-        if (path.empty()) return false;
-        DWORD attrs = GetFileAttributesW(path.c_str());
-        return (attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY));
-    };
-
-    // In packaged MSIX mode, always prefer the signed plugin bundled inside the immutable package directory.
-    if (SystemInfo::IsPackagedApp()) {
-        std::wstring pkgBuiltin = exeDir + L"\\" + kDefaultRelPath;
-        if (fileExists(pkgBuiltin)) {
-            if (_wcsicmp(m_srPluginPath.c_str(), kDefaultRelPath) != 0) {
-                m_srPluginPath = kDefaultRelPath;
-                m_installCacheValid = false;
-            }
-            if (pOutRelativeForIni) {
-                *pOutRelativeForIni = kDefaultRelPath;
-            }
-            return pkgBuiltin;
-        }
-    }
-
-    std::wstring configuredPath = m_srPluginPath.empty() ? kDefaultRelPath : m_srPluginPath;
-
-    // Candidate 1: Try configured path directly (if relative, anchor to exeDir)
-    std::wstring absConfigured = configuredPath;
-    if (PathIsRelativeW(absConfigured.c_str()) && !exeDir.empty()) {
-        wchar_t combined[MAX_PATH * 2]{};
-        if (PathCombineW(combined, exeDir.c_str(), configuredPath.c_str())) {
-            absConfigured = combined;
-        }
-    }
-    if (fileExists(absConfigured)) {
-        if (pOutRelativeForIni) {
-            *pOutRelativeForIni = ToRelativeIfUnderExeDir(absConfigured, exeDir);
-        }
-        return absConfigured;
-    }
-
-    // Candidate 2: Self-Healing Search in standard app, fallback LocalAppData, and legacy directories
-    std::wstring fileName = configuredPath;
-    size_t lastSlash = fileName.find_last_of(L"\\/");
-    if (lastSlash != std::wstring::npos) {
-        fileName = fileName.substr(lastSlash + 1);
-    }
-    if (fileName.empty()) fileName = L"sr_ncnn_vulkan.qvx";
-
-    std::vector<std::wstring> probeLocations;
-    probeLocations.reserve(8);
-    if (!exeDir.empty()) {
-        probeLocations.push_back(exeDir + L"\\plugins\\sr\\sr_ncnn_vulkan\\" + fileName);
-        probeLocations.push_back(exeDir + L"\\plugins\\sr_ncnn_vulkan\\" + fileName);
-        probeLocations.push_back(exeDir + L"\\plugins\\sr\\" + fileName);
-        probeLocations.push_back(exeDir + L"\\plugins\\" + fileName);
-    }
-
-    const std::wstring localRoot = GetLocalAppDataRoot();
-    if (!localRoot.empty() && !SystemInfo::IsPackagedApp()) {
-        probeLocations.push_back(localRoot + L"\\QuickView\\plugins\\sr\\sr_ncnn_vulkan\\" + fileName);
-    }
-
-    // If configured path referred to the official plugin, also probe standard official locations
-    if (_wcsicmp(fileName.c_str(), L"sr_ncnn_vulkan.qvx") == 0 ||
-        configuredPath.find(L"sr_ncnn_vulkan") != std::wstring::npos) {
-        if (!exeDir.empty()) {
-            probeLocations.push_back(exeDir + L"\\plugins\\sr\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx");
-            probeLocations.push_back(exeDir + L"\\plugins\\sr_ncnn_vulkan.qvx");
-        }
-        if (!localRoot.empty() && !SystemInfo::IsPackagedApp()) {
-            probeLocations.push_back(localRoot + L"\\QuickView\\plugins\\sr\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx");
-        }
-    }
-
-    for (const auto& probe : probeLocations) {
-        if (fileExists(probe)) {
-            std::wstring iniPath = ToRelativeIfUnderExeDir(probe, exeDir);
-            m_srPluginPath = iniPath;
-            m_installCacheValid = false;
-            if (pOutRelativeForIni) {
-                *pOutRelativeForIni = iniPath;
-            }
-            return probe;
-        }
-    }
-
-    // Not found anywhere on the current system
-    if (pOutRelativeForIni) {
-        *pOutRelativeForIni = configuredPath;
-    }
-    return absConfigured;
-}
-
-PluginInstallState PluginHost::GetSrPluginInstallState() const {
-    std::lock_guard<std::recursive_mutex> lock(m_srMutex);
-    if (m_installCacheValid && !m_cachedResolvedPath.empty()) {
-        DWORD attrs = GetFileAttributesW(m_cachedResolvedPath.c_str());
-        if (attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY)) {
-            return m_cachedInstallState;
-        }
-        m_installCacheValid = false;
-    }
-
-    if (m_hSrModule && m_srHeader) {
-        std::string installedVer = m_srHeader->version_str ? m_srHeader->version_str : "";
-        std::string pluginId = m_srHeader->plugin_id ? m_srHeader->plugin_id : "";
-        m_cachedResolvedPath = ResolveEffectiveSrPluginPath();
-        m_cachedInstalledVersion = installedVer;
-        m_cachedInstallState = (pluginId == "com.quickview.sr.ncnn_vulkan" &&
-                                ComparePluginVersions(QVX_OFFICIAL_SR_PLUGIN_VERSION, installedVer) > 0)
-            ? PluginInstallState::UpdateAvailable
-            : PluginInstallState::Installed;
-        m_installCacheValid = true;
-        return m_cachedInstallState;
-    }
-
-    std::wstring fullPath = ResolveEffectiveSrPluginPath();
-    DWORD attrs = GetFileAttributesW(fullPath.c_str());
-    if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY)) {
-        m_cachedInstallState = PluginInstallState::NotInstalled;
-        m_cachedInstalledVersion.clear();
-        m_cachedResolvedPath = fullPath;
-        return PluginInstallState::NotInstalled;
-    }
-
-    HMODULE hMod = LoadLibraryExW(fullPath.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
-    if (!hMod) {
-        hMod = LoadLibraryW(fullPath.c_str());
-    }
-    if (!hMod) return PluginInstallState::NotInstalled;
-
-    auto pfnInit = reinterpret_cast<QVX_InitFn>(GetProcAddress(hMod, "qvx_init"));
-    auto pfnShutdown = reinterpret_cast<QVX_ShutdownFn>(GetProcAddress(hMod, "qvx_shutdown"));
-    if (!pfnInit) {
-        FreeLibrary(hMod);
-        return PluginInstallState::NotInstalled;
-    }
-
-    const QVX_PluginHeader* header = nullptr;
-    if (!pfnInit(&header) || !header || header->abi_version != QVX_ABI_VERSION) {
-        if (pfnShutdown) pfnShutdown();
-        FreeLibrary(hMod);
-        return PluginInstallState::NotInstalled;
-    }
-
-    std::string installedVer = (header->version_str) ? header->version_str : "";
-    std::string pluginId = (header->plugin_id) ? header->plugin_id : "";
-    if (pfnShutdown) pfnShutdown();
-    FreeLibrary(hMod);
-
-    m_cachedResolvedPath = fullPath;
-    m_cachedInstalledVersion = installedVer;
-    m_cachedInstallState = (pluginId == "com.quickview.sr.ncnn_vulkan" &&
-                            ComparePluginVersions(QVX_OFFICIAL_SR_PLUGIN_VERSION, installedVer) > 0)
-        ? PluginInstallState::UpdateAvailable
-        : PluginInstallState::Installed;
-    m_installCacheValid = true;
-    return m_cachedInstallState;
-}
-
-std::string PluginHost::GetInstalledPluginVersion() const {
-    std::lock_guard<std::recursive_mutex> lock(m_srMutex);
-    if (m_srHeader && m_srHeader->version_str) {
-        return m_srHeader->version_str;
-    }
-    if (!m_installCacheValid) {
-        GetSrPluginInstallState();
-    }
-    return m_cachedInstalledVersion;
-}
-
-void PluginHost::SetLanguage(const std::string& langCode) {
-    std::lock_guard<std::recursive_mutex> lock(m_srMutex);
-    m_currentLanguage = langCode;
-    m_modelsCacheValid = false;
-    if (m_srVTable && m_srVTable->set_language) {
-        m_srVTable->set_language(m_currentLanguage.c_str());
-    }
-}
-
-bool PluginHost::CanExecuteSrOnDimensions(uint32_t inW, uint32_t inH, std::wstring* outReason) const {
+bool PluginHost::CanExecuteSrOnDimensions(uint32_t inW, uint32_t inH, std::wstring* outReason) {
     if (inW == 0 || inH == 0) {
         if (outReason) *outReason = L"Invalid image dimensions";
         return false;
     }
 
-    uint64_t totalPixels = static_cast<uint64_t>(inW) * inH;
-    if (inW > MAX_SR_INPUT_DIMENSION || inH > MAX_SR_INPUT_DIMENSION || totalPixels > MAX_SR_INPUT_PIXELS) {
+    uint32_t maxDim = MAX_SR_INPUT_DIMENSION;
+    uint64_t maxPixels = MAX_SR_INPUT_PIXELS;
+    const std::string activeModel = GetSrModelId();
+    for (const auto& p : GetCurrentSrModels()) {
+        if (p.presetId == activeModel || activeModel.empty()) {
+            if (p.maxInputDim > 0) maxDim = p.maxInputDim;
+            if (p.maxInputPixels > 0) maxPixels = p.maxInputPixels;
+            break;
+        }
+    }
+
+    const uint64_t totalPixels = static_cast<uint64_t>(inW) * inH;
+    if (inW > maxDim || inH > maxDim || totalPixels > maxPixels) {
         if (outReason) {
             wchar_t buf[256];
             const wchar_t* fmt = AppStrings::g.OSD_SrImageTooLargeFormat ? AppStrings::g.OSD_SrImageTooLargeFormat : L"Image resolution is too large (%ux%u, >16 MP)";
@@ -438,559 +2306,9 @@ bool PluginHost::CanExecuteSrOnDimensions(uint32_t inW, uint32_t inH, std::wstri
     return true;
 }
 
-bool PluginHost::EnsureSrModuleLoaded() {
-    if (m_hSrModule && m_srHeader && m_srVTable) {
-        return true;
-    }
-
-    std::wstring fullPath = ResolveEffectiveSrPluginPath();
-    DWORD attrs = GetFileAttributesW(fullPath.c_str());
-    if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY)) {
-        return false;
-    }
-
-    if (!m_hSrModule) {
-        m_hSrModule = LoadLibraryExW(fullPath.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
-        if (!m_hSrModule) {
-            m_hSrModule = LoadLibraryW(fullPath.c_str());
-        }
-        if (!m_hSrModule) return false;
-
-        auto pfnInit = reinterpret_cast<QVX_InitFn>(GetProcAddress(m_hSrModule, "qvx_init"));
-        if (!pfnInit) {
-            FreeLibrary(m_hSrModule);
-            m_hSrModule = nullptr;
-            return false;
-        }
-
-        const QVX_PluginHeader* header = nullptr;
-        if (!pfnInit(&header) || !header || header->abi_version != QVX_ABI_VERSION || !header->get_interface) {
-            FreeLibrary(m_hSrModule);
-            m_hSrModule = nullptr;
-            return false;
-        }
-
-        m_srHeader = header;
-        m_srVTable = static_cast<const QVX_SR_VTable*>(header->get_interface(QVX_IFACE_SUPER_RESOLUTION, QVX_SR_INTERFACE_VERSION));
-        if (!m_srVTable || !m_srVTable->upscale_gpu || !m_srVTable->create_context || !m_srVTable->destroy_context) {
-            FreeLibrary(m_hSrModule);
-            m_hSrModule = nullptr;
-            m_srHeader = nullptr;
-            m_srVTable = nullptr;
-            return false;
-        }
-
-        // Apply active language to newly loaded plugin
-        if (m_srVTable->set_language) {
-            m_srVTable->set_language(m_currentLanguage.c_str());
-        }
-
-        // Hydrate plugin-specific dynamic parameters from cached INI if LoadConfig deferred DLL load
-        if (!m_cachedIniPath.empty() && m_srHeader->plugin_id &&
-            m_srVTable->get_param_count && m_srVTable->get_param_desc) {
-            wchar_t section[128] = { 0 };
-            QuickView::Utf8ToWide(m_srHeader->plugin_id, section);
-            std::wstring fullSection = L"Plugin." + std::wstring(section);
-            uint32_t count = m_srVTable->get_param_count();
-            for (uint32_t i = 0; i < count; ++i) {
-                const QVX_ParamDesc* pDesc = m_srVTable->get_param_desc(i);
-                if (!pDesc || !pDesc->id) continue;
-                wchar_t keyWide[64] = { 0 };
-                wchar_t valWide[64] = { 0 };
-                QuickView::Utf8ToWide(pDesc->id, keyWide);
-                if (GetPrivateProfileStringW(fullSection.c_str(), keyWide, L"", valWide, 64, m_cachedIniPath.c_str()) > 0) {
-                    wchar_t* pEnd = nullptr;
-                    float fVal = wcstof(valWide, &pEnd);
-                    bool found = false;
-                    for (auto& kv : m_dynamicParams) {
-                        if (kv.first == pDesc->id) {
-                            kv.second = fVal;
-                            found = true;
-                            break;
-                        }
-                    }
-                    if (!found) {
-                        m_dynamicParams.push_back({ pDesc->id, fVal });
-                    }
-                }
-            }
-        }
-    }
-    return true;
-}
-
-void PluginHost::SetSrModelId(const std::string& modelId) {
-    std::lock_guard<std::recursive_mutex> lock(m_srMutex);
-    if (m_srModelId != modelId) {
-        m_srModelId = modelId;
-        if (m_srVTable && m_srContext) {
-            WaitForInFlightUpscales();
-            m_srVTable->destroy_context(m_srContext);
-            m_srContext = nullptr;
-        }
-    }
-}
-
-float PluginHost::GetParamValue(const std::string& paramId, float defaultVal) const {
-    std::lock_guard<std::recursive_mutex> lock(m_srMutex);
-    for (const auto& kv : m_dynamicParams) {
-        if (kv.first == paramId) {
-            return kv.second;
-        }
-    }
-    return defaultVal;
-}
-
-void PluginHost::SetParamValue(const std::string& paramId, float val) {
-    std::lock_guard<std::recursive_mutex> lock(m_srMutex);
-    if (paramId == "denoise") {
-        m_srDenoise.store(std::clamp(val, 0.0f, 1.0f), std::memory_order_relaxed);
-    }
-    bool found = false;
-    for (auto& kv : m_dynamicParams) {
-        if (kv.first == paramId) {
-            kv.second = val;
-            found = true;
-            break;
-        }
-    }
-    if (!found) {
-        m_dynamicParams.push_back({ paramId, val });
-    }
-
-    // Live forward to active plugin context (in-memory zero I/O)
-    if (m_srVTable && m_srContext && m_srVTable->set_param_value) {
-        m_srVTable->set_param_value(m_srContext, paramId.c_str(), val);
-    }
-}
-
-void PluginHost::SyncDynamicParamsToContext() {
-    if (!m_srVTable || !m_srContext || !m_srVTable->set_param_value) return;
-
-    for (const auto& kv : m_dynamicParams) {
-        m_srVTable->set_param_value(m_srContext, kv.first.c_str(), kv.second);
-    }
-}
-
-std::vector<SrModelEntry> PluginHost::GetCurrentSrModels() const {
-    std::lock_guard<std::recursive_mutex> lock(m_srMutex);
-    if (m_modelsCacheValid) {
-        return m_cachedSrModels;
-    }
-
-    std::vector<SrModelEntry> result;
-    const_cast<PluginHost*>(this)->EnsureSrModuleLoaded();
-
-    if (!m_srVTable || !m_srVTable->get_model_count || !m_srVTable->get_model_info) {
-        return result;
-    }
-
-    uint32_t count = m_srVTable->get_model_count();
-    result.reserve(count);
-
-    const std::wstring exeDir = GetExecutableDirectory();
-    std::wstring writableModelsDir = GetWritableModelsDirectory();
-    std::wstring localAppModelsDir = GetLocalAppDataRoot() + L"\\QuickView\\plugins\\sr\\sr_ncnn_vulkan\\models";
-    std::wstring isolatedModelsDir = exeDir.empty() ? std::wstring{} : (exeDir + L"\\plugins\\sr\\sr_ncnn_vulkan\\models");
-    std::wstring legacyModelsDir = exeDir.empty() ? std::wstring{} : (exeDir + L"\\plugins\\models");
-
-    auto hasModelPair = [&](const std::wstring& modelStem) -> bool {
-        const std::wstring* dirs[] = { &writableModelsDir, &localAppModelsDir, &isolatedModelsDir, &legacyModelsDir };
-        for (const auto* d : dirs) {
-            if (d->empty()) continue;
-            DWORD binAttr = GetFileAttributesW((*d + L"\\" + modelStem + L".bin").c_str());
-            DWORD paramAttr = GetFileAttributesW((*d + L"\\" + modelStem + L".param").c_str());
-            if (binAttr != INVALID_FILE_ATTRIBUTES && !(binAttr & FILE_ATTRIBUTE_DIRECTORY) &&
-                paramAttr != INVALID_FILE_ATTRIBUTES && !(paramAttr & FILE_ATTRIBUTE_DIRECTORY)) {
-                return true;
-            }
-        }
-        return false;
-    };
-
-    for (uint32_t i = 0; i < count; ++i) {
-        const QVX_SR_ModelInfo* info = m_srVTable->get_model_info(i);
-        if (!info || !info->model_id) continue;
-
-        SrModelEntry entry;
-        entry.modelId = info->model_id;
-        entry.displayName = info->display_name ? info->display_name : info->model_id;
-        entry.description = info->description ? info->description : "";
-        entry.scale = info->scale > 0.0f ? info->scale : 2.0f;
-        entry.isHdrCapable = info->is_hdr_capable;
-        entry.isInstalled = info->is_installed;
-        entry.fileSizeBytes = info->file_size_bytes;
-        entry.downloadUrl = info->download_url ? info->download_url : "";
-        entry.preferredTileSize = info->preferred_tile_size;
-        entry.defaultDebounceMs = info->default_debounce_ms > 0 ? info->default_debounce_ms : 150;
-        entry.defaultCompareMode = info->default_compare_mode;
-
-        // Fallback file existence check if plugin returned not installed
-        if (!entry.isInstalled && !entry.downloadUrl.empty()) {
-            if (entry.modelId == "realesr-animevideov3-auto") {
-                if (hasModelPair(L"realesr-animevideov3-x2") &&
-                    hasModelPair(L"realesr-animevideov3-x3") &&
-                    hasModelPair(L"realesr-animevideov3-x4")) {
-                    entry.isInstalled = true;
-                }
-            } else {
-                std::wstring wideStem(entry.modelId.begin(), entry.modelId.end());
-                if (hasModelPair(wideStem)) {
-                    entry.isInstalled = true;
-                }
-            }
-        }
-
-        result.push_back(std::move(entry));
-    }
-    m_cachedSrModels = result;
-    m_modelsCacheValid = true;
-    return result;
-}
-
-float PluginHost::GetCurrentSrModelScale() const {
-    std::lock_guard<std::recursive_mutex> lock(m_srMutex);
-    const std::string activeId = m_srModelId;
-    auto models = GetCurrentSrModels();
-    for (const auto& m : models) {
-        if (m.modelId == activeId) {
-            return m.scale;
-        }
-    }
-    return 2.0f;
-}
-
-std::wstring PluginHost::GetModelDisplayName(const std::string& modelId) const {
-    auto models = GetCurrentSrModels();
-    for (const auto& m : models) {
-        if (m.modelId == modelId) {
-            return QuickView::Utf8ToWide(m.displayName);
-        }
-    }
-    return QuickView::Utf8ToWide(modelId);
-}
-
-std::vector<SrParamEntry> PluginHost::GetCurrentSrParams() const {
-    std::vector<SrParamEntry> result;
-    std::lock_guard<std::recursive_mutex> lock(m_srMutex);
-
-    const_cast<PluginHost*>(this)->EnsureSrModuleLoaded();
-
-    if (!m_srVTable || !m_srVTable->get_param_count || !m_srVTable->get_param_desc) {
-        return result;
-    }
-
-    uint32_t count = m_srVTable->get_param_count();
-    result.reserve(count);
-
-    for (uint32_t i = 0; i < count; ++i) {
-        const QVX_ParamDesc* pDesc = m_srVTable->get_param_desc(i);
-        if (!pDesc || !pDesc->id) continue;
-
-        SrParamEntry entry;
-        entry.id = pDesc->id;
-        entry.label = pDesc->label ? pDesc->label : "";
-        entry.tooltip = pDesc->tooltip ? pDesc->tooltip : "";
-        entry.type = pDesc->type;
-
-        float val = 0.0f;
-        switch (pDesc->type) {
-            case QVX_PARAM_TYPE_BOOL:
-                entry.defaultBool = pDesc->bool_param.default_val;
-                val = entry.defaultBool ? 1.0f : 0.0f;
-                break;
-            case QVX_PARAM_TYPE_INT:
-                entry.intMin = pDesc->int_param.min_val;
-                entry.intMax = pDesc->int_param.max_val;
-                entry.intStep = pDesc->int_param.step;
-                entry.intDefault = pDesc->int_param.default_val;
-                entry.formatStr = pDesc->int_param.format_str ? pDesc->int_param.format_str : "";
-                val = static_cast<float>(entry.intDefault);
-                break;
-            case QVX_PARAM_TYPE_FLOAT:
-                entry.floatMin = pDesc->float_param.min_val;
-                entry.floatMax = pDesc->float_param.max_val;
-                entry.floatStep = pDesc->float_param.step;
-                entry.floatDefault = pDesc->float_param.default_val;
-                entry.formatStr = pDesc->float_param.format_str ? pDesc->float_param.format_str : "";
-                val = entry.floatDefault;
-                break;
-            case QVX_PARAM_TYPE_ENUM:
-                entry.enumDefault = pDesc->enum_param.default_val;
-                val = static_cast<float>(entry.enumDefault);
-                if (pDesc->enum_param.options && pDesc->enum_param.option_count > 0) {
-                    entry.enumOptions.reserve(pDesc->enum_param.option_count);
-                    for (uint32_t optIdx = 0; optIdx < pDesc->enum_param.option_count; ++optIdx) {
-                        const auto& opt = pDesc->enum_param.options[optIdx];
-                        if (!opt.label) continue;
-                        entry.enumOptions.push_back({ opt.value, opt.label });
-                    }
-                }
-                break;
-        }
-
-        // Check cached storage
-        for (const auto& kv : m_dynamicParams) {
-            if (kv.first == entry.id) {
-                val = kv.second;
-                break;
-            }
-        }
-        entry.currentValue = val;
-        result.push_back(std::move(entry));
-    }
-    return result;
-}
-
-void PluginHost::ResetToDefaults() {
-    std::lock_guard<std::recursive_mutex> lock(m_srMutex);
-    m_enableSrPlugin = false;
-    m_srPluginPath = L"plugins\\sr\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx";
-    m_srModelId = "realesr-animevideov3-auto";
-    m_srAutoTrigger = false;
-    m_srOpenInCompareMode = true;
-    m_srPromptModelOnHotkey = false;
-    m_srDenoise = 0.0f;
-    m_srDebounceDelayMs = 150;
-    m_srAutoTriggerMaxSourceMp = 1.0f;
-    m_srAutoTriggerMaxWidth = 1080;
-    m_srAutoTriggerMaxHeight = 1080;
-    m_dynamicParams.clear();
-    m_installCacheValid = false;
-    m_modelsCacheValid = false;
-
-    if (m_srVTable && m_srContext) {
-        WaitForInFlightUpscales();
-        m_srVTable->destroy_context(m_srContext);
-        m_srContext = nullptr;
-    }
-}
-
-void PluginHost::LoadConfig(const wchar_t* iniPath) {
-    if (!iniPath || iniPath[0] == L'\0') return;
-
-    std::lock_guard<std::recursive_mutex> lock(m_srMutex);
-    m_cachedIniPath = iniPath;
-    m_installCacheValid = false;
-    m_modelsCacheValid = false;
-
-    m_enableSrPlugin = (GetPrivateProfileIntW(L"SuperResolution", L"EnableSrPlugin", 0, iniPath) != 0);
-
-    wchar_t pathBuf[MAX_PATH] = { 0 };
-    GetPrivateProfileStringW(L"SuperResolution", L"SrPluginPath", L"plugins\\sr\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx", pathBuf, MAX_PATH, iniPath);
-    m_srPluginPath = pathBuf;
-    if (m_srPluginPath.empty()) {
-        m_srPluginPath = L"plugins\\sr\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx";
-    }
-
-    wchar_t modelBuf[128] = { 0 };
-    GetPrivateProfileStringW(L"SuperResolution", L"SrModelId", L"realesr-animevideov3-auto", modelBuf, 128, iniPath);
-    m_srModelId = QuickView::WideToUtf8(modelBuf);
-    if (m_srModelId.empty()) {
-        m_srModelId = "realesr-animevideov3-auto";
-    }
-
-    int autoTriggerVal = GetPrivateProfileIntW(L"SuperResolution", L"SrAutoTrigger", -1, iniPath);
-    if (autoTriggerVal == -1) {
-        m_srAutoTrigger = (GetPrivateProfileIntW(L"SuperResolution", L"SrTriggerMode", 0, iniPath) == 1);
-    } else {
-        m_srAutoTrigger = (autoTriggerVal != 0);
-    }
-    m_srOpenInCompareMode = (GetPrivateProfileIntW(L"SuperResolution", L"SrOpenInCompareMode", 1, iniPath) != 0);
-    m_srPromptModelOnHotkey = (GetPrivateProfileIntW(L"SuperResolution", L"SrPromptModelOnHotkey", 0, iniPath) != 0);
-
-    auto setParamInternal = [this](const std::string& key, float val) {
-        for (auto& kv : m_dynamicParams) {
-            if (kv.first == key) {
-                kv.second = val;
-                return;
-            }
-        }
-        m_dynamicParams.push_back({ key, val });
-    };
-
-    wchar_t denoiseBuf[32] = { 0 };
-    GetPrivateProfileStringW(L"SuperResolution", L"SrDenoise", L"0.00", denoiseBuf, 32, iniPath);
-    wchar_t* endPtr = nullptr;
-    float denoise = wcstof(denoiseBuf, &endPtr);
-    m_srDenoise = (denoise >= 0.0f && denoise <= 1.0f) ? denoise : 0.00f;
-    setParamInternal("denoise", m_srDenoise);
-
-    // Preserve values pre-loaded from [Controls] when [SuperResolution] omits these keys.
-    const int defaultDebounce = m_srDebounceDelayMs.load(std::memory_order_relaxed);
-    int debounce = GetPrivateProfileIntW(L"SuperResolution", L"SrDebounceDelayMs", defaultDebounce, iniPath);
-    m_srDebounceDelayMs = (debounce >= 0 && debounce <= 5000) ? debounce : defaultDebounce;
-
-    wchar_t maxMpBuf[32] = { 0 };
-    GetPrivateProfileStringW(L"SuperResolution", L"SrAutoTriggerMaxSourceMp", L"", maxMpBuf, 32, iniPath);
-    if (maxMpBuf[0] != L'\0') {
-        wchar_t* endMp = nullptr;
-        float maxMp = wcstof(maxMpBuf, &endMp);
-        if (endMp != maxMpBuf) {
-            m_srAutoTriggerMaxSourceMp = (maxMp >= 0.1f && maxMp <= 16.0f) ? maxMp : 1.0f;
-        }
-    }
-    const int defaultMaxW = static_cast<int>(m_srAutoTriggerMaxWidth.load(std::memory_order_relaxed));
-    const int defaultMaxH = static_cast<int>(m_srAutoTriggerMaxHeight.load(std::memory_order_relaxed));
-    m_srAutoTriggerMaxWidth = (uint32_t)std::clamp<int>(GetPrivateProfileIntW(L"SuperResolution", L"SrAutoTriggerMaxWidth", defaultMaxW, iniPath), 0, 8192);
-    m_srAutoTriggerMaxHeight = (uint32_t)std::clamp<int>(GetPrivateProfileIntW(L"SuperResolution", L"SrAutoTriggerMaxHeight", defaultMaxH, iniPath), 0, 8192);
-
-    // Load plugin-specific dynamic parameters lazily without loading DLL on cold boot
-    const char* pluginId = (m_srHeader && m_srHeader->plugin_id) ? m_srHeader->plugin_id : "com.quickview.sr.ncnn_vulkan";
-    wchar_t section[128] = { 0 };
-    QuickView::Utf8ToWide(pluginId, section);
-    std::wstring fullSection = L"Plugin." + std::wstring(section);
-    constexpr wchar_t kLegacySection[] = L"Plugin.sr_ncnn_vulkan";
-
-    if (m_srHeader && m_srVTable && m_srVTable->get_param_count && m_srVTable->get_param_desc) {
-        uint32_t count = m_srVTable->get_param_count();
-        for (uint32_t i = 0; i < count; ++i) {
-            const QVX_ParamDesc* pDesc = m_srVTable->get_param_desc(i);
-            if (!pDesc || !pDesc->id) continue;
-            wchar_t keyWide[64] = { 0 };
-            wchar_t valWide[64] = { 0 };
-            QuickView::Utf8ToWide(pDesc->id, keyWide);
-            if (GetPrivateProfileStringW(fullSection.c_str(), keyWide, L"", valWide, 64, iniPath) > 0 ||
-                GetPrivateProfileStringW(kLegacySection, keyWide, L"", valWide, 64, iniPath) > 0) {
-                wchar_t* pEnd = nullptr;
-                float fVal = wcstof(valWide, &pEnd);
-                setParamInternal(pDesc->id, fVal);
-                if (strcmp(pDesc->id, "denoise") == 0) {
-                    m_srDenoise.store(std::clamp(fVal, 0.0f, 1.0f), std::memory_order_relaxed);
-                }
-            }
-        }
-    } else {
-        // Fallback standard parameters if plugin is not loaded during cold boot
-        const char* fallbackKeys[] = { "tile_size", "denoise" };
-        for (const char* k : fallbackKeys) {
-            wchar_t keyWide[64] = { 0 };
-            wchar_t valWide[64] = { 0 };
-            QuickView::Utf8ToWide(k, keyWide);
-            if (GetPrivateProfileStringW(fullSection.c_str(), keyWide, L"", valWide, 64, iniPath) > 0 ||
-                GetPrivateProfileStringW(kLegacySection, keyWide, L"", valWide, 64, iniPath) > 0) {
-                wchar_t* pEnd = nullptr;
-                float fVal = wcstof(valWide, &pEnd);
-                setParamInternal(k, fVal);
-                if (strcmp(k, "denoise") == 0) {
-                    m_srDenoise.store(std::clamp(fVal, 0.0f, 1.0f), std::memory_order_relaxed);
-                }
-            }
-        }
-    }
-}
-
-void PluginHost::SaveConfig(const wchar_t* iniPath) const {
-    if (!iniPath || iniPath[0] == L'\0') return;
-
-    std::lock_guard<std::recursive_mutex> lock(m_srMutex);
-
-    std::wstring buf;
-    buf.reserve(1024);
-    auto appendEntry = [&buf](std::wstring_view key, std::wstring_view val) {
-        buf.append(key);
-        buf.push_back(L'=');
-        buf.append(val);
-        buf.push_back(L'\0');
-    };
-    auto flushSection = [&buf, iniPath](const wchar_t* section) {
-        buf.push_back(L'\0');
-        if (buf.size() == 1) buf.push_back(L'\0');
-        WritePrivateProfileSectionW(section, buf.data(), iniPath);
-        buf.clear();
-    };
-
-    appendEntry(L"EnableSrPlugin", m_enableSrPlugin.load(std::memory_order_relaxed) ? L"1" : L"0");
-
-    std::wstring relativeForIni;
-    ResolveEffectiveSrPluginPath(&relativeForIni);
-    appendEntry(L"SrPluginPath", relativeForIni);
-
-    wchar_t modelWide[128] = { 0 };
-    QuickView::Utf8ToWide(m_srModelId, modelWide);
-    appendEntry(L"SrModelId", modelWide);
-
-    appendEntry(L"SrAutoTrigger", m_srAutoTrigger.load(std::memory_order_relaxed) ? L"1" : L"0");
-    appendEntry(L"SrOpenInCompareMode", m_srOpenInCompareMode.load(std::memory_order_relaxed) ? L"1" : L"0");
-    appendEntry(L"SrPromptModelOnHotkey", m_srPromptModelOnHotkey.load(std::memory_order_relaxed) ? L"1" : L"0");
-
-    wchar_t numBuf[32];
-    swprintf_s(numBuf, L"%.2f", m_srDenoise.load(std::memory_order_relaxed));
-    appendEntry(L"SrDenoise", numBuf);
-
-    swprintf_s(numBuf, L"%d", m_srDebounceDelayMs.load(std::memory_order_relaxed));
-    appendEntry(L"SrDebounceDelayMs", numBuf);
-
-    swprintf_s(numBuf, L"%.2f", m_srAutoTriggerMaxSourceMp.load(std::memory_order_relaxed));
-    appendEntry(L"SrAutoTriggerMaxSourceMp", numBuf);
-
-    swprintf_s(numBuf, L"%u", m_srAutoTriggerMaxWidth.load(std::memory_order_relaxed));
-    appendEntry(L"SrAutoTriggerMaxWidth", numBuf);
-
-    swprintf_s(numBuf, L"%u", m_srAutoTriggerMaxHeight.load(std::memory_order_relaxed));
-    appendEntry(L"SrAutoTriggerMaxHeight", numBuf);
-
-    flushSection(L"SuperResolution");
-
-    // Save all dynamic params under active plugin ID section
-    const char* pluginId = (m_srHeader && m_srHeader->plugin_id) ? m_srHeader->plugin_id : "com.quickview.sr.ncnn_vulkan";
-    wchar_t section[128] = { 0 };
-    QuickView::Utf8ToWide(pluginId, section);
-    std::wstring fullSection = L"Plugin." + std::wstring(section);
-    if (!m_dynamicParams.empty()) {
-        for (const auto& kv : m_dynamicParams) {
-            wchar_t keyWide[64] = { 0 };
-            wchar_t valWide[32] = { 0 };
-            QuickView::Utf8ToWide(kv.first, keyWide);
-            swprintf_s(valWide, L"%.4f", kv.second);
-            appendEntry(keyWide, valWide);
-        }
-        flushSection(fullSection.c_str());
-    }
-}
-
 bool PluginHost::EnsureSrContext(ID3D11Device* pDevice) {
-    if (!m_enableSrPlugin.load(std::memory_order_relaxed) || m_shuttingDown.load(std::memory_order_relaxed) || !pDevice) {
-        return false;
-    }
-
-    std::lock_guard<std::recursive_mutex> lock(m_srMutex);
-    if (m_srPluginPath.empty() || m_shuttingDown.load(std::memory_order_relaxed)) {
-        return false;
-    }
-
-    // If context already valid for this device, return true immediately (0 overhead)
-    if (m_hSrModule && m_srVTable && m_srContext && m_cachedDevice == pDevice) {
-        return true;
-    }
-
-    if (!EnsureSrModuleLoaded()) {
-        UnloadSrPlugin();
-        return false;
-    }
-
-    // Initialize or recreate context if device changed
-    if (m_srVTable && (!m_srContext || m_cachedDevice != pDevice)) {
-        if (m_srContext) {
-            WaitForInFlightUpscales();
-            m_srVTable->destroy_context(m_srContext);
-            m_srContext = nullptr;
-        }
-        const char* modelIdPtr = m_srModelId.empty() ? nullptr : m_srModelId.c_str();
-        m_srContext = m_srVTable->create_context(pDevice, modelIdPtr);
-        m_cachedDevice = pDevice;
-
-        if (m_srContext) {
-            SyncDynamicParamsToContext();
-        }
-
-        char logBuf[256];
-        sprintf_s(logBuf, "[QVX-SR] Created GPU Context (Device: %p, Model: %s, Result: %s)\n",
-                  pDevice, modelIdPtr ? modelIdPtr : "Default", m_srContext ? "OK" : "FAILED");
-        OutputDebugStringA(logBuf);
-    }
-
-    return (m_srContext != nullptr);
+    const std::string id = GetActiveUpscalerPluginId();
+    return !id.empty() && EnsureProcessorContext(id, pDevice);
 }
 
 int32_t PluginHost::ExecuteSrUpscaleGpu(
@@ -1004,1109 +2322,29 @@ int32_t PluginHost::ExecuteSrUpscaleGpu(
     QVX_ProgressCallback onProgress,
     void* progressUserData
 ) {
-    if (!inTexture || !outTexture || inWidth == 0 || inHeight == 0 || outWidth == 0 || outHeight == 0) {
-        return QVX_E_INVALIDARG;
-    }
-
-    const QVX_SR_VTable* vtable = nullptr;
-    QVX_SR_Context ctx = nullptr;
-    std::string pluginName = "Real-ESRGAN";
-    float denoiseVal = m_srDenoise.load(std::memory_order_relaxed);
-
-    {
-        std::lock_guard<std::recursive_mutex> lock(m_srMutex);
-        if (m_shuttingDown.load(std::memory_order_relaxed) || !EnsureSrContext(pDevice)) {
-            OutputDebugStringA("[QVX-SR] Execute failed: EnsureSrContext returned false.\n");
-            return QVX_E_FAIL;
-        }
-        vtable = m_srVTable;
-        ctx = m_srContext;
-        if (m_srHeader && m_srHeader->plugin_name) {
-            pluginName = m_srHeader->plugin_name;
-        }
-        if (!vtable || !ctx || !vtable->upscale_gpu) {
-            return QVX_E_FAIL;
-        }
-        std::lock_guard<std::mutex> flightLock(m_inFlightMutex);
-        ++m_inFlightUpscaleCount;
-    }
-
-    int32_t result = QVX_E_FAIL;
-    LARGE_INTEGER freq, t0, t1;
-    QueryPerformanceFrequency(&freq);
-    QueryPerformanceCounter(&t0);
-
-    {
-        struct InFlightGuard {
-            std::mutex& mtx;
-            std::condition_variable& cv;
-            uint32_t& count;
-            ~InFlightGuard() {
-                {
-                    std::lock_guard<std::mutex> flightLock(mtx);
-                    if (count > 0) --count;
-                }
-                cv.notify_all();
-            }
-        } flightGuard{ m_inFlightMutex, m_inFlightCv, m_inFlightUpscaleCount };
-
-        QVX_SR_ExecuteParams params{};
-        params.in_width = inWidth;
-        params.in_height = inHeight;
-        params.out_width = outWidth;
-        params.out_height = outHeight;
-        params.check_cancel = checkCancel;
-        params.cancel_user_data = cancelUserData;
-        params.denoise = denoiseVal;
-        params.on_progress = onProgress;
-        params.progress_user_data = progressUserData;
-
-        // [Lock-Free GPU Forward] Forward inference executes completely OUTSIDE m_srMutex!
-        // Lifetime of vtable/ctx is protected by InFlightGuard (m_inFlightUpscaleCount > 0),
-        // which releases BEFORE m_srMutex is re-acquired below to avoid AB-BA deadlock with WaitForInFlightUpscales().
-        result = vtable->upscale_gpu(ctx, inTexture, outTexture, &params);
-    }
-
-    QueryPerformanceCounter(&t1);
-    double duration = (freq.QuadPart > 0) ? (t1.QuadPart - t0.QuadPart) * 1000.0 / freq.QuadPart : 0.0;
-    m_lastDurationMs.store(duration, std::memory_order_relaxed);
-
-    char logBuf[256];
-    sprintf_s(logBuf, "[QVX-SR] Upscale %ux%u -> %ux%u with %s (Denoise=%.2f) took %.2f ms (ret=0x%08X)\n",
-              inWidth, inHeight, outWidth, outHeight,
-              pluginName.c_str(),
-              denoiseVal, duration, result);
-    {
-        std::lock_guard<std::recursive_mutex> lock(m_srMutex);
-        m_lastLog = logBuf;
-    }
-    OutputDebugStringA(logBuf);
-
-    return result;
+    const std::string id = GetActiveUpscalerPluginId();
+    if (id.empty()) return QVX_E_FAIL;
+    return ExecuteImageProcessorGpu(
+        id, pDevice, inTexture, inWidth, inHeight, outTexture, outWidth, outHeight,
+        checkCancel, cancelUserData, onProgress, progressUserData);
 }
 
-void PluginHost::UnloadSrPlugin() {
-    std::lock_guard<std::recursive_mutex> lock(m_srMutex);
-    WaitForInFlightUpscales();
-    if (m_srVTable && m_srContext) {
-        m_srVTable->destroy_context(m_srContext);
-        m_srContext = nullptr;
-    }
-    if (m_hSrModule) {
-        auto pfnShutdown = reinterpret_cast<QVX_ShutdownFn>(GetProcAddress(m_hSrModule, "qvx_shutdown"));
-        if (pfnShutdown) {
-            pfnShutdown();
+void PluginHost::InvalidateModelCache() {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    for (const auto& lp : m_loadedPlugins) {
+        if (lp && !lp->retired && lp->header && lp->header->notify_assets_changed) {
+            lp->header->notify_assets_changed();
         }
-        FreeLibrary(m_hSrModule);
-        m_hSrModule = nullptr;
-    }
-    m_srHeader = nullptr;
-    m_srVTable = nullptr;
-    m_cachedDevice = nullptr;
-    m_modelsCacheValid = false;
-    m_installCacheValid = false;
-}
-
-std::vector<PluginCandidate> PluginHost::ScanPluginsDirectory(const std::wstring& pluginsDir) {
-    std::vector<PluginCandidate> candidates;
-    std::vector<std::wstring> seenFilesLower;
-
-    const std::wstring exeDir = GetExecutableDirectory();
-    std::vector<std::wstring> searchRoots;
-    if (!pluginsDir.empty()) {
-        searchRoots.push_back(pluginsDir);
-    } else {
-        if (!exeDir.empty()) {
-            searchRoots.push_back(exeDir + L"\\plugins");
-        }
-        if (!SystemInfo::IsPackagedApp()) {
-            const std::wstring localRoot = GetLocalAppDataRoot();
-            if (!localRoot.empty()) {
-                std::wstring localPlugins = localRoot + L"\\QuickView\\plugins";
-                if (searchRoots.empty() || _wcsicmp(localPlugins.c_str(), searchRoots[0].c_str()) != 0) {
-                    searchRoots.push_back(std::move(localPlugins));
-                }
-            }
-        }
-    }
-
-    auto probeFile = [&](const std::wstring& fullPath) {
-        std::wstring keyLower = fullPath;
-        std::transform(keyLower.begin(), keyLower.end(), keyLower.begin(), ::towlower);
-        for (const auto& seen : seenFilesLower) {
-            if (seen == keyLower) return;
-        }
-        seenFilesLower.push_back(std::move(keyLower));
-
-        HMODULE hMod = LoadLibraryExW(fullPath.c_str(), nullptr, DONT_RESOLVE_DLL_REFERENCES | LOAD_LIBRARY_AS_DATAFILE);
-        if (!hMod) return;
-
-        FreeLibrary(hMod);
-        HMODULE hExec = LoadLibraryExW(fullPath.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
-        if (!hExec) return;
-
-        auto pfnInit = reinterpret_cast<QVX_InitFn>(GetProcAddress(hExec, "qvx_init"));
-        auto pfnShutdown = reinterpret_cast<QVX_ShutdownFn>(GetProcAddress(hExec, "qvx_shutdown"));
-        if (pfnInit) {
-            const QVX_PluginHeader* header = nullptr;
-            if (pfnInit(&header) && header && header->abi_version == QVX_ABI_VERSION) {
-                PluginCandidate cand;
-                cand.filePath = ToRelativeIfUnderExeDir(fullPath, exeDir);
-                cand.pluginId = header->plugin_id ? header->plugin_id : "";
-                cand.pluginName = header->plugin_name ? header->plugin_name : "";
-                cand.versionStr = header->version_str ? header->version_str : "";
-                cand.supportedInterfaces = header->supported_interfaces;
-                {
-                    std::lock_guard<std::recursive_mutex> lock(m_srMutex);
-                    cand.isLoaded = (_wcsicmp(cand.filePath.c_str(), m_srPluginPath.c_str()) == 0 && m_hSrModule != nullptr);
-                }
-                candidates.push_back(std::move(cand));
-            }
-            if (pfnShutdown) pfnShutdown();
-        }
-        FreeLibrary(hExec);
-    };
-
-    auto scanDirRecursive = [&](auto self, const std::wstring& dir, int depth) -> void {
-        if (depth > 3) return;
-        WIN32_FIND_DATAW ffd;
-        std::wstring pattern = dir + L"\\*";
-        HANDLE hFind = FindFirstFileW(pattern.c_str(), &ffd);
-        if (hFind == INVALID_HANDLE_VALUE) return;
-
-        do {
-            if (wcscmp(ffd.cFileName, L".") == 0 || wcscmp(ffd.cFileName, L"..") == 0) continue;
-
-            std::wstring itemPath = dir + L"\\" + ffd.cFileName;
-            if (ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-                self(self, itemPath, depth + 1);
-            } else {
-                std::wstring nameLower = ffd.cFileName;
-                std::transform(nameLower.begin(), nameLower.end(), nameLower.begin(), ::towlower);
-                if (nameLower.ends_with(L".qvx") || nameLower.ends_with(L".dll")) {
-                    probeFile(itemPath);
-                }
-            }
-        } while (FindNextFileW(hFind, &ffd));
-        FindClose(hFind);
-    };
-
-    for (const auto& rootDir : searchRoots) {
-        DWORD rootAttr = GetFileAttributesW(rootDir.c_str());
-        if (rootAttr != INVALID_FILE_ATTRIBUTES && (rootAttr & FILE_ATTRIBUTE_DIRECTORY)) {
-            scanDirRecursive(scanDirRecursive, rootDir, 0);
-        }
-    }
-
-    // Deduplicate entries sharing the same non-empty pluginId, preferring newer version then standard/loaded path.
-    std::vector<PluginCandidate> deduped;
-    deduped.reserve(candidates.size());
-    for (auto& cand : candidates) {
-        if (cand.pluginId.empty()) {
-            deduped.push_back(std::move(cand));
-            continue;
-        }
-        auto existing = std::find_if(deduped.begin(), deduped.end(), [&](const PluginCandidate& item) {
-            return item.pluginId == cand.pluginId;
-        });
-        if (existing == deduped.end()) {
-            deduped.push_back(std::move(cand));
-            continue;
-        }
-        const int verCmp = ComparePluginVersions(cand.versionStr, existing->versionStr);
-        const bool preferCand =
-            (verCmp > 0) ||
-            (verCmp == 0 && ((cand.isLoaded && !existing->isLoaded) ||
-                             (!existing->isLoaded && _wcsicmp(cand.filePath.c_str(), L"plugins\\sr\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx") == 0)));
-        if (preferCand) {
-            *existing = std::move(cand);
-        }
-    }
-    return deduped;
-}
-
-#ifdef _DEBUG
-static void LogDownloadDebug(const char* fmt, ...) {
-    char buf[1024];
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf_s(buf, sizeof(buf), _TRUNCATE, fmt, args);
-    va_end(args);
-    OutputDebugStringA(buf);
-}
-#else
-#define LogDownloadDebug(...) ((void)0)
-#endif
-
-static bool WinHttpDownloadSingleUrl(
-    const std::string& initialUrl, 
-    const std::wstring& targetPath,
-    PluginHost::DownloadProgressCallback onProgress,
-    void* userData
-) {
-    if (initialUrl.empty()) return false;
-
-    LogDownloadDebug("[QVX-Download] WinHttpDownloadSingleUrl: starting '%s' -> '%ls'\n", initialUrl.c_str(), targetPath.c_str());
-
-    std::string currentUrl = initialUrl;
-    for (int redirectHop = 0; redirectHop < 8; ++redirectHop) {
-        bool isHttps = (currentUrl.rfind("https://", 0) == 0);
-        // Plugins and model weights are executable/trusted inputs.  Never
-        // downgrade to HTTP, including through a redirect.
-        if (!isHttps) {
-            LogDownloadDebug("[QVX-Download] Refusing non-HTTPS URL: %s\n", currentUrl.c_str());
-            return false;
-        }
-        size_t protocolPos = currentUrl.find("://");
-        if (protocolPos == std::string::npos) {
-            LogDownloadDebug("[QVX-Download] Invalid URL protocol in: %s\n", currentUrl.c_str());
-            return false;
-        }
-
-        std::string domainPath = currentUrl.substr(protocolPos + 3);
-        size_t slashPos = domainPath.find('/');
-        if (slashPos == std::string::npos) {
-            LogDownloadDebug("[QVX-Download] No path slash in domainPath: %s\n", domainPath.c_str());
-            return false;
-        }
-
-        std::string hostStr = domainPath.substr(0, slashPos);
-        std::string pathStr = domainPath.substr(slashPos);
-
-        // Trusted host check: Official publisher repos, CDN and verified proxy mirrors
-        auto isTrustedHost = [](const std::string& h) -> bool {
-            if (h == "justnullname.github.io" ||
-                h == "raw.githubusercontent.com" ||
-                h == "github.com" ||
-                h == "objects.githubusercontent.com" ||
-                h == "codeload.github.com" ||
-                h == "ghfast.top" ||
-                h == "ghproxy.net" ||
-                h == "ghproxy.cn" ||
-                h == "gh-proxy.com" ||
-                h == "fastly.jsdelivr.net" ||
-                h == "cdn.jsdelivr.net") {
-                return true;
-            }
-            if (h.ends_with(".github.io") || h.ends_with(".githubusercontent.com") || h.ends_with(".github.com")) {
-                return true;
-            }
-            return false;
-        };
-
-        if (!isTrustedHost(hostStr)) {
-            LogDownloadDebug("[QVX-Download] Refusing untrusted host: %s\n", hostStr.c_str());
-            return false;
-        }
-
-        std::wstring host(hostStr.begin(), hostStr.end());
-        std::wstring path(pathStr.begin(), pathStr.end());
-
-        HINTERNET hSession = WinHttpOpen(L"QuickView/2.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-        if (!hSession) {
-            LogDownloadDebug("[QVX-Download] WinHttpOpen failed (err=%lu)\n", GetLastError());
-            return false;
-        }
-
-        // Resilient timeouts: 15s resolve, 15s connect, 15s send, 300s receive (supports large models on slow networks)
-        WinHttpSetTimeouts(hSession, 15000, 15000, 15000, 300000);
-
-        INTERNET_PORT port = isHttps ? INTERNET_DEFAULT_HTTPS_PORT : INTERNET_DEFAULT_HTTP_PORT;
-        HINTERNET hConnect = WinHttpConnect(hSession, host.c_str(), port, 0);
-        if (!hConnect) {
-            LogDownloadDebug("[QVX-Download] WinHttpConnect to '%ls' failed (err=%lu)\n", host.c_str(), GetLastError());
-            WinHttpCloseHandle(hSession);
-            return false;
-        }
-
-        DWORD flags = isHttps ? WINHTTP_FLAG_SECURE : 0;
-        HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", path.c_str(), NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
-        if (!hRequest) {
-            LogDownloadDebug("[QVX-Download] WinHttpOpenRequest failed (err=%lu)\n", GetLastError());
-            WinHttpCloseHandle(hConnect);
-            WinHttpCloseHandle(hSession);
-            return false;
-        }
-
-        // Enforce manual redirect inspection on every hop so HTTPS & trusted host allowlist are never bypassed
-        DWORD redirectPolicy = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
-        WinHttpSetOption(hRequest, WINHTTP_OPTION_REDIRECT_POLICY, &redirectPolicy, sizeof(redirectPolicy));
-
-        bool success = false;
-        if (WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
-            WinHttpReceiveResponse(hRequest, NULL)) {
-
-            DWORD statusCode = 0;
-            DWORD dwSize = sizeof(statusCode);
-            WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                                WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &dwSize, WINHTTP_NO_HEADER_INDEX);
-
-            LogDownloadDebug("[QVX-Download] HTTP response status=%lu for '%s'\n", statusCode, currentUrl.c_str());
-
-            if (statusCode == 301 || statusCode == 302 || statusCode == 303 || statusCode == 307 || statusCode == 308) {
-                wchar_t locBuf[2048] = { 0 };
-                DWORD locSize = sizeof(locBuf);
-                if (WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_LOCATION, WINHTTP_HEADER_NAME_BY_INDEX, locBuf, &locSize, WINHTTP_NO_HEADER_INDEX)) {
-                    std::string nextUrl = QuickView::WideToUtf8(locBuf);
-                    if (nextUrl.find("://") == std::string::npos) {
-                        if (!nextUrl.empty() && nextUrl[0] == '/') {
-                            nextUrl = (isHttps ? "https://" : "http://") + hostStr + nextUrl;
-                        }
-                    }
-                    LogDownloadDebug("[QVX-Download] Redirect hop -> '%s'\n", nextUrl.c_str());
-                    currentUrl = nextUrl;
-                    WinHttpCloseHandle(hRequest);
-                    WinHttpCloseHandle(hConnect);
-                    WinHttpCloseHandle(hSession);
-                    continue; // Follow redirect hop
-                }
-            }
-
-            if (statusCode == 200) {
-                DWORD contentLength = 0;
-                DWORD lenSize = sizeof(contentLength);
-                bool hasContentLength = WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
-                                                            WINHTTP_HEADER_NAME_BY_INDEX, &contentLength, &lenSize, WINHTTP_NO_HEADER_INDEX);
-
-                LogDownloadDebug("[QVX-Download] Content-Length=%lu (hasLen=%d)\n", contentLength, hasContentLength ? 1 : 0);
-
-                // Ensure parent directory exists before creating target file
-                size_t lastSlash = targetPath.find_last_of(L"\\/");
-                if (lastSlash != std::wstring::npos) {
-                    std::wstring parentDir = targetPath.substr(0, lastSlash);
-                    CreateDirectoryW(parentDir.c_str(), nullptr);
-                }
-
-                HANDLE hFile = CreateFileW(targetPath.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-                if (hFile != INVALID_HANDLE_VALUE) {
-                    DWORD bytesRead = 0;
-                    DWORD totalDownloaded = 0;
-                    char buffer[65536];
-                    success = true;
-                    while (true) {
-                        BOOL readOk = WinHttpReadData(hRequest, buffer, sizeof(buffer), &bytesRead);
-                        if (!readOk) {
-                            LogDownloadDebug("[QVX-Download] WinHttpReadData failed (err=%lu)\n", GetLastError());
-                            success = false;
-                            break;
-                        }
-                        if (bytesRead == 0) {
-                            break;
-                        }
-                        DWORD written = 0;
-                        if (!WriteFile(hFile, buffer, bytesRead, &written, nullptr) || written != bytesRead) {
-                            LogDownloadDebug("[QVX-Download] WriteFile failed (err=%lu)\n", GetLastError());
-                            success = false;
-                            break;
-                        }
-                        totalDownloaded += bytesRead;
-                        if (onProgress) {
-                            float progress = (hasContentLength && contentLength > 0)
-                                ? (static_cast<float>(totalDownloaded) / static_cast<float>(contentLength))
-                                : 0.5f;
-                            onProgress(progress, false, false, userData);
-                        }
-                    }
-                    CloseHandle(hFile);
-
-                    // Validate truncation: if Content-Length was reported and downloaded count differs, fail
-                    if (hasContentLength && contentLength > 0 && totalDownloaded != contentLength) {
-                        LogDownloadDebug("[QVX-Download] Stream Truncation Error: expected %lu bytes, got %lu bytes\n", contentLength, totalDownloaded);
-                        success = false;
-                    }
-
-                    // Validate ZIP magic if downloading a zip file
-                    if (success && (targetPath.ends_with(L".zip") || currentUrl.find(".zip") != std::string::npos)) {
-                        if (totalDownloaded < 22) {
-                            LogDownloadDebug("[QVX-Download] Zip Validation Error: file size %lu is too small\n", totalDownloaded);
-                            success = false;
-                        } else {
-                            HANDLE hVerify = CreateFileW(targetPath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-                            if (hVerify != INVALID_HANDLE_VALUE) {
-                                char magic[4] = { 0 };
-                                DWORD readMagic = 0;
-                                ReadFile(hVerify, magic, 4, &readMagic, nullptr);
-                                CloseHandle(hVerify);
-                                if (readMagic < 4 || magic[0] != 'P' || magic[1] != 'K') {
-                                    LogDownloadDebug("[QVX-Download] Zip Magic Mismatch: not a valid PK zip (got 0x%02X 0x%02X)\n", (uint8_t)magic[0], (uint8_t)magic[1]);
-                                    success = false;
-                                }
-                            }
-                        }
-                    }
-
-                    if (!success) {
-                        DeleteFileW(targetPath.c_str());
-                    } else {
-                        LogDownloadDebug("[QVX-Download] Successfully downloaded %lu bytes to '%ls'\n", totalDownloaded, targetPath.c_str());
-                    }
-                } else {
-                    LogDownloadDebug("[QVX-Download] CreateFileW failed for '%ls' (err=%lu)\n", targetPath.c_str(), GetLastError());
-                }
-            } else {
-                LogDownloadDebug("[QVX-Download] HTTP status %lu != 200, failing download for '%s'\n", statusCode, currentUrl.c_str());
-            }
-        } else {
-            LogDownloadDebug("[QVX-Download] WinHttpSendRequest/ReceiveResponse failed (err=%lu)\n", GetLastError());
-        }
-
-        WinHttpCloseHandle(hRequest);
-        WinHttpCloseHandle(hConnect);
-        WinHttpCloseHandle(hSession);
-        if (success) return true;
-        break;
-    }
-    return false;
-}
-
-static bool WinHttpDownloadFile(
-    const std::string& url, 
-    const std::wstring& targetPath,
-    PluginHost::DownloadProgressCallback onProgress = nullptr,
-    void* userData = nullptr
-) {
-    if (url.empty()) return false;
-
-    // Strip any existing proxy prefix if already present to prevent nested proxying (e.g. ghfast.top/https://ghfast.top/...)
-    std::string rawUrl = url;
-    if (rawUrl.rfind("https://ghfast.top/", 0) == 0) {
-        rawUrl = rawUrl.substr(strlen("https://ghfast.top/"));
-    } else if (rawUrl.rfind("https://ghproxy.net/", 0) == 0) {
-        rawUrl = rawUrl.substr(strlen("https://ghproxy.net/"));
-    }
-
-    std::vector<std::string> candidates;
-    if (rawUrl.find("justnullname.github.io/QuickView/") != std::string::npos) {
-        std::string suffix = rawUrl.substr(rawUrl.find("justnullname.github.io/QuickView/") + strlen("justnullname.github.io/QuickView/"));
-        candidates.push_back("https://ghfast.top/https://raw.githubusercontent.com/justnullname/QuickView/gh-pages/" + suffix);
-        candidates.push_back("https://ghproxy.net/https://raw.githubusercontent.com/justnullname/QuickView/gh-pages/" + suffix);
-        candidates.push_back("https://raw.githubusercontent.com/justnullname/QuickView/gh-pages/" + suffix);
-        candidates.push_back(rawUrl);
-    } else if (rawUrl.find("raw.githubusercontent.com") != std::string::npos || rawUrl.find("github.com") != std::string::npos) {
-        candidates.push_back("https://ghfast.top/" + rawUrl);
-        candidates.push_back("https://ghproxy.net/" + rawUrl);
-        candidates.push_back(rawUrl);
-    } else {
-        candidates.push_back(rawUrl);
-    }
-
-    LogDownloadDebug("[QVX-Download] WinHttpDownloadFile: '%s' -> '%ls' (%zu candidates)\n", rawUrl.c_str(), targetPath.c_str(), candidates.size());
-
-    for (size_t i = 0; i < candidates.size(); ++i) {
-        LogDownloadDebug("[QVX-Download] Trying candidate [%zu/%zu]: '%s'\n", i + 1, candidates.size(), candidates[i].c_str());
-        if (WinHttpDownloadSingleUrl(candidates[i], targetPath, onProgress, userData)) {
-            LogDownloadDebug("[QVX-Download] Candidate [%zu/%zu] succeeded!\n", i + 1, candidates.size());
-            if (onProgress) {
-                onProgress(1.0f, true, true, userData);
-            }
-            return true;
-        }
-        LogDownloadDebug("[QVX-Download] Candidate [%zu/%zu] failed, falling back...\n", i + 1, candidates.size());
-    }
-
-    LogDownloadDebug("[QVX-Download] All candidates failed for '%s'\n", rawUrl.c_str());
-    if (onProgress) {
-        onProgress(0.0f, true, false, userData);
-    }
-    return false;
-}
-
-static void FlattenNestedPluginSubdir(const std::wstring& targetDir, const wchar_t* subdirName) {
-    if (targetDir.empty() || !subdirName || subdirName[0] == L'\0') return;
-    std::wstring nestedDir = targetDir + L"\\" + subdirName;
-    DWORD attr = GetFileAttributesW(nestedDir.c_str());
-    if (attr == INVALID_FILE_ATTRIBUTES || !(attr & FILE_ATTRIBUTE_DIRECTORY)) return;
-
-    std::wstring nestedQvx = nestedDir + L"\\sr_ncnn_vulkan.qvx";
-    std::wstring topQvx = targetDir + L"\\sr_ncnn_vulkan.qvx";
-    if (GetFileAttributesW(nestedQvx.c_str()) == INVALID_FILE_ATTRIBUTES ||
-        GetFileAttributesW(topQvx.c_str()) != INVALID_FILE_ATTRIBUTES) {
-        return;
-    }
-
-    auto moveTree = [&](auto self, const std::wstring& src, const std::wstring& dst) -> void {
-        SystemInfo::EnsureDirectoryRecursive(dst);
-        WIN32_FIND_DATAW fd;
-        HANDLE hFind = FindFirstFileW((src + L"\\*").c_str(), &fd);
-        if (hFind == INVALID_HANDLE_VALUE) return;
-        do {
-            if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
-            std::wstring sPath = src + L"\\" + fd.cFileName;
-            std::wstring dPath = dst + L"\\" + fd.cFileName;
-            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-                self(self, sPath, dPath);
-                RemoveDirectoryW(sPath.c_str());
-            } else {
-                SetFileAttributesW(dPath.c_str(), FILE_ATTRIBUTE_NORMAL);
-                MoveFileExW(sPath.c_str(), dPath.c_str(), MOVEFILE_REPLACE_EXISTING);
-            }
-        } while (FindNextFileW(hFind, &fd));
-        FindClose(hFind);
-    };
-    moveTree(moveTree, nestedDir, targetDir);
-    RemoveDirectoryW(nestedDir.c_str());
-}
-
-static void RemoveDirectoryContentsSafe(const std::wstring& dirPath) {
-    DWORD attr = GetFileAttributesW(dirPath.c_str());
-    if (attr == INVALID_FILE_ATTRIBUTES || !(attr & FILE_ATTRIBUTE_DIRECTORY)) return;
-    WIN32_FIND_DATAW fd;
-    HANDLE hFind = FindFirstFileW((dirPath + L"\\*").c_str(), &fd);
-    if (hFind == INVALID_HANDLE_VALUE) return;
-    do {
-        if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
-        std::wstring itemPath = dirPath + L"\\" + fd.cFileName;
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-            RemoveDirectoryContentsSafe(itemPath);
-            RemoveDirectoryW(itemPath.c_str());
-        } else {
-            SetFileAttributesW(itemPath.c_str(), FILE_ATTRIBUTE_NORMAL);
-            DeleteFileW(itemPath.c_str());
-        }
-    } while (FindNextFileW(hFind, &fd));
-    FindClose(hFind);
-    RemoveDirectoryW(dirPath.c_str());
-}
-
-std::wstring PluginHost::GetWritablePluginsDirectory() const {
-    if (SystemInfo::IsPackagedApp()) {
-        return {};
-    }
-    const std::wstring exeDir = GetExecutableDirectory();
-    if (!exeDir.empty()) {
-        std::wstring appPlugins = exeDir + L"\\plugins";
-        if (IsDirectoryWritable(appPlugins)) {
-            return appPlugins;
-        }
-    }
-    const std::wstring localRoot = GetLocalAppDataRoot();
-    if (!localRoot.empty()) {
-        std::wstring localPlugins = localRoot + L"\\QuickView\\plugins";
-        SystemInfo::EnsureDirectoryRecursive(localPlugins);
-        return localPlugins;
-    }
-    return {};
-}
-
-std::wstring PluginHost::GetWritableModelsDirectory() const {
-    if (SystemInfo::IsPackagedApp()) {
-        return GetLocalAppDataRoot() + L"\\QuickView\\plugins\\sr\\sr_ncnn_vulkan\\models";
-    }
-    std::wstring pluginsRoot = GetWritablePluginsDirectory();
-    if (pluginsRoot.empty()) {
-        return GetLocalAppDataRoot() + L"\\QuickView\\plugins\\sr\\sr_ncnn_vulkan\\models";
-    }
-    return pluginsRoot + L"\\sr\\sr_ncnn_vulkan\\models";
-}
-
-bool PluginHost::DownloadPlugin(const std::wstring& pluginName, const std::string& downloadUrl, const std::string& expectedSha256, DownloadProgressCallback onProgress, void* userData) {
-    // Store / MSIX builds bundle official plugins inside the package and must not download executable binaries.
-    if (SystemInfo::IsPackagedApp()) {
-        LogDownloadDebug("[QVX-Download] Blocked DownloadPlugin in packaged MSIX mode.\n");
-        if (onProgress) {
-            onProgress(0.0f, true, false, userData);
-        }
-        return false;
-    }
-
-    const std::wstring exeDir = GetExecutableDirectory();
-    std::wstring pluginsRoot = GetWritablePluginsDirectory();
-    if (pluginsRoot.empty() || !SystemInfo::EnsureDirectoryRecursive(pluginsRoot)) {
-        if (onProgress) {
-            onProgress(0.0f, true, false, userData);
-        }
-        return false;
-    }
-
-    std::string url = downloadUrl;
-    if (url.empty()) {
-        url = std::string("https://justnullname.github.io/QuickView/plugins/") + QuickView::WideToUtf8(pluginName);
-    }
-
-    const bool isZip = (url.find(".zip") != std::string::npos || pluginName.ends_with(L".zip"));
-    const bool isOfficialSr = (pluginName.find(L"sr_ncnn_vulkan") != std::wstring::npos ||
-                               url.find("sr_ncnn_vulkan") != std::string::npos);
-    const std::wstring destDir = (isZip && isOfficialSr)
-        ? (pluginsRoot + L"\\sr\\sr_ncnn_vulkan")
-        : pluginsRoot;
-    SystemInfo::EnsureDirectoryRecursive(destDir);
-
-    bool ok = false;
-
-    LogDownloadDebug("[QVX-Download] DownloadPlugin: plugin='%ls', url='%s', isZip=%d, dest='%ls'\n",
-                     pluginName.c_str(), url.c_str(), isZip ? 1 : 0, destDir.c_str());
-
-    struct PluginDlStageCtx {
-        DownloadProgressCallback cb;
-        void* userData;
-    };
-    PluginDlStageCtx stageCtx{ onProgress, userData };
-    auto stageProgress = [](float progress, bool finished, [[maybe_unused]] bool success, void* u) {
-        auto* ctx = static_cast<PluginDlStageCtx*>(u);
-        if (ctx && ctx->cb && !finished) {
-            ctx->cb(progress * 0.9f, false, false, ctx->userData);
-        }
-    };
-    DownloadProgressCallback dlCb = onProgress ? stageProgress : nullptr;
-    void* dlCtx = onProgress ? &stageCtx : nullptr;
-
-    if (isZip) {
-        std::wstring tempZipPath = pluginsRoot + L"\\temp_plugin_download.zip";
-        bool dlOk = WinHttpDownloadFile(url, tempZipPath, dlCb, dlCtx);
-        if (dlOk) {
-            if (!expectedSha256.empty()) {
-                std::string actualHash = CalculateSHA256(tempZipPath);
-                if (_stricmp(actualHash.c_str(), expectedSha256.c_str()) != 0) {
-                    LogDownloadDebug("[QVX-Download] Plugin SHA-256 mismatch: exp='%s', act='%s'\n", expectedSha256.c_str(), actualHash.c_str());
-                    DeleteFileW(tempZipPath.c_str());
-                    if (onProgress) onProgress(0.0f, true, false, userData);
-                    return false;
-                }
-            }
-            if (onProgress) {
-                onProgress(0.95f, false, false, userData);
-            }
-
-            // Unload active DLL cleanly BEFORE overwriting binaries on Windows.
-            UnloadSrPlugin();
-
-            if (isOfficialSr && !exeDir.empty()) {
-                const std::wstring targetQvx = destDir + L"\\sr_ncnn_vulkan.qvx";
-                const std::wstring legacyLocations[] = {
-                    exeDir + L"\\plugins\\sr_ncnn_vulkan.qvx",
-                    exeDir + L"\\plugins\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx",
-                    exeDir + L"\\plugins\\sr\\sr_ncnn_vulkan.qvx",
-                    exeDir + L"\\plugins\\sr\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx",
-                };
-                for (const auto& oldPath : legacyLocations) {
-                    if (_wcsicmp(oldPath.c_str(), targetQvx.c_str()) != 0) {
-                        SetFileAttributesW(oldPath.c_str(), FILE_ATTRIBUTE_NORMAL);
-                        DeleteFileW(oldPath.c_str());
-                    }
-                }
-            }
-
-            ok = IArchive::ExtractZipToDirectory(tempZipPath, destDir);
-            DeleteFileW(tempZipPath.c_str());
-            if (ok && isOfficialSr) {
-                FlattenNestedPluginSubdir(destDir, L"sr_ncnn_vulkan");
-            }
-        }
-    } else {
-        std::wstring destFilePath = destDir + L"\\" + pluginName;
-        std::wstring tempFilePath = destFilePath + L".tmp";
-        bool dlOk = WinHttpDownloadFile(url, tempFilePath, dlCb, dlCtx);
-        if (dlOk) {
-            if (!expectedSha256.empty()) {
-                std::string actualHash = CalculateSHA256(tempFilePath);
-                if (_stricmp(actualHash.c_str(), expectedSha256.c_str()) != 0) {
-                    LogDownloadDebug("[QVX-Download] Plugin SHA-256 mismatch: exp='%s', act='%s'\n", expectedSha256.c_str(), actualHash.c_str());
-                    DeleteFileW(tempFilePath.c_str());
-                    if (onProgress) onProgress(0.0f, true, false, userData);
-                    return false;
-                }
-            }
-            UnloadSrPlugin();
-            ok = (MoveFileExW(tempFilePath.c_str(), destFilePath.c_str(), MOVEFILE_REPLACE_EXISTING) != FALSE);
-        }
-    }
-
-    if (ok) {
-        std::lock_guard<std::recursive_mutex> lock(m_srMutex);
-        const std::wstring preferredQvx = isOfficialSr ? (destDir + L"\\sr_ncnn_vulkan.qvx") : L"";
-        if (!preferredQvx.empty() && GetFileAttributesW(preferredQvx.c_str()) != INVALID_FILE_ATTRIBUTES) {
-            m_srPluginPath = ToRelativeIfUnderExeDir(preferredQvx, exeDir);
-        } else {
-            m_srPluginPath.clear();
-            std::wstring relForIni;
-            std::wstring effective = ResolveEffectiveSrPluginPath(&relForIni);
-            m_srPluginPath = !effective.empty() ? relForIni : std::wstring(L"plugins\\sr\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx");
-        }
-        m_installCacheValid = false;
-        m_modelsCacheValid = false;
-        EnsureSrModuleLoaded();
-        GetSrPluginInstallState();
-    }
-    if (onProgress) {
-        onProgress(ok ? 1.0f : 0.0f, true, ok, userData);
-    }
-    LogDownloadDebug("[QVX-Download] DownloadPlugin finished: ok=%d\n", ok ? 1 : 0);
-    return ok;
-}
-
-bool PluginHost::UninstallSrPlugin() {
-    if (SystemInfo::IsPackagedApp()) {
-        return false;
-    }
-
-    std::lock_guard<std::recursive_mutex> lock(m_srMutex);
-    const std::wstring exeDir = GetExecutableDirectory();
-    const std::wstring localRoot = GetLocalAppDataRoot();
-    const std::wstring activePath = ResolveEffectiveSrPluginPath();
-
-    bool isOfficialPlugin = false;
-    if (m_srHeader && m_srHeader->plugin_id) {
-        isOfficialPlugin = (std::string_view(m_srHeader->plugin_id) == "com.quickview.sr.ncnn_vulkan");
-    }
-    if (!isOfficialPlugin) {
-        std::wstring pathLower = activePath;
-        std::transform(pathLower.begin(), pathLower.end(), pathLower.begin(), ::towlower);
-        isOfficialPlugin = (pathLower.find(L"sr_ncnn_vulkan.qvx") != std::wstring::npos);
-    }
-
-    UnloadSrPlugin();
-
-    auto deleteFileSafe = [](const std::wstring& path) -> bool {
-        if (path.empty()) return true;
-        DWORD attrs = GetFileAttributesW(path.c_str());
-        if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY)) return true;
-        SetFileAttributesW(path.c_str(), FILE_ATTRIBUTE_NORMAL);
-        return (DeleteFileW(path.c_str()) != FALSE);
-    };
-
-    bool deletedAny = true;
-    if (!activePath.empty()) {
-        deletedAny = deleteFileSafe(activePath);
-    }
-
-    if (isOfficialPlugin) {
-        std::vector<std::wstring> officialRoots;
-        if (!exeDir.empty()) officialRoots.push_back(exeDir + L"\\plugins");
-        if (!localRoot.empty()) officialRoots.push_back(localRoot + L"\\QuickView\\plugins");
-
-        for (const auto& root : officialRoots) {
-            DWORD rootAttr = GetFileAttributesW(root.c_str());
-            if (rootAttr == INVALID_FILE_ATTRIBUTES || !(rootAttr & FILE_ATTRIBUTE_DIRECTORY)) continue;
-            if (!IsDirectoryWritable(root)) continue;
-            deletedAny &= deleteFileSafe(root + L"\\sr\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx");
-            deletedAny &= deleteFileSafe(root + L"\\sr\\sr_ncnn_vulkan\\README.md");
-            RemoveDirectoryContentsSafe(root + L"\\sr\\sr_ncnn_vulkan\\models");
-            RemoveDirectoryW((root + L"\\sr\\sr_ncnn_vulkan").c_str());
-
-            deletedAny &= deleteFileSafe(root + L"\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx");
-            deletedAny &= deleteFileSafe(root + L"\\sr_ncnn_vulkan\\README.md");
-            RemoveDirectoryContentsSafe(root + L"\\sr_ncnn_vulkan\\models");
-            RemoveDirectoryW((root + L"\\sr_ncnn_vulkan").c_str());
-
-            deletedAny &= deleteFileSafe(root + L"\\sr\\sr_ncnn_vulkan.qvx");
-            deletedAny &= deleteFileSafe(root + L"\\sr_ncnn_vulkan.qvx");
-            RemoveDirectoryW((root + L"\\sr").c_str());
-            RemoveDirectoryW(root.c_str());
-        }
-    }
-
-    m_enableSrPlugin.store(false, std::memory_order_relaxed);
-    m_srPluginPath = L"plugins\\sr\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx";
-    m_cachedInstalledVersion.clear();
-    m_cachedResolvedPath.clear();
-    m_cachedSrModels.clear();
-    m_cachedInstallState = PluginInstallState::NotInstalled;
-    m_installCacheValid = false;
-    m_modelsCacheValid = false;
-
-    return deletedAny;
-}
-
-static void FlattenModelDirectory(const std::wstring& fullModelsDir) {
-    WIN32_FIND_DATAW fd;
-    std::wstring searchPattern = fullModelsDir + L"\\*";
-    HANDLE hFind = FindFirstFileW(searchPattern.c_str(), &fd);
-    if (hFind != INVALID_HANDLE_VALUE) {
-        do {
-            if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) &&
-                wcscmp(fd.cFileName, L".") != 0 && wcscmp(fd.cFileName, L"..") != 0) {
-                std::wstring subDir = fullModelsDir + L"\\" + fd.cFileName;
-                WIN32_FIND_DATAW subFd;
-                std::wstring subPattern = subDir + L"\\*";
-                HANDLE hSubFind = FindFirstFileW(subPattern.c_str(), &subFd);
-                if (hSubFind != INVALID_HANDLE_VALUE) {
-                    do {
-                        if (!(subFd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
-                            std::wstring srcFile = subDir + L"\\" + subFd.cFileName;
-                            std::wstring dstFile = fullModelsDir + L"\\" + subFd.cFileName;
-                            MoveFileExW(srcFile.c_str(), dstFile.c_str(), MOVEFILE_REPLACE_EXISTING);
-                        }
-                    } while (FindNextFileW(hSubFind, &subFd));
-                    FindClose(hSubFind);
-                }
-                RemoveDirectoryW(subDir.c_str());
-            }
-        } while (FindNextFileW(hFind, &fd));
-        FindClose(hFind);
     }
 }
 
-bool PluginHost::DownloadModel(
-    const std::wstring& targetRelativePath, 
-    const std::string& downloadUrl,
-    const std::string& expectedSha256,
-    DownloadProgressCallback onProgress,
-    void* userData
-) {
-    if (downloadUrl.empty()) return false;
-
-    LogDownloadDebug("[QVX-Download] PluginHost::DownloadModel start: target='%ls', url='%s'\n", targetRelativePath.c_str(), downloadUrl.c_str());
-
-    // Release any active SR context without unloading the plugin DLL
-    {
-        std::lock_guard<std::recursive_mutex> lock(m_srMutex);
-        if (m_srVTable && m_srContext) {
-            WaitForInFlightUpscales();
-            m_srVTable->destroy_context(m_srContext);
-            m_srContext = nullptr;
-        }
-    }
-
-    std::wstring fullModelsDir = GetWritableModelsDirectory();
-    if (!SystemInfo::EnsureDirectoryRecursive(fullModelsDir)) {
-        if (onProgress) {
-            onProgress(0.0f, true, false, userData);
-        }
-        return false;
-    }
-
-    bool isAutoComposite = (targetRelativePath.find(L"realesr-animevideov3-auto") != std::wstring::npos ||
-                            downloadUrl.find("realesr-animevideov3-auto") != std::string::npos ||
-                            (downloadUrl.find("animevideov3-x2") != std::string::npos && targetRelativePath.find(L"realesr-animevideov3-auto") != std::wstring::npos));
-
-    // Extract model ID (without .bin / .zip extension)
-    std::string modelId;
-    size_t lastSlash = downloadUrl.find_last_of('/');
-    std::string baseFilename = (lastSlash != std::string::npos) ? downloadUrl.substr(lastSlash + 1) : downloadUrl;
-    size_t dotPos = baseFilename.find_last_of('.');
-    modelId = (dotPos != std::string::npos) ? baseFilename.substr(0, dotPos) : baseFilename;
-
-    std::string zipUrl = downloadUrl;
-    if (zipUrl.ends_with(".bin")) {
-        zipUrl = zipUrl.substr(0, zipUrl.length() - 4) + ".zip";
-    }
-
-    bool ok = false;
-    LogDownloadDebug("[QVX-Download] PluginHost::DownloadModel: isAutoComposite=%d, modelId='%s', zipUrl='%s', modelsDir='%ls'\n", isAutoComposite ? 1 : 0, modelId.c_str(), zipUrl.c_str(), fullModelsDir.c_str());
-
-    struct ModelDownloadCtx {
-        DownloadProgressCallback onProgress;
-        void* userData;
-    };
-    ModelDownloadCtx ctx{ onProgress, userData };
-
-    auto internalProgress = [](float progress, bool finished, [[maybe_unused]] bool success, void* u) {
-        auto* pCtx = static_cast<ModelDownloadCtx*>(u);
-        if (pCtx && pCtx->onProgress && !finished) {
-            pCtx->onProgress(progress * 0.9f, false, false, pCtx->userData);
-        }
-    };
-
-    if (isAutoComposite) {
-        // Sequentially download x2, x3, and x4 zip packages for auto composite model
-        std::vector<std::string> autoZipUrls = {
-            "https://justnullname.github.io/QuickView/models/realesr-animevideov3-x2.zip",
-            "https://justnullname.github.io/QuickView/models/realesr-animevideov3-x3.zip",
-            "https://justnullname.github.io/QuickView/models/realesr-animevideov3-x4.zip"
-        };
-        bool allOk = true;
-        for (size_t i = 0; i < autoZipUrls.size(); ++i) {
-            std::wstring tempZip = fullModelsDir + L"\\temp_auto_" + std::to_wstring(i) + L".zip";
-            struct SubCtx {
-                DownloadProgressCallback onProgress;
-                void* userData;
-                size_t index;
-                size_t total;
-            } subCtx{ onProgress, userData, i, autoZipUrls.size() };
-
-            auto subProg = [](float progress, bool finished, [[maybe_unused]] bool success, void* u) {
-                auto* pSub = static_cast<SubCtx*>(u);
-                if (pSub && pSub->onProgress && !finished) {
-                    float overall = (static_cast<float>(pSub->index) + progress) / static_cast<float>(pSub->total) * 0.9f;
-                    pSub->onProgress(overall, false, false, pSub->userData);
-                }
-            };
-
-            LogDownloadDebug("[QVX-Download] [AutoComposite] Step %zu/%zu: Downloading '%s'\n", i + 1, autoZipUrls.size(), autoZipUrls[i].c_str());
-            bool dl = WinHttpDownloadFile(autoZipUrls[i], tempZip, onProgress ? subProg : nullptr, onProgress ? &subCtx : nullptr);
-            if (dl) {
-                LogDownloadDebug("[QVX-Download] [AutoComposite] Step %zu/%zu: Extracting '%ls'...\n", i + 1, autoZipUrls.size(), tempZip.c_str());
-                bool ext = IArchive::ExtractZipToDirectory(tempZip, fullModelsDir);
-                DeleteFileW(tempZip.c_str());
-                if (ext) {
-                    LogDownloadDebug("[QVX-Download] [AutoComposite] Step %zu/%zu: Extraction succeeded\n", i + 1, autoZipUrls.size());
-                    FlattenModelDirectory(fullModelsDir);
-                } else {
-                    LogDownloadDebug("[QVX-Download] [AutoComposite] Step %zu/%zu: Extraction failed!\n", i + 1, autoZipUrls.size());
-                    allOk = false;
-                    break;
-                }
-            } else {
-                LogDownloadDebug("[QVX-Download] [AutoComposite] Step %zu/%zu: Download failed!\n", i + 1, autoZipUrls.size());
-                allOk = false;
-                break;
-            }
-        }
-        ok = allOk;
-    } else {
-        // Download ZIP package containing model .bin and .param companion files
-        std::wstring wModelId(modelId.begin(), modelId.end());
-        std::wstring tempZipPath = fullModelsDir + L"\\temp_" + wModelId + L".zip";
-        LogDownloadDebug("[QVX-Download] [ZipModel] Downloading ZIP package '%s' -> '%ls'\n", zipUrl.c_str(), tempZipPath.c_str());
-        bool dlZipOk = WinHttpDownloadFile(zipUrl, tempZipPath, onProgress ? internalProgress : nullptr, onProgress ? &ctx : nullptr);
-        if (dlZipOk) {
-            if (!expectedSha256.empty()) {
-                std::string actualHash = CalculateSHA256(tempZipPath);
-                if (_stricmp(actualHash.c_str(), expectedSha256.c_str()) != 0) {
-                    LogDownloadDebug("[QVX-Download] Model SHA-256 mismatch: exp='%s', act='%s'\n", expectedSha256.c_str(), actualHash.c_str());
-                    DeleteFileW(tempZipPath.c_str());
-                    if (onProgress) onProgress(0.0f, true, false, userData);
-                    return false;
-                }
-            }
-            if (onProgress) {
-                onProgress(0.95f, false, false, userData);
-            }
-            LogDownloadDebug("[QVX-Download] [ZipModel] Extracting '%ls' to '%ls'...\n", tempZipPath.c_str(), fullModelsDir.c_str());
-            ok = IArchive::ExtractZipToDirectory(tempZipPath, fullModelsDir);
-            DeleteFileW(tempZipPath.c_str());
-            if (ok) {
-                LogDownloadDebug("[QVX-Download] [ZipModel] Extraction succeeded, flattening directory...\n");
-                FlattenModelDirectory(fullModelsDir);
-            } else {
-                LogDownloadDebug("[QVX-Download] [ZipModel] Extraction failed for '%ls'!\n", tempZipPath.c_str());
-            }
-        } else {
-            LogDownloadDebug("[QVX-Download] [ZipModel] Download failed for '%s'!\n", zipUrl.c_str());
-        }
-    }
-
-    LogDownloadDebug("[QVX-Download] PluginHost::DownloadModel finished: ok=%d\n", ok ? 1 : 0);
-
-    if (ok) {
-        std::lock_guard<std::recursive_mutex> lock(m_srMutex);
-        m_modelsCacheValid = false;
-        if (m_srVTable && m_srContext) {
-            WaitForInFlightUpscales();
-            m_srVTable->destroy_context(m_srContext);
-            m_srContext = nullptr;
-        }
-    }
-
-    if (onProgress) {
-        onProgress(ok ? 1.0f : 0.0f, true, ok, userData);
-    }
-    return ok;
+std::string PluginHost::GetLastExecutionLog() const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    return m_lastLog;
 }
 
-void PluginHost::FetchRemoteManifestAsync(ManifestCallback callback, void* userData) {
-    QuickView::RunDetached([callback, userData]() {
-        wchar_t tempDir[MAX_PATH];
-        GetTempPathW(MAX_PATH, tempDir);
-        std::wstring tempPath = std::wstring(tempDir) + L"quickview_plugins_manifest.json.tmp";
-        
-        std::vector<std::string> candidates = {
-            "https://justnullname.github.io/QuickView/plugins_manifest.json",
-            "https://raw.githubusercontent.com/justnullname/QuickView/gh-pages/plugins_manifest.json"
-        };
-        
-        std::vector<RemotePluginItem> items;
-        for (const auto& candUrl : candidates) {
-            if (WinHttpDownloadFile(candUrl, tempPath, nullptr, nullptr)) {
-                HANDLE hFile = CreateFileW(tempPath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-                if (hFile != INVALID_HANDLE_VALUE) {
-                    DWORD sz = GetFileSize(hFile, nullptr);
-                    if (sz > 0 && sz < 1024 * 1024) {
-                        std::vector<char> buf(sz + 1, 0);
-                        DWORD read = 0;
-                        ReadFile(hFile, buf.data(), sz, &read, nullptr);
-                        CloseHandle(hFile);
-                        DeleteFileW(tempPath.c_str());
-                        
-                        yyjson_doc* doc = yyjson_read(buf.data(), read, 0);
-                        if (doc) {
-                            yyjson_val* root = yyjson_doc_get_root(doc);
-                            yyjson_val* pluginsArr = yyjson_obj_get(root, "plugins");
-                            if (yyjson_is_arr(pluginsArr)) {
-                                size_t idx, max;
-                                yyjson_val* item;
-                                yyjson_arr_foreach(pluginsArr, idx, max, item) {
-                                    if (!yyjson_is_obj(item)) continue;
-                                    RemotePluginItem r;
-                                    auto readStr = [item](const char* key) -> std::string {
-                                        yyjson_val* fv = yyjson_obj_get(item, key);
-                                        if (fv && yyjson_is_str(fv)) {
-                                            const char* s = yyjson_get_str(fv);
-                                            return s ? std::string(s) : std::string();
-                                        }
-                                        return {};
-                                    };
-                                    r.id = readStr("id");
-                                    r.name = readStr("name");
-                                    r.version = readStr("version");
-                                    r.author = readStr("author");
-                                    r.interfaceName = readStr("interface");
-                                    r.description = readStr("description");
-#if defined(_M_ARM64) || defined(__aarch64__)
-                                    r.downloadUrl = readStr("download_url_arm64");
-                                    if (r.downloadUrl.empty()) r.downloadUrl = readStr("download_url");
-                                    r.fileName = readStr("file_name_arm64");
-                                    if (r.fileName.empty()) r.fileName = readStr("file_name");
-#else
-                                    r.downloadUrl = readStr("download_url_amd64");
-                                    if (r.downloadUrl.empty()) r.downloadUrl = readStr("download_url_x64");
-                                    if (r.downloadUrl.empty()) r.downloadUrl = readStr("download_url");
-                                    r.fileName = readStr("file_name_amd64");
-                                    if (r.fileName.empty()) r.fileName = readStr("file_name");
-#endif
-                                    yyjson_val* vSz = yyjson_obj_get(item, "file_size");
-                                    if (vSz && yyjson_is_uint(vSz)) r.fileSize = yyjson_get_uint(vSz);
-                                    r.sha256 = readStr("sha256");
-                                    r.minAppVersion = readStr("min_app_version");
-                                    items.push_back(std::move(r));
-                                }
-                            }
-                            yyjson_doc_free(doc);
-                            if (!items.empty()) break;
-                        }
-                    } else {
-                        CloseHandle(hFile);
-                        DeleteFileW(tempPath.c_str());
-                    }
-                }
-            }
-        }
-        if (callback) {
-            callback(items, userData);
-        }
-    });
-}
-
-void PluginHost::TriggerManifestFetch() {
-    {
-        std::lock_guard<std::recursive_mutex> lock(m_srMutex);
-        if (m_isFetchingManifest) return;
-        m_isFetchingManifest = true;
-    }
-    FetchRemoteManifestAsync([](const std::vector<RemotePluginItem>& items, void* userData) {
-        auto* self = static_cast<PluginHost*>(userData);
-        if (self) {
-            std::lock_guard<std::recursive_mutex> lock(self->m_srMutex);
-            if (!items.empty()) {
-                self->m_cachedManifest = items;
-            }
-            self->m_isFetchingManifest = false;
-            self->NotifyUI();
-        }
-    }, this);
-}
-
-void PluginHost::OpenModelsDirectory() const {
-    std::wstring fullModelsDir = GetWritableModelsDirectory();
-    SystemInfo::EnsureDirectoryRecursive(fullModelsDir);
-
-    ShellExecuteW(nullptr, L"open", fullModelsDir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-}
-
-void PluginHost::Shutdown() {
-    m_shuttingDown.store(true, std::memory_order_release);
-    UnloadSrPlugin();
+double PluginHost::GetLastDurationMs() const {
+    return m_lastDurationMs.load(std::memory_order_relaxed);
 }
 
 } // namespace QuickView
-

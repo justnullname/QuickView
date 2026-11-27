@@ -56,6 +56,14 @@ HRESULT LoadDirectToBuffer(const uint8_t* data, size_t size,
                            QuickView::Codec::DecodeResult& result,
                            uint32_t pageIndex = 0);
 
+// Memory-bounded sampled thumbnail decoder for giant Classic TIFF (magic 42) images.
+// BigTIFF (magic 43) returns E_NOTIMPL for WIC/external fallback.
+HRESULT LoadThumbnailSampled(const uint8_t* data, size_t size,
+                             int targetSize,
+                             CImageLoader::ThumbData* pData,
+                             QuickView::SimplePredicate checkCancel = {},
+                             uint32_t pageIndex = 0);
+
 // Internal helper for Phase 3 CMYK to BGRA conversion
 void ConvertCmykToBgra(const uint8_t* src, uint8_t* dst, int width, int samples);
 

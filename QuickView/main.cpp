@@ -40,6 +40,8 @@ static UINT GetSvgSurfaceSizeLimit();
 
 #include "TileManager.h" // [Infinity Engine]
 #include "ToolProcessProtocol.h"
+#include "ThumbWorker.h"
+#include "ThumbWorkerProtocol.h"
 #include "ProcessRouter.h"
 #include "InputController.h"  // Quantum Stream: Warp Mode
 #include "ViewPanController.h" // RTS-style seamless panning
@@ -73,6 +75,7 @@ static UINT GetSvgSurfaceSizeLimit();
 #pragma comment(lib, "psapi.lib")
 
 #include <d2d1helper.h>
+#include <gdiplus.h>
 
 using namespace Microsoft::WRL;
 
@@ -7983,7 +7986,7 @@ static void TriggerDebouncedSuperResolution(HWND hwnd, bool forceManual = false)
 
     std::string activeModelId = QuickView::PluginHost::Instance().GetSrModelId();
     float targetScale = 2.0f;
-    if (activeModelId == "realesr-animevideov3-auto") {
+    if (QuickView::PluginHost::Instance().IsCurrentSrPresetDynamicAuto()) {
         if (pixelStretchRatio <= 2.2f) {
             targetScale = 2.0f;
         } else if (pixelStretchRatio <= 3.2f) {
@@ -9383,36 +9386,139 @@ static int RunDecodeWorker(int argc, LPWSTR* argv) {
     return SUCCEEDED(hr) ? 0 : 2;
 }
 
-static bool TryRunToolProcessFromCommandLine(int* outExitCode) {
-    if (!outExitCode) return false;
+static int RunThumbWorkerEntry(int argc, LPWSTR* argv) {
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
 
-    int argc = 0;
-    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    if (!argv) return false;
+    struct ScopedGdiplus {
+        ULONG_PTR token = 0;
+        bool started = false;
+        ScopedGdiplus() noexcept {
+            Gdiplus::GdiplusStartupInput input;
+            started = (Gdiplus::GdiplusStartup(&token, &input, nullptr) == Gdiplus::Ok);
+        }
+        ~ScopedGdiplus() {
+            if (started) {
+                Gdiplus::GdiplusShutdown(token);
+            }
+        }
+    } gdiplusScope;
 
-    enum class ToolMode { None, DecodeWorker, Uninstall };
+    // Dedicated WebView2 profile folder + lazy STA worker (30s idle auto-teardown)
+    QuickView::WebViewThumbService::Instance().SetUserDataSubfolder(L"WebView2_ThumbWorker");
+    QuickView::WebViewThumbService::Instance().EnableLazyStaWorker(true);
+    struct ScopedWebViewShutdown {
+        ~ScopedWebViewShutdown() { QuickView::WebViewThumbService::Instance().Shutdown(); }
+    } webViewShutdownScope;
+
+    // OS-level hard safety ceiling: cap single-process commit at 2048 MiB so no third-party
+    // WIC/codec bug can thrash pagefile, while leaving headroom for 8K/51MP Media Foundation HEVC
+    // decode buffers and allowing WebView2 child processes silent breakaway.
+    HANDLE hJob = CreateJobObjectW(nullptr, nullptr);
+    if (hJob) {
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli{};
+        jeli.BasicLimitInformation.LimitFlags =
+            JOB_OBJECT_LIMIT_PROCESS_MEMORY | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK;
+        jeli.ProcessMemoryLimit = 2048ULL * 1024ULL * 1024ULL;
+        if (SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &jeli, sizeof(jeli))) {
+            AssignProcessToJobObject(hJob, GetCurrentProcess());
+        }
+    }
+    struct ScopedJobClose {
+        HANDLE h = nullptr;
+        ~ScopedJobClose() { if (h) CloseHandle(h); }
+    } jobGuard{hJob};
+
+    QuickView::ThumbWorkerDecodeOps ops{};
+    ops.createLoader = []() -> void* {
+        auto* loader = new (std::nothrow) CImageLoader();
+        if (!loader) return nullptr;
+        Microsoft::WRL::ComPtr<IWICImagingFactory> wicFactory;
+        if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                       IID_PPV_ARGS(&wicFactory))) && wicFactory) {
+            loader->Initialize(wicFactory.Get());
+        }
+        return loader;
+    };
+    ops.destroyLoader = [](void* ptr) {
+        delete static_cast<CImageLoader*>(ptr);
+    };
+    ops.decodeFile = [](void* ptr, LPCWSTR filePath, int targetSize, QuickView::ThumbDecodeResult& out,
+                        const std::atomic<bool>* cancelFlag) -> HRESULT {
+        auto* loader = static_cast<CImageLoader*>(ptr);
+        if (!loader) return E_POINTER;
+        CImageLoader::ThumbData td;
+        CImageLoader::CancelPredicate pred{};
+        if (cancelFlag) {
+            pred.pfn = [](void* c) -> bool {
+                return static_cast<const std::atomic<bool>*>(c)->load(std::memory_order_relaxed);
+            };
+            pred.ctx = const_cast<std::atomic<bool>*>(cancelFlag);
+        }
+        const HRESULT hr = loader->LoadThumbnail(filePath, targetSize, &td, true, true, pred);
+        if (FAILED(hr) || !td.isValid || td.width <= 0 || td.height <= 0 ||
+            td.stride <= 0 || td.pixels.empty()) {
+            return FAILED(hr) ? hr : E_FAIL;
+        }
+        out.width = static_cast<uint32_t>(td.width);
+        out.height = static_cast<uint32_t>(td.height);
+        out.stride = static_cast<uint32_t>(td.stride);
+        out.isPremultiplied = td.isPremultiplied;
+        out.pixels = std::move(td.pixels);
+        return S_OK;
+    };
+    ops.decodeMemory = [](void* ptr, const uint8_t* data, size_t size, LPCWSTR extHint, int targetSize,
+                          QuickView::ThumbDecodeResult& out, const std::atomic<bool>* cancelFlag) -> HRESULT {
+        auto* loader = static_cast<CImageLoader*>(ptr);
+        if (!loader) return E_POINTER;
+        CImageLoader::ThumbData td;
+        CImageLoader::CancelPredicate pred{};
+        if (cancelFlag) {
+            pred.pfn = [](void* c) -> bool {
+                return static_cast<const std::atomic<bool>*>(c)->load(std::memory_order_relaxed);
+            };
+            pred.ctx = const_cast<std::atomic<bool>*>(cancelFlag);
+        }
+        const HRESULT hr = loader->LoadThumbnailFromMemory(data, size, extHint, targetSize, &td, true, pred);
+        if (FAILED(hr) || !td.isValid || td.width <= 0 || td.height <= 0 ||
+            td.stride <= 0 || td.pixels.empty()) {
+            return FAILED(hr) ? hr : E_FAIL;
+        }
+        out.width = static_cast<uint32_t>(td.width);
+        out.height = static_cast<uint32_t>(td.height);
+        out.stride = static_cast<uint32_t>(td.stride);
+        out.isPremultiplied = td.isPremultiplied;
+        out.pixels = std::move(td.pixels);
+        return S_OK;
+    };
+    return QuickView::RunThumbWorker(argc, argv, ops);
+}
+
+static bool TryRunToolProcessFromCommandLine(int argc, LPWSTR* argv, int* outExitCode) {
+    if (!outExitCode || !argv) return false;
+
+    enum class ToolMode { None, DecodeWorker, ThumbWorker, Uninstall };
     ToolMode mode = ToolMode::None;
 
     for (int i = 1; i < argc; ++i) {
         if (!argv[i]) continue;
         if (_wcsicmp(argv[i], L"--decode-worker") == 0) { mode = ToolMode::DecodeWorker; break; }
-        if (_wcsicmp(argv[i], L"--uninstall") == 0) { mode = ToolMode::Uninstall; break; }
+        if (_wcsicmp(argv[i], L"--thumb-worker") == 0)  { mode = ToolMode::ThumbWorker; break; }
+        if (_wcsicmp(argv[i], L"--uninstall") == 0)     { mode = ToolMode::Uninstall; break; }
     }
 
     if (mode == ToolMode::None) {
-        LocalFree(argv);
         return false;
     }
 
     switch (mode) {
         case ToolMode::DecodeWorker: *outExitCode = RunDecodeWorker(argc, argv); break;
+        case ToolMode::ThumbWorker:  *outExitCode = RunThumbWorkerEntry(argc, argv); break;
         case ToolMode::Uninstall:
             SettingsOverlay::UnregisterAssociations();
             *outExitCode = 0;
             break;
         default:                     *outExitCode = 2; break;
     }
-    LocalFree(argv);
     return true;
 }
 
@@ -10115,6 +10221,7 @@ static void EnsureThumbMgrInitialized(HWND hwnd) {
     EnsureRatingStoreInitialized(hwnd);
     g_thumbMgrInitialized = true;
     g_thumbMgr.Initialize(hwnd, g_imageLoader.get());
+    QuickView::PluginHost::Instance().SetInProcThumbLookupCallback(&ThumbnailManager::InProcLookupThunk, &g_thumbMgr);
     g_gallery.Initialize(&g_thumbMgr, &GetPaneContext(PaneSlot::Primary).navigator);
 }
 
@@ -10151,6 +10258,16 @@ static void EnsureBootHydrated(HWND hwnd) {
 }
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCmdLine, int nCmdShow) {
+    // === Priority 0: Fast headless tool-process dispatch before any GUI/HWND probing ===
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+
+    int toolExitCode = 0;
+    if (argv && TryRunToolProcessFromCommandLine(argc, argv, &toolExitCode)) {
+        LocalFree(argv);
+        return toolExitCode;
+    }
+
     MSG earlyMsg{};
     PeekMessageW(&earlyMsg, nullptr, 0, 0, PM_NOREMOVE);
 
@@ -10167,19 +10284,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCm
         }
     }
 
-    // === Priority 0: CMD Parsing & Subprocess dispatch ===
-    int argc = 0;
-    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-
     // [Self-Update] Perform deterministic cleanup of the previous version if requested
     if (argv && argc > 1) {
         TryCleanupOldVersion(argc, argv);
-    }
-
-    int toolExitCode = 0;
-    if (TryRunToolProcessFromCommandLine(&toolExitCode)) {
-        if (argv) LocalFree(argv);
-        return toolExitCode;
     }
 
     // === Priority 1: Viewer-child bypass (spawned by Master, skip routing) ===
@@ -14500,12 +14607,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     }
 
 
-    case QuickView::WebViewThumbService::kRasterMessage: {
-        auto* job = reinterpret_cast<QuickView::WebViewThumbJob*>(lParam);
-        QuickView::WebViewThumbService::Instance().HandleRasterMessage(job);
-        return 0;
-    }
-
     case WM_ENGINE_EVENT:
         ProcessEngineEvents(hwnd);
         return 0;
@@ -15372,6 +15473,7 @@ case WM_DESTROY: {
                 g_webContentHost.reset();
             }
             g_thumbMgr.Shutdown();
+            QuickView::PluginHost::Instance().SetInProcThumbLookupCallback(nullptr, nullptr);
             g_ratingStore.Shutdown();
             ClearPdfRoiOverlay(hwnd);
             QuickView::PdfDecoder::ReleaseResources();
@@ -23176,7 +23278,7 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
         std::string curModel = QuickView::PluginHost::Instance().GetSrModelId();
         bool isModelInstalled = false;
         for (const auto& m : models) {
-            if (m.modelId == curModel) {
+            if (m.presetId == curModel || (curModel.empty() && &m == &models.front())) {
                 isModelInstalled = m.isInstalled;
                 break;
             }
@@ -23186,12 +23288,12 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
         }
 
         if (QuickView::PluginHost::Instance().IsSrPromptModelOnHotkey()) {
-            std::vector<QuickView::SrModelEntry> installedModels;
+            std::vector<QuickView::PluginPresetEntry> installedModels;
             std::vector<std::wstring> modelOptions;
             int defaultSelectIdx = 0;
             for (const auto& m : models) {
-                if (m.isInstalled && m.modelId != "realesr-animevideov3-auto") {
-                    if (m.modelId == curModel) {
+                if (m.isInstalled && !m.isDynamicAuto) {
+                    if (m.presetId == curModel) {
                         defaultSelectIdx = static_cast<int>(installedModels.size());
                     }
                     installedModels.push_back(m);
@@ -23223,7 +23325,7 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
                 }
 
                 if (selectedIdx >= 0 && selectedIdx < static_cast<int>(installedModels.size())) {
-                    QuickView::PluginHost::Instance().SetSrModelId(installedModels[selectedIdx].modelId);
+                    QuickView::PluginHost::Instance().SetSrModelId(installedModels[selectedIdx].presetId);
                     bool shouldOpenCompare = AppContext::GetInstance().Dialog.IsChecked;
                     QuickView::PluginHost::Instance().SetSrOpenInCompareMode(shouldOpenCompare);
 

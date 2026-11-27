@@ -180,6 +180,11 @@ void GalleryOverlay::Open(int currentIndex, GalleryMode targetMode, bool freezeD
     m_isLButtonDown = false;
     m_dragMode = DragMode::None;
     m_freezeDismissalUntilEnter = freezeDismissal;
+
+    m_appliedThumbTier = (m_preferredCellWidth >= 210.0f) ? 512 : 320;
+    if (m_pThumbMgr) {
+        m_pThumbMgr->SetTargetSize(m_appliedThumbTier);
+    }
     
     RequestRepaint(QuickView::PaintLayer::Gallery);
 }
@@ -310,6 +315,14 @@ void GalleryOverlay::Update(float deltaTime, HWND hwnd) {
         m_zoomDebounceTimer -= deltaTime;
         if (m_zoomDebounceTimer <= 0.0f) {
             m_isZooming = false;
+            repaintNeeded = true;
+            const int desiredTier = (m_preferredCellWidth >= 210.0f) ? 512 : 320;
+            if (desiredTier != m_appliedThumbTier) {
+                m_appliedThumbTier = desiredTier;
+                if (m_pThumbMgr) {
+                    m_pThumbMgr->SetTargetSize(m_appliedThumbTier);
+                }
+            }
             SaveConfig(); // Persist changes once the user stops zooming
         }
         if (m_cols != m_targetCols) {
@@ -782,6 +795,10 @@ void GalleryOverlay::Render(ID2D1DeviceContext *pDC, const D2D1_SIZE_F &size,
         ImageID imgId = m_pNav->GetImageID(i);
         const std::wstring& path = m_pNav->TryGetCachedFile(i);
         auto bmp = m_pThumbMgr->GetThumbnail(imgId, path.c_str(), pDC);
+        if (bmp && !m_isZooming && !m_gridSliderDragging && m_pThumbMgr->NeedsUpgrade(imgId)) {
+            int prio = std::abs(i - centerIdx);
+            m_pThumbMgr->QueueRequest(imgId, path.c_str(), prio);
+        }
         
         if (bmp) {
             // Use BitmapBrush to draw with elegant rounded corners
@@ -1567,6 +1584,8 @@ bool GalleryOverlay::OnLButtonDown(int x, int y) {
                     // Switch to auto mode
                     g_config.GalleryThumbnailSize = 0;
                     m_preferredCellWidth = 140.0f;
+                    m_appliedThumbTier = 320;
+                    if (m_pThumbMgr) m_pThumbMgr->SetTargetSize(320);
                 }
                 SaveConfig();
                 RequestRepaint(QuickView::PaintLayer::Gallery);
@@ -1802,6 +1821,13 @@ bool GalleryOverlay::OnLButtonUp(int x, int y, int& outSelectedIndex) {
     // Finalize slider drag → persist to config
     if (m_gridSliderDragging) {
         m_gridSliderDragging = false;
+        const int desiredTier = (m_preferredCellWidth >= 210.0f) ? 512 : 320;
+        if (desiredTier != m_appliedThumbTier) {
+            m_appliedThumbTier = desiredTier;
+            if (m_pThumbMgr) {
+                m_pThumbMgr->SetTargetSize(m_appliedThumbTier);
+            }
+        }
         // Persistence was already updated continuously in OnMouseMove / OnLButtonDown.
         // We now just finalize by calling SaveConfig() on mouse release.
         SaveConfig();

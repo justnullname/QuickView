@@ -11,7 +11,7 @@
 #include <unordered_map>
 #include "TileTypes.h"  // [Titan]
 #include "ComputeEngine.h"
-#include "Plugin/qvx_sr.h"
+#include "Plugin/abi/qvx_core.h"
 #include <mutex>
 #include <array>
 #include <cmath>

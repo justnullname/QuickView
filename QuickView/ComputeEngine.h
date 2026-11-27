@@ -6,7 +6,7 @@
 #include <vector>
 #include <memory>
 #include "ImageTypes.h"
-#include "Plugin/qvx_sr.h"
+#include "Plugin/abi/qvx_core.h"
 
 using Microsoft::WRL::ComPtr;
 

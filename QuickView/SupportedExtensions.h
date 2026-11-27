@@ -348,7 +348,19 @@ inline std::wstring GetSupportedExtensionsFilter(
 
     auto appendFilterGroup = [&](const wchar_t* label, std::span<const std::wstring_view> exts) {
         if (!label || !*label || exts.empty()) return;
+        constexpr size_t kMaxPreviewExts = 6u;
         filter.append(label);
+        filter.append(L" (");
+        const size_t previewCount = (std::min)(exts.size(), kMaxPreviewExts);
+        for (size_t i = 0; i < previewCount; ++i) {
+            if (i > 0) filter.append(L"; ");
+            filter.push_back(L'*');
+            filter.append(exts[i]);
+        }
+        if (exts.size() > kMaxPreviewExts) {
+            filter.append(L"; ...");
+        }
+        filter.push_back(L')');
         filter.push_back(L'\0');
         for (size_t i = 0; i < exts.size(); ++i) {
             if (i > 0) filter.push_back(L';');

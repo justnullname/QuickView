@@ -1,0 +1,33 @@
+{
+  "schema_version": 3,
+  "abi_version": "3.0.0",
+  "id": "com.quickview.sr.ncnn_vulkan",
+  "version": "0.3.0",
+  "author": "QuickView Core Team",
+  "entry": "sr_ncnn_vulkan.qvx",
+  "arch": "x64",
+  "sandbox_pref": "in_process",
+  "i18n": {
+    "en-US": {
+      "name": "Real-ESRGAN NCNN Vulkan",
+      "desc": "High-Performance In-Process Vulkan Compute Neural Super-Resolution Engine (0-Copy, 0 Disk I/O)."
+    },
+    "zh-CN": {
+      "name": "Real-ESRGAN NCNN Vulkan 超分引擎",
+      "desc": "基于 Vulkan 计算管线的进程内高性能神经网络超分辨率引擎（零拷贝、零磁盘临时 I/O）。"
+    },
+    "zh-TW": {
+      "name": "Real-ESRGAN NCNN Vulkan 超解析引擎",
+      "desc": "基於 Vulkan 計算管線的高效能神經網路超解析度引擎（零拷貝、零磁碟暫存 I/O）。"
+    },
+    "ja-JP": {
+      "name": "Real-ESRGAN NCNN Vulkan 超解像エンジン",
+      "desc": "Vulkan Compute ベースの高速インプロセス超解像ニューラルエンジン。"
+    }
+  },
+  "interfaces": ["image_processor"],
+  "image_processor": {
+    "kind": "upscaler",
+    "caps": ["gpu_d3d11", "auto_trigger", "compare_mode"]
+  }
+}

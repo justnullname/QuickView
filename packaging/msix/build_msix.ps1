@@ -83,7 +83,7 @@ function Get-StoreVersionFromRc {
     throw "Could not parse FILEVERSION from $RcFile"
 }
 
-function Get-LowercaseExtensionsXml {
+function Get-LowercaseExtensionsXmlGroups {
     param([string]$HeaderFile)
     $content = Get-Content -Path $HeaderFile -Raw -Encoding UTF8
     $arrayNames = @(
@@ -114,14 +114,49 @@ function Get-LowercaseExtensionsXml {
         }
     }
 
-    if ($exts.Count -ne 92) {
-        throw "Expected 92 associable extensions from SupportedExtensions.h, found $($exts.Count)"
+    if ($exts.Count -ne 93) {
+        throw "Expected 93 associable extensions from SupportedExtensions.h, found $($exts.Count)"
     }
 
-    $lines = foreach ($e in $exts) {
-        "              <uap:FileType>$e</uap:FileType>"
+    # Align MSIX ThumbnailHandler FileTypes with qv_shell_thumb default-enabled groups
+    # (kModernExts + kProExts + kRawExts + kComicExts), excluding native Windows formats,
+    # Store-extension-dependent HEIC/HEIF/HIF, and generic .data/.cap.
+    $nativeSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+    @(
+        ".jpg", ".jpeg", ".jpe", ".jfif", ".png", ".bmp", ".dib", ".gif", ".tif", ".tiff", ".ico", ".cur",
+        ".webp", ".wdp", ".hdp", ".jxr", ".wmf", ".emf", ".wmz", ".emz",
+        ".heic", ".heif", ".hif",
+        ".zip", ".rar", ".data", ".cap"
+    ) | ForEach-Object { [void]$nativeSet.Add($_) }
+
+    $shellDefaultThumbSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+    @(
+        # kModernExts
+        ".jxl", ".avif", ".avifs", ".svg", ".svgz", ".apng",
+        # kProExts (non-native subset; native .wmf/.emf/.wmz/.emz/.jxr/.wdp are in $nativeSet)
+        ".psd", ".psb", ".exr", ".hdr", ".pic", ".tga", ".icb", ".vda", ".vst",
+        ".pcx", ".qoi", ".wbmp", ".pam", ".pbm", ".pgm", ".ppm", ".pnm", ".dds",
+        # kRawExts (22 standard camera RAWs)
+        ".arw", ".cr2", ".cr3", ".crw", ".dng", ".nef", ".orf", ".raf", ".rw2", ".srw", ".x3f",
+        ".mrw", ".mos", ".kdc", ".dcr", ".sr2", ".pef", ".erf", ".3fr", ".mef", ".nrw", ".raw",
+        # kComicExts
+        ".cbz", ".cbr"
+    ) | ForEach-Object { [void]$shellDefaultThumbSet.Add($_) }
+
+    $nativeExts = New-Object System.Collections.Generic.List[string]
+    $thumbExts = New-Object System.Collections.Generic.List[string]
+    foreach ($e in $exts) {
+        if ($shellDefaultThumbSet.Contains($e) -and -not $nativeSet.Contains($e)) {
+            $thumbExts.Add("              <uap:FileType>$e</uap:FileType>")
+        } else {
+            $nativeExts.Add("              <uap:FileType>$e</uap:FileType>")
+        }
     }
-    return ($lines -join "`r`n")
+
+    return [PSCustomObject]@{
+        NativeXml = ($nativeExts -join "`r`n")
+        ThumbXml  = ($thumbExts -join "`r`n")
+    }
 }
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
@@ -177,11 +212,15 @@ if (-not (Test-Path $BuildDir)) {
 
 $exePath = Join-Path $BuildDir "QuickView.exe"
 $pluginPath = Join-Path $BuildDir "plugins\sr\sr_ncnn_vulkan\sr_ncnn_vulkan.qvx"
+$shellThumbPluginPath = Join-Path $BuildDir "plugins\shell\qv_shell_thumb\qv_shell_thumb.qvx"
 if (-not (Test-Path $exePath)) {
     throw "QuickView.exe not found: $exePath"
 }
 if (-not (Test-Path $pluginPath)) {
     throw "sr_ncnn_vulkan.qvx not found: $pluginPath"
+}
+if (-not (Test-Path $shellThumbPluginPath)) {
+    throw "qv_shell_thumb.qvx not found: $shellThumbPluginPath"
 }
 
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
@@ -200,20 +239,38 @@ New-Item -ItemType Directory -Force -Path $priTempDir | Out-Null
 try {
     Copy-Item -Path $exePath -Destination (Join-Path $stagingDir "QuickView.exe") -Force
 
-    # Bundle pre-built sr_ncnn_vulkan.qvx without large neural model weights (.bin/.param).
+    # Bundle pre-built sr_ncnn_vulkan.qvx and manifest.json without large neural model weights (.bin/.param).
     $pluginDestDir = Join-Path $stagingDir "plugins\sr\sr_ncnn_vulkan"
     New-Item -ItemType Directory -Force -Path $pluginDestDir | Out-Null
     Copy-Item -Path $pluginPath -Destination (Join-Path $pluginDestDir "sr_ncnn_vulkan.qvx") -Force
+    $pluginManifestPath = Join-Path $RepoRoot "plugins\sr\sr_ncnn_vulkan\manifest.json"
+    if (-not (Test-Path $pluginManifestPath)) {
+        throw "sr_ncnn_vulkan manifest.json not found: $pluginManifestPath"
+    }
+    $pluginManifestContent = (Get-Content -Path $pluginManifestPath -Raw -Encoding UTF8) -replace '"arch"\s*:\s*"[^"]*"', "`"arch`": `"$Arch`""
+    [System.IO.File]::WriteAllText((Join-Path $pluginDestDir "manifest.json"), $pluginManifestContent, [System.Text.UTF8Encoding]::new($false))
+
+    # Bundle qv_shell_thumb.qvx and manifest.json for Windows Explorer ThumbnailHandler COM surrogate.
+    $shellDestDir = Join-Path $stagingDir "plugins\shell\qv_shell_thumb"
+    New-Item -ItemType Directory -Force -Path $shellDestDir | Out-Null
+    Copy-Item -Path $shellThumbPluginPath -Destination (Join-Path $shellDestDir "qv_shell_thumb.qvx") -Force
+    $shellManifestPath = Join-Path $RepoRoot "plugins\shell\qv_shell_thumb\manifest.json"
+    if (-not (Test-Path $shellManifestPath)) {
+        throw "qv_shell_thumb manifest.json not found: $shellManifestPath"
+    }
+    $shellManifestContent = (Get-Content -Path $shellManifestPath -Raw -Encoding UTF8) -replace '"arch"\s*:\s*"[^"]*"', "`"arch`": `"$Arch`""
+    [System.IO.File]::WriteAllText((Join-Path $shellDestDir "manifest.json"), $shellManifestContent, [System.Text.UTF8Encoding]::new($false))
 
     $assetsDestDir = Join-Path $stagingDir "Assets"
     New-Item -ItemType Directory -Force -Path $assetsDestDir | Out-Null
     Copy-Item -Path (Join-Path $AssetsDir "*.png") -Destination $assetsDestDir -Force
 
-    $fileTypesXml = Get-LowercaseExtensionsXml -HeaderFile $ExtHeaderPath
+    $fileTypeGroups = Get-LowercaseExtensionsXmlGroups -HeaderFile $ExtHeaderPath
     $manifestXml = Get-Content -Path $ManifestTemplatePath -Raw -Encoding UTF8
     $manifestXml = $manifestXml.Replace("@MSIX_VERSION@", $Version)
     $manifestXml = $manifestXml.Replace("@ARCH@", $Arch)
-    $manifestXml = $manifestXml.Replace("@FILE_TYPES@", $fileTypesXml)
+    $manifestXml = $manifestXml.Replace("@FILE_TYPES_NATIVE@", $fileTypeGroups.NativeXml)
+    $manifestXml = $manifestXml.Replace("@FILE_TYPES_THUMB@", $fileTypeGroups.ThumbXml)
     $stagedManifestPath = Join-Path $stagingDir "AppxManifest.xml"
     [System.IO.File]::WriteAllText($stagedManifestPath, $manifestXml, [System.Text.UTF8Encoding]::new($false))
 

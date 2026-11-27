@@ -11,47 +11,64 @@
 
 // --- RAW (TIFF-based) ---
 
+namespace {
+
+[[nodiscard]] bool IsJpegSoiAt(const uint8_t* data, size_t size, uint64_t off, uint64_t len) noexcept {
+    if (len < 128 || off >= size || len > size - off) return false;
+    return data[off] == 0xFF && data[off + 1] == 0xD8 && data[off + 2] == 0xFF;
+}
+
+[[nodiscard]] bool ReadJpegSofDims(const uint8_t* data, size_t size, int& outW, int& outH) noexcept {
+    outW = 0;
+    outH = 0;
+    if (!data || size < 4 || data[0] != 0xFF || data[1] != 0xD8) return false;
+    size_t pos = 2;
+    while (pos + 4 <= size) {
+        while (pos < size && data[pos] != 0xFF) ++pos;
+        while (pos < size && data[pos] == 0xFF) ++pos;
+        if (pos >= size) break;
+        const uint8_t marker = data[pos++];
+        if (marker == 0x00 || (marker >= 0xD0 && marker <= 0xD8)) continue;
+        if (marker == 0xD9 || marker == 0xDA) break;
+        if (pos + 2 > size) break;
+        const uint16_t segLen = static_cast<uint16_t>((data[pos] << 8) | data[pos + 1]);
+        if (segLen < 2 || pos + segLen > size) break;
+        const bool isSof =
+            (marker >= 0xC0 && marker <= 0xC3) ||
+            (marker >= 0xC5 && marker <= 0xC7) ||
+            (marker >= 0xC9 && marker <= 0xCB) ||
+            (marker >= 0xCD && marker <= 0xCF);
+        if (isSof && segLen >= 7 && pos + 7 <= size) {
+            outH = (data[pos + 3] << 8) | data[pos + 4];
+            outW = (data[pos + 5] << 8) | data[pos + 6];
+            return (outW > 0 && outH > 0);
+        }
+        pos += segLen;
+    }
+    return false;
+}
+
+} // namespace
+
 bool PreviewExtractor::ExtractFromRAW(const uint8_t* data, size_t size, ExtractedData& out) {
     if (size < 1024) return false;
 
-    // TIFF Header check
-    // II (49 49) = Little Endian
-    // MM (4D 4D) = Big Endian
     bool isLE = false;
     if (data[0] == 0x49 && data[1] == 0x49) isLE = true;
     else if (data[0] == 0x4D && data[1] == 0x4D) isLE = false;
-    else return false; // Not TIFF
+    else return false;
 
-    uint16_t fortyTwo = isLE ? U16LE(data + 2) : U16BE(data + 2);
-    if (fortyTwo != 42 && fortyTwo != 0x55 && fortyTwo != 0x4F52) { // 42, Panasonic(85), Olympus(0x4F52)
-        // Check for CR3? CR3 is ISOBMFF, not TIFF. 
-        // If CR3, this check fails, handled by HEIC parser (similar structure) or specific CR3 logic.
-        // But Canon CR2 is TIFF.
-        // Let's assume TIFF standard for now.
-    }
-    
     uint32_t firstIFD = isLE ? U32LE(data + 4) : U32BE(data + 4);
-    if (firstIFD >= size) return false;
+    if (firstIFD == 0 || firstIFD >= size) return false;
 
     uint64_t jpgOff = 0, jpgSz = 0;
-    
-    // Parse IFD0
-    // IFD0 usually contains the tiny thumbnail (160x120).
-    // SubIFDs usually contain the full preview.
-    // Sony ARW: Preview in SubIFD.
-    // Canon CR2: Preview image tag in IFD0 or StripOffsets?
-    
-    // Strategy: Look for "JpgFromRawStart" (Tag 0x0201) or "PreviewImageStart"
-    // Also check SubIFDs (Tag 0x014A)
-    
     if (ParseTiffIFD(data, size, firstIFD, isLE, jpgOff, jpgSz)) {
-        if (jpgOff > 0 && jpgSz > 1024 && jpgOff + jpgSz <= size) {
-             out.pData = data + jpgOff;
-             out.size = (size_t)jpgSz;
-             return true;
+        if (IsJpegSoiAt(data, size, jpgOff, jpgSz)) {
+            out.pData = data + jpgOff;
+            out.size = static_cast<size_t>(jpgSz);
+            return true;
         }
     }
-    
     return false;
 }
 
@@ -63,11 +80,12 @@ bool PreviewExtractor::ExtractFromTIFF(const uint8_t* data, size_t size, Extract
     else if (data[0] == 0x4D && data[1] == 0x4D) isLE = false;
     else return false;
 
+    // Only Classic TIFF (magic == 42) uses 32-bit IFD offsets and 12-byte entries.
     uint16_t magic = isLE ? U16LE(data + 2) : U16BE(data + 2);
-    if (magic != 42 && magic != 43) return false;
+    if (magic != 42) return false;
 
     uint32_t ifd0 = isLE ? U32LE(data + 4) : U32BE(data + 4);
-    if (ifd0 >= size) return false;
+    if (ifd0 == 0 || ifd0 >= size) return false;
 
     uint64_t jpgOff = 0;
     uint64_t jpgSz = 0;
@@ -75,7 +93,7 @@ bool PreviewExtractor::ExtractFromTIFF(const uint8_t* data, size_t size, Extract
         return false;
     }
 
-    if (jpgOff > 0 && jpgSz > 512 && jpgOff + jpgSz <= size) {
+    if (IsJpegSoiAt(data, size, jpgOff, jpgSz) && jpgSz > 512) {
         out.pData = data + jpgOff;
         out.size = static_cast<size_t>(jpgSz);
         return true;
@@ -84,66 +102,138 @@ bool PreviewExtractor::ExtractFromTIFF(const uint8_t* data, size_t size, Extract
     return false;
 }
 
-bool PreviewExtractor::ParseTiffIFD(const uint8_t* data, size_t size, size_t offset, bool isLE, uint64_t& jpegOffset, uint64_t& jpegSize) {
-    if (offset + 2 > size) return false;
-    
-    uint16_t count = isLE ? U16LE(data + offset) : U16BE(data + offset);
-    size_t entrySize = 12;
-    size_t current = offset + 2;
-    
-    if (current + count * entrySize > size) return false;
+namespace {
 
-    uint64_t subIfdOffset = 0;
-    
-    for (int i = 0; i < count; i++) {
-        const uint8_t* ev = data + current + i * entrySize;
-        uint16_t tag = isLE ? U16LE(ev) : U16BE(ev);
-        uint16_t type = isLE ? U16LE(ev + 2) : U16BE(ev + 2);
-        uint32_t cnt = isLE ? U32LE(ev + 4) : U32BE(ev + 4);
-        uint32_t valOrOff = isLE ? U32LE(ev + 8) : U32BE(ev + 8); // Value if fits 4 bytes, else offset
-        
-        // JPEGInterchangeFormat (0x0201) - Common in EXIF/TIFF, points to SOI
-        if (tag == 0x0201) { 
-            jpegOffset = valOrOff; 
+struct TiffIfdVisitBudget {
+    size_t visited[64]{};
+    int count = 0;
+    int remainingNodes = 64;
+
+    bool TryVisit(size_t off) noexcept {
+        if (remainingNodes <= 0) return false;
+        for (int i = 0; i < count; ++i) {
+            if (visited[i] == off) return false;
         }
-        // JPEGInterchangeFormatLength (0x0202)
-        else if (tag == 0x0202) { 
-            jpegSize = valOrOff; 
+        --remainingNodes;
+        if (count < 64) {
+            visited[count++] = off;
         }
-        // StripOffsets (0x0111) - Sometimes used for thumb
-        // StripByteCounts (0x0117)
-        // SubIFDs (0x014A) - VERY IMPORTANT for RAW
-        else if (tag == 0x014A) {
-             // SubIFDs usually points to a list of offsets.
-             // If type=4 (LONG), cnt=1, then valOrOff is offset.
-             // If cnt > 1, valOrOff is offset to array of offsets.
-             if (type == 4 || type == 3) { // LONG or SHORT
-                 if (cnt == 1) subIfdOffset = valOrOff;
-                 else subIfdOffset = valOrOff; // Offset to array
-             }
-        }
+        return true;
     }
-    
-    // If found valid JPEG in this IFD, check if it's "large enough" (> 50KB?)
-    // Thumbnails are small. Previews are large.
-    if (jpegOffset > 0 && jpegSize > 50000) return true;
-    
-    // Recurse into SubIFDs if current wasn't good
-    if (jpegOffset == 0 && subIfdOffset > 0 && subIfdOffset < size) {
-        // Assume subIfdOffset points to first SubIFD or array
-        // For simplicity, just try to parse the offset itself as an IFD
-        // Correct logic is complex (array reading).
-        // Hack: Try to parse whatever is at subIfdOffset.
-        // Usually it's an array of LONGs. Read first one.
-        // If SubIFDS tag pointed to array, we need to read memory.
-        // Let's assume it points to valid IFD.
-        
-        // Actually for ARW/DNG, SubIFD is main image or preview.
-        // Let's implement full parsing later. 
-        // For now, let's enable DNG/ARW basic detection.
+};
+
+bool ParseTiffIFDImpl(const uint8_t* data, size_t size, size_t offset, bool isLE,
+                      uint64_t& jpegOffset, uint64_t& jpegSize, int depth,
+                      TiffIfdVisitBudget& budget, uint16_t* outOrientation) {
+    jpegOffset = 0;
+    jpegSize = 0;
+    if (depth > 4) return false;
+
+    uint64_t bestOff = 0;
+    uint64_t bestSz = 0;
+    auto considerCandidate = [&](uint64_t candOff, uint64_t candSz) {
+        if (!IsJpegSoiAt(data, size, candOff, candSz)) return;
+        if (candSz > bestSz) {
+            bestOff = candOff;
+            bestSz = candSz;
+        }
+    };
+
+    size_t curIfd = offset;
+    for (int ifdStep = 0; ifdStep < 8 && curIfd > 0 && curIfd + 2 <= size; ++ifdStep) {
+        if (!budget.TryVisit(curIfd)) break;
+        uint16_t count = isLE ? U16LE(data + curIfd) : U16BE(data + curIfd);
+        size_t entrySize = 12;
+        size_t current = curIfd + 2;
+        if (count > 512 || current + static_cast<size_t>(count) * entrySize > size) break;
+
+        uint64_t jifOff = 0, jifSz = 0;
+        uint64_t stripOff = 0, stripSz = 0;
+        uint32_t stripOffCnt = 0, stripSzCnt = 0;
+        uint64_t subIfdVal = 0;
+        uint32_t subIfdCnt = 0;
+        uint16_t subIfdType = 0;
+
+        for (int i = 0; i < count; ++i) {
+            const uint8_t* ev = data + current + static_cast<size_t>(i) * entrySize;
+            uint16_t tag = isLE ? U16LE(ev) : U16BE(ev);
+            uint16_t type = isLE ? U16LE(ev + 2) : U16BE(ev + 2);
+            uint32_t cnt = isLE ? U32LE(ev + 4) : U32BE(ev + 4);
+            uint32_t valOrOff = (type == 3 && cnt == 1)
+                ? static_cast<uint32_t>(isLE ? U16LE(ev + 8) : U16BE(ev + 8))
+                : (isLE ? U32LE(ev + 8) : U32BE(ev + 8));
+
+            if (tag == 0x0112 && outOrientation && *outOrientation == 0 && cnt == 1 &&
+                valOrOff >= 1 && valOrOff <= 8) {
+                *outOrientation = static_cast<uint16_t>(valOrOff);
+            } else if (tag == 0x0201) { // JPEGInterchangeFormat
+                jifOff = valOrOff;
+            } else if (tag == 0x0202) { // JPEGInterchangeFormatLength
+                jifSz = valOrOff;
+            } else if (tag == 0x0111) { // StripOffsets (CR2/embedded JPEG preview)
+                stripOff = valOrOff;
+                stripOffCnt = cnt;
+            } else if (tag == 0x0117) { // StripByteCounts
+                stripSz = valOrOff;
+                stripSzCnt = cnt;
+            } else if (tag == 0x014A && (type == 4 || type == 3 || type == 13)) { // SubIFDs
+                subIfdVal = valOrOff;
+                subIfdCnt = cnt;
+                subIfdType = type;
+            }
+        }
+
+        considerCandidate(jifOff, jifSz);
+        if (stripOffCnt == 1 && stripSzCnt == 1) {
+            considerCandidate(stripOff, stripSz);
+        }
+
+        if (subIfdCnt > 0 && subIfdVal > 0 && subIfdVal < size) {
+            if (subIfdCnt == 1) {
+                uint64_t sOff = 0, sSz = 0;
+                if (ParseTiffIFDImpl(data, size, static_cast<size_t>(subIfdVal), isLE, sOff, sSz, depth + 1, budget, nullptr)) {
+                    considerCandidate(sOff, sSz);
+                }
+            } else {
+                const size_t elemBytes = (subIfdType == 3) ? 2u : 4u;
+                const uint32_t capped = (std::min)(subIfdCnt, 16u);
+                if (subIfdVal <= size && static_cast<size_t>(capped) * elemBytes <= size - subIfdVal) {
+                    for (uint32_t s = 0; s < capped; ++s) {
+                        const uint8_t* ptr = data + subIfdVal + static_cast<size_t>(s) * elemBytes;
+                        const uint32_t subOff = (elemBytes == 2u)
+                            ? static_cast<uint32_t>(isLE ? U16LE(ptr) : U16BE(ptr))
+                            : (isLE ? U32LE(ptr) : U32BE(ptr));
+                        if (subOff > 0 && subOff < size) {
+                            uint64_t sOff = 0, sSz = 0;
+                            if (ParseTiffIFDImpl(data, size, subOff, isLE, sOff, sSz, depth + 1, budget, nullptr)) {
+                                considerCandidate(sOff, sSz);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        const size_t nextPtrPos = current + static_cast<size_t>(count) * entrySize;
+        if (nextPtrPos + 4 > size) break;
+        const uint32_t nextIfd = isLE ? U32LE(data + nextPtrPos) : U32BE(data + nextPtrPos);
+        if (nextIfd == 0 || nextIfd == curIfd) break;
+        curIfd = nextIfd;
     }
-    
-    return (jpegOffset > 0 && jpegSize > 0);
+
+    if (bestOff > 0 && bestSz > 0) {
+        jpegOffset = bestOff;
+        jpegSize = bestSz;
+        return true;
+    }
+    return false;
+}
+
+} // namespace
+
+bool PreviewExtractor::ParseTiffIFD(const uint8_t* data, size_t size, size_t offset, bool isLE, uint64_t& jpegOffset, uint64_t& jpegSize, int depth) {
+    TiffIfdVisitBudget budget;
+    return ParseTiffIFDImpl(data, size, offset, isLE, jpegOffset, jpegSize, depth, budget, nullptr);
 }
 
 
@@ -301,83 +391,240 @@ bool PreviewExtractor::ExtractFromJPEG(const uint8_t* data, size_t size, Extract
         
         // End markers
         if (marker == 0xD9 || marker == 0xDA) break;
-        
-        // Get segment length
-        uint16_t segLen = (data[pos + 2] << 8) | data[pos + 3];
-        
+        if (pos + 4 > size) break;
+
+        // Get segment length (includes the 2 length bytes themselves)
+        const uint16_t segLen = static_cast<uint16_t>((data[pos + 2] << 8) | data[pos + 3]);
+        if (segLen < 2 || pos + 2 + static_cast<size_t>(segLen) > size) break;
+
         // APP1 marker (0xE1) - EXIF data
         if (marker == 0xE1) {
-            // Check for "Exif\0\0"
-            if (pos + 10 < size && 
-                data[pos + 4] == 'E' && data[pos + 5] == 'x' && 
+            // Require >= 16 bytes: 2B length + 6B "Exif\0\0" + 8B TIFF header
+            if (segLen >= 16 &&
+                data[pos + 4] == 'E' && data[pos + 5] == 'x' &&
                 data[pos + 6] == 'i' && data[pos + 7] == 'f' &&
                 data[pos + 8] == 0 && data[pos + 9] == 0) {
-                
+
                 // TIFF header starts at pos + 10
                 const uint8_t* tiffStart = data + pos + 10;
-                size_t tiffSize = segLen - 8; // Subtract "Exif\0\0" and length bytes
-                
-                if (tiffSize < 8 || pos + 10 + tiffSize > size) {
-                    pos += 2 + segLen;
+                const size_t tiffSize = static_cast<size_t>(segLen) - 8u;
+
+                // Check TIFF byte order & classic magic (42)
+                const bool isLE = (tiffStart[0] == 'I' && tiffStart[1] == 'I');
+                const bool isBE = (tiffStart[0] == 'M' && tiffStart[1] == 'M');
+                if (!isLE && !isBE) {
+                    pos += 2 + static_cast<size_t>(segLen);
                     continue;
                 }
-                
-                // Check TIFF byte order
-                bool isLE = (tiffStart[0] == 'I' && tiffStart[1] == 'I');
-                
-                if ((tiffStart[0] != 'I' && tiffStart[0] != 'M') || 
-                    (tiffStart[0] == 'I' && tiffStart[1] != 'I') ||
-                    (tiffStart[0] == 'M' && tiffStart[1] != 'M')) {
-                    pos += 2 + segLen;
+                const uint16_t magic = isLE ? U16LE(tiffStart + 2) : U16BE(tiffStart + 2);
+                if (magic != 42) {
+                    pos += 2 + static_cast<size_t>(segLen);
                     continue;
                 }
-                
+
                 // Get IFD0 offset
-                uint32_t ifd0Offset = isLE ? 
-                    (tiffStart[4] | (tiffStart[5] << 8) | (tiffStart[6] << 16) | (tiffStart[7] << 24)) :
-                    ((tiffStart[4] << 24) | (tiffStart[5] << 16) | (tiffStart[6] << 8) | tiffStart[7]);
-                
-                // Parse TIFF IFD for thumbnail
+                const uint32_t ifd0Offset = isLE ? U32LE(tiffStart + 4) : U32BE(tiffStart + 4);
+
+                // Parse TIFF IFD chain (IFD0 -> IFD1 -> ...) for thumbnail
                 uint64_t jpgOff = 0, jpgSz = 0;
                 if (ParseTiffIFD(tiffStart, tiffSize, ifd0Offset, isLE, jpgOff, jpgSz)) {
-                    if (jpgOff > 0 && jpgSz > 100 && jpgOff + jpgSz <= tiffSize) {
+                    if (jpgOff > 0 && jpgSz > 100 && jpgOff <= tiffSize && jpgSz <= tiffSize - jpgOff) {
                         out.pData = tiffStart + jpgOff;
-                        out.size = (size_t)jpgSz;
+                        out.size = static_cast<size_t>(jpgSz);
                         return true;
-                    }
-                }
-                
-                // Try IFD1 (often contains the thumbnail)
-                // After IFD0 entries, there's a pointer to IFD1
-                if (ifd0Offset < tiffSize) {
-                    uint16_t numEntries = isLE ? 
-                        (tiffStart[ifd0Offset] | (tiffStart[ifd0Offset + 1] << 8)) :
-                        ((tiffStart[ifd0Offset] << 8) | tiffStart[ifd0Offset + 1]);
-                    
-                    size_t ifd1PtrPos = ifd0Offset + 2 + numEntries * 12;
-                    if (ifd1PtrPos + 4 <= tiffSize) {
-                        uint32_t ifd1Offset = isLE ?
-                            (tiffStart[ifd1PtrPos] | (tiffStart[ifd1PtrPos + 1] << 8) | 
-                             (tiffStart[ifd1PtrPos + 2] << 16) | (tiffStart[ifd1PtrPos + 3] << 24)) :
-                            ((tiffStart[ifd1PtrPos] << 24) | (tiffStart[ifd1PtrPos + 1] << 16) | 
-                             (tiffStart[ifd1PtrPos + 2] << 8) | tiffStart[ifd1PtrPos + 3]);
-                        
-                        if (ifd1Offset > 0 && ifd1Offset < tiffSize) {
-                            if (ParseTiffIFD(tiffStart, tiffSize, ifd1Offset, isLE, jpgOff, jpgSz)) {
-                                if (jpgOff > 0 && jpgSz > 100 && jpgOff + jpgSz <= tiffSize) {
-                                    out.pData = tiffStart + jpgOff;
-                                    out.size = (size_t)jpgSz;
-                                    return true;
-                                }
-                            }
-                        }
                     }
                 }
             }
         }
-        
-        pos += 2 + segLen;
+
+        pos += 2 + static_cast<size_t>(segLen);
     }
-    
+
     return false;
+}
+
+bool PreviewExtractor::ExtractFromPSDFile(const wchar_t* filePath, std::vector<uint8_t>& outJpeg, bool* outIsBgr) {
+    outJpeg.clear();
+    if (outIsBgr) *outIsBgr = false;
+    if (!filePath || !filePath[0]) return false;
+
+    HANDLE hFile = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                               nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+    if (hFile == INVALID_HANDLE_VALUE) return false;
+
+    auto readExact = [&](void* dst, DWORD bytes) -> bool {
+        uint8_t* p = static_cast<uint8_t*>(dst);
+        DWORD total = 0;
+        while (total < bytes) {
+            DWORD chunk = 0;
+            if (!ReadFile(hFile, p + total, bytes - total, &chunk, nullptr) || chunk == 0) {
+                return false;
+            }
+            total += chunk;
+        }
+        return true;
+    };
+
+    uint8_t hdr[30]{};
+    if (!readExact(hdr, 30) || std::memcmp(hdr, "8BPS", 4) != 0) {
+        CloseHandle(hFile);
+        return false;
+    }
+
+    const uint32_t colorModeLen = U32BE(hdr + 26);
+    if (colorModeLen > 64u * 1024u * 1024u) {
+        CloseHandle(hFile);
+        return false;
+    }
+
+    LARGE_INTEGER seekPos{};
+    seekPos.QuadPart = 30ll + static_cast<LONGLONG>(colorModeLen);
+    if (!SetFilePointerEx(hFile, seekPos, nullptr, FILE_BEGIN)) {
+        CloseHandle(hFile);
+        return false;
+    }
+
+    uint8_t resLenBuf[4]{};
+    if (!readExact(resLenBuf, 4)) {
+        CloseHandle(hFile);
+        return false;
+    }
+    const uint32_t imgResLen = U32BE(resLenBuf);
+    constexpr uint32_t kMaxImgResRead = 8u * 1024u * 1024u;
+    if (imgResLen == 0 || imgResLen > kMaxImgResRead) {
+        CloseHandle(hFile);
+        return false;
+    }
+
+    std::vector<uint8_t> resBlock(imgResLen);
+    if (!readExact(resBlock.data(), imgResLen)) {
+        CloseHandle(hFile);
+        return false;
+    }
+    CloseHandle(hFile);
+
+    std::vector<uint8_t> fallback1033;
+    size_t off = 0;
+    while (off + 8 <= resBlock.size()) {
+        const bool isValidSig =
+            std::memcmp(resBlock.data() + off, "8BIM", 4) == 0 ||
+            std::memcmp(resBlock.data() + off, "MeSa", 4) == 0 ||
+            std::memcmp(resBlock.data() + off, "8B64", 4) == 0 ||
+            std::memcmp(resBlock.data() + off, "PHUT", 4) == 0;
+        if (!isValidSig) break;
+        const bool is8Bim = (resBlock[off] == '8' && resBlock[off + 1] == 'B' &&
+                             resBlock[off + 2] == 'I' && resBlock[off + 3] == 'M');
+        off += 4;
+        const uint16_t id = U16BE(resBlock.data() + off);
+        off += 2;
+        if (off >= resBlock.size()) break;
+        const uint8_t nameLen = resBlock[off];
+        off += 1 + nameLen;
+        if ((off & 1u) != 0) ++off;
+        if (off + 4 > resBlock.size()) break;
+        const uint32_t dataSz = U32BE(resBlock.data() + off);
+        off += 4;
+        if (dataSz > resBlock.size() - off) break;
+
+        if (is8Bim && (id == 1036 || id == 1033) && dataSz > 28) {
+            const uint32_t fmt = U32BE(resBlock.data() + off);
+            if (fmt == 1 && IsJpegSoiAt(resBlock.data(), resBlock.size(), off + 28, dataSz - 28)) {
+                if (id == 1036) {
+                    outJpeg.assign(resBlock.data() + off + 28, resBlock.data() + off + dataSz);
+                    if (outIsBgr) *outIsBgr = false;
+                    return true;
+                }
+                if (fallback1033.empty()) {
+                    fallback1033.assign(resBlock.data() + off + 28, resBlock.data() + off + dataSz);
+                }
+            }
+        }
+        off += dataSz;
+        if ((off & 1u) != 0) ++off;
+    }
+    if (!fallback1033.empty()) {
+        outJpeg = std::move(fallback1033);
+        if (outIsBgr) *outIsBgr = true;
+        return true;
+    }
+    return false;
+}
+
+bool PreviewExtractor::ExtractFromJPEGHeaderValidated(const wchar_t* filePath, int targetSize,
+                                                      std::vector<uint8_t>& outJpeg,
+                                                      int& outMainW, int& outMainH,
+                                                      int* outMainOrientation) {
+    outJpeg.clear();
+    outMainW = 0;
+    outMainH = 0;
+    if (outMainOrientation) *outMainOrientation = 1;
+    if (!filePath || !filePath[0]) return false;
+
+    HANDLE hFile = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                               nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+    if (hFile == INVALID_HANDLE_VALUE) return false;
+
+    constexpr DWORD kProbeBytes = 256u * 1024u;
+    std::vector<uint8_t> buf(kProbeBytes);
+    DWORD readBytes = 0;
+    const BOOL ok = ReadFile(hFile, buf.data(), kProbeBytes, &readBytes, nullptr);
+    CloseHandle(hFile);
+    if (!ok || readBytes < 64) return false;
+    buf.resize(readBytes);
+
+    if (!ReadJpegSofDims(buf.data(), buf.size(), outMainW, outMainH)) return false;
+
+    // Extract main EXIF Orientation (Tag 0x0112) from APP1 IFD0 if requested
+    if (outMainOrientation && buf.size() >= 20 && buf[0] == 0xFF && buf[1] == 0xD8) {
+        size_t pos = 2;
+        while (pos + 4 <= buf.size()) {
+            if (buf[pos] != 0xFF) { ++pos; continue; }
+            const uint8_t marker = buf[pos + 1];
+            if (marker == 0xFF) { ++pos; continue; }
+            if (marker == 0xD9 || marker == 0xDA) break;
+            const uint16_t segLen = static_cast<uint16_t>((buf[pos + 2] << 8) | buf[pos + 3]);
+            if (segLen < 2 || pos + 2 + static_cast<size_t>(segLen) > buf.size()) break;
+            if (marker == 0xE1 && segLen >= 16 &&
+                buf[pos + 4] == 'E' && buf[pos + 5] == 'x' && buf[pos + 6] == 'i' &&
+                buf[pos + 7] == 'f' && buf[pos + 8] == 0 && buf[pos + 9] == 0) {
+                const uint8_t* tiffStart = buf.data() + pos + 10;
+                const size_t tiffSize = static_cast<size_t>(segLen) - 8u;
+                const bool isLE = (tiffStart[0] == 'I' && tiffStart[1] == 'I');
+                const bool isBE = (tiffStart[0] == 'M' && tiffStart[1] == 'M');
+                if (isLE || isBE) {
+                    const uint16_t magic = isLE ? U16LE(tiffStart + 2) : U16BE(tiffStart + 2);
+                    const uint32_t ifd0 = isLE ? U32LE(tiffStart + 4) : U32BE(tiffStart + 4);
+                    if (magic == 42 && ifd0 < tiffSize) {
+                        uint64_t dummyOff = 0, dummySz = 0;
+                        uint16_t ori = 0;
+                        TiffIfdVisitBudget budget;
+                        ParseTiffIFDImpl(tiffStart, tiffSize, ifd0, isLE, dummyOff, dummySz, 0, budget, &ori);
+                        if (ori >= 1 && ori <= 8) {
+                            *outMainOrientation = static_cast<int>(ori);
+                            break;
+                        }
+                    }
+                }
+            }
+            pos += 2 + static_cast<size_t>(segLen);
+        }
+    }
+
+    ExtractedData ex;
+    if (!ExtractFromJPEG(buf.data(), buf.size(), ex) || !ex.IsValid()) return false;
+
+    int thumbW = 0, thumbH = 0;
+    if (!ReadJpegSofDims(ex.pData, ex.size, thumbW, thumbH)) return false;
+
+    const int reqMax = (std::max)(targetSize, 16);
+    if ((std::max)(thumbW, thumbH) < reqMax) return false;
+
+    // Anti-black-bar / anti-stale-preview aspect check (< 5% relative error)
+    const double lhs = static_cast<double>(thumbW) * static_cast<double>(outMainH);
+    const double rhs = static_cast<double>(thumbH) * static_cast<double>(outMainW);
+    const double diff = (lhs >= rhs) ? (lhs - rhs) : (rhs - lhs);
+    if (rhs <= 0.0 || diff > 0.05 * rhs) return false;
+
+    outJpeg.assign(ex.pData, ex.pData + ex.size);
+    return true;
 }
