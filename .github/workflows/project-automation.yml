@@ -24,6 +24,9 @@ env:
   LABEL_PRE_RELEASE: "status: pre-release"
   LABEL_RELEASED: "status: released"
   LABEL_BLOCKED: "status: blocked"
+  LABEL_BUG: "type: bug"
+  LABEL_ENHANCEMENT: "type: enhancement"
+  LABEL_DOCUMENTATION: "type: documentation"
 
 jobs:
   automate:
@@ -46,6 +49,9 @@ jobs:
               preRelease: process.env.LABEL_PRE_RELEASE,
               released: process.env.LABEL_RELEASED,
               blocked: process.env.LABEL_BLOCKED,
+              bug: process.env.LABEL_BUG,
+              enhancement: process.env.LABEL_ENHANCEMENT,
+              documentation: process.env.LABEL_DOCUMENTATION,
             };
 
             let projectMetaCache = null;
@@ -53,168 +59,206 @@ jobs:
             async function getProjectMeta() {
               if (!hasProjectToken) return null;
               if (projectMetaCache) return projectMetaCache;
-              const query = `
-                query($login: String!, $number: Int!) {
-                  user(login: $login) {
-                    projectV2(number: $number) {
-                      id
-                      field(name: "Status") {
-                        ... on ProjectV2SingleSelectField {
-                          id
-                          options {
+              try {
+                const res = await github.graphql(`
+                  query($login: String!, $number: Int!) {
+                    user(login: $login) {
+                      projectV2(number: $number) {
+                        id
+                        field(name: "Status") {
+                          ... on ProjectV2SingleSelectField {
                             id
-                            name
+                            options {
+                              id
+                              name
+                            }
                           }
                         }
                       }
                     }
                   }
-                }
-              `;
-              const res = await github.graphql(query, { login: projectOwner, number: projectNumber });
-              const project = res?.user?.projectV2;
-              if (!project) throw new Error(`Project #${projectNumber} not found for user ${projectOwner}`);
-              const statusField = project.field;
-              const optionsMap = {};
-              for (const opt of statusField?.options || []) {
-                optionsMap[opt.name] = opt.id;
+                `, { login: projectOwner, number: projectNumber });
+                const project = res?.user?.projectV2;
+                if (!project || !project.field) return null;
+                projectMetaCache = {
+                  projectId: project.id,
+                  statusFieldId: project.field.id,
+                  options: Object.fromEntries(
+                    project.field.options.map((o) => [o.name, o.id])
+                  ),
+                };
+                return projectMetaCache;
+              } catch (err) {
+                core.warning(`Project V2 metadata query failed: ${err.message}`);
+                return null;
               }
-              projectMetaCache = {
-                projectId: project.id,
-                statusFieldId: statusField?.id,
-                optionsMap,
-              };
-              return projectMetaCache;
             }
 
             async function addIssueToProjectAndSetStatus(issueNodeId, statusName) {
-              if (!hasProjectToken) return;
               const meta = await getProjectMeta();
-              const optionId = meta.optionsMap[statusName];
+              if (!meta) return;
+              const optionId = meta.options[statusName];
               if (!optionId) {
-                core.warning(`Project status "${statusName}" not found.`);
+                core.warning(`Status option "${statusName}" not found in Project V2.`);
                 return;
               }
-              const addRes = await github.graphql(`
-                mutation($projectId: ID!, $contentId: ID!) {
-                  addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) {
-                    item { id }
+              try {
+                const addRes = await github.graphql(`
+                  mutation($projectId: ID!, $contentId: ID!) {
+                    addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) {
+                      item {
+                        id
+                      }
+                    }
                   }
-                }
-              `, { projectId: meta.projectId, contentId: issueNodeId });
-
-              const itemId = addRes?.addProjectV2ItemById?.item?.id;
-              if (!itemId) return;
-
-              await github.graphql(`
-                mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
-                  updateProjectV2ItemFieldValue(input: {
-                    projectId: $projectId,
-                    itemId: $itemId,
-                    fieldId: $fieldId,
-                    value: { singleSelectOptionId: $optionId }
-                  }) {
-                    projectV2Item { id }
+                `, { projectId: meta.projectId, contentId: issueNodeId });
+                const itemId = addRes?.addProjectV2ItemById?.item?.id;
+                if (!itemId) return;
+                await github.graphql(`
+                  mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+                    updateProjectV2ItemFieldValue(input: {
+                      projectId: $projectId,
+                      itemId: $itemId,
+                      fieldId: $fieldId,
+                      value: { singleSelectOptionId: $optionId }
+                    }) {
+                      projectV2Item {
+                        id
+                      }
+                    }
                   }
-                }
-              `, {
-                projectId: meta.projectId,
-                itemId,
-                fieldId: meta.statusFieldId,
-                optionId,
-              });
+                `, {
+                  projectId: meta.projectId,
+                  itemId,
+                  fieldId: meta.statusFieldId,
+                  optionId,
+                });
+                core.info(`Set Project V2 status to "${statusName}" for item ${itemId}`);
+              } catch (err) {
+                core.warning(`Project V2 update failed: ${err.message}`);
+              }
             }
 
             async function getIssue(issueNumber) {
               try {
-                const { data } = await github.rest.issues.get({ owner, repo, issue_number: issueNumber });
+                const { data } = await github.rest.issues.get({
+                  owner,
+                  repo,
+                  issue_number: issueNumber,
+                });
                 if (data.pull_request) return null;
                 return data;
               } catch (err) {
-                core.info(`Issue #${issueNumber} not found or inaccessible: ${err.message}`);
+                core.warning(`Issue #${issueNumber} not found or inaccessible: ${err.message}`);
                 return null;
               }
             }
 
             async function syncIssueLabels(issue, addLabels, removeLabels) {
-              const current = new Set((issue.labels || []).map(l => typeof l === 'string' ? l : l.name));
-              const toAdd = addLabels.filter(l => l && !current.has(l));
-              const toRemove = removeLabels.filter(l => l && current.has(l));
-
-              if (toAdd.length > 0) {
-                await github.rest.issues.addLabels({
-                  owner,
-                  repo,
-                  issue_number: issue.number,
-                  labels: toAdd,
-                });
+              const current = new Set((issue.labels || []).map((l) => l.name));
+              for (const label of addLabels) {
+                if (label && !current.has(label)) {
+                  await github.rest.issues.addLabels({
+                    owner,
+                    repo,
+                    issue_number: issue.number,
+                    labels: [label],
+                  });
+                }
               }
-              for (const label of toRemove) {
-                await github.rest.issues.removeLabel({
-                  owner,
-                  repo,
-                  issue_number: issue.number,
-                  name: label,
-                }).catch(() => {});
+              for (const label of removeLabels) {
+                if (label && current.has(label)) {
+                  try {
+                    await github.rest.issues.removeLabel({
+                      owner,
+                      repo,
+                      issue_number: issue.number,
+                      name: label,
+                    });
+                  } catch (err) {
+                    core.info(`Failed to remove label "${label}" from #${issue.number}: ${err.message}`);
+                  }
+                }
               }
             }
 
-            function extractIssueNumbers(text) {
+            function extractIssueNumbersFromText(text) {
+              const nums = new Set();
               if (!text) return [];
-              const matches = [...text.matchAll(/(?<![A-Za-z0-9_])#(\d+)\b/g)];
-              return [...new Set(matches.map(m => Number(m[1])))];
-            }
-
-            if (!hasProjectToken) {
-              core.warning('PROJECT_TOKEN secret is not configured; skipping GitHub Project V2 board sync. Issue labels and release closing will still run.');
+              const re = /#(\d+)\b/g;
+              let m;
+              while ((m = re.exec(text)) !== null) {
+                nums.add(Number(m[1]));
+              }
+              return [...nums];
             }
 
             const eventName = context.eventName;
 
-            // Rule A: New issue opened -> add to Project Todo
+            // Rule A: New issue opened -> add to Project Todo & auto-label by title
             if (eventName === 'issues' && context.payload.action === 'opened') {
               const issue = context.payload.issue;
               if (!issue.pull_request) {
                 await addIssueToProjectAndSetStatus(issue.node_id, 'Todo');
+                const title = (issue.title || '').toLowerCase();
+                const labelsToAdd = [];
+                if (title.includes('[bug]') || title.includes('bug:')) {
+                  labelsToAdd.push(LABELS.bug);
+                }
+                if (
+                  title.includes('[feat]') ||
+                  title.includes('[feature]') ||
+                  title.includes('feat:') ||
+                  title.includes('feature:')
+                ) {
+                  labelsToAdd.push(LABELS.enhancement);
+                }
+                if (title.includes('[docs]') || title.includes('docs:') || title.includes('documentation:')) {
+                  labelsToAdd.push(LABELS.documentation);
+                }
+                if (labelsToAdd.length > 0) {
+                  await syncIssueLabels(issue, labelsToAdd, []);
+                }
               }
             }
 
-            // Rule B: Commit pushed to main/dev referencing #123 -> status: implemented + Project Implemented
+            // Rule B: Push commits referencing #123 -> mark status: implemented + Project Done
             else if (eventName === 'push') {
               const commits = context.payload.commits || [];
-              const issueNums = new Set();
+              const referenced = new Set();
               for (const c of commits) {
-                for (const num of extractIssueNumbers(c.message)) {
-                  issueNums.add(num);
+                for (const n of extractIssueNumbersFromText(c.message)) {
+                  referenced.add(n);
                 }
               }
-              for (const num of issueNums) {
+              for (const num of referenced) {
                 const issue = await getIssue(num);
-                if (!issue || issue.state === 'closed') continue;
-                await syncIssueLabels(issue, [LABELS.implemented], [LABELS.inProgress, LABELS.blocked]);
-                await addIssueToProjectAndSetStatus(issue.node_id, 'Implemented');
+                if (!issue) continue;
+                await syncIssueLabels(
+                  issue,
+                  [LABELS.implemented],
+                  [LABELS.inProgress, LABELS.blocked]
+                );
+                await addIssueToProjectAndSetStatus(issue.node_id, 'Done');
               }
             }
 
             // Rule C: Release published -> pre-release vs stable release
             else if (eventName === 'release' && context.payload.action === 'published') {
               const release = context.payload.release;
-              const isPreRelease = Boolean(release.prerelease);
               const tagName = release.tag_name;
-              const issueNums = extractIssueNumbers(release.body);
-
-              for (const num of issueNums) {
+              const isPrerelease = Boolean(release.prerelease);
+              const referenced = new Set(extractIssueNumbersFromText(release.body));
+              for (const num of referenced) {
                 const issue = await getIssue(num);
                 if (!issue) continue;
-
-                if (isPreRelease) {
+                if (isPrerelease) {
                   await syncIssueLabels(
                     issue,
                     [LABELS.preRelease],
-                    [LABELS.inProgress, LABELS.implemented, LABELS.blocked]
+                    [LABELS.implemented, LABELS.inProgress, LABELS.blocked]
                   );
-                  await addIssueToProjectAndSetStatus(issue.node_id, 'Implemented');
-
+                  await addIssueToProjectAndSetStatus(issue.node_id, 'Done');
                   const { data: comments } = await github.rest.issues.listComments({
                     owner,
                     repo,
@@ -229,7 +273,7 @@ jobs:
                       owner,
                       repo,
                       issue_number: num,
-                      body: `🎉 This fix/feature has been included in pre-release **${tagName}**! Please switch to the pre-release channel to try it out, and feel free to report any issues.`,
+                      body: `Included in pre-release **${tagName}**. Please verify and share feedback if anything is still off.`,
                     });
                   }
                 } else {
@@ -240,12 +284,23 @@ jobs:
                   );
                   await addIssueToProjectAndSetStatus(issue.node_id, 'Done');
                   if (issue.state !== 'closed') {
-                    await github.rest.issues.createComment({
+                    const { data: comments } = await github.rest.issues.listComments({
                       owner,
                       repo,
                       issue_number: num,
-                      body: `Released in ${tagName}. Closing this issue.`,
+                      per_page: 100,
                     });
+                    const alreadyCommented = comments.some(
+                      (c) => c.body && c.body.includes(`officially released in **${tagName}**`)
+                    );
+                    if (!alreadyCommented) {
+                      await github.rest.issues.createComment({
+                        owner,
+                        repo,
+                        issue_number: num,
+                        body: `🚀 This fix/feature has been officially released in **${tagName}**! Closing this issue now—feel free to reopen or open a new one if you still encounter any problems.`,
+                      });
+                    }
                     await github.rest.issues.update({
                       owner,
                       repo,
