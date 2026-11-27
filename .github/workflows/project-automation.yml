@@ -239,7 +239,7 @@ jobs:
                   [LABELS.implemented],
                   [LABELS.inProgress, LABELS.blocked]
                 );
-                await addIssueToProjectAndSetStatus(issue.node_id, 'Done');
+                await addIssueToProjectAndSetStatus(issue.node_id, 'Implemented');
               }
             }
 
@@ -258,7 +258,7 @@ jobs:
                     [LABELS.preRelease],
                     [LABELS.implemented, LABELS.inProgress, LABELS.blocked]
                   );
-                  await addIssueToProjectAndSetStatus(issue.node_id, 'Done');
+                  await addIssueToProjectAndSetStatus(issue.node_id, 'Implemented');
                   const { data: comments } = await github.rest.issues.listComments({
                     owner,
                     repo,
