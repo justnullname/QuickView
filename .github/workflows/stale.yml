@@ -1,0 +1,35 @@
+name: Stale Issue Cleanup
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close stale issues
+        uses: actions/stale@v9
+        with:
+          days-before-issue-stale: 60
+          days-before-issue-close: 14
+          days-before-pr-stale: -1
+          days-before-pr-close: -1
+          stale-issue-label: 'stale'
+          stale-issue-message: >-
+            This issue has been automatically marked as stale because it has not
+            had recent activity for 60 days. If this is still relevant or you have
+            additional information to share, please leave a comment within 14 days;
+            otherwise, it will be automatically closed.
+          close-issue-message: >-
+            This issue was automatically closed because it remained inactive for
+            14 days after being marked as stale. Please feel free to reopen it or
+            create a new issue if the problem persists.
+          exempt-issue-labels: 'type: enhancement,status: in progress,status: implemented,status: pre-release,pinned'
+          remove-stale-when-updated: true
+          operations-per-run: 30
