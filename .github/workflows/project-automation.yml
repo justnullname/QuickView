@@ -4,7 +4,7 @@ on:
   issues:
     types: [opened]
   push:
-    branches: [main]
+    branches: [main, dev]
   release:
     types: [published]
   schedule:
@@ -179,7 +179,7 @@ jobs:
               }
             }
 
-            // Rule B: Commit pushed to main referencing #123 -> status: implemented + Project Implemented
+            // Rule B: Commit pushed to main/dev referencing #123 -> status: implemented + Project Implemented
             else if (eventName === 'push') {
               const commits = context.payload.commits || [];
               const issueNums = new Set();
@@ -214,6 +214,24 @@ jobs:
                     [LABELS.inProgress, LABELS.implemented, LABELS.blocked]
                   );
                   await addIssueToProjectAndSetStatus(issue.node_id, 'Implemented');
+
+                  const { data: comments } = await github.rest.issues.listComments({
+                    owner,
+                    repo,
+                    issue_number: num,
+                    per_page: 100,
+                  });
+                  const alreadyCommented = comments.some(
+                    (c) => c.body && c.body.includes(tagName)
+                  );
+                  if (!alreadyCommented) {
+                    await github.rest.issues.createComment({
+                      owner,
+                      repo,
+                      issue_number: num,
+                      body: `🎉 This fix/feature has been included in pre-release **${tagName}**! Please switch to the pre-release channel to try it out, and feel free to report any issues.`,
+                    });
+                  }
                 } else {
                   await syncIssueLabels(
                     issue,
