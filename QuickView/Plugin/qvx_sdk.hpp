@@ -7,6 +7,7 @@
 
 #include "abi/qvx_core.h"
 #include "abi/qvx_processor.h"
+#include "abi/qvx_analyzer.h"
 #include "abi/qvx_shell_ext.h"
 #include <string_view>
 #include <span>
@@ -25,6 +26,10 @@ inline bool IsCancelled(const QVX_CancelToken& token) noexcept {
 
 inline bool IsCancelled(const QVX_ProcExecuteParams* params) noexcept {
     return params && IsCancelled(params->cancel);
+}
+
+inline bool IsCancelled(const QVX_AnalyzerInput* input) noexcept {
+    return input && IsCancelled(input->cancel);
 }
 
 // Scoped Context Wrapper

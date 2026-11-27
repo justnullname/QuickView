@@ -8,6 +8,7 @@
 
 #include "abi/qvx_core.h"
 #include "abi/qvx_processor.h"
+#include "abi/qvx_analyzer.h"
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -56,6 +57,10 @@ struct PluginRecord {
     // ImageProcessor metadata declared statically in manifest.json
     QVX_ProcKind processorKind = QVX_PROC_KIND_UNKNOWN;
     uint32_t processorCaps = 0;
+
+    // Analyzer metadata declared statically in manifest.json
+    QVX_AnalyzerKind analyzerKind = QVX_ANALYZER_KIND_UNKNOWN;
+    uint32_t analyzerCaps = 0;
 
     std::vector<PluginLocalizedText> i18n;
     std::vector<PluginManifestAsset> manifestAssets;

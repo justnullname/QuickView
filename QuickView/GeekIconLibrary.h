@@ -111,6 +111,8 @@ namespace GeekIcons {
     extern const VectorIcon AdvancedVector;       // 0xE71C
     extern const VectorIcon AiActionVector;       // AI 3-Star Sparkles (✨)
     extern const VectorIcon BookVector;           // Open Book (Multi-page / Comic)
+    extern const VectorIcon OcrVector;            // Viewfinder + T (OCR Text Recognition)
+    extern const VectorIcon SelectAllVector;      // Rounded frame + inner solid rounded rect
 
     // --- Legacy Mapping Aliases (now pointing to Vectors) ---
     inline IconGlyph Open        = &OpenVector;
@@ -168,6 +170,8 @@ namespace GeekIcons {
     inline IconGlyph Passthrough      = &PassthroughVector;
     inline IconGlyph SuperResolution  = &AiActionVector;
     inline IconGlyph AiAction         = &AiActionVector;
+    inline IconGlyph Ocr              = &OcrVector;
+    inline IconGlyph SelectAll        = &SelectAllVector;
 
     // --- Aliases & Batch 1 Mapping ---
     inline IconGlyph Close            = &CancelVector;

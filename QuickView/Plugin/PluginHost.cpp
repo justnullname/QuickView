@@ -515,12 +515,20 @@ void PluginHost::WaitForAllBgTasks() {
 }
 
 void PluginHost::ReleasePluginContextLocked(LoadedPlugin& lp) {
-    if (lp.procVTable && lp.procContext) {
+    if ((lp.procVTable && lp.procContext) || (lp.analyzerVTable && lp.analyzerContext)) {
         WaitForAllInFlight();
-        lp.procVTable->destroy_context(lp.procContext);
-        lp.procContext = nullptr;
-        lp.contextPresetId.clear();
-        lp.cachedDevice = nullptr;
+        if (lp.procVTable && lp.procContext) {
+            lp.procVTable->destroy_context(lp.procContext);
+            lp.procContext = nullptr;
+            lp.contextPresetId.clear();
+            lp.cachedDevice = nullptr;
+        }
+        if (lp.analyzerVTable && lp.analyzerContext) {
+            lp.analyzerVTable->destroy_context(lp.analyzerContext);
+            lp.analyzerContext = nullptr;
+            lp.analyzerContextPresetId.clear();
+            lp.analyzerLastUsedTickMs = 0;
+        }
     }
 }
 
@@ -560,6 +568,18 @@ void PluginHost::SyncConfigToHeaderAndContextLocked(LoadedPlugin& lp) {
     if (lp.header->set_param_string) {
         for (const auto& kv : st->strParams) {
             lp.header->set_param_string(kv.first.c_str(), kv.second.c_str());
+        }
+    }
+    if (lp.analyzerVTable && lp.analyzerContext) {
+        if (lp.analyzerVTable->set_param_value) {
+            for (const auto& kv : st->numParams) {
+                lp.analyzerVTable->set_param_value(lp.analyzerContext, kv.first.c_str(), kv.second);
+            }
+        }
+        if (lp.analyzerVTable->set_param_string) {
+            for (const auto& kv : st->strParams) {
+                lp.analyzerVTable->set_param_string(lp.analyzerContext, kv.first.c_str(), kv.second.c_str());
+            }
         }
     }
 }
@@ -628,6 +648,16 @@ PluginHost::LoadedPlugin* PluginHost::EnsurePluginLoadedLocked(std::string_view 
             lp->procVTable = procVt;
         }
     }
+    if (header->supported_interfaces & (1u << QVX_IFACE_ANALYZER)) {
+        const auto* analyzerVt = static_cast<const QVX_Analyzer_VTable*>(
+            header->get_interface(QVX_IFACE_ANALYZER, QVX_ANALYZER_INTERFACE_VERSION));
+        if (analyzerVt && analyzerVt->struct_size >= sizeof(QVX_Analyzer_VTable)) {
+            lp->analyzerVTable = analyzerVt;
+            if (analyzerVt->set_language && !m_currentLanguage.empty()) {
+                analyzerVt->set_language(m_currentLanguage.c_str());
+            }
+        }
+    }
     if (header->supported_interfaces & (1u << QVX_IFACE_SHELL_EXT)) {
         lp->shellExtVTable = static_cast<const QVX_ShellExt_VTable*>(
             header->get_interface(QVX_IFACE_SHELL_EXT, QVX_SHELL_EXT_INTERFACE_VERSION));
@@ -681,6 +711,9 @@ void PluginHost::SetPluginEnabled(const std::string& pluginId, bool enable) {
             if (rec->processorKind == QVX_PROC_KIND_UPSCALER) {
                 m_activeUpscalerPluginId = pluginId;
             }
+            if (rec->HasInterface(QVX_IFACE_ANALYZER) && rec->analyzerKind == QVX_ANALYZER_KIND_OCR) {
+                m_activeOcrPluginId = pluginId;
+            }
             if (!SystemInfo::IsPackagedApp() && rec->HasInterface(QVX_IFACE_SHELL_EXT)) {
                 if (LoadedPlugin* loaded = EnsurePluginLoadedLocked(pluginId)) {
                     if (loaded->shellExtVTable && loaded->shellExtVTable->register_shell) {
@@ -713,11 +746,20 @@ void PluginHost::SetPluginActivePreset(const std::string& pluginId, const std::s
 
 std::vector<PluginAssetEntry> PluginHost::CollectAssetsLocked(const PluginRecord& rec, LoadedPlugin* lp) {
     std::vector<PluginAssetEntry> out;
+    uint32_t (*getAssetCount)(void) = nullptr;
+    const QVX_AssetDesc* (*getAssetDesc)(uint32_t) = nullptr;
     if (lp && lp->header && lp->header->get_asset_count && lp->header->get_asset_desc) {
-        const uint32_t count = lp->header->get_asset_count();
+        getAssetCount = lp->header->get_asset_count;
+        getAssetDesc = lp->header->get_asset_desc;
+    } else if (lp && lp->analyzerVTable && lp->analyzerVTable->get_asset_count && lp->analyzerVTable->get_asset_desc) {
+        getAssetCount = lp->analyzerVTable->get_asset_count;
+        getAssetDesc = lp->analyzerVTable->get_asset_desc;
+    }
+    if (getAssetCount && getAssetDesc) {
+        const uint32_t count = getAssetCount();
         out.reserve(count);
         for (uint32_t i = 0; i < count; ++i) {
-            const QVX_AssetDesc* d = lp->header->get_asset_desc(i);
+            const QVX_AssetDesc* d = getAssetDesc(i);
             if (!d || d->struct_size < sizeof(QVX_AssetDesc) || !d->asset_id) continue;
             PluginAssetEntry e;
             e.assetId = d->asset_id;
@@ -764,65 +806,102 @@ std::vector<PluginPresetEntry> PluginHost::GetPluginPresets(const std::string& p
     const PluginRecord* rec = m_registry.FindById(pluginId);
     if (!rec) return {};
     LoadedPlugin* lp = EnsurePluginLoadedLocked(pluginId);
-    if (!lp || !lp->procVTable || !lp->procVTable->get_preset_count || !lp->procVTable->get_preset_info) {
-        return {};
-    }
+    if (!lp) return {};
 
     const std::vector<PluginAssetEntry> assets = CollectAssetsLocked(*rec, lp);
-    const uint32_t count = lp->procVTable->get_preset_count();
-    std::vector<PluginPresetEntry> result;
-    result.reserve(count);
-
-    for (uint32_t i = 0; i < count; ++i) {
-        const QVX_ProcPresetInfo* info = lp->procVTable->get_preset_info(i);
-        if (!info || info->struct_size < sizeof(QVX_ProcPresetInfo) || !info->preset_id) continue;
-
-        PluginPresetEntry entry;
-        entry.presetId = info->preset_id;
-        entry.displayName = info->display_name ? info->display_name : info->preset_id;
-        entry.description = info->description ? info->description : "";
-        entry.requiredAssetId = info->required_asset_id ? info->required_asset_id : "";
-        entry.scale = (info->scale_factor > 0.0f) ? info->scale_factor : 1.0f;
-        entry.isHdrCapable = info->is_hdr_capable;
-        entry.outputHasAlpha = info->output_has_alpha;
-        entry.defaultCompareMode = info->default_compare_mode;
-        entry.isDynamicAuto = info->is_dynamic_auto;
-        entry.preferredTileSize = info->preferred_tile_size;
-        entry.defaultDebounceMs = info->default_debounce_ms > 0 ? info->default_debounce_ms : 150;
-        entry.maxInputDim = info->max_input_dim;
-        entry.maxInputPixels = info->max_input_pixels;
-        entry.isInstalled = entry.requiredAssetId.empty();
-
-        if (!entry.requiredAssetId.empty()) {
-            for (const auto& a : assets) {
-                if (a.assetId == entry.requiredAssetId) {
-                    entry.isInstalled = a.isInstalled;
-                    entry.assetSizeBytes = a.fileSizeBytes;
-                    entry.assetDownloadUrl = a.downloadUrl;
-                    entry.assetSha256 = a.sha256;
-                    break;
-                }
+    auto linkAsset = [&assets](PluginPresetEntry& entry) {
+        if (entry.requiredAssetId.empty()) return;
+        for (const auto& a : assets) {
+            if (a.assetId == entry.requiredAssetId) {
+                entry.isInstalled = a.isInstalled;
+                entry.assetSizeBytes = a.fileSizeBytes;
+                if (entry.assetDownloadUrl.empty()) entry.assetDownloadUrl = a.downloadUrl;
+                if (entry.assetSha256.empty()) entry.assetSha256 = a.sha256;
+                break;
             }
         }
-        result.push_back(std::move(entry));
+    };
+
+    if (lp->procVTable && lp->procVTable->get_preset_count && lp->procVTable->get_preset_info) {
+        const uint32_t count = lp->procVTable->get_preset_count();
+        std::vector<PluginPresetEntry> result;
+        result.reserve(count);
+
+        for (uint32_t i = 0; i < count; ++i) {
+            const QVX_ProcPresetInfo* info = lp->procVTable->get_preset_info(i);
+            if (!info || info->struct_size < sizeof(QVX_ProcPresetInfo) || !info->preset_id) continue;
+
+            PluginPresetEntry entry;
+            entry.presetId = info->preset_id;
+            entry.displayName = info->display_name ? info->display_name : info->preset_id;
+            entry.description = info->description ? info->description : "";
+            entry.requiredAssetId = info->required_asset_id ? info->required_asset_id : "";
+            entry.scale = (info->scale_factor > 0.0f) ? info->scale_factor : 1.0f;
+            entry.isHdrCapable = info->is_hdr_capable;
+            entry.outputHasAlpha = info->output_has_alpha;
+            entry.defaultCompareMode = info->default_compare_mode;
+            entry.isDynamicAuto = info->is_dynamic_auto;
+            entry.preferredTileSize = info->preferred_tile_size;
+            entry.defaultDebounceMs = info->default_debounce_ms > 0 ? info->default_debounce_ms : 150;
+            entry.maxInputDim = info->max_input_dim;
+            entry.maxInputPixels = info->max_input_pixels;
+            entry.isInstalled = entry.requiredAssetId.empty();
+            linkAsset(entry);
+            result.push_back(std::move(entry));
+        }
+        return result;
     }
-    return result;
+
+    if (lp->analyzerVTable && lp->analyzerVTable->get_preset_count && lp->analyzerVTable->get_preset_info) {
+        const uint32_t count = lp->analyzerVTable->get_preset_count();
+        std::vector<PluginPresetEntry> result;
+        result.reserve(count);
+
+        for (uint32_t i = 0; i < count; ++i) {
+            const QVX_AnalyzerPresetInfo* info = lp->analyzerVTable->get_preset_info(i);
+            if (!info || info->struct_size < sizeof(QVX_AnalyzerPresetInfo) || !info->preset_id) continue;
+
+            PluginPresetEntry entry;
+            entry.presetId = info->preset_id;
+            entry.displayName = info->display_name ? info->display_name : info->preset_id;
+            entry.description = info->description ? info->description : "";
+            entry.requiredAssetId = info->required_asset_id ? info->required_asset_id : "";
+            entry.isInstalled = info->is_installed;
+            entry.assetSizeBytes = info->asset_size_bytes;
+            entry.assetDownloadUrl = info->asset_download_url ? info->asset_download_url : "";
+            entry.assetSha256 = info->asset_sha256 ? info->asset_sha256 : "";
+            linkAsset(entry);
+            result.push_back(std::move(entry));
+        }
+        return result;
+    }
+
+    return {};
 }
 
 std::vector<PluginParamEntry> PluginHost::GetPluginParams(const std::string& pluginId) {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
     LoadedPlugin* lp = EnsurePluginLoadedLocked(pluginId);
-    if (!lp || !lp->header || !lp->header->get_param_count || !lp->header->get_param_desc) {
+    uint32_t (*getParamCount)(void) = nullptr;
+    const QVX_ParamDesc* (*getParamDesc)(uint32_t) = nullptr;
+    if (lp && lp->header && lp->header->get_param_count && lp->header->get_param_desc) {
+        getParamCount = lp->header->get_param_count;
+        getParamDesc = lp->header->get_param_desc;
+    } else if (lp && lp->analyzerVTable && lp->analyzerVTable->get_param_count && lp->analyzerVTable->get_param_desc) {
+        getParamCount = lp->analyzerVTable->get_param_count;
+        getParamDesc = lp->analyzerVTable->get_param_desc;
+    }
+    if (!getParamCount || !getParamDesc) {
         return {};
     }
 
     const PluginConfigState* st = FindConfigStateLocked(pluginId);
-    const uint32_t count = lp->header->get_param_count();
+    const uint32_t count = getParamCount();
     std::vector<PluginParamEntry> result;
     result.reserve(count);
 
     for (uint32_t i = 0; i < count; ++i) {
-        const QVX_ParamDesc* pDesc = lp->header->get_param_desc(i);
+        const QVX_ParamDesc* pDesc = getParamDesc(i);
         if (!pDesc || pDesc->struct_size < sizeof(QVX_ParamDesc) || !pDesc->id) continue;
 
         PluginParamEntry entry;
@@ -921,6 +1000,9 @@ void PluginHost::SetPluginParamNumber(const std::string& pluginId, const std::st
             if (lp->header && lp->header->set_param_number) {
                 lp->header->set_param_number(paramId.c_str(), val);
             }
+            if (lp->analyzerVTable && lp->analyzerContext && lp->analyzerVTable->set_param_value) {
+                lp->analyzerVTable->set_param_value(lp->analyzerContext, paramId.c_str(), val);
+            }
             if (!SystemInfo::IsPackagedApp() && st.enabled &&
                 lp->shellExtVTable && lp->shellExtVTable->struct_size >= sizeof(QVX_ShellExt_VTable) &&
                 lp->shellExtVTable->register_shell &&
@@ -963,6 +1045,9 @@ void PluginHost::SetPluginParamString(const std::string& pluginId, const std::st
         if (lp->header && lp->header->set_param_string) {
             lp->header->set_param_string(paramId.c_str(), val.c_str());
         }
+        if (lp->analyzerVTable && lp->analyzerContext && lp->analyzerVTable->set_param_string) {
+            lp->analyzerVTable->set_param_string(lp->analyzerContext, paramId.c_str(), val.c_str());
+        }
     }
 }
 
@@ -972,6 +1057,9 @@ void PluginHost::SetLanguage(const std::string& langCode) {
     for (const auto& lp : m_loadedPlugins) {
         if (lp && !lp->retired && lp->header && lp->header->set_language) {
             lp->header->set_language(m_currentLanguage.c_str());
+        }
+        if (lp && !lp->retired && lp->analyzerVTable && lp->analyzerVTable->set_language) {
+            lp->analyzerVTable->set_language(m_currentLanguage.c_str());
         }
     }
 }
@@ -1438,6 +1526,7 @@ bool PluginHost::UninstallPlugin(const std::string& pluginId) {
     RetirePluginLocked(pluginId);
     if (auto* st = FindConfigStateLocked(pluginId)) st->enabled = false;
     if (m_activeUpscalerPluginId == pluginId) m_activeUpscalerPluginId.clear();
+    if (m_activeOcrPluginId == pluginId) m_activeOcrPluginId.clear();
 
     RemoveDirectoryTreeBestEffort(pluginDir);
 
@@ -1481,6 +1570,7 @@ void PluginHost::ResetToDefaults() {
     }
     m_configStates.clear();
     m_activeUpscalerPluginId.clear();
+    m_activeOcrPluginId.clear();
     m_upscalerFallbackEnabled.store(false, std::memory_order_relaxed);
     m_upscalerFallbackPreset.clear();
     m_srAutoTrigger.store(false, std::memory_order_relaxed);
@@ -1533,12 +1623,15 @@ void PluginHost::LoadConfig(const wchar_t* iniPath) {
     };
 
     wchar_t upscalerBuf[128]{};
+    wchar_t ocrBuf[128]{};
     const int debounceCheck = static_cast<int>(GetPrivateProfileIntW(L"Plugins", L"UpscalerDebounceMs", -1, iniPath));
     const bool hasPluginsSection = (GetPrivateProfileStringW(L"Plugins", L"ActiveUpscalerPluginId", L"", upscalerBuf, 128, iniPath) > 0) ||
+                                   (GetPrivateProfileStringW(L"Plugins", L"ActiveOcrPluginId", L"", ocrBuf, 128, iniPath) > 0) ||
                                    (debounceCheck >= 0);
 
     if (hasPluginsSection) {
         m_activeUpscalerPluginId = WideToUtf8(upscalerBuf);
+        m_activeOcrPluginId = WideToUtf8(ocrBuf);
         m_upscalerFallbackEnabled.store(GetPrivateProfileIntW(L"Plugins", L"UpscalerFallbackEnabled", 0, iniPath) != 0, std::memory_order_relaxed);
         wchar_t fallbackPresetBuf[128]{};
         const DWORD fpLen = GetPrivateProfileStringW(L"Plugins", L"UpscalerFallbackPreset", L"", fallbackPresetBuf, 128, iniPath);
@@ -1678,6 +1771,9 @@ void PluginHost::SaveConfig(const wchar_t* iniPath) const {
 
     const std::string activeUpscaler = !m_activeUpscalerPluginId.empty() ? m_activeUpscalerPluginId : ResolveActiveUpscalerIdLocked();
     appendEntry(L"ActiveUpscalerPluginId", Utf8ToWide(activeUpscaler));
+    if (!m_activeOcrPluginId.empty()) {
+        appendEntry(L"ActiveOcrPluginId", Utf8ToWide(m_activeOcrPluginId));
+    }
     appendEntry(L"UpscalerFallbackEnabled", m_upscalerFallbackEnabled.load(std::memory_order_relaxed) ? L"1" : L"0");
     if (!m_upscalerFallbackPreset.empty()) {
         appendEntry(L"UpscalerFallbackPreset", Utf8ToWide(m_upscalerFallbackPreset));
@@ -1929,7 +2025,12 @@ void PluginHost::Shutdown() {
         const QVX_Processor_VTable* vtable;
         QVX_ProcContext ctx;
     };
+    struct PendingDestroyAnalyzerCtx {
+        const QVX_Analyzer_VTable* vtable;
+        QVX_AnalyzerContext ctx;
+    };
     std::vector<PendingDestroyCtx> pendingContexts;
+    std::vector<PendingDestroyAnalyzerCtx> pendingAnalyzerContexts;
     std::vector<QVX_ShutdownFn> pendingShutdowns;
 
     {
@@ -1946,6 +2047,12 @@ void PluginHost::Shutdown() {
                 lp->contextPresetId.clear();
                 lp->cachedDevice = nullptr;
             }
+            if (lp->analyzerVTable && lp->analyzerContext && lp->analyzerVTable->destroy_context) {
+                pendingAnalyzerContexts.push_back({ lp->analyzerVTable, lp->analyzerContext });
+                lp->analyzerContext = nullptr;
+                lp->analyzerContextPresetId.clear();
+                lp->analyzerLastUsedTickMs = 0;
+            }
             if (!lp->shutdownCalled && lp->hModule) {
                 lp->shutdownCalled = true;
                 auto pfnShutdown = reinterpret_cast<QVX_ShutdownFn>(GetProcAddress(lp->hModule, "qvx_shutdown"));
@@ -1956,6 +2063,9 @@ void PluginHost::Shutdown() {
 
     WaitForAllInFlight();
     for (const auto& item : pendingContexts) {
+        item.vtable->destroy_context(item.ctx);
+    }
+    for (const auto& item : pendingAnalyzerContexts) {
         item.vtable->destroy_context(item.ctx);
     }
     for (QVX_ShutdownFn pfnShutdown : pendingShutdowns) {
@@ -2143,6 +2253,265 @@ void PluginHost::TriggerManifestFetch() {
             self->NotifyUI();
         }
     }, this);
+}
+
+std::string PluginHost::ResolveActiveOcrIdLocked() const {
+    EnsureRegistryScannedLocked();
+    auto isEligible = [this](const PluginRecord& rec) -> bool {
+        return rec.HasInterface(QVX_IFACE_ANALYZER) &&
+               (rec.analyzerKind == QVX_ANALYZER_KIND_OCR || rec.analyzerKind == QVX_ANALYZER_KIND_UNKNOWN) &&
+               IsPluginEnabled(rec.id);
+    };
+    if (!m_activeOcrPluginId.empty()) {
+        if (const PluginRecord* rec = m_registry.FindById(m_activeOcrPluginId); rec && isEligible(*rec)) {
+            return rec->id;
+        }
+    }
+    for (const auto& rec : m_registry.GetAll()) {
+        if (isEligible(rec)) {
+            return rec.id;
+        }
+    }
+    return {};
+}
+
+#ifdef __clang__
+#define QV_PH_COLD __attribute__((minsize, noinline))
+#else
+#define QV_PH_COLD __declspec(noinline)
+#endif
+
+QV_PH_COLD std::string PluginHost::GetActiveOcrPluginId() const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    return ResolveActiveOcrIdLocked();
+}
+
+void PluginHost::SetActiveOcrPluginId(const std::string& pluginId) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    m_activeOcrPluginId = pluginId;
+}
+
+QV_PH_COLD std::vector<PluginRecord> PluginHost::GetInstalledOcrPlugins() const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    EnsureRegistryScannedLocked();
+    std::vector<PluginRecord> out;
+    for (const auto& rec : m_registry.GetAll()) {
+        if (rec.HasInterface(QVX_IFACE_ANALYZER) &&
+            (rec.analyzerKind == QVX_ANALYZER_KIND_OCR || rec.analyzerKind == QVX_ANALYZER_KIND_UNKNOWN)) {
+            out.push_back(rec);
+        }
+    }
+    return out;
+}
+
+QV_PH_COLD void PluginHost::ReleaseIdleAnalyzerContexts(uint64_t idleTimeoutMs) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    const uint64_t now = GetTickCount64();
+    for (auto& lp : m_loadedPlugins) {
+        if (!lp || lp->retired || !lp->analyzerVTable || !lp->analyzerContext) continue;
+        if (lp->analyzerInFlight.load(std::memory_order_acquire) > 0) continue;
+        const uint64_t lastUsed = lp->analyzerLastUsedTickMs.load(std::memory_order_acquire);
+        if (idleTimeoutMs == 0 || (now >= lastUsed && (now - lastUsed) >= idleTimeoutMs)) {
+            if (lp->analyzerVTable->destroy_context) {
+                lp->analyzerVTable->destroy_context(lp->analyzerContext);
+            }
+            lp->analyzerContext = nullptr;
+            lp->analyzerContextPresetId.clear();
+            lp->analyzerLastUsedTickMs.store(0, std::memory_order_release);
+        }
+    }
+}
+
+QV_PH_COLD void PluginHost::ReleaseAnalyzerContextNow(std::string_view pluginId) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    for (auto& lp : m_loadedPlugins) {
+        if (!lp || lp->retired || !lp->analyzerVTable || !lp->analyzerContext) continue;
+        if (!pluginId.empty() && lp->pluginId != pluginId) continue;
+        WaitForAllInFlight();
+        if (lp->analyzerVTable->destroy_context) {
+            lp->analyzerVTable->destroy_context(lp->analyzerContext);
+        }
+        lp->analyzerContext = nullptr;
+        lp->analyzerContextPresetId.clear();
+        lp->analyzerLastUsedTickMs.store(0, std::memory_order_release);
+    }
+}
+
+QV_PH_COLD int32_t PluginHost::ExecuteOcrAnalyze(
+    const std::string& pluginId,
+    const QVX_AnalyzerInput& input,
+    QuickView::Ocr::OcrDocument& outDoc,
+    std::string* outError
+) {
+    if (pluginId.empty() || !input.pixels || input.width == 0 || input.height == 0 || input.stride < input.width * 4) {
+        if (outError) *outError = "Invalid OCR input";
+        return QVX_E_INVALIDARG;
+    }
+
+    const QVX_Analyzer_VTable* vtable = nullptr;
+    QVX_AnalyzerContext ctx = nullptr;
+    std::string pluginName = pluginId;
+    LoadedPlugin* targetLp = nullptr;
+
+    {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        if (m_shuttingDown.load(std::memory_order_acquire)) {
+            return QVX_E_ABORT;
+        }
+        if (!IsPluginEnabled(pluginId)) {
+            if (outError) *outError = "OCR plugin disabled";
+            return QVX_E_FAIL;
+        }
+        LoadedPlugin* lp = EnsurePluginLoadedLocked(pluginId);
+        if (!lp || !lp->analyzerVTable || !lp->analyzerVTable->create_context ||
+            !lp->analyzerVTable->destroy_context || !lp->analyzerVTable->analyze || !lp->analyzerVTable->free_result) {
+            if (outError) *outError = "OCR plugin analyzer interface unavailable";
+            return QVX_E_NOTIMPL;
+        }
+
+        std::string targetPreset = GetPluginActivePreset(pluginId);
+        if (targetPreset.empty() && lp->analyzerVTable->get_preset_count && lp->analyzerVTable->get_preset_info) {
+            if (lp->analyzerVTable->get_preset_count() > 0) {
+                if (const QVX_AnalyzerPresetInfo* first = lp->analyzerVTable->get_preset_info(0); first && first->preset_id) {
+                    targetPreset = first->preset_id;
+                }
+            }
+        }
+
+        if (lp->analyzerContext && lp->analyzerContextPresetId != targetPreset) {
+            WaitForAllInFlight();
+            lp->analyzerVTable->destroy_context(lp->analyzerContext);
+            lp->analyzerContext = nullptr;
+            lp->analyzerContextPresetId.clear();
+        }
+
+        if (!lp->analyzerContext) {
+            lp->analyzerContext = lp->analyzerVTable->create_context(targetPreset.empty() ? nullptr : targetPreset.c_str());
+            lp->analyzerContextPresetId = lp->analyzerContext ? targetPreset : std::string();
+            if (lp->analyzerContext) {
+                SyncConfigToHeaderAndContextLocked(*lp);
+            }
+        }
+        if (!lp->analyzerContext) {
+            if (outError) *outError = "Failed to initialize OCR plugin context";
+            return QVX_E_FAIL;
+        }
+
+        EnsureRegistryScannedLocked();
+        if (const PluginRecord* rec = m_registry.FindById(pluginId)) {
+            const std::string resolved = rec->ResolveName(m_currentLanguage);
+            if (!resolved.empty()) pluginName = resolved;
+        } else if (lp->header && lp->header->plugin_name) {
+            pluginName = lp->header->plugin_name;
+        }
+
+        vtable = lp->analyzerVTable;
+        ctx = lp->analyzerContext;
+        targetLp = lp;
+        lp->analyzerInFlight.fetch_add(1, std::memory_order_acq_rel);
+        lp->analyzerLastUsedTickMs.store(GetTickCount64(), std::memory_order_release);
+
+        std::lock_guard<std::mutex> fl(m_inFlightMutex);
+        ++m_inFlightCount;
+    }
+
+    struct InFlightGuard {
+        std::mutex& mtx;
+        std::condition_variable& cv;
+        uint32_t& globalCount;
+        LoadedPlugin* lp;
+        ~InFlightGuard() {
+            if (lp) {
+                lp->analyzerInFlight.fetch_sub(1, std::memory_order_acq_rel);
+                lp->analyzerLastUsedTickMs.store(GetTickCount64(), std::memory_order_release);
+            }
+            {
+                std::lock_guard<std::mutex> fl(mtx);
+                if (globalCount > 0) --globalCount;
+            }
+            cv.notify_all();
+        }
+    } guard{ m_inFlightMutex, m_inFlightCv, m_inFlightCount, targetLp };
+
+    QVX_AnalyzerResult rawResult{};
+    rawResult.struct_size = sizeof(QVX_AnalyzerResult);
+    int32_t hr = QVX_E_FAIL;
+    {
+        std::lock_guard<std::mutex> execLock(m_analyzerExecMutex);
+        hr = vtable->analyze(ctx, &input, &rawResult);
+        if (hr == QVX_OK) {
+            auto convertQuad = [](const QVX_NormQuad& q) noexcept -> QuickView::Ocr::OcrQuad {
+                auto clamp01 = [](float v) noexcept { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); };
+                QuickView::Ocr::OcrQuad oq{};
+                for (int i = 0; i < 4; ++i) {
+                    oq.x[i] = clamp01(q.x[i]);
+                    oq.y[i] = clamp01(q.y[i]);
+                }
+                oq.minX = clamp01(q.min_x);
+                oq.minY = clamp01(q.min_y);
+                oq.maxX = clamp01(q.max_x);
+                oq.maxY = clamp01(q.max_y);
+                return oq;
+            };
+            const char* poolPtr = rawResult.utf8_pool;
+            const uint32_t poolBytes = rawResult.utf8_pool_bytes;
+            auto sliceUtf8 = [poolPtr, poolBytes](uint32_t off, uint32_t len) -> std::wstring {
+                if (!poolPtr || len == 0 || off >= poolBytes) return {};
+                return Utf8ToWide(std::string_view(poolPtr + off, (std::min)(len, poolBytes - off)));
+            };
+
+            outDoc.sourceVisualW = input.width;
+            outDoc.sourceVisualH = input.height;
+            outDoc.textAngleDeg = rawResult.text_angle_deg;
+            outDoc.engineId = pluginId;
+            outDoc.engineLabel = Utf8ToWide(pluginName);
+            outDoc.usedFallback = false;
+            outDoc.lines.clear();
+            outDoc.tokens.clear();
+
+            if (rawResult.tokens && rawResult.token_count > 0) {
+                for (uint32_t i = 0; i < rawResult.token_count; ++i) {
+                    const QVX_AnalyzerToken& src = rawResult.tokens[i];
+                    QuickView::Ocr::OcrToken tok;
+                    tok.quad = convertQuad(src.quad);
+                    tok.text = sliceUtf8(src.utf8_offset, src.utf8_len);
+                    tok.confidence = src.confidence;
+                    tok.spaceAfter = (src.space_after != 0);
+                    outDoc.tokens.push_back(std::move(tok));
+                }
+            }
+
+            if (rawResult.lines && rawResult.line_count > 0) {
+                const uint32_t totalTok = static_cast<uint32_t>(outDoc.tokens.size());
+                for (uint32_t i = 0; i < rawResult.line_count; ++i) {
+                    const QVX_AnalyzerLine& src = rawResult.lines[i];
+                    QuickView::Ocr::OcrLine line;
+                    line.quad = convertQuad(src.quad);
+                    line.text = sliceUtf8(src.utf8_offset, src.utf8_len);
+                    if (src.token_start < totalTok && src.token_count > 0) {
+                        line.tokenStart = src.token_start;
+                        line.tokenCount = (std::min)(src.token_count, totalTok - src.token_start);
+                    } else {
+                        line.tokenStart = 0;
+                        line.tokenCount = 0;
+                    }
+                    if (line.text.empty() && line.tokenCount > 0) {
+                        line.text = QuickView::Ocr::JoinTokensSmart(outDoc.tokens, line.tokenStart, line.tokenCount);
+                    }
+                    line.confidence = src.confidence;
+                    line.flags = src.flags;
+                    outDoc.lines.push_back(std::move(line));
+                }
+            }
+        } else if (outError) {
+            if (hr == QVX_E_MISSING_ASSET) *outError = "Missing OCR plugin model asset";
+            else if (hr == QVX_E_ABORT) *outError = "OCR canceled";
+            else *outError = "OCR plugin execution failed";
+        }
+        vtable->free_result(ctx, &rawResult);
+    }
+
+    return hr;
 }
 
 // --- Thin Upscaler Facade ---

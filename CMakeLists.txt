@@ -133,6 +133,9 @@ set(QUICKVIEW_SOURCES
     QuickView/ThumbWorker.cpp
     QuickView/AiActionManager.cpp
     QuickView/AiActionOverlay.cpp
+    QuickView/WinOcrBackend.cpp
+    QuickView/OcrManager.cpp
+    QuickView/OcrOverlay.cpp
     
     # Third party manually included
     third_party/yyjson/yyjson.c
@@ -186,6 +189,9 @@ if(ENABLE_LTO)
         QuickView/Plugin/PluginRegistry.cpp
         QuickView/Plugin/PluginHost.cpp
         QuickView/ThumbWorker.cpp
+        QuickView/WinOcrBackend.cpp
+        QuickView/OcrManager.cpp
+        QuickView/OcrOverlay.cpp
     )
     set_source_files_properties(${QUICKVIEW_COLD_CXX_SOURCES} PROPERTIES
         SKIP_PRECOMPILE_HEADERS ON
@@ -434,6 +440,7 @@ target_link_libraries(QuickView PRIVATE
     comctl32.lib
     mscms.lib
     gdiplus.lib
+    runtimeobject.lib
     ${QV_WEBVIEW2_LIB}
 )
 
@@ -546,6 +553,26 @@ add_custom_command(TARGET qv_shell_thumb POST_BUILD
 add_dependencies(QuickView qv_shell_thumb)
 
 # ============================================================================
+# Mock OCR Analyzer Plugin (for QuickViewTests E2E Verification)
+# ============================================================================
+add_library(qv_mock_ocr_test SHARED tests/mock_ocr_plugin/mock_ocr_plugin.cpp)
+set_target_properties(qv_mock_ocr_test PROPERTIES
+    SUFFIX ".qvx"
+    MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}"
+)
+target_compile_definitions(qv_mock_ocr_test PRIVATE UNICODE _UNICODE QVX_BUILDING_PLUGIN)
+if(MSVC OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    target_compile_options(qv_mock_ocr_test PRIVATE
+        /W4 /WX /utf-8 /Gw /Gy /GR- /EHs-c- /GS
+        /clang:-fno-exceptions /clang:-fno-ident
+    )
+endif()
+target_include_directories(qv_mock_ocr_test PRIVATE QuickView)
+
+# ============================================================================
 # Unit Tests
 # ============================================================================
 find_package(GTest CONFIG REQUIRED)
@@ -576,9 +603,13 @@ add_executable(QuickViewTests
     tests/HdrPipelineTests.cpp
     tests/ColorPipelineTests.cpp
     tests/ViewPanTests.cpp
+    tests/OcrTests.cpp
     QuickView/ViewPanController.cpp
     QuickView/TileManager.cpp
     QuickView/AiActionManager.cpp
+    QuickView/WinOcrBackend.cpp
+    QuickView/OcrManager.cpp
+    QuickView/OcrOverlay.cpp
     QuickView/GeekWidgets.cpp
     QuickView/ThemePalette.cpp
     QuickView/GeekIconLibrary.cpp
@@ -620,6 +651,9 @@ endif()
 if(TARGET qv_shell_thumb)
     add_dependencies(QuickViewTests qv_shell_thumb)
 endif()
+if(TARGET qv_mock_ocr_test)
+    add_dependencies(QuickViewTests qv_mock_ocr_test)
+endif()
 target_precompile_headers(QuickViewTests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:pch.h>)
 target_link_libraries(QuickViewTests PRIVATE 
     GTest::gtest_main 
@@ -637,6 +671,7 @@ target_link_libraries(QuickViewTests PRIVATE
     gdiplus.lib
     winhttp.lib
     crypt32.lib
+    runtimeobject.lib
     unrar-mini
     ZLIB::ZLIB
     libjpeg-turbo::turbojpeg-static

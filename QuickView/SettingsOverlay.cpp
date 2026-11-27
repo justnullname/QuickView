@@ -3458,7 +3458,7 @@ void SettingsOverlay::BuildKeysTab(SettingsTab& tabKeys) {
         HotkeyAction::ToggleOverlay, HotkeyAction::OverlayAlphaUp, HotkeyAction::OverlayAlphaDown, HotkeyAction::OverlayTogglePassthrough
     };
     static constexpr HotkeyAction kPluginActions[] = {
-        HotkeyAction::SuperResolution, HotkeyAction::AiAction
+        HotkeyAction::SuperResolution, HotkeyAction::AiAction, HotkeyAction::OcrText
     };
 
     auto appendGroup = [&](const wchar_t* titleZh, const wchar_t* titleEn, const auto& actionList) {
@@ -3570,6 +3570,16 @@ void SettingsOverlay::BuildImageTab(SettingsTab& tabImage) {
         ApplyPairRawJpegSetting(g_mainHwnd);
     };
     tabImage.items.push_back(std::move(itemPairRaw));
+
+    // --- OCR / Live Text ---
+    AddHeader(tabImage, AppStrings::g.Settings_Header_Ocr);
+    SettingsItem itemAutoOcr = { AppStrings::g.Settings_Label_OcrAutoLiveText, OptionType::Toggle, &g_config.OcrAutoLiveText };
+    itemAutoOcr.tooltipText = AppStrings::g.Settings_Tooltip_OcrAutoLiveText;
+    itemAutoOcr.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        extern void SaveConfig();
+        SaveConfig();
+    };
+    tabImage.items.push_back(std::move(itemAutoOcr));
 
     // --- 2. Color Management (CMS) Group ---
     AddHeader(tabImage, AppStrings::g.Settings_Label_CMS);
@@ -3916,6 +3926,7 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
         int presetIdx = 0;
         bool isImageProcessor = false;
         bool isShellExt = false;
+        bool isAnalyzer = false;
         bool srAutoTrigger = false;
         float srMaxWidth = 1080.0f;
         float srMaxHeight = 1080.0f;
@@ -4203,6 +4214,7 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
                 card.enabled = pluginHost.IsPluginEnabled(rec.id);
                 card.isImageProcessor = rec.HasInterface(QVX_IFACE_IMAGE_PROCESSOR);
                 card.isShellExt = rec.HasInterface(QVX_IFACE_SHELL_EXT);
+                card.isAnalyzer = rec.HasInterface(QVX_IFACE_ANALYZER);
 
                 std::wstring title = Utf8ToWide(rec.ResolveName(curLang));
                 if (!rec.version.empty()) title += L" (v" + Utf8ToWide(rec.version) + L")";
@@ -4300,6 +4312,7 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
                         const bool newVal = *item->pBoolVal;
                         const bool isShell = cb->isShellExt;
                         const bool isProc = cb->isImageProcessor;
+                        const bool isAnalyzer = cb->isAnalyzer;
                         if (isShell) {
                             QuickView::RunDetached([overlay, pluginId, newVal, isProc]() {
                                 QuickView::PluginHost::Instance().SetPluginEnabled(pluginId, newVal);
@@ -4309,6 +4322,15 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
                             });
                         } else {
                             QuickView::PluginHost::Instance().SetPluginEnabled(pluginId, newVal);
+                            if (isAnalyzer) {
+                                if (newVal) {
+                                    QuickView::PluginHost::Instance().SetActiveOcrPluginId(pluginId);
+                                    g_config.OcrPreferredEngine = pluginId;
+                                } else if (g_config.OcrPreferredEngine == pluginId) {
+                                    QuickView::PluginHost::Instance().SetActiveOcrPluginId("");
+                                    g_config.OcrPreferredEngine = "builtin.winocr";
+                                }
+                            }
                             SaveConfig();
                             if (overlay) overlay->RequestRebuild();
                             if (isProc) {

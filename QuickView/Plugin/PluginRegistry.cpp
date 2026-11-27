@@ -66,6 +66,22 @@ uint32_t ParseProcessorCap(std::string_view cap) noexcept {
     return 0u;
 }
 
+QVX_AnalyzerKind ParseAnalyzerKind(std::string_view kind) noexcept {
+    if (kind == "ocr") return QVX_ANALYZER_KIND_OCR;
+    if (kind == "barcode") return QVX_ANALYZER_KIND_BARCODE;
+    return QVX_ANALYZER_KIND_UNKNOWN;
+}
+
+uint32_t ParseAnalyzerCap(std::string_view cap) noexcept {
+    if (cap == "ocr") return QVX_ANALYZER_CAP_OCR;
+    if (cap == "barcode") return QVX_ANALYZER_CAP_BARCODE;
+    if (cap == "multi_lang") return QVX_ANALYZER_CAP_MULTI_LANG;
+    if (cap == "gpu") return QVX_ANALYZER_CAP_GPU;
+    if (cap == "vertical_text") return QVX_ANALYZER_CAP_VERTICAL_TEXT;
+    if (cap == "roi") return QVX_ANALYZER_CAP_ROI;
+    return 0u;
+}
+
 const PluginLocalizedText* FindBestLocale(const std::vector<PluginLocalizedText>& i18n, std::string_view lang) noexcept {
     if (i18n.empty()) return nullptr;
     for (const auto& item : i18n) {
@@ -195,6 +211,30 @@ bool TryParseManifestFile(const std::wstring& manifestPath, const std::wstring& 
                                 outRecord.processorCaps |= ParseProcessorCap(yyjson_get_str(item));
                             }
                         }
+                    }
+                }
+
+                // Parse analyzer metadata (default to OCR when interface is declared without explicit block)
+                yyjson_val* analyzerObj = yyjson_obj_get(root, "analyzer");
+                if (yyjson_is_obj(analyzerObj)) {
+                    outRecord.analyzerKind = ParseAnalyzerKind(readStr(analyzerObj, "kind"));
+                    yyjson_val* capsArr = yyjson_obj_get(analyzerObj, "caps");
+                    if (yyjson_is_arr(capsArr)) {
+                        size_t idx = 0, max = 0;
+                        yyjson_val* item = nullptr;
+                        yyjson_arr_foreach(capsArr, idx, max, item) {
+                            if (yyjson_is_str(item)) {
+                                outRecord.analyzerCaps |= ParseAnalyzerCap(yyjson_get_str(item));
+                            }
+                        }
+                    }
+                }
+                if (outRecord.HasInterface(QVX_IFACE_ANALYZER)) {
+                    if (outRecord.analyzerKind == QVX_ANALYZER_KIND_UNKNOWN) {
+                        outRecord.analyzerKind = QVX_ANALYZER_KIND_OCR;
+                    }
+                    if (outRecord.analyzerCaps == 0) {
+                        outRecord.analyzerCaps = QVX_ANALYZER_CAP_OCR;
                     }
                 }
 

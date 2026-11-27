@@ -83,6 +83,8 @@ public:
     // State Setters
     void SetLockState(bool locked);
     void SetExifState(bool open);
+    void SetOcrMode(bool enabled);
+    bool IsOcrMode() const { return m_ocrMode; }
     void SetRawState(bool isRaw, bool isFullDecode, bool isPaired = false);
     void SetExtensionWarning(bool hasMismatch);
     void SetGamutWarningAvailable(bool available);
@@ -93,7 +95,7 @@ public:
     bool IsComicMode() const { return m_comicMode; }
     bool IsBookOrComicMode() const { return m_comicMode || m_bookModeActive; }
     bool HasPageScrubber() const {
-        return (m_pageTotal > 1) && !m_animMode && !m_slideshowMode && !m_cropMode && !m_overlayMode &&
+        return (m_pageTotal > 1) && !m_animMode && !m_slideshowMode && !m_cropMode && !m_overlayMode && !m_ocrMode &&
                (!m_compareMode || m_comicMode || m_bookModeActive);
     }
     void SetBookModeState(bool available, bool active, uint32_t currentPage, uint32_t totalPages);
@@ -172,6 +174,8 @@ private:
     bool m_animPlaying = true;
     bool m_overlayMode = false;
     bool m_cropMode = false;
+    bool m_ocrMode = false;
+    bool m_preOcrPinned = false;
     bool m_animDirtyRect = false;
     int  m_overlayAlphaPercent = 50;
     float m_animProgress = 0.0f;

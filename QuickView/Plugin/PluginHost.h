@@ -11,8 +11,10 @@
 // ============================================================================
 
 #include "PluginRegistry.h"
+#include "OcrTypes.h"
 #include "abi/qvx_core.h"
 #include "abi/qvx_processor.h"
+#include "abi/qvx_analyzer.h"
 #include "abi/qvx_shell_ext.h"
 #include <windows.h>
 #include <d3d11.h>
@@ -202,6 +204,19 @@ public:
     );
     void ReleasePluginContext(std::string_view pluginId);
 
+    // --- Generic Analyzer Services (QVX_IFACE_ANALYZER / OCR) ---
+    std::string GetActiveOcrPluginId() const;
+    void SetActiveOcrPluginId(const std::string& pluginId);
+    std::vector<PluginRecord> GetInstalledOcrPlugins() const;
+    int32_t ExecuteOcrAnalyze(
+        const std::string& pluginId,
+        const QVX_AnalyzerInput& input,
+        QuickView::Ocr::OcrDocument& outDoc,
+        std::string* outError = nullptr
+    );
+    void ReleaseIdleAnalyzerContexts(uint64_t idleTimeoutMs = 60000);
+    void ReleaseAnalyzerContextNow(std::string_view pluginId = {});
+
     // --- Generic Shell Extension Services (QVX_IFACE_SHELL_EXT) ---
     void SetInProcThumbLookupCallback(QVX_InProcThumbLookupFn fn, void* userData);
     QVX_ShellRegState GetShellExtRegistrationState(const std::string& pluginId);
@@ -297,9 +312,14 @@ private:
         QVX_HostServices services{};
         const QVX_PluginHeader* header = nullptr;
         const QVX_Processor_VTable* procVTable = nullptr;
+        const QVX_Analyzer_VTable* analyzerVTable = nullptr;
         const QVX_ShellExt_VTable* shellExtVTable = nullptr;
         QVX_ProcContext procContext = nullptr;
+        QVX_AnalyzerContext analyzerContext = nullptr;
         std::string contextPresetId;
+        std::string analyzerContextPresetId;
+        std::atomic<uint64_t> analyzerLastUsedTickMs{0};
+        std::atomic<uint32_t> analyzerInFlight{0};
         ID3D11Device* cachedDevice = nullptr;
         bool retired = false;
         bool shutdownCalled = false;
@@ -321,9 +341,11 @@ private:
     void WaitForAllInFlight();
     void WaitForAllBgTasks();
     std::string ResolveActiveUpscalerIdLocked() const;
+    std::string ResolveActiveOcrIdLocked() const;
     std::vector<PluginAssetEntry> CollectAssetsLocked(const PluginRecord& rec, LoadedPlugin* lp);
 
     mutable std::recursive_mutex m_mutex;
+    std::mutex m_analyzerExecMutex;
     std::mutex m_inFlightMutex;
     std::condition_variable m_inFlightCv;
     uint32_t m_inFlightCount = 0;
@@ -342,8 +364,9 @@ private:
     std::vector<std::unique_ptr<LoadedPlugin>> m_loadedPlugins;
     std::vector<PluginConfigState> m_configStates;
 
-    // Active Upscaler behavioral configuration (atomic fast reads)
+    // Active Upscaler & OCR behavioral configuration (atomic fast reads)
     std::string m_activeUpscalerPluginId;
+    std::string m_activeOcrPluginId;
     std::atomic<bool> m_upscalerFallbackEnabled{false};
     std::string m_upscalerFallbackPreset;
     std::atomic<bool> m_srAutoTrigger{false};

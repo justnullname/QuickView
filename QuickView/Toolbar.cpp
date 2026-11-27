@@ -34,6 +34,7 @@ Toolbar::Toolbar() {
       {ToolbarButtonID::Gallery, Icons::Gallery, {}, true},
 
       {ToolbarButtonID::Exif, Icons::Info, {}, true, false},
+      {ToolbarButtonID::Ocr, Icons::Ocr, {}, true, false},
       {ToolbarButtonID::RawToggle, Icons::Raw, {}, false, false},
       {ToolbarButtonID::FixExtension, Icons::Warning, {}, false, false, false},
       {ToolbarButtonID::GamutWarning, Icons::Warning, {}, false, false},
@@ -71,6 +72,10 @@ Toolbar::Toolbar() {
       {ToolbarButtonID::CropSave,   Icons::Save,        {}, true, false},
       {ToolbarButtonID::CropApply,  Icons::Check,       {}, true, false},
       {ToolbarButtonID::CropCancel, Icons::ExitToolbar, {}, true, false},
+      // OCR mode buttons
+      {ToolbarButtonID::OcrCopy,      Icons::Copy,        {}, true, false},
+      {ToolbarButtonID::OcrSelectAll, Icons::SelectAll,   {}, true, false},
+      {ToolbarButtonID::OcrExit,      Icons::ExitToolbar, {}, true, false},
       // Pin at the very end
       {ToolbarButtonID::Pin, Icons::Pin, {}, true, false},
   };
@@ -225,6 +230,12 @@ void Toolbar::UpdateLayout(float winW, float winH) {
            id == ToolbarButtonID::CropApply ||
            id == ToolbarButtonID::CropCancel;
   };
+  auto isOcrButton = [](ToolbarButtonID id) {
+    return id == ToolbarButtonID::OcrCopy ||
+           id == ToolbarButtonID::OcrSelectAll ||
+           id == ToolbarButtonID::OcrExit ||
+           id == ToolbarButtonID::Pin;
+  };
 
   [[maybe_unused]] auto isNormalButton = [&](ToolbarButtonID id) {
     return !isCompareButton(id) && id != ToolbarButtonID::AnimPlayPause && id != ToolbarButtonID::AnimPrevFrame && id != ToolbarButtonID::AnimNextFrame && id != ToolbarButtonID::AnimDirtyRect && !isAlwaysVisible(id);
@@ -247,6 +258,7 @@ void Toolbar::UpdateLayout(float winW, float winH) {
       {ToolbarButtonID::BookMode},
       {ToolbarButtonID::Gallery},
       {ToolbarButtonID::CompareToggle},
+      {ToolbarButtonID::Ocr},
       {ToolbarButtonID::Exif},
       {ToolbarButtonID::RotateL, ToolbarButtonID::RotateR},
       {ToolbarButtonID::Prev, ToolbarButtonID::Next},  // Core — hide => hide toolbar
@@ -282,6 +294,7 @@ void Toolbar::UpdateLayout(float winW, float winH) {
       {ToolbarButtonID::RotateL, ToolbarButtonID::RotateR},
       {ToolbarButtonID::Gallery},
       {ToolbarButtonID::CompareToggle},
+      {ToolbarButtonID::Ocr},
       {ToolbarButtonID::Exif},
       {ToolbarButtonID::Prev, ToolbarButtonID::Next},  // Core
   };
@@ -305,6 +318,12 @@ void Toolbar::UpdateLayout(float winW, float winH) {
       {ToolbarButtonID::SlideshowExit},  // Core
   };
 
+  static constexpr ResponsiveHideGroup kOcrHideOrder[] = {
+      {ToolbarButtonID::Pin},
+      {ToolbarButtonID::OcrSelectAll},
+      {ToolbarButtonID::OcrCopy, ToolbarButtonID::OcrExit},  // Core
+  };
+
   // Select the appropriate hide table for the current mode
   const bool comicOrBookActive = m_comicMode || m_bookModeActive;
   const ResponsiveHideGroup* hideOrder = kNormalHideOrder;
@@ -312,6 +331,9 @@ void Toolbar::UpdateLayout(float winW, float winH) {
   if (m_cropMode) {
       hideOrder = kCropHideOrder;
       hideOrderCount = (int)std::size(kCropHideOrder);
+  } else if (m_ocrMode) {
+      hideOrder = kOcrHideOrder;
+      hideOrderCount = (int)std::size(kOcrHideOrder);
   } else if (m_overlayMode) {
       hideOrder = kOverlayHideOrder;
       hideOrderCount = (int)std::size(kOverlayHideOrder);
@@ -341,6 +363,9 @@ void Toolbar::UpdateLayout(float winW, float winH) {
     }
     // Responsive hide check (applied on top of mode-based visibility)
     if (isResponsiveHidden(btn.id)) return false;
+    if (m_ocrMode) {
+      return isOcrButton(btn.id);
+    }
 
     if (btn.id == ToolbarButtonID::Gallery && (winH < 450.0f || winW < 600.0f)) {
       return false;
@@ -550,6 +575,14 @@ const wchar_t *GetTooltipText(const ToolbarButton &btn) {
     return AppStrings::g.Toolbar_Tooltip_Gallery;
   case ToolbarButtonID::Exif:
     return AppStrings::g.Toolbar_Tooltip_Info;
+  case ToolbarButtonID::Ocr:
+    return AppStrings::g.Toolbar_Tooltip_Ocr;
+  case ToolbarButtonID::OcrCopy:
+    return AppStrings::g.Toolbar_Tooltip_OcrCopy;
+  case ToolbarButtonID::OcrSelectAll:
+    return AppStrings::g.Toolbar_Tooltip_OcrSelectAll;
+  case ToolbarButtonID::OcrExit:
+    return AppStrings::g.Toolbar_Tooltip_CropCancel;
   case ToolbarButtonID::RawToggle:
     // [RAW+JPEG Pairing] On a paired item the button switches the displayed
     // file rather than the decode quality
@@ -837,7 +870,7 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
         pBrush = m_brushIconActive.Get();
       if (btn.id == ToolbarButtonID::CropApply && m_brushGreen)
         pBrush = m_brushGreen.Get();
-      if (btn.id == ToolbarButtonID::CropCancel && m_brushRed)
+      if ((btn.id == ToolbarButtonID::CropCancel || btn.id == ToolbarButtonID::OcrExit) && m_brushRed)
         pBrush = m_brushRed.Get();
 
       // Scale down the vector icon to match original font sizes
@@ -1304,6 +1337,19 @@ void Toolbar::SetLockState(bool locked) {
 
 void Toolbar::SetExifState(bool open) {
   for (auto &btn : m_buttons) { if (btn.id == ToolbarButtonID::Exif) { btn.isToggled = open; } }
+}
+
+void Toolbar::SetOcrMode(bool enabled) {
+  if (enabled == m_ocrMode) return;
+  m_ocrMode = enabled;
+  if (enabled) {
+    m_preOcrPinned = m_isPinned;
+    m_isPinned = true;
+    m_targetVisible = true;
+    m_opacity = 1.0f;
+  } else {
+    m_isPinned = m_preOcrPinned;
+  }
 }
 
 void Toolbar::SetRawState(bool isRaw, bool isFullDecode, bool isPaired) {

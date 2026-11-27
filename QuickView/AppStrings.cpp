@@ -779,7 +779,14 @@ static constexpr char kBlob_EN[] =
     /* Dialog_Prompt_MoveToRecycleBin */ "Move to Recycle Bin?\0"
     /* Dialog_Button_Delete */ "Delete\0"
     /* Dialog_Prompt_DeleteWhichFiles */ "Delete which files?\0"
-    /* Dialog_Format_OnlyExt */ "%ls only\0";
+    /* Dialog_Format_OnlyExt */ "%ls only\0"
+    /* Context_OcrText */ "Recognize Text (OCR)\0"
+    /* Toolbar_Tooltip_Ocr */ "Recognize Text (OCR)\0"
+    /* Toolbar_Tooltip_OcrCopy */ "Copy Text (Ctrl+C)\0"
+    /* Toolbar_Tooltip_OcrSelectAll */ "Select All (Ctrl+A)\0"
+    /* Settings_Header_Ocr */ "Text Recognition (OCR)\0"
+    /* Settings_Label_OcrAutoLiveText */ "Auto Live Text on image view\0"
+    /* Settings_Tooltip_OcrAutoLiveText */ "Default off. When enabled, automatically runs OCR on static images after a short dwell to enable direct text selection.\0";
 static constexpr char kBlob_CN[] =
     /* CurrentLocale */ "zh-cn\0"
     /* OSD_NoImage */ "没有加载图片\0"
@@ -1549,7 +1556,14 @@ static constexpr char kBlob_CN[] =
     /* Dialog_Prompt_MoveToRecycleBin */ "确定要移至回收站吗？\0"
     /* Dialog_Button_Delete */ "删除\0"
     /* Dialog_Prompt_DeleteWhichFiles */ "要删除哪些文件？\0"
-    /* Dialog_Format_OnlyExt */ "仅 %ls\0";
+    /* Dialog_Format_OnlyExt */ "仅 %ls\0"
+    /* Context_OcrText */ "识别图中文字 (OCR)\0"
+    /* Toolbar_Tooltip_Ocr */ "识别图中文字 (OCR)\0"
+    /* Toolbar_Tooltip_OcrCopy */ "复制文字 (Ctrl+C)\0"
+    /* Toolbar_Tooltip_OcrSelectAll */ "全选文字 (Ctrl+A)\0"
+    /* Settings_Header_Ocr */ "文字识别 (OCR)\0"
+    /* Settings_Label_OcrAutoLiveText */ "看图时自动识别图中文字\0"
+    /* Settings_Tooltip_OcrAutoLiveText */ "默认关闭。开启后，看静态图驻留片刻将自动运行 OCR，可直接划词复制；关闭时仅按需触发。\0";
 static constexpr char kBlob_TW[] =
     /* CurrentLocale */ "zh-tw\0"
     /* OSD_NoImage */ "沒有載入圖片\0"
@@ -2319,7 +2333,14 @@ static constexpr char kBlob_TW[] =
     /* Dialog_Prompt_MoveToRecycleBin */ "確定要移至資源回收筒嗎？\0"
     /* Dialog_Button_Delete */ "刪除\0"
     /* Dialog_Prompt_DeleteWhichFiles */ "要刪除哪些檔案？\0"
-    /* Dialog_Format_OnlyExt */ "僅 %ls\0";
+    /* Dialog_Format_OnlyExt */ "僅 %ls\0"
+    /* Context_OcrText */ "辨識圖中文字 (OCR)\0"
+    /* Toolbar_Tooltip_Ocr */ "辨識圖中文字 (OCR)\0"
+    /* Toolbar_Tooltip_OcrCopy */ "複製文字 (Ctrl+C)\0"
+    /* Toolbar_Tooltip_OcrSelectAll */ "全選文字 (Ctrl+A)\0"
+    /* Settings_Header_Ocr */ "文字辨識 (OCR)\0"
+    /* Settings_Label_OcrAutoLiveText */ "檢視圖片時自動辨識文字\0"
+    /* Settings_Tooltip_OcrAutoLiveText */ "預設關閉。開啟後，靜態圖片駐留片刻將自動執行 OCR，可直接選取複製；關閉時僅依需求觸發。\0";
 static constexpr char kBlob_JA[] =
     /* CurrentLocale */ "ja-jp\0"
     /* OSD_NoImage */ "画像が読み込まれていません\0"
@@ -3089,7 +3110,14 @@ static constexpr char kBlob_JA[] =
     /* Dialog_Prompt_MoveToRecycleBin */ "ごみ箱に移動しますか？\0"
     /* Dialog_Button_Delete */ "削除\0"
     /* Dialog_Prompt_DeleteWhichFiles */ "どのファイルを削除しますか？\0"
-    /* Dialog_Format_OnlyExt */ "%ls のみ\0";
+    /* Dialog_Format_OnlyExt */ "%ls のみ\0"
+    /* Context_OcrText */ "テキストを認識 (OCR)\0"
+    /* Toolbar_Tooltip_Ocr */ "テキストを認識 (OCR)\0"
+    /* Toolbar_Tooltip_OcrCopy */ "テキストをコピー (Ctrl+C)\0"
+    /* Toolbar_Tooltip_OcrSelectAll */ "すべて選択 (Ctrl+A)\0"
+    /* Settings_Header_Ocr */ "テキスト認識 (OCR)\0"
+    /* Settings_Label_OcrAutoLiveText */ "画像表示時に自動テキスト認識\0"
+    /* Settings_Tooltip_OcrAutoLiveText */ "既定はオフです。オンにすると静止画で少し待つと自動で OCR を実行し、文字選択が可能になります。\0";
 static constexpr char kBlob_RU[] =
     /* CurrentLocale */ "ru-ru\0"
     /* OSD_NoImage */ "Изображение не загружено\0"
@@ -3859,7 +3887,14 @@ static constexpr char kBlob_RU[] =
     /* Dialog_Prompt_MoveToRecycleBin */ "Переместить в Корзину?\0"
     /* Dialog_Button_Delete */ "Удалить\0"
     /* Dialog_Prompt_DeleteWhichFiles */ "Какие файлы удалить?\0"
-    /* Dialog_Format_OnlyExt */ "Только %ls\0";
+    /* Dialog_Format_OnlyExt */ "Только %ls\0"
+    /* Context_OcrText */ "Распознать текст (OCR)\0"
+    /* Toolbar_Tooltip_Ocr */ "Распознать текст (OCR)\0"
+    /* Toolbar_Tooltip_OcrCopy */ "Копировать текст (Ctrl+C)\0"
+    /* Toolbar_Tooltip_OcrSelectAll */ "Выделить всё (Ctrl+A)\0"
+    /* Settings_Header_Ocr */ "Распознавание текста (OCR)\0"
+    /* Settings_Label_OcrAutoLiveText */ "Автораспознавание текста при просмотре\0"
+    /* Settings_Tooltip_OcrAutoLiveText */ "По умолчанию выкл. При включении автоматически запускает OCR на статичных фото после паузы.\0";
 static constexpr char kBlob_DE[] =
     /* CurrentLocale */ "de-de\0"
     /* OSD_NoImage */ "Kein Bild geladen\0"
@@ -4629,7 +4664,14 @@ static constexpr char kBlob_DE[] =
     /* Dialog_Prompt_MoveToRecycleBin */ "In den Papierkorb verschieben?\0"
     /* Dialog_Button_Delete */ "Löschen\0"
     /* Dialog_Prompt_DeleteWhichFiles */ "Welche Dateien löschen?\0"
-    /* Dialog_Format_OnlyExt */ "Nur %ls\0";
+    /* Dialog_Format_OnlyExt */ "Nur %ls\0"
+    /* Context_OcrText */ "Text erkennen (OCR)\0"
+    /* Toolbar_Tooltip_Ocr */ "Text erkennen (OCR)\0"
+    /* Toolbar_Tooltip_OcrCopy */ "Text kopieren (Strg+C)\0"
+    /* Toolbar_Tooltip_OcrSelectAll */ "Alles auswählen (Strg+A)\0"
+    /* Settings_Header_Ocr */ "Texterkennung (OCR)\0"
+    /* Settings_Label_OcrAutoLiveText */ "Live-Text beim Öffnen automatisch erkennen\0"
+    /* Settings_Tooltip_OcrAutoLiveText */ "Standardmäßig aus. Wenn aktiv, wird OCR auf statischen Bildern nach kurzer Pause automatisch ausgeführt.\0";
 static constexpr char kBlob_ES[] =
     /* CurrentLocale */ "es-es\0"
     /* OSD_NoImage */ "No hay imagen cargada\0"
@@ -5399,7 +5441,14 @@ static constexpr char kBlob_ES[] =
     /* Dialog_Prompt_MoveToRecycleBin */ "¿Mover a la Papelera de reciclaje?\0"
     /* Dialog_Button_Delete */ "Eliminar\0"
     /* Dialog_Prompt_DeleteWhichFiles */ "¿Qué archivos eliminar?\0"
-    /* Dialog_Format_OnlyExt */ "Solo %ls\0";
+    /* Dialog_Format_OnlyExt */ "Solo %ls\0"
+    /* Context_OcrText */ "Reconocer texto (OCR)\0"
+    /* Toolbar_Tooltip_Ocr */ "Reconocer texto (OCR)\0"
+    /* Toolbar_Tooltip_OcrCopy */ "Copiar texto (Ctrl+C)\0"
+    /* Toolbar_Tooltip_OcrSelectAll */ "Seleccionar todo (Ctrl+A)\0"
+    /* Settings_Header_Ocr */ "Reconocimiento de texto (OCR)\0"
+    /* Settings_Label_OcrAutoLiveText */ "Reconocer texto automáticamente al ver\0"
+    /* Settings_Tooltip_OcrAutoLiveText */ "Desactivado por defecto. Al activarlo, ejecuta OCR automáticamente tras una breve pausa en imágenes estáticas.\0";
 static constexpr char kBlob_FR[] =
     /* CurrentLocale */ "fr-fr\0"
     /* OSD_NoImage */ "No image loaded\0"
@@ -6169,7 +6218,14 @@ static constexpr char kBlob_FR[] =
     /* Dialog_Prompt_MoveToRecycleBin */ "Déplacer vers la Corbeille ?\0"
     /* Dialog_Button_Delete */ "Supprimer\0"
     /* Dialog_Prompt_DeleteWhichFiles */ "Quels fichiers supprimer ?\0"
-    /* Dialog_Format_OnlyExt */ "%ls uniquement\0";
+    /* Dialog_Format_OnlyExt */ "%ls uniquement\0"
+    /* Context_OcrText */ "Reconnaître le texte (OCR)\0"
+    /* Toolbar_Tooltip_Ocr */ "Reconnaître le texte (OCR)\0"
+    /* Toolbar_Tooltip_OcrCopy */ "Copier le texte (Ctrl+C)\0"
+    /* Toolbar_Tooltip_OcrSelectAll */ "Tout sélectionner (Ctrl+A)\0"
+    /* Settings_Header_Ocr */ "Reconnaissance de texte (OCR)\0"
+    /* Settings_Label_OcrAutoLiveText */ "Reconnaissance auto du texte à l'ouverture\0"
+    /* Settings_Tooltip_OcrAutoLiveText */ "Désactivé par défaut. Lance automatiquement l'OCR après une courte pause sur les images fixes.\0";
 
 struct PackedLangBlob {
     const char* data;
@@ -6317,6 +6373,11 @@ std::wstring GetHotkeyActionName(HotkeyAction action) {
     case HotkeyAction::AiAction: {
         needsCleaning = false;
         raw = PickLang({ L"AI Actions", L"AI 动作", L"AI 動作", L"AI アクション", L"AI Действия", L"AI-Aktionen", L"Acciones IA", L"Actions IA" });
+        break;
+    }
+    case HotkeyAction::OcrText: {
+        needsCleaning = false;
+        raw = AppStrings::g.Context_OcrText;
         break;
     }
     case HotkeyAction::NavNext:
@@ -6737,6 +6798,7 @@ std::wstring GetMouseActionTargetName(::MouseActionTarget action) {
     case MouseActionTarget::NextFrameOrPage:     return GetHotkeyActionName(HotkeyAction::AnimNextFrame);
     case MouseActionTarget::PrevFrameOrPage:     return GetHotkeyActionName(HotkeyAction::AnimPrevFrame);
     case MouseActionTarget::ToggleBookMode:      return GetHotkeyActionName(HotkeyAction::ToggleBookMode);
+    case MouseActionTarget::OcrText:             return GetHotkeyActionName(HotkeyAction::OcrText);
     case MouseActionTarget::PanVertical: {
         return PickLang({
             L"Pan Image Vertically",

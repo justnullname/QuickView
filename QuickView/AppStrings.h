@@ -891,6 +891,15 @@ namespace AppStrings {
         const wchar_t* Dialog_Prompt_DeleteWhichFiles = nullptr;
         const wchar_t* Dialog_Format_OnlyExt = nullptr;
 
+        // OCR / Live Text
+        const wchar_t* Context_OcrText = nullptr;
+        const wchar_t* Toolbar_Tooltip_Ocr = nullptr;
+        const wchar_t* Toolbar_Tooltip_OcrCopy = nullptr;
+        const wchar_t* Toolbar_Tooltip_OcrSelectAll = nullptr;
+        const wchar_t* Settings_Header_Ocr = nullptr;
+        const wchar_t* Settings_Label_OcrAutoLiveText = nullptr;
+        const wchar_t* Settings_Tooltip_OcrAutoLiveText = nullptr;
+
     };
 
     inline Strings g{};

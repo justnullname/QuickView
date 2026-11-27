@@ -30,6 +30,8 @@ static constexpr const char* CURRENT_MODULE = "Main";
 #include "AiActionTypes.h"
 #include "AiActionManager.h"
 #include "AiActionOverlay.h"
+#include "OcrManager.h"
+#include "OcrOverlay.h"
 using namespace ColorMath;
 
 // --- Controller Refactoring Constants & Declarations ---
@@ -173,6 +175,7 @@ static void ClearPdfRoiOverlay(HWND hwnd);
 #define WM_SR_ANIMATION_COMPLETED (WM_APP + 61) // [QVX-SR] Background Full-Sequence Animation SR finished
 #define WM_SR_PROGRESS   (WM_APP + 64)  // [QVX-SR] UI-marshaled progress & animation step status
 constexpr UINT WM_PDF_ROI_READY = WM_APP + 67;
+constexpr UINT WM_APP_OCR_DONE  = WM_APP + 68;
 #define WM_DEFERRED_BOOT_HYDRATE (WM_APP + 25)
 #define WM_BOOT_FRAME_READY      (WM_APP + 26)
 constexpr UINT WM_DEFERRED_EXPLORER_SYNC = WM_APP + 27;
@@ -183,6 +186,8 @@ constexpr UINT_PTR TIMER_ID_SR_DEBOUNCE = 3001;
 constexpr UINT_PTR TIMER_ID_UPDATE_CHECK = 3002;
 constexpr UINT_PTR TIMER_ID_MARQUEE = 3003;
 constexpr UINT_PTR TIMER_ID_PDF_ROI_DEBOUNCE = 3004;
+constexpr UINT_PTR TIMER_ID_OCR_SCAN = 3005;
+constexpr UINT_PTR TIMER_ID_OCR_AUTO = 3006;
 
 bool g_isBootingWithImage = false;
 bool g_waitingBootFrame = false;
@@ -417,6 +422,7 @@ std::array<HotkeyBinding, static_cast<size_t>(HotkeyAction::Count)> g_hotkeys = 
     HotkeyBinding{ HotkeyAction::ToggleAnimation, KeyCombo{ VK_SPACE, 0 }, KeyCombo{ VK_SPACE, 0 } },
     HotkeyBinding{ HotkeyAction::AnimNextFrame, KeyCombo{ VK_RIGHT, 4 }, KeyCombo{ VK_RIGHT, 4 } }, // Alt + Right
     HotkeyBinding{ HotkeyAction::AnimPrevFrame, KeyCombo{ VK_LEFT, 4 }, KeyCombo{ VK_LEFT, 4 } },   // Alt + Left
+    HotkeyBinding{ HotkeyAction::ToggleBookMode, KeyCombo{ VK_BACK, 0 }, KeyCombo{ VK_BACK, 0 } },  // Toggle Book Mode
     HotkeyBinding{ HotkeyAction::ToggleGallery, KeyCombo{ 'T', 0 }, KeyCombo{ 'T', 0 } },
     HotkeyBinding{ HotkeyAction::ToggleFilmstrip, KeyCombo{ 'T', 2 }, KeyCombo{ 'T', 2 } }, // Shift + T
     HotkeyBinding{ HotkeyAction::ToggleInfoPanel, KeyCombo{ VK_TAB, 0 }, KeyCombo{ VK_TAB, 0 } },
@@ -456,6 +462,7 @@ std::array<HotkeyBinding, static_cast<size_t>(HotkeyAction::Count)> g_hotkeys = 
     HotkeyBinding{ HotkeyAction::Help, KeyCombo{ VK_F1, 0 }, KeyCombo{ VK_F1, 0 } },
     HotkeyBinding{ HotkeyAction::SuperResolution, KeyCombo{ 'S', 2 }, KeyCombo{ 'S', 2 } }, // AI Super-Resolution (Shift + S)
     HotkeyBinding{ HotkeyAction::AiAction, KeyCombo{ 'A', 0 }, KeyCombo{ 'A', 0 } }, // AI Actions (A)
+    HotkeyBinding{ HotkeyAction::OcrText, KeyCombo{ 'O', 4 }, KeyCombo{ 'O', 4 } }, // OCR Text Recognition (Alt + O)
     HotkeyBinding{ HotkeyAction::Exit, KeyCombo{ VK_ESCAPE, 0 }, KeyCombo{ VK_ESCAPE, 0 } },
     HotkeyBinding{ HotkeyAction::Undo, KeyCombo{ 'Z', 1 }, KeyCombo{ 'Z', 1 } },
     HotkeyBinding{ HotkeyAction::PanUp, KeyCombo{ VK_UP, 1 }, KeyCombo{ VK_UP, 1 } },
@@ -1559,6 +1566,8 @@ bool IsRatingNeeded();
 static void EnsureSettingsInitialized(HWND hwnd);
 void EnsureHelpInitialized(HWND hwnd);
 static void EnsureAiInitialized(HWND hwnd);
+static void TriggerOcrOnPrimaryPane(HWND hwnd, bool silentAuto);
+static void DismissOcrOverlay(HWND hwnd);
 static void EnsureThumbMgrInitialized(HWND hwnd);
 static void EnsureRatingStoreInitialized(HWND hwnd);
 static void EnsureUpdateInitialized(HWND hwnd);
@@ -1582,6 +1591,7 @@ static void ApplyUIScale(float scale) {
     g_settingsOverlay.SetUIScale(g_uiScale);
     g_helpOverlay.SetUIScale(g_uiScale);
     QuickView::UI::AiActionOverlay::Instance().SetUIScale(g_uiScale);
+    QuickView::UI::OcrOverlay::Instance().SetUIScale(g_uiScale);
 }
 
 static float ResolveUIScale(UINT dpi) {
@@ -4135,6 +4145,7 @@ static void FinishGallery(HWND hwnd, GalleryFinishKind kind, int commitIndex) {
 }
 
 static void ShowGallery(HWND hwnd) {
+    DismissOcrOverlay(hwnd);
     EnsureThumbMgrInitialized(hwnd);
     if (g_gallerySession.intent == GalleryIntent::None) {
         g_gallerySession.intent = GalleryIntent::OverlayBrowse;
@@ -5993,6 +6004,11 @@ void FlushConfigSnapshotToDiskLocked(
     sec.AddBool(L"AlwaysSaveLossy", cfg.AlwaysSaveLossy);
     sec.Flush(L"Image", pIni);
 
+    // [OCR]
+    sec.AddBool(L"OcrAutoLiveText", cfg.OcrAutoLiveText);
+    sec.AddString(L"OcrPreferredEngine", QuickView::Utf8ToWide(cfg.OcrPreferredEngine));
+    sec.Flush(L"OCR", pIni);
+
     // [Advanced]
     sec.AddBool(L"EnableDebugFeatures", cfg.EnableDebugFeatures);
     sec.AddInt(L"PrefetchGear", (int)cfg.PrefetchGear);
@@ -6280,6 +6296,7 @@ void LoadConfig() {
         { L"Image",    L"AlwaysSaveLossless",                 &AppConfig::AlwaysSaveLossless,                 false },
         { L"Image",    L"AlwaysSaveEdgeAdapted",              &AppConfig::AlwaysSaveEdgeAdapted,              false },
         { L"Image",    L"AlwaysSaveLossy",                    &AppConfig::AlwaysSaveLossy,                    false },
+        { L"OCR",      L"OcrAutoLiveText",                    &AppConfig::OcrAutoLiveText,                    false },
         { L"Advanced", L"EnableDebugFeatures",                &AppConfig::EnableDebugFeatures,                false },
         { L"Advanced", L"ShowDirtyRectButton",                &AppConfig::ShowDirtyRectButton,                false },
         { L"Registry", L"FileAssocInitialized",               &AppConfig::FileAssocInitialized,               false },
@@ -6683,6 +6700,12 @@ void LoadConfig() {
     auto& ph = QuickView::PluginHost::Instance();
     ph.LoadConfig(ini);
     g_config.SrDebounceDelayMs = ph.GetSrDebounceDelayMs();
+
+    // OCR Engine selection sync
+    g_config.OcrPreferredEngine = QuickView::WideToUtf8(ReadIniString(ini, L"OCR", L"OcrPreferredEngine", L"", 128));
+    if (!g_config.OcrPreferredEngine.empty() && g_config.OcrPreferredEngine != "builtin.winocr") {
+        ph.SetActiveOcrPluginId(g_config.OcrPreferredEngine);
+    }
     g_config.SrAutoTriggerMaxSourceMp = ph.GetSrAutoTriggerMaxSourceMp();
     g_config.SrAutoTriggerMaxWidth = static_cast<int>(ph.GetSrAutoTriggerMaxWidth());
     g_config.SrAutoTriggerMaxHeight = static_cast<int>(ph.GetSrAutoTriggerMaxHeight());
@@ -8920,6 +8943,7 @@ void PerformTransform(HWND hwnd, TransformType type) {
     std::wstring& path = pane.path;
 
     if (path.empty()) return;
+    DismissOcrOverlay(hwnd);
     if (state.OriginalFilePath.empty()) {
         state.OriginalFilePath = path;
     }
@@ -10190,6 +10214,284 @@ static bool RenderAiSnapshotToVisualBgra(
     return SUCCEEDED(QuickView::ImageExporter::RenderVisualBgraFrame(opts, outBgra, outW, outH, outStride));
 }
 
+#ifdef __clang__
+#define QV_MAIN_OCR_COLD __attribute__((minsize, noinline))
+#else
+#define QV_MAIN_OCR_COLD __declspec(noinline)
+#endif
+
+static bool g_ocrInitialized = false;
+
+static QV_MAIN_OCR_COLD QuickView::UI::OcrViewportMetrics BuildOcrViewportMetrics(HWND hwnd) {
+    QuickView::UI::OcrViewportMetrics ovp{};
+    if (!hwnd) return ovp;
+    RECT rc{};
+    if (GetClientRect(hwnd, &rc)) {
+        ovp.winW = static_cast<float>(rc.right - rc.left);
+        ovp.winH = static_cast<float>(rc.bottom - rc.top);
+    }
+    ImageDisplayMetrics metrics{};
+    if (GetPrimaryImageDisplayMetrics(hwnd, metrics) && metrics.valid) {
+        ovp.imgDrawX = metrics.imgDrawX;
+        ovp.imgDrawY = metrics.imgDrawY;
+        ovp.totalScale = metrics.totalScale;
+        ovp.visualW = metrics.visualW;
+        ovp.visualH = metrics.visualH;
+        ovp.valid = true;
+    }
+    return ovp;
+}
+
+static QV_MAIN_OCR_COLD void DismissOcrOverlay(HWND hwnd) {
+    if (hwnd) {
+        KillTimer(hwnd, TIMER_ID_OCR_SCAN);
+        KillTimer(hwnd, TIMER_ID_OCR_AUTO);
+    }
+    if (QuickView::UI::OcrOverlay::Instance().IsVisible() ||
+        QuickView::Ocr::OcrManager::Instance().GetCurrentGeneration() != 0) {
+        QuickView::UI::OcrOverlay::Instance().DismissAndCancel();
+    }
+    if (g_toolbar.IsOcrMode()) {
+        g_toolbar.SetOcrMode(false);
+        if (hwnd) {
+            RefreshToolbarSafeLayout(hwnd);
+            SyncToolbarHoverFromCursor(hwnd);
+        }
+        RequestRepaint(PaintLayer::Static);
+    }
+}
+
+static QV_MAIN_OCR_COLD void EnsureOcrInitialized(HWND hwnd) {
+    if (g_ocrInitialized) return;
+    g_ocrInitialized = true;
+    if (g_renderEngine) {
+        QuickView::UI::OcrOverlay::Instance().Init(g_renderEngine->GetDeviceContext(), hwnd);
+    }
+    QuickView::UI::OcrOverlay::Instance().SetUIScale(g_uiScale);
+
+    QuickView::UI::OcrOverlay::HostCallbacks cbs{};
+    cbs.onCancelOcr = []() {
+        QuickView::Ocr::OcrManager::Instance().CancelAll();
+        if (g_mainHwnd) {
+            KillTimer(g_mainHwnd, TIMER_ID_OCR_SCAN);
+        }
+    };
+    cbs.onRequestRepaint = []() {
+        RequestRepaint(PaintLayer::Static);
+    };
+    cbs.onShowOsd = [](HWND h, const wchar_t* text) {
+        if (h && text) g_osd.Show(h, text, true);
+    };
+    QuickView::UI::OcrOverlay::Instance().SetCallbacks(cbs);
+}
+
+static QV_MAIN_OCR_COLD bool CapturePrimaryVisualBgraForOcr(
+    std::vector<uint8_t>& outBgra,
+    uint32_t& outW,
+    uint32_t& outH,
+    uint32_t& outStride)
+{
+    const auto& pane = GetPaneContext(PaneSlot::Primary);
+    const int effectiveExif = GetEffectiveExifOrientation(pane.view.ExifOrientation, pane.editState);
+    const Transform2D netT = Transform2D::FromExif(effectiveExif);
+    const bool needTransform = (netT.Rotation != 0 || netT.FlipH || pane.editState.HasCrop);
+
+    std::shared_ptr<QuickView::RawImageFrame> memFrame;
+    QuickView::RawImageFrame extracted;
+    const QuickView::RawImageFrame* srcPtr = nullptr;
+
+    if (!pane.editState.HasModifiedFrame && pane.resource.animator) {
+        std::lock_guard<std::mutex> lock(g_animatorMutex);
+        memFrame = pane.resource.animator->SeekToFrame(pane.resource.frameMeta.index);
+    } else if (pane.currentFrame && pane.currentFrame->pixels && pane.currentFrame->width > 0) {
+        memFrame = pane.currentFrame;
+    }
+
+    auto is8Bit4Ch = [](QuickView::PixelFormat fmt) noexcept {
+        return fmt == QuickView::PixelFormat::BGRA8888 ||
+               fmt == QuickView::PixelFormat::BGRX8888 ||
+               fmt == QuickView::PixelFormat::RGBA8888;
+    };
+
+    if (memFrame && memFrame->pixels && memFrame->width > 0 && memFrame->height > 0 &&
+        memFrame->stride >= memFrame->width * 4 && is8Bit4Ch(memFrame->format)) {
+        srcPtr = memFrame.get();
+    } else if (g_pRenderEngine) {
+        ID2D1Bitmap* srcBmp = pane.resource.promotedSrBitmap
+            ? pane.resource.promotedSrBitmap.Get()
+            : pane.resource.bitmap.Get();
+        if (srcBmp && SUCCEEDED(g_pRenderEngine->ExtractBitmapPixels(srcBmp, &extracted)) &&
+            extracted.pixels && extracted.width > 0 && extracted.height > 0 &&
+            extracted.stride >= extracted.width * 4 && is8Bit4Ch(extracted.format)) {
+            srcPtr = &extracted;
+        }
+    }
+
+    if (srcPtr) {
+        const uint32_t w = srcPtr->width;
+        const uint32_t h = srcPtr->height;
+        const uint32_t rowBytes = w * 4u;
+        std::vector<uint8_t> tempBgra(static_cast<size_t>(rowBytes) * h);
+        const bool swapRb = (srcPtr->format == QuickView::PixelFormat::RGBA8888);
+        for (uint32_t y = 0; y < h; ++y) {
+            const uint8_t* sRow = srcPtr->pixels + static_cast<size_t>(y) * srcPtr->stride;
+            uint8_t* dRow = tempBgra.data() + static_cast<size_t>(y) * rowBytes;
+            if (!swapRb) {
+                memcpy(dRow, sRow, rowBytes);
+            } else {
+                for (uint32_t x = 0; x < w; ++x) {
+                    dRow[x * 4 + 0] = sRow[x * 4 + 2];
+                    dRow[x * 4 + 1] = sRow[x * 4 + 1];
+                    dRow[x * 4 + 2] = sRow[x * 4 + 0];
+                    dRow[x * 4 + 3] = sRow[x * 4 + 3];
+                }
+            }
+        }
+
+        if (!needTransform) {
+            outBgra = std::move(tempBgra);
+            outW = w;
+            outH = h;
+            outStride = rowBytes;
+            return true;
+        }
+
+        QuickView::AI::VisualFrameSnapshot snap;
+        snap.imagePath = !pane.path.empty() ? pane.path : g_imagePath;
+        snap.effectiveExif = effectiveExif;
+        snap.netRotation = netT.Rotation;
+        snap.netFlipH = netT.FlipH;
+        snap.flipV = false;
+        snap.hasCrop = pane.editState.HasCrop;
+        snap.cropLeft = pane.editState.CropLeft;
+        snap.cropTop = pane.editState.CropTop;
+        snap.cropRight = pane.editState.CropRight;
+        snap.cropBottom = pane.editState.CropBottom;
+        snap.rawForceFullDecode = g_runtime.ForceRawDecode;
+        snap.memoryBgra = std::move(tempBgra);
+        snap.memoryWidth = w;
+        snap.memoryHeight = h;
+        snap.memoryStride = rowBytes;
+        return RenderAiSnapshotToVisualBgra(snap, outBgra, outW, outH, outStride);
+    }
+
+    QuickView::AI::VisualFrameSnapshot snap;
+    return CapturePrimaryVisualSnapshotForAi(snap) &&
+           RenderAiSnapshotToVisualBgra(snap, outBgra, outW, outH, outStride);
+}
+
+static QV_MAIN_OCR_COLD void TriggerOcrOnPrimaryPane(HWND hwnd, bool silentAuto) {
+    if (!hwnd) return;
+    const auto& pane = GetPaneContext(PaneSlot::Primary);
+    if (!pane.resource) return;
+    if (IsCompareModeActive() || g_cropState.IsActive) return;
+    if (g_gallery.IsVisible() && g_gallery.GetMode() == GalleryMode::FullGrid) return;
+
+    EnsureOcrInitialized(hwnd);
+
+    QuickView::Ocr::OcrRequest req{};
+    if (!CapturePrimaryVisualBgraForOcr(req.bgraPixels, req.width, req.height, req.stride)) {
+        if (!silentAuto) {
+            g_osd.Show(hwnd, AppStrings::g.OSD_NoImage ? AppStrings::g.OSD_NoImage : L"No image", true);
+        }
+        return;
+    }
+
+    const uint64_t imageId = g_currentImageId.load();
+    req.notifyHwnd = hwnd;
+    req.notifyMsg = WM_APP_OCR_DONE;
+    req.imageId = imageId;
+    req.preferredEngineId = g_config.OcrPreferredEngine;
+
+    const uint64_t gen = QuickView::Ocr::OcrManager::Instance().RequestAnalyze(std::move(req));
+    if (gen == 0) return;
+
+    QuickView::UI::OcrOverlay::Instance().BeginScan(imageId, gen, silentAuto);
+    if (!silentAuto) {
+        g_toolbar.SetOcrMode(true);
+        RefreshToolbarSafeLayout(hwnd);
+        RequestRepaint(PaintLayer::Static);
+        SetTimer(hwnd, TIMER_ID_OCR_SCAN, 16, nullptr);
+    }
+}
+
+static QV_MAIN_OCR_COLD void HandleOcrDoneMessage(HWND hwnd, WPARAM wParam) {
+    KillTimer(hwnd, TIMER_ID_OCR_SCAN);
+    QuickView::Ocr::OcrResultPackage pkg;
+    const uint64_t doneGen = static_cast<uint64_t>(wParam);
+    if (QuickView::Ocr::OcrManager::Instance().ConsumeResult(doneGen, pkg)) {
+        if (pkg.imageId == g_currentImageId.load() &&
+            pkg.generationId == QuickView::UI::OcrOverlay::Instance().GetActiveGeneration()) {
+            const auto ovp = BuildOcrViewportMetrics(hwnd);
+            if (pkg.statusCode == 0) {
+                QuickView::UI::OcrOverlay::Instance().SetDocument(std::move(pkg.doc), ovp.visualW, ovp.visualH);
+            } else {
+                QuickView::UI::OcrOverlay::Instance().OnScanFailed(pkg.generationId, pkg.errorMsg, false);
+            }
+        }
+    }
+    if (!QuickView::UI::OcrOverlay::Instance().IsVisible() && g_toolbar.IsOcrMode()) {
+        DismissOcrOverlay(hwnd);
+    }
+}
+
+static QV_MAIN_OCR_COLD bool HandleOcrInputMessage(HWND hwnd, UINT msg, WPARAM wParam, POINT pt) {
+    auto& ocr = QuickView::UI::OcrOverlay::Instance();
+    if (!ocr.IsVisible()) return false;
+
+    if (msg == WM_KEYDOWN) {
+        const bool ctrlDown = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+        if (ocr.OnKeyDown(wParam, ctrlDown)) {
+            if (!ocr.IsVisible()) {
+                DismissOcrOverlay(hwnd);
+            }
+            return true;
+        }
+        return false;
+    }
+
+    if (msg == WM_LBUTTONUP) {
+        return ocr.OnLButtonUp(static_cast<float>(pt.x), static_cast<float>(pt.y), BuildOcrViewportMetrics(hwnd));
+    }
+
+    if (g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible() ||
+        (g_gallery.IsVisible() && g_gallery.GetMode() == GalleryMode::FullGrid) ||
+        IsCompareModeActive() || g_cropState.IsActive) {
+        return false;
+    }
+
+    const auto ovp = BuildOcrViewportMetrics(hwnd);
+    if (msg == WM_LBUTTONDBLCLK) {
+        if (g_toolbar.IsVisible() && g_toolbar.HitTest(static_cast<float>(pt.x), static_cast<float>(pt.y))) {
+            return false;
+        }
+        return ocr.OnLButtonDblClk(static_cast<float>(pt.x), static_cast<float>(pt.y), ovp);
+    }
+    if (msg == WM_LBUTTONDOWN) {
+        if (g_toolbar.IsVisible() && g_toolbar.HitTest(static_cast<float>(pt.x), static_cast<float>(pt.y))) {
+            return false;
+        }
+        const bool shiftDown = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+        return ocr.OnLButtonDown(static_cast<float>(pt.x), static_cast<float>(pt.y), ovp, shiftDown);
+    }
+    if (msg == WM_MOUSEMOVE) {
+        const auto& v = GetPaneContext(PaneSlot::Primary).view;
+        if (v.IsDragging || v.IsRightButtonDragZoom || v.IsMiddleDragWindow) return false;
+        if (!ocr.IsDragging() && g_toolbar.IsVisible() && g_toolbar.HitTest(static_cast<float>(pt.x), static_cast<float>(pt.y))) {
+            return false;
+        }
+        const bool shiftDown = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+        const bool ocrDragging = ocr.OnMouseMove(static_cast<float>(pt.x), static_cast<float>(pt.y), ovp, shiftDown);
+        const auto zone = ocr.HitTest(static_cast<float>(pt.x), static_cast<float>(pt.y), ovp);
+        if (ocrDragging || zone == QuickView::UI::OcrHitZone::Text) {
+            g_currentCursor = LoadCursor(nullptr, (zone == QuickView::UI::OcrHitZone::Text && !shiftDown) ? IDC_IBEAM : IDC_ARROW);
+            SetCursor(g_currentCursor);
+            return true;
+        }
+    }
+    return false;
+}
+
 static void EnsureAiInitialized(HWND hwnd) {
     if (g_aiInitialized) return;
     g_aiInitialized = true;
@@ -11208,6 +11510,11 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
 
         if (wmId == IDM_AI_ACTION) {
             HandleHotkeyAction(hwnd, HotkeyAction::AiAction);
+            return 0;
+        }
+
+        if (wmId == IDM_OCR_TEXT) {
+            HandleHotkeyAction(hwnd, HotkeyAction::OcrText);
             return 0;
         }
 
@@ -12763,6 +13070,9 @@ static bool ExecuteMouseActionTarget(HWND hwnd, MouseActionTarget action, POINT 
     case MouseActionTarget::ToggleBookMode:
         ToggleBookMode(hwnd);
         return true;
+    case MouseActionTarget::OcrText:
+        HandleHotkeyAction(hwnd, HotkeyAction::OcrText);
+        return true;
     case MouseActionTarget::ViewPan:
         if (ViewPan_IsActive()) {
             ViewPan_Stop(hwnd, true);
@@ -13126,6 +13436,14 @@ static bool IsAnyInlineInputFocused() {
 // Pure-ESC layered dismissal pipeline (independent from direct window-close commands).
 // Returns true if an active task, transient overlay, special mode, or fullscreen was dismissed.
 static bool TryHandleEscapeDismiss(HWND hwnd) {
+    if (QuickView::UI::OcrOverlay::Instance().IsVisible()) {
+        if (QuickView::UI::OcrOverlay::Instance().OnKeyDown(VK_ESCAPE, false)) {
+            if (!QuickView::UI::OcrOverlay::Instance().IsVisible()) {
+                DismissOcrOverlay(hwnd);
+            }
+            return true;
+        }
+    }
     if (QuickView::UI::AiActionOverlay::Instance().IsVisible()) {
         if (QuickView::UI::AiActionOverlay::Instance().OnKeyDown(VK_ESCAPE)) {
             return true;
@@ -13714,6 +14032,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         }
         return 0;
     }
+    case WM_APP_OCR_DONE:
+        HandleOcrDoneMessage(hwnd, wParam);
+        return 0;
     case SettingsOverlay::WM_SETTINGS_UI_EVENT:
         SettingsOverlay::HandleUiEventMessage(wParam, lParam);
         return 0;
@@ -14200,6 +14521,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     // [AI Action] Image Generation / Inpainting completed
     case QuickView::AI::WM_AI_ACTION_COMPLETED: {
         KillTimer(hwnd, TIMER_ID_SR_DEBOUNCE);
+    DismissOcrOverlay(hwnd);
         auto* aiRes = reinterpret_cast<QuickView::AI::AsyncAiImageResult*>(lParam);
         if (!aiRes) return 0;
         std::unique_ptr<QuickView::AI::AsyncAiImageResult> autoDelete(aiRes);
@@ -14766,6 +15088,24 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         if (wParam == TIMER_ID_PDF_ROI_DEBOUNCE) {
             KillTimer(hwnd, TIMER_ID_PDF_ROI_DEBOUNCE);
             TriggerDebouncedPdfRoi(hwnd);
+            return 0;
+        }
+
+        if (wParam == TIMER_ID_OCR_SCAN) {
+            if (QuickView::UI::OcrOverlay::Instance().NeedsAnimationTick()) {
+                RequestRepaint(PaintLayer::Static);
+            } else {
+                KillTimer(hwnd, TIMER_ID_OCR_SCAN);
+            }
+            return 0;
+        }
+
+        if (wParam == TIMER_ID_OCR_AUTO) {
+            KillTimer(hwnd, TIMER_ID_OCR_AUTO);
+            if (g_config.OcrAutoLiveText && !IsCompareModeActive() && !g_cropState.IsActive &&
+                !g_gallery.IsVisible() && !QuickView::UI::OcrOverlay::Instance().IsVisible()) {
+                TriggerOcrOnPrimaryPane(hwnd, true);
+            }
             return 0;
         }
 
@@ -15473,6 +15813,8 @@ case WM_DESTROY: {
                 g_webContentHost.reset();
             }
             g_thumbMgr.Shutdown();
+            DismissOcrOverlay(hwnd);
+            QuickView::Ocr::OcrManager::Instance().Shutdown();
             QuickView::PluginHost::Instance().SetInProcThumbLookupCallback(nullptr, nullptr);
             g_ratingStore.Shutdown();
             ClearPdfRoiOverlay(hwnd);
@@ -15920,6 +16262,10 @@ case WM_DESTROY: {
               SetCursor(g_currentCursor);
               return 0;
           }
+
+          if (HandleOcrInputMessage(hwnd, WM_MOUSEMOVE, wParam, pt)) {
+              return 0;
+          }
           
           if (g_gallery.IsVisible()) {
               if (g_gallery.OnMouseMove(pt.x, pt.y)) {
@@ -16159,7 +16505,8 @@ SKIP_EDGE_NAV:;
                               g_cropState.DragStartCropLeft = g_cropState.DragStartCropRight = clampedX;
                               g_cropState.DragStartCropTop = g_cropState.DragStartCropBottom = clampedY;
                               g_cropState.IsQuickActionVisible = true;
-                              g_toolbar.SetCropMode(true);
+                              DismissOcrOverlay(hwnd);
+                g_toolbar.SetCropMode(true);
                               g_toolbar.SetVisible(true);
                               RequestRepaint(PaintLayer::All);
                           }
@@ -16503,6 +16850,9 @@ SKIP_EDGE_NAV:;
         
     case WM_LBUTTONDBLCLK: {
         POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
+        if (HandleOcrInputMessage(hwnd, WM_LBUTTONDBLCLK, wParam, pt)) {
+            return 0;
+        }
         if (IsMouseOverUI(hwnd, pt.x, pt.y)) {
             return 0; // Completely block double-click on ANY UI layer, overlay, floating bar, control or hotspot
         }
@@ -16979,6 +17329,9 @@ SKIP_EDGE_NAV:;
         if (QuickView::ExportPanel::GetInstance().IsVisible()) {
             if (QuickView::ExportPanel::GetInstance().OnLButtonDown((float)pt.x, (float)pt.y)) return 0;
         }
+        if (HandleOcrInputMessage(hwnd, WM_LBUTTONDOWN, wParam, pt)) {
+            return 0;
+        }
 
         auto miniHit = HitTestMinimaps(pt);
         if (miniHit.minimapIdx != -1) {
@@ -17373,7 +17726,8 @@ SKIP_EDGE_NAV:;
                         g_cropState.IsQuickActionVisible = false;
 
                         if (g_cropState.Mode != RegionInteractionMode::AiInpaint) {
-                            g_toolbar.SetCropMode(true);
+                            DismissOcrOverlay(hwnd);
+                g_toolbar.SetCropMode(true);
                             g_toolbar.SetVisible(true);
                         }
 
@@ -17477,7 +17831,8 @@ SKIP_EDGE_NAV:;
                     g_cropState.DragStartCropBottom = imgY;
                     g_cropState.IsQuickActionVisible = true;
 
-                    g_toolbar.SetCropMode(true);
+                    DismissOcrOverlay(hwnd);
+                g_toolbar.SetCropMode(true);
                     g_toolbar.SetVisible(true);
 
                     RequestRepaint(PaintLayer::All);
@@ -17546,6 +17901,9 @@ SKIP_EDGE_NAV:;
         }
 
         if (QuickView::UI::AiActionOverlay::Instance().IsVisible()) {
+            return 0;
+        }
+        if (HandleOcrInputMessage(hwnd, WM_LBUTTONUP, wParam, pt)) {
             return 0;
         }
 
@@ -17684,6 +18042,17 @@ SKIP_EDGE_NAV:;
                     break;
                 }
                 case ToolbarButtonID::Exif:    SendMessage(hwnd, WM_COMMAND, IDM_SHOW_INFO_PANEL, 0); break;
+                case ToolbarButtonID::Ocr:     HandleHotkeyAction(hwnd, HotkeyAction::OcrText); break;
+                case ToolbarButtonID::OcrCopy:
+                    QuickView::UI::OcrOverlay::Instance().CopySelectionOrAllToClipboard(hwnd);
+                    break;
+                case ToolbarButtonID::OcrSelectAll:
+                    QuickView::UI::OcrOverlay::Instance().SelectAll();
+                    RequestRepaint(PaintLayer::Static);
+                    break;
+                case ToolbarButtonID::OcrExit:
+                    DismissOcrOverlay(hwnd);
+                    break;
                 case ToolbarButtonID::RawToggle: {
                     // [Refactor] Use Centralized Command Handler (same as Menu)
                     // This ensures proper Config Update + Force Refresh logic is applied.
@@ -17987,6 +18356,7 @@ SKIP_EDGE_NAV:;
                 }
             } else {
                 g_cropState.IsQuickActionVisible = true;
+                DismissOcrOverlay(hwnd);
                 g_toolbar.SetCropMode(true);
                 g_toolbar.SetVisible(true);
                 RECT rcWnd; GetClientRect(hwnd, &rcWnd);
@@ -18571,6 +18941,9 @@ SKIP_EDGE_NAV:;
                 return 0;
             }
         }
+        if (HandleOcrInputMessage(hwnd, WM_KEYDOWN, wParam, POINT{})) {
+            return 0;
+        }
         if (g_cropState.IsActive && g_cropState.Mode == RegionInteractionMode::AiInpaint) {
             if (wParam == VK_RETURN) {
                 TriggerInpaintCurrentSelection(hwnd);
@@ -18785,7 +19158,15 @@ SKIP_EDGE_NAV:;
         if (message == WM_SYSKEYDOWN) break;
         return 0;
     }
-    
+
+    case WM_SYSCHAR:
+        // Allow Alt+Space system window menu; suppress Windows default MessageBeep for Alt+<key> hotkeys (e.g. Alt+O).
+        if (wParam == VK_SPACE) break;
+        return 0;
+
+    case WM_MENUCHAR:
+        return MAKELRESULT(0, MNC_CLOSE);
+
     case WM_RBUTTONUP: {
         EnsureBootHydrated(hwnd);
         if (QuickView::UI::AiActionOverlay::Instance().IsVisible()) {
@@ -19731,6 +20112,9 @@ void ProcessEngineEvents(HWND hwnd) {
                 // [QVX-SR] Trigger debounced Super-Resolution check when image/animation is loaded and displayed
                 if (!isPreview) {
                     ScheduleDebouncedSuperResolution(hwnd);
+                    if (g_config.OcrAutoLiveText && !IsCompareModeActive() && !g_cropState.IsActive && !primaryResource.animator) {
+                        SetTimer(hwnd, TIMER_ID_OCR_AUTO, 350, nullptr);
+                    }
                 }
                 
                 // Cursor Update
@@ -20484,6 +20868,7 @@ void StartNavigation(HWND hwnd, std::wstring path, [[maybe_unused]] bool showOSD
         g_osd.EndPersistentTask(hwnd);
     }
     KillTimer(hwnd, TIMER_ID_SR_DEBOUNCE);
+    DismissOcrOverlay(hwnd);
     
     // [ImageID] Compute stable hash from path - this is the new primary identifier
     ImageID myImageId = ComputePathHash(path);
@@ -23151,6 +23536,7 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
             AppContext::GetInstance().CompareCtrl->ExitMode(hwnd);
             ReturnToPairFaceAfterCompareExit(hwnd);
         } else {
+            DismissOcrOverlay(hwnd);
             AppContext::GetInstance().CompareCtrl->EnterMode(hwnd);
         }
         RequestRepaint(PaintLayer::All);
@@ -23248,6 +23634,7 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
                     g_cropState.CropBottom = static_cast<int>(std::lround(visH));
                 }
 
+                DismissOcrOverlay(hwnd);
                 g_toolbar.SetCropMode(true);
                 AdjustCropModeWindowAndZoom(hwnd);
                 g_osd.Show(hwnd, AppStrings::g.OSD_EnterCropMode, true);
@@ -23260,6 +23647,14 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
         EnsureAiInitialized(hwnd);
         QuickView::UI::AiActionOverlay::Instance().Toggle();
         RequestRepaint(PaintLayer::Static);
+        return true;
+
+    case HotkeyAction::OcrText:
+        if (QuickView::UI::OcrOverlay::Instance().IsVisible()) {
+            DismissOcrOverlay(hwnd);
+        } else {
+            TriggerOcrOnPrimaryPane(hwnd, false);
+        }
         return true;
 
     case HotkeyAction::SaveAs:

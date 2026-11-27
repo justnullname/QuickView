@@ -17,16 +17,46 @@
 #include "PrintPreviewUI.h"
 #include "ExportPanel.h"
 #include "AiActionOverlay.h"
+#include "OcrOverlay.h"
 #include "GeekWidgets.h"
 #include "ThemePalette.h"
 #include "SystemInfo.h"
 #include <functional> // For std::hash
+
+extern bool GetPrimaryImageDisplayMetrics(HWND hwnd, ImageDisplayMetrics& out);
 
 namespace {
     template <class T>
     inline void CombineHash(uint64_t& seed, const T& v) {
         std::hash<T> hasher;
         seed ^= hasher(v) + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2);
+    }
+
+#ifdef __clang__
+    __attribute__((minsize, noinline))
+#else
+    __declspec(noinline)
+#endif
+    void RenderOcrOverlayCold(
+        ID2D1DeviceContext* dc,
+        HWND hwnd,
+        float winW,
+        float winH,
+        float uiScale)
+    {
+        ImageDisplayMetrics metrics{};
+        GetPrimaryImageDisplayMetrics(hwnd, metrics);
+        QuickView::UI::OcrViewportMetrics ovp{};
+        ovp.imgDrawX = metrics.imgDrawX;
+        ovp.imgDrawY = metrics.imgDrawY;
+        ovp.totalScale = metrics.totalScale;
+        ovp.visualW = metrics.visualW;
+        ovp.visualH = metrics.visualH;
+        ovp.winW = winW;
+        ovp.winH = winH;
+        ovp.valid = metrics.valid;
+        QuickView::UI::OcrOverlay::Instance().SetUIScale(uiScale > 0.0f ? uiScale : 1.0f);
+        QuickView::UI::OcrOverlay::Instance().Render(dc, ovp);
     }
 }
 #include "Toolbar.h"
@@ -914,6 +944,12 @@ void UIRenderer::RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd) {
     } else {
         AppContext::GetInstance().Minimaps[0].ClearRects();
         AppContext::GetInstance().Minimaps[1].ClearRects();
+    }
+
+    // OCR / Live Text Interactive Overlay (above image & canvas, beneath modal Settings/Help overlays)
+    if (QuickView::UI::OcrOverlay::Instance().IsVisible() &&
+        !isAnyOverlayActive && !IsCompareModeActive() && !g_cropState.IsActive) {
+        RenderOcrOverlayCold(dc, hwnd, (float)m_width, (float)m_height, m_uiScale);
     }
 
     // Settings Overlay

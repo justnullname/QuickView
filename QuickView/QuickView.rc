@@ -13,8 +13,8 @@
 // Version Information - This sets the display name in Windows
 // Note: When modifying any plugin under plugins/, also bump its version in plugins/<category>/<name>/manifest.json (propagated via QVX_PLUGIN_VERSION_STR).
  VS_VERSION_INFO VERSIONINFO
- FILEVERSION 6,61,0,2
- PRODUCTVERSION 6,61,0,2
+ FILEVERSION 6,62,0,0
+ PRODUCTVERSION 6,62,0,0
 FILEFLAGSMASK 0x3fL
 FILEFLAGS 0x0L
 FILEOS 0x40004L
@@ -27,12 +27,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "QuickView"
             VALUE "FileDescription", "QuickView"
-            VALUE "FileVersion", "6.61.0.2"
+            VALUE "FileVersion", "6.62.0.0"
             VALUE "InternalName", "QuickView.exe"
             VALUE "LegalCopyright", "Copyright (C) 2026"
             VALUE "OriginalFilename", "QuickView.exe"
             VALUE "ProductName", "QuickView"
-            VALUE "ProductVersion", "6.61.0.2"
+            VALUE "ProductVersion", "6.62.0.0"
         END
     END
     BLOCK "VarFileInfo"

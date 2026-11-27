@@ -367,6 +367,7 @@ enum class MouseActionTarget : int {
     NextFrameOrPage,     // Next animation frame or document/ICO page
     PrevFrameOrPage,     // Previous animation frame or document/ICO page
     ToggleBookMode,      // Toggle multi-page/comic book mode
+    OcrText,             // Recognize Text (OCR)
     Count
 };
 
@@ -683,6 +684,7 @@ enum class HotkeyAction : uint8_t {
     Help,              // Toggle Help Overlay
     SuperResolution,   // AI Super-Resolution (Default: Shift+S)
     AiAction,          // AI Actions Palette & Execution (Default: A)
+    OcrText,           // OCR Text Recognition Overlay (Default: Alt+O)
     Exit,              // Close Window / Exit App
     Undo,              // Undo last operation (Ctrl+Z)
     PanUp,
@@ -758,6 +760,7 @@ inline std::wstring_view HotkeyActionToString(HotkeyAction action) noexcept {
         case HotkeyAction::Help: return L"Help";
         case HotkeyAction::SuperResolution: return L"SuperResolution";
         case HotkeyAction::AiAction: return L"AiAction";
+        case HotkeyAction::OcrText: return L"OcrText";
         case HotkeyAction::ToggleSlideshow: return L"ToggleSlideshow";
         case HotkeyAction::ToggleSettings: return L"ToggleSettings";
         case HotkeyAction::Exit: return L"Exit";
@@ -818,6 +821,7 @@ inline HotkeyAction StringToHotkeyAction(std::wstring_view sv) noexcept {
     if (sv == L"ComparePair") return HotkeyAction::ComparePair;
     if (sv == L"SuperResolution") return HotkeyAction::SuperResolution;
     if (sv == L"AiAction") return HotkeyAction::AiAction;
+    if (sv == L"OcrText") return HotkeyAction::OcrText;
     if (sv == L"Rate0") return HotkeyAction::Rate0;
     if (sv == L"Rate1") return HotkeyAction::Rate1;
     if (sv == L"Rate2") return HotkeyAction::Rate2;
@@ -1225,6 +1229,7 @@ inline std::vector<HotkeyRule> GetDefaultHotkeyRules() {
         { HotkeyAction::Help,                     { VK_F1, 0 } },
         { HotkeyAction::SuperResolution,          { 'S', 2 /* Shift */ } },
         { HotkeyAction::AiAction,                 { 'A', 0 } },
+        { HotkeyAction::OcrText,                  { 'O', 4 /* Alt */ } },
 
         // Panning (Strictly match b2d9198: Ctrl + Arrows, Ctrl+Shift + Arrows)
         { HotkeyAction::PanUp,                    { VK_UP, 1 /* Ctrl */ } },
@@ -1623,6 +1628,10 @@ struct AppConfig {
     // one logical photo (the RAW is hidden from the list). Default off so
     // behavior is identical to stock unless the user opts in.
     bool PairRawJpeg = false;
+
+    // [OCR / Live Text]
+    bool OcrAutoLiveText = false;
+    std::string OcrPreferredEngine;
     /// <summary>
     bool IsAdvancedColorEnabled(bool isSystemHdrActive) const {
         return AdvancedColorMode == 1 || (AdvancedColorMode == 2 && isSystemHdrActive);

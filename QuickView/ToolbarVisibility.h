@@ -45,7 +45,12 @@ enum class ToolbarButtonID {
     CropCancel,
     // Multi-page / Book mode
     BookMode,
-    PageSeek
+    PageSeek,
+    // OCR / Live Text
+    Ocr,
+    OcrCopy,
+    OcrSelectAll,
+    OcrExit
 };
 
 inline bool IsToolbarButtonVisibleInMode(
@@ -61,7 +66,8 @@ inline bool IsToolbarButtonVisibleInMode(
     bool isButtonWarning = false,
     bool compareHasAnim = false,
     bool isDirty = false,
-    bool showDirtyRectButton = false) {
+    bool showDirtyRectButton = false,
+    bool ocrMode = false) {
     auto isCompareButton = [](ToolbarButtonID btnId) {
         switch (btnId) {
         case ToolbarButtonID::CompareOpen:
@@ -105,12 +111,21 @@ inline bool IsToolbarButtonVisibleInMode(
     auto isAlwaysVisible = [](ToolbarButtonID btnId) {
         return btnId == ToolbarButtonID::Pin;
     };
+    auto isOcrButton = [](ToolbarButtonID btnId) {
+        return btnId == ToolbarButtonID::OcrCopy ||
+               btnId == ToolbarButtonID::OcrSelectAll ||
+               btnId == ToolbarButtonID::OcrExit ||
+               btnId == ToolbarButtonID::Pin;
+    };
 
     if (id == ToolbarButtonID::PageSeek) {
         return false;
     }
     if (cropMode) {
         return isCropButton(id);
+    }
+    if (ocrMode) {
+        return isOcrButton(id);
     }
     if (slideshowMode) {
         const bool isSlideshowButton =
@@ -145,6 +160,7 @@ inline bool IsToolbarButtonVisibleInMode(
         case ToolbarButtonID::RotateR:
         case ToolbarButtonID::Gallery:
         case ToolbarButtonID::Exif:
+        case ToolbarButtonID::Ocr:
         case ToolbarButtonID::CompareToggle:
         case ToolbarButtonID::Pin:
             return true;
@@ -173,7 +189,8 @@ inline bool IsToolbarButtonVisibleInMode(
         return false;
     }
     if (id == ToolbarButtonID::CropApply || id == ToolbarButtonID::CropCopy ||
-        id == ToolbarButtonID::CropCancel) {
+        id == ToolbarButtonID::CropCancel || id == ToolbarButtonID::OcrCopy ||
+        id == ToolbarButtonID::OcrSelectAll || id == ToolbarButtonID::OcrExit) {
         return false;
     }
     if (id == ToolbarButtonID::CropSave) {
