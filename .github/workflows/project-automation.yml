@@ -4,12 +4,11 @@ on:
   issues:
     types: [opened]
   push:
-    branches:
-      - main
+    branches: [main]
   release:
     types: [published]
-  projects_v2_item:
-    types: [edited]
+  schedule:
+    - cron: '*/30 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -19,10 +18,12 @@ permissions:
 env:
   PROJECT_OWNER: justnullname
   PROJECT_NUMBER: 1
+  HAS_PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN != '' }}
   LABEL_IN_PROGRESS: "status: in progress"
   LABEL_IMPLEMENTED: "status: implemented"
   LABEL_PRE_RELEASE: "status: pre-release"
   LABEL_RELEASED: "status: released"
+  LABEL_BLOCKED: "status: blocked"
 
 jobs:
   automate:
@@ -37,15 +38,21 @@ jobs:
             const repo = context.repo.repo;
             const projectOwner = process.env.PROJECT_OWNER;
             const projectNumber = Number(process.env.PROJECT_NUMBER);
+            const hasProjectToken = process.env.HAS_PROJECT_TOKEN === 'true';
 
             const LABELS = {
               inProgress: process.env.LABEL_IN_PROGRESS,
               implemented: process.env.LABEL_IMPLEMENTED,
               preRelease: process.env.LABEL_PRE_RELEASE,
               released: process.env.LABEL_RELEASED,
+              blocked: process.env.LABEL_BLOCKED,
             };
 
+            let projectMetaCache = null;
+
             async function getProjectMeta() {
+              if (!hasProjectToken) return null;
+              if (projectMetaCache) return projectMetaCache;
               const query = `
                 query($login: String!, $number: Int!) {
                   user(login: $login) {
@@ -64,238 +71,238 @@ jobs:
                   }
                 }
               `;
-              const res = await github.graphql(query, {
-                login: projectOwner,
-                number: projectNumber,
-              });
+              const res = await github.graphql(query, { login: projectOwner, number: projectNumber });
               const project = res?.user?.projectV2;
-              if (!project) {
-                throw new Error(`ProjectV2 #${projectNumber} not found for user ${projectOwner}`);
-              }
+              if (!project) throw new Error(`Project #${projectNumber} not found for user ${projectOwner}`);
               const statusField = project.field;
-              const options = {};
+              const optionsMap = {};
               for (const opt of statusField?.options || []) {
-                options[opt.name] = opt.id;
+                optionsMap[opt.name] = opt.id;
               }
-              return {
+              projectMetaCache = {
                 projectId: project.id,
                 statusFieldId: statusField?.id,
-                options,
+                optionsMap,
               };
+              return projectMetaCache;
             }
 
-            async function setProjectStatus(issueNodeId, targetStatusName) {
-              try {
-                const meta = await getProjectMeta();
-                const optionId = meta.options[targetStatusName];
-                if (!meta.statusFieldId || !optionId) {
-                  core.warning(`Status option "${targetStatusName}" not found in Project #${projectNumber}.`);
-                  return;
-                }
-                const addMutation = `
-                  mutation($projectId: ID!, $contentId: ID!) {
-                    addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) {
-                      item {
-                        id
-                      }
-                    }
-                  }
-                `;
-                const addRes = await github.graphql(addMutation, {
-                  projectId: meta.projectId,
-                  contentId: issueNodeId,
-                });
-                const itemId = addRes?.addProjectV2ItemById?.item?.id;
-                if (!itemId) return;
-
-                const updateMutation = `
-                  mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
-                    updateProjectV2ItemFieldValue(
-                      input: {
-                        projectId: $projectId
-                        itemId: $itemId
-                        fieldId: $fieldId
-                        value: { singleSelectOptionId: $optionId }
-                      }
-                    ) {
-                      projectV2Item {
-                        id
-                      }
-                    }
-                  }
-                `;
-                await github.graphql(updateMutation, {
-                  projectId: meta.projectId,
-                  itemId,
-                  fieldId: meta.statusFieldId,
-                  optionId,
-                });
-                core.info(`Updated Project #${projectNumber} status -> ${targetStatusName}`);
-              } catch (err) {
-                core.warning(
-                  `Failed to update User ProjectV2 (ensure secrets.PROJECT_TOKEN is set with 'project' + 'repo' scopes): ${err.message}`
-                );
+            async function addIssueToProjectAndSetStatus(issueNodeId, statusName) {
+              if (!hasProjectToken) return;
+              const meta = await getProjectMeta();
+              const optionId = meta.optionsMap[statusName];
+              if (!optionId) {
+                core.warning(`Project status "${statusName}" not found.`);
+                return;
               }
-            }
+              const addRes = await github.graphql(`
+                mutation($projectId: ID!, $contentId: ID!) {
+                  addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) {
+                    item { id }
+                  }
+                }
+              `, { projectId: meta.projectId, contentId: issueNodeId });
 
-            async function addLabels(issueNumber, labels) {
-              if (!labels.length) return;
-              await github.rest.issues.addLabels({
-                owner,
-                repo,
-                issue_number: issueNumber,
-                labels,
+              const itemId = addRes?.addProjectV2ItemById?.item?.id;
+              if (!itemId) return;
+
+              await github.graphql(`
+                mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+                  updateProjectV2ItemFieldValue(input: {
+                    projectId: $projectId,
+                    itemId: $itemId,
+                    fieldId: $fieldId,
+                    value: { singleSelectOptionId: $optionId }
+                  }) {
+                    projectV2Item { id }
+                  }
+                }
+              `, {
+                projectId: meta.projectId,
+                itemId,
+                fieldId: meta.statusFieldId,
+                optionId,
               });
             }
 
-            async function removeLabel(issueNumber, label) {
+            async function getIssue(issueNumber) {
               try {
+                const { data } = await github.rest.issues.get({ owner, repo, issue_number: issueNumber });
+                if (data.pull_request) return null;
+                return data;
+              } catch (err) {
+                core.info(`Issue #${issueNumber} not found or inaccessible: ${err.message}`);
+                return null;
+              }
+            }
+
+            async function syncIssueLabels(issue, addLabels, removeLabels) {
+              const current = new Set((issue.labels || []).map(l => typeof l === 'string' ? l : l.name));
+              const toAdd = addLabels.filter(l => l && !current.has(l));
+              const toRemove = removeLabels.filter(l => l && current.has(l));
+
+              if (toAdd.length > 0) {
+                await github.rest.issues.addLabels({
+                  owner,
+                  repo,
+                  issue_number: issue.number,
+                  labels: toAdd,
+                });
+              }
+              for (const label of toRemove) {
                 await github.rest.issues.removeLabel({
                   owner,
                   repo,
-                  issue_number: issueNumber,
+                  issue_number: issue.number,
                   name: label,
-                });
-              } catch (err) {
-                if (err.status !== 404) throw err;
+                }).catch(() => {});
               }
             }
 
             function extractIssueNumbers(text) {
               if (!text) return [];
-              const matches = text.matchAll(/(?:^|[^\w])#(\d+)\b/g);
-              const nums = new Set();
-              for (const m of matches) {
-                nums.add(Number(m[1]));
-              }
-              return [...nums];
+              const matches = [...text.matchAll(/(?<![A-Za-z0-9_])#(\d+)\b/g)];
+              return [...new Set(matches.map(m => Number(m[1])))];
             }
 
-            async function getIssueIfNotPR(issueNumber) {
-              try {
-                const { data } = await github.rest.issues.get({
-                  owner,
-                  repo,
-                  issue_number: issueNumber,
-                });
-                if (data.pull_request) return null;
-                return data;
-              } catch (err) {
-                core.warning(`Issue #${issueNumber} not accessible: ${err.message}`);
-                return null;
-              }
+            if (!hasProjectToken) {
+              core.warning('PROJECT_TOKEN secret is not configured; skipping GitHub Project V2 board sync. Issue labels and release closing will still run.');
             }
 
-            // Rule A: New Issue -> Add to Project 1 & set Status = Todo
-            if (context.eventName === "issues" && context.payload.action === "opened") {
+            const eventName = context.eventName;
+
+            // Rule A: New issue opened -> add to Project Todo
+            if (eventName === 'issues' && context.payload.action === 'opened') {
               const issue = context.payload.issue;
-              await setProjectStatus(issue.node_id, "Todo");
+              if (!issue.pull_request) {
+                await addIssueToProjectAndSetStatus(issue.node_id, 'Todo');
+              }
             }
 
-            // Rule B: Push to main -> Parse commit messages (use refs #123 / impl #123 to keep open)
-            if (context.eventName === "push") {
+            // Rule B: Commit pushed to main referencing #123 -> status: implemented + Project Implemented
+            else if (eventName === 'push') {
               const commits = context.payload.commits || [];
               const issueNums = new Set();
               for (const c of commits) {
-                for (const n of extractIssueNumbers(c.message)) {
-                  issueNums.add(n);
+                for (const num of extractIssueNumbers(c.message)) {
+                  issueNums.add(num);
                 }
               }
               for (const num of issueNums) {
-                const issue = await getIssueIfNotPR(num);
-                if (!issue) continue;
-                await addLabels(num, [LABELS.implemented]);
-                await removeLabel(num, LABELS.inProgress);
-                await setProjectStatus(issue.node_id, "Implemented");
+                const issue = await getIssue(num);
+                if (!issue || issue.state === 'closed') continue;
+                await syncIssueLabels(issue, [LABELS.implemented], [LABELS.inProgress, LABELS.blocked]);
+                await addIssueToProjectAndSetStatus(issue.node_id, 'Implemented');
               }
             }
 
-            // Rule C: Release published -> Sync issues mentioned in release body
-            if (context.eventName === "release" && context.payload.action === "published") {
+            // Rule C: Release published -> pre-release vs stable release
+            else if (eventName === 'release' && context.payload.action === 'published') {
               const release = context.payload.release;
               const isPreRelease = Boolean(release.prerelease);
+              const tagName = release.tag_name;
               const issueNums = extractIssueNumbers(release.body);
 
               for (const num of issueNums) {
-                const issue = await getIssueIfNotPR(num);
+                const issue = await getIssue(num);
                 if (!issue) continue;
 
                 if (isPreRelease) {
-                  await addLabels(num, [LABELS.preRelease, LABELS.implemented]);
-                  await removeLabel(num, LABELS.inProgress);
-                  await setProjectStatus(issue.node_id, "Implemented");
+                  await syncIssueLabels(
+                    issue,
+                    [LABELS.preRelease],
+                    [LABELS.inProgress, LABELS.implemented, LABELS.blocked]
+                  );
+                  await addIssueToProjectAndSetStatus(issue.node_id, 'Implemented');
                 } else {
-                  await addLabels(num, [LABELS.released]);
-                  await removeLabel(num, LABELS.inProgress);
-                  await removeLabel(num, LABELS.implemented);
-                  await removeLabel(num, LABELS.preRelease);
-                  await setProjectStatus(issue.node_id, "Done");
-                  if (issue.state !== "closed") {
-                    await github.rest.issues.update({
-                      owner,
-                      repo,
-                      issue_number: num,
-                      state: "closed",
-                      state_reason: "completed",
-                    });
+                  await syncIssueLabels(
+                    issue,
+                    [LABELS.released],
+                    [LABELS.preRelease, LABELS.implemented, LABELS.inProgress, LABELS.blocked]
+                  );
+                  await addIssueToProjectAndSetStatus(issue.node_id, 'Done');
+                  if (issue.state !== 'closed') {
                     await github.rest.issues.createComment({
                       owner,
                       repo,
                       issue_number: num,
-                      body: `Included in official release ${release.tag_name}.`,
+                      body: `Released in ${tagName}. Closing this issue.`,
+                    });
+                    await github.rest.issues.update({
+                      owner,
+                      repo,
+                      issue_number: num,
+                      state: 'closed',
                     });
                   }
                 }
               }
             }
 
-            // Rule D: Project V2 Item edited -> Sync Status column to Issue labels
-            if (context.eventName === "projects_v2_item" && context.payload.action === "edited") {
-              const itemNodeId = context.payload.projects_v2_item?.node_id;
-              if (!itemNodeId) return;
-
-              const itemQuery = `
-                query($itemId: ID!) {
-                  node(id: $itemId) {
-                    ... on ProjectV2Item {
-                      fieldValueByName(name: "Status") {
-                        ... on ProjectV2ItemFieldSingleSelectValue {
-                          name
-                        }
-                      }
-                      content {
-                        ... on Issue {
-                          number
-                          repository {
-                            name
-                            owner {
-                              login
+            // Rule D: Scheduled / manual sync from Project V2 Status -> Issue Labels
+            else if (eventName === 'schedule' || eventName === 'workflow_dispatch') {
+              if (!hasProjectToken) {
+                core.info('Skipping scheduled Project V2 -> Label sync because PROJECT_TOKEN is not configured.');
+                return;
+              }
+              let cursor = null;
+              let hasNextPage = true;
+              while (hasNextPage) {
+                const res = await github.graphql(`
+                  query($login: String!, $number: Int!, $cursor: String) {
+                    user(login: $login) {
+                      projectV2(number: $number) {
+                        items(first: 100, after: $cursor) {
+                          pageInfo {
+                            hasNextPage
+                            endCursor
+                          }
+                          nodes {
+                            fieldValueByName(name: "Status") {
+                              ... on ProjectV2ItemFieldSingleSelectValue {
+                                name
+                              }
+                            }
+                            content {
+                              ... on Issue {
+                                number
+                                state
+                                repository {
+                                  nameWithOwner
+                                }
+                              }
                             }
                           }
                         }
                       }
                     }
                   }
+                `, { login: projectOwner, number: projectNumber, cursor });
+
+                const items = res?.user?.projectV2?.items;
+                for (const item of items?.nodes || []) {
+                  const content = item.content;
+                  if (!content || content.repository?.nameWithOwner !== `${owner}/${repo}`) continue;
+                  if (content.state === 'CLOSED') continue;
+
+                  const statusName = item.fieldValueByName?.name;
+                  if (statusName === 'In Progress') {
+                    const issue = await getIssue(content.number);
+                    if (issue) {
+                      await syncIssueLabels(
+                        issue,
+                        [LABELS.inProgress],
+                        [LABELS.implemented, LABELS.preRelease, LABELS.released, LABELS.blocked]
+                      );
+                    }
+                  } else if (statusName === 'Todo') {
+                    const issue = await getIssue(content.number);
+                    if (issue) {
+                      await syncIssueLabels(issue, [], [LABELS.inProgress]);
+                    }
+                  }
                 }
-              `;
-              const res = await github.graphql(itemQuery, { itemId: itemNodeId });
-              const item = res?.node;
-              const content = item?.content;
-              if (!content?.number) return;
-              if (content.repository?.owner?.login !== owner || content.repository?.name !== repo) {
-                return;
-              }
-
-              const statusName = item?.fieldValueByName?.name;
-              const num = content.number;
-
-              if (statusName === "In Progress") {
-                await addLabels(num, [LABELS.inProgress]);
-              } else {
-                await removeLabel(num, LABELS.inProgress);
-              }
-
-              if (statusName === "Implemented") {
-                await addLabels(num, [LABELS.implemented]);
+                hasNextPage = Boolean(items?.pageInfo?.hasNextPage);
+                cursor = items?.pageInfo?.endCursor || null;
               }
             }
