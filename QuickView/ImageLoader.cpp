@@ -4394,8 +4394,10 @@ HRESULT CImageLoader::LoadShellThumbnail(LPCWSTR filePath, int targetSize,
   }
 
   ComPtr<IWICBitmap> wicBitmap;
+  // IShellItemImageFactory::GetImage returns straight-alpha (WTSAT_ARGB) 32bpp DIBs;
+  // request WICBitmapUseAlpha so the FormatConverter below properly premultiplies to 32bppPBGRA.
   hr = m_wicFactory->CreateBitmapFromHBITMAP(
-      hBitmap, nullptr, WICBitmapUsePremultipliedAlpha, &wicBitmap);
+      hBitmap, nullptr, WICBitmapUseAlpha, &wicBitmap);
   DeleteObject(hBitmap);
 
   if (FAILED(hr) || !wicBitmap)
@@ -5464,8 +5466,9 @@ static HRESULT LoadThumbPNG_Streaming(LPCWSTR filePath, int targetSize,
   bool hasTrnsKey = false;
   uint16_t trnsKeyR = 0, trnsKeyG = 0, trnsKeyB = 0;
 
-  std::vector<int> srcX;
-  std::vector<int> srcY;
+  std::vector<uint32_t> srcXBounds;
+  std::vector<uint32_t> srcYBounds;
+  std::vector<uint64_t> rowAccum;
   std::vector<uint8_t> outPixels;
   std::vector<uint8_t> rawRow;
   std::vector<uint8_t> prevRow;
@@ -5561,18 +5564,17 @@ static HRESULT LoadThumbPNG_Streaming(LPCWSTR filePath, int targetSize,
         dstW = static_cast<int>(width);
         dstH = static_cast<int>(height);
       }
-      srcX.resize(static_cast<size_t>(dstW));
-      srcY.resize(static_cast<size_t>(dstH));
-      for (int dx = 0; dx < dstW; ++dx) {
-        srcX[dx] = static_cast<int>(
-            (std::min)(static_cast<uint64_t>(width - 1),
-                       (static_cast<uint64_t>(dx) * width) / dstW));
+      srcXBounds.resize(static_cast<size_t>(dstW) + 1u);
+      srcYBounds.resize(static_cast<size_t>(dstH) + 1u);
+      for (int dx = 0; dx <= dstW; ++dx) {
+        srcXBounds[static_cast<size_t>(dx)] = static_cast<uint32_t>(
+            (static_cast<uint64_t>(dx) * width) / dstW);
       }
-      for (int dy = 0; dy < dstH; ++dy) {
-        srcY[dy] = static_cast<int>(
-            (std::min)(static_cast<uint64_t>(height - 1),
-                       (static_cast<uint64_t>(dy) * height) / dstH));
+      for (int dy = 0; dy <= dstH; ++dy) {
+        srcYBounds[static_cast<size_t>(dy)] = static_cast<uint32_t>(
+            (static_cast<uint64_t>(dy) * height) / dstH);
       }
+      rowAccum.assign(static_cast<size_t>(dstW) * 4u, 0ULL);
       outPixels.assign(static_cast<size_t>(dstW) * dstH * 4u, 0);
       rawRow.assign(rawRowBytes, 0);
       prevRow.assign(rawRowBytes - 1, 0);
@@ -5647,78 +5649,105 @@ static HRESULT LoadThumbPNG_Streaming(LPCWSTR filePath, int targetSize,
             }
             const uint8_t *dst = currRow.data();
 
-            while (nextDy < dstH && srcY[nextDy] == static_cast<int>(curRow)) {
-              uint8_t *outRow =
-                  outPixels.data() + static_cast<size_t>(nextDy) * dstW * 4u;
-              const size_t step16 = (bitDepth == 16) ? 2u : 1u;
-              for (int dx = 0; dx < dstW; ++dx) {
-                const uint8_t *px =
-                    dst + static_cast<size_t>(srcX[dx]) * bytesPerPixel;
-                uint8_t r = 0, g = 0, b = 0, a = 255;
-                if (colorType == 0) {
-                  r = g = b = px[0];
-                  if (hasTrnsKey) {
-                    const uint16_t v =
-                        (bitDepth == 16)
-                            ? static_cast<uint16_t>((px[0] << 8) | px[1])
-                            : static_cast<uint16_t>(px[0]);
-                    if (v == trnsKeyR)
-                      a = 0;
+            // Premultiplied box-filter accumulation across each destination pixel cell
+            // to eliminate aliasing jaggies and alpha fringing on large transparent PNGs.
+            if (nextDy < dstH) {
+              const uint32_t y0 = srcYBounds[static_cast<size_t>(nextDy)];
+              const uint32_t y1 = (std::max)(y0 + 1u, srcYBounds[static_cast<size_t>(nextDy) + 1u]);
+              if (curRow >= y0 && curRow < y1) {
+                const size_t step16 = (bitDepth == 16) ? 2u : 1u;
+                for (int dx = 0; dx < dstW; ++dx) {
+                  const uint32_t x0 = srcXBounds[static_cast<size_t>(dx)];
+                  const uint32_t x1 = (std::max)(x0 + 1u, srcXBounds[static_cast<size_t>(dx) + 1u]);
+                  uint64_t sb = 0, sg = 0, sr = 0, sa = 0;
+                  for (uint32_t sx = x0; sx < x1; ++sx) {
+                    const uint8_t *px = dst + static_cast<size_t>(sx) * bytesPerPixel;
+                    uint8_t r = 0, g = 0, b = 0, a = 255;
+                    if (colorType == 0) {
+                      r = g = b = px[0];
+                      if (hasTrnsKey) {
+                        const uint16_t v =
+                            (bitDepth == 16)
+                                ? static_cast<uint16_t>((px[0] << 8) | px[1])
+                                : static_cast<uint16_t>(px[0]);
+                        if (v == trnsKeyR)
+                          a = 0;
+                      }
+                    } else if (colorType == 2) {
+                      r = px[0];
+                      g = px[1 * step16];
+                      b = px[2 * step16];
+                      if (hasTrnsKey) {
+                        const uint16_t rv =
+                            (bitDepth == 16)
+                                ? static_cast<uint16_t>((px[0] << 8) | px[1])
+                                : static_cast<uint16_t>(px[0]);
+                        const uint16_t gv =
+                            (bitDepth == 16)
+                                ? static_cast<uint16_t>((px[2] << 8) | px[3])
+                                : static_cast<uint16_t>(px[1]);
+                        const uint16_t bv =
+                            (bitDepth == 16)
+                                ? static_cast<uint16_t>((px[4] << 8) | px[5])
+                                : static_cast<uint16_t>(px[2]);
+                        if (rv == trnsKeyR && gv == trnsKeyG && bv == trnsKeyB)
+                          a = 0;
+                      }
+                    } else if (colorType == 3) {
+                      const uint8_t idx = px[0];
+                      if (idx < paletteEntries) {
+                        r = palette[idx * 3u + 0];
+                        g = palette[idx * 3u + 1];
+                        b = palette[idx * 3u + 2];
+                        a = paletteAlpha[idx];
+                      } else {
+                        a = 0;
+                      }
+                    } else if (colorType == 4) {
+                      r = g = b = px[0];
+                      a = px[1 * step16];
+                    } else if (colorType == 6) {
+                      r = px[0];
+                      g = px[1 * step16];
+                      b = px[2 * step16];
+                      a = px[3 * step16];
+                    }
+                    if (a < 255) {
+                      b = static_cast<uint8_t>((static_cast<uint32_t>(b) * a + 127u) / 255u);
+                      g = static_cast<uint8_t>((static_cast<uint32_t>(g) * a + 127u) / 255u);
+                      r = static_cast<uint8_t>((static_cast<uint32_t>(r) * a + 127u) / 255u);
+                    }
+                    sb += b;
+                    sg += g;
+                    sr += r;
+                    sa += a;
                   }
-                } else if (colorType == 2) {
-                  r = px[0];
-                  g = px[1 * step16];
-                  b = px[2 * step16];
-                  if (hasTrnsKey) {
-                    const uint16_t rv =
-                        (bitDepth == 16)
-                            ? static_cast<uint16_t>((px[0] << 8) | px[1])
-                            : static_cast<uint16_t>(px[0]);
-                    const uint16_t gv =
-                        (bitDepth == 16)
-                            ? static_cast<uint16_t>((px[2] << 8) | px[3])
-                            : static_cast<uint16_t>(px[1]);
-                    const uint16_t bv =
-                        (bitDepth == 16)
-                            ? static_cast<uint16_t>((px[4] << 8) | px[5])
-                            : static_cast<uint16_t>(px[2]);
-                    if (rv == trnsKeyR && gv == trnsKeyG && bv == trnsKeyB)
-                      a = 0;
-                  }
-                } else if (colorType == 3) {
-                  const uint8_t idx = px[0];
-                  if (idx < paletteEntries) {
-                    r = palette[idx * 3u + 0];
-                    g = palette[idx * 3u + 1];
-                    b = palette[idx * 3u + 2];
-                    a = paletteAlpha[idx];
-                  } else {
-                    a = 0;
-                  }
-                } else if (colorType == 4) {
-                  r = g = b = px[0];
-                  a = px[1 * step16];
-                } else if (colorType == 6) {
-                  r = px[0];
-                  g = px[1 * step16];
-                  b = px[2 * step16];
-                  a = px[3 * step16];
+                  uint64_t *acc = rowAccum.data() + static_cast<size_t>(dx) * 4u;
+                  acc[0] += sb;
+                  acc[1] += sg;
+                  acc[2] += sr;
+                  acc[3] += sa;
                 }
-                if (a < 255) {
-                  b = static_cast<uint8_t>((static_cast<uint32_t>(b) * a + 127u) /
-                                           255u);
-                  g = static_cast<uint8_t>((static_cast<uint32_t>(g) * a + 127u) /
-                                           255u);
-                  r = static_cast<uint8_t>((static_cast<uint32_t>(r) * a + 127u) /
-                                           255u);
+                if (curRow + 1u == y1) {
+                  uint8_t *outRow =
+                      outPixels.data() + static_cast<size_t>(nextDy) * dstW * 4u;
+                  const uint64_t yCount = static_cast<uint64_t>(y1 - y0);
+                  for (int dx = 0; dx < dstW; ++dx) {
+                    const uint32_t x0 = srcXBounds[static_cast<size_t>(dx)];
+                    const uint32_t x1 = (std::max)(x0 + 1u, srcXBounds[static_cast<size_t>(dx) + 1u]);
+                    const uint64_t totalCount = yCount * static_cast<uint64_t>(x1 - x0);
+                    const uint64_t half = totalCount >> 1u;
+                    uint64_t *acc = rowAccum.data() + static_cast<size_t>(dx) * 4u;
+                    uint8_t *outPx = outRow + static_cast<size_t>(dx) * 4u;
+                    outPx[0] = static_cast<uint8_t>((acc[0] + half) / totalCount);
+                    outPx[1] = static_cast<uint8_t>((acc[1] + half) / totalCount);
+                    outPx[2] = static_cast<uint8_t>((acc[2] + half) / totalCount);
+                    outPx[3] = static_cast<uint8_t>((acc[3] + half) / totalCount);
+                    acc[0] = acc[1] = acc[2] = acc[3] = 0ULL;
+                  }
+                  ++nextDy;
                 }
-                uint8_t *outPx = outRow + static_cast<size_t>(dx) * 4u;
-                outPx[0] = b;
-                outPx[1] = g;
-                outPx[2] = r;
-                outPx[3] = a;
               }
-              ++nextDy;
             }
 
             prevRow.swap(currRow);
@@ -6191,10 +6220,19 @@ HRESULT CImageLoader::LoadThumbnailFromMappedBuffer(
             res.pixels + static_cast<size_t>(y) * res.stride);
         uint8_t* dstRow = pData->pixels.data() + static_cast<size_t>(y) * dstStride;
         for (int x = 0; x < res.width; ++x) {
-          dstRow[x * 4 + 0] = static_cast<uint8_t>(srcRow[x * 4 + 2] >> 8);
-          dstRow[x * 4 + 1] = static_cast<uint8_t>(srcRow[x * 4 + 1] >> 8);
-          dstRow[x * 4 + 2] = static_cast<uint8_t>(srcRow[x * 4 + 0] >> 8);
-          dstRow[x * 4 + 3] = static_cast<uint8_t>(srcRow[x * 4 + 3] >> 8);
+          uint8_t r = static_cast<uint8_t>(srcRow[x * 4 + 0] >> 8);
+          uint8_t g = static_cast<uint8_t>(srcRow[x * 4 + 1] >> 8);
+          uint8_t b = static_cast<uint8_t>(srcRow[x * 4 + 2] >> 8);
+          const uint8_t a = static_cast<uint8_t>(srcRow[x * 4 + 3] >> 8);
+          if (a < 255u) {
+            b = static_cast<uint8_t>((static_cast<uint32_t>(b) * a + 127u) / 255u);
+            g = static_cast<uint8_t>((static_cast<uint32_t>(g) * a + 127u) / 255u);
+            r = static_cast<uint8_t>((static_cast<uint32_t>(r) * a + 127u) / 255u);
+          }
+          dstRow[x * 4 + 0] = b;
+          dstRow[x * 4 + 1] = g;
+          dstRow[x * 4 + 2] = r;
+          dstRow[x * 4 + 3] = a;
         }
       }
       pData->stride = dstStride;
@@ -9370,15 +9408,17 @@ static HRESULT LoadPNG(const uint8_t *data, size_t size,
   QuickView::AllocatorCallback capturingAlloc = {.pfn = CapturingAllocPfn,
                                                  .ctx = &cctx};
 
-  // Call Wuffs with CAPTURING allocator AND Metadata Info
+  // For thumbnail/preview paths, decode 16-bit PNG directly to 8-bit premultiplied BGRA
+  // inside Wuffs to halve memory usage and guarantee correct premultiplied alpha.
+  const bool force8BitBgra = ctx.forcePreview && !ctx.preserveFloat;
   if (!WuffsLoader::DecodePNG(data, size, &w, &h, capturingAlloc,
-                              ctx.checkCancel, &info))
+                              ctx.checkCancel, &info, force8BitBgra))
     return E_FAIL;
 
   result.pixels = capturedPtr;
   result.width = w;
   result.height = h;
-  if (info.bitDepth == 16) {
+  if (info.bitDepth == 16 && !force8BitBgra) {
     const int packedStride = static_cast<int>(w) * 8;
     const int stride = CalculateSIMDAlignedStride(static_cast<int>(w), 8);
     result.stride = stride;

@@ -10,6 +10,8 @@
 #include <shlwapi.h>
 #include <shlobj.h>
 #include <thumbcache.h>
+#include <zlib.h>
+#include <cmath>
 #include <vector>
 #include <string>
 #include <type_traits>
@@ -1127,4 +1129,190 @@ TEST(ShellThumbTests, DibAlphaAndMiniTiffOrientationRegressions) {
     EXPECT_EQ(td8.pixels[px8_tl + 2], 250u);
     EXPECT_EQ(td5.pixels[0 + 2], 0u);
     EXPECT_EQ(td8.pixels[3u * static_cast<size_t>(td8.stride) + 2], 0u);
+}
+
+TEST(ShellThumbTests, TransparentPng16BitAnd8BitNoWhiteFringe) {
+    const std::wstring qvxPath = GetShellThumbDllPath();
+    const std::wstring hostExe = GetExeDirPath() + L"\\QuickView.exe";
+    if (GetFileAttributesW(qvxPath.c_str()) == INVALID_FILE_ATTRIBUTES ||
+        GetFileAttributesW(hostExe.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        GTEST_SKIP() << "qv_shell_thumb.qvx or QuickView.exe not staged.";
+    }
+
+    const HRESULT coHr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    HMODULE hMod = LoadLibraryW(qvxPath.c_str());
+    ASSERT_NE(hMod, nullptr);
+    using QvxInitFn = bool (*)(const QVX_HostServices*, const QVX_PluginHeader**);
+    using QvxShutdownFn = void (*)(void);
+    using DllGetClassObjectFn = HRESULT(STDAPICALLTYPE*)(REFCLSID, REFIID, void**);
+    auto pInit = reinterpret_cast<QvxInitFn>(GetProcAddress(hMod, "qvx_init"));
+    auto pShutdown = reinterpret_cast<QvxShutdownFn>(GetProcAddress(hMod, "qvx_shutdown"));
+    auto pGetClassObj = reinterpret_cast<DllGetClassObjectFn>(GetProcAddress(hMod, "DllGetClassObject"));
+    ASSERT_NE(pInit, nullptr);
+    ASSERT_NE(pGetClassObj, nullptr);
+
+    const QVX_PluginHeader* hdr = nullptr;
+    QVX_HostServices svc{};
+    svc.struct_size = sizeof(svc);
+    svc.abi_version = QVX_ABI_VERSION;
+    ASSERT_TRUE(pInit(&svc, &hdr));
+    ScopedQvxHandle qvx{ hMod, hdr, pShutdown };
+
+    IClassFactory* pFactory = nullptr;
+    ASSERT_EQ(pGetClassObj(kTestClsidThumb, IID_IClassFactory, reinterpret_cast<void**>(&pFactory)), S_OK);
+    ASSERT_NE(pFactory, nullptr);
+
+    auto writePngFile = [](const wchar_t* path, bool is16Bit) -> bool {
+        constexpr uint32_t W = 512, H = 512;
+        const size_t bpp = is16Bit ? 8u : 4u;
+        const size_t rawStride = 1u + static_cast<size_t>(W) * bpp;
+        std::vector<uint8_t> raw(rawStride * H, 0);
+
+        for (uint32_t y = 0; y < H; ++y) {
+            uint8_t* row = raw.data() + static_cast<size_t>(y) * rawStride;
+            row[0] = 0; // filter None
+            uint8_t* px = row + 1;
+            const double dy = static_cast<double>(y) - 255.5;
+            for (uint32_t x = 0; x < W; ++x) {
+                const double dx = static_cast<double>(x) - 255.5;
+                const double d = std::sqrt(dx * dx + dy * dy);
+                double alphaF = 0.0;
+                if (d <= 128.0) {
+                    alphaF = 1.0;
+                } else if (d < 176.0) {
+                    alphaF = (176.0 - d) / 48.0;
+                }
+                if (is16Bit) {
+                    const uint16_t a16 = static_cast<uint16_t>(std::lround(alphaF * 65535.0));
+                    const uint16_t r16 = 65535u;
+                    const uint16_t g16 = (a16 == 0u) ? 65535u : 0u;
+                    const uint16_t b16 = (a16 == 0u) ? 65535u : 0u;
+                    uint8_t* d8 = px + static_cast<size_t>(x) * 8u;
+                    d8[0] = static_cast<uint8_t>(r16 >> 8); d8[1] = static_cast<uint8_t>(r16 & 0xFFu);
+                    d8[2] = static_cast<uint8_t>(g16 >> 8); d8[3] = static_cast<uint8_t>(g16 & 0xFFu);
+                    d8[4] = static_cast<uint8_t>(b16 >> 8); d8[5] = static_cast<uint8_t>(b16 & 0xFFu);
+                    d8[6] = static_cast<uint8_t>(a16 >> 8); d8[7] = static_cast<uint8_t>(a16 & 0xFFu);
+                } else {
+                    const uint8_t a8 = static_cast<uint8_t>(std::lround(alphaF * 255.0));
+                    const uint8_t r8 = 255u;
+                    const uint8_t g8 = (a8 == 0u) ? 255u : 0u;
+                    const uint8_t b8 = (a8 == 0u) ? 255u : 0u;
+                    uint8_t* d8 = px + static_cast<size_t>(x) * 4u;
+                    d8[0] = r8; d8[1] = g8; d8[2] = b8; d8[3] = a8;
+                }
+            }
+        }
+
+        uLongf compLen = compressBound(static_cast<uLong>(raw.size()));
+        std::vector<uint8_t> comp(compLen);
+        if (compress2(comp.data(), &compLen, raw.data(), static_cast<uLong>(raw.size()), Z_BEST_SPEED) != Z_OK) {
+            return false;
+        }
+        comp.resize(compLen);
+
+        std::vector<uint8_t> png;
+        png.reserve(128 + comp.size());
+        static constexpr uint8_t kSig[8] = { 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n' };
+        png.insert(png.end(), kSig, kSig + 8);
+        auto appendBE32 = [&](uint32_t v) {
+            png.push_back(static_cast<uint8_t>((v >> 24) & 0xFFu));
+            png.push_back(static_cast<uint8_t>((v >> 16) & 0xFFu));
+            png.push_back(static_cast<uint8_t>((v >> 8) & 0xFFu));
+            png.push_back(static_cast<uint8_t>(v & 0xFFu));
+        };
+        auto appendChunk = [&](const char tag[4], const uint8_t* data, uint32_t len) {
+            appendBE32(len);
+            const size_t crcStart = png.size();
+            png.insert(png.end(), tag, tag + 4);
+            if (len > 0 && data) png.insert(png.end(), data, data + len);
+            const uLong c = crc32(0L, png.data() + crcStart, 4u + len);
+            appendBE32(static_cast<uint32_t>(c));
+        };
+
+        uint8_t ihdr[13]{};
+        ihdr[0] = (W >> 24) & 0xFFu; ihdr[1] = (W >> 16) & 0xFFu; ihdr[2] = (W >> 8) & 0xFFu; ihdr[3] = W & 0xFFu;
+        ihdr[4] = (H >> 24) & 0xFFu; ihdr[5] = (H >> 16) & 0xFFu; ihdr[6] = (H >> 8) & 0xFFu; ihdr[7] = H & 0xFFu;
+        ihdr[8] = is16Bit ? 16 : 8;
+        ihdr[9] = 6; // RGBA
+        appendChunk("IHDR", ihdr, 13);
+        appendChunk("IDAT", comp.data(), static_cast<uint32_t>(comp.size()));
+        appendChunk("IEND", nullptr, 0);
+
+        HANDLE hFile = CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (hFile == INVALID_HANDLE_VALUE) return false;
+        DWORD written = 0;
+        const BOOL ok = WriteFile(hFile, png.data(), static_cast<DWORD>(png.size()), &written, nullptr);
+        CloseHandle(hFile);
+        return ok && written == png.size();
+    };
+
+    wchar_t tempDir[MAX_PATH]{};
+    ASSERT_GT(GetTempPathW(MAX_PATH, tempDir), 0u);
+    const std::wstring path8 = std::wstring(tempDir) + L"qv_test_alpha_8bit.png";
+    const std::wstring path16 = std::wstring(tempDir) + L"qv_test_alpha_16bit.png";
+    ASSERT_TRUE(writePngFile(path8.c_str(), false));
+    ASSERT_TRUE(writePngFile(path16.c_str(), true));
+
+    auto verifyNoWhiteFringe = [&](const wchar_t* filePath, const char* label) {
+        IInitializeWithFile* pInitFile = nullptr;
+        IThumbnailProvider* pThumb = nullptr;
+        ASSERT_EQ(pFactory->CreateInstance(nullptr, IID_IInitializeWithFile, reinterpret_cast<void**>(&pInitFile)), S_OK) << label;
+        ASSERT_EQ(pInitFile->QueryInterface(IID_IThumbnailProvider, reinterpret_cast<void**>(&pThumb)), S_OK) << label;
+        ASSERT_EQ(pInitFile->Initialize(filePath, STGM_READ), S_OK) << label;
+
+        HBITMAP hBmp = nullptr;
+        WTS_ALPHATYPE alpha = WTSAT_UNKNOWN;
+        ASSERT_EQ(pThumb->GetThumbnail(256, &hBmp, &alpha), S_OK) << label;
+        ASSERT_NE(hBmp, nullptr) << label;
+        EXPECT_EQ(alpha, WTSAT_ARGB) << label;
+
+        BITMAP bm{};
+        ASSERT_GT(GetObjectW(hBmp, sizeof(bm), &bm), 0) << label;
+        EXPECT_EQ(bm.bmWidth, 256) << label;
+        EXPECT_EQ(bm.bmHeight, 256) << label;
+
+        BITMAPINFO bmi{};
+        bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bmi.bmiHeader.biWidth = bm.bmWidth;
+        bmi.bmiHeader.biHeight = -bm.bmHeight;
+        bmi.bmiHeader.biPlanes = 1;
+        bmi.bmiHeader.biBitCount = 32;
+        bmi.bmiHeader.biCompression = BI_RGB;
+        std::vector<uint8_t> pixels(static_cast<size_t>(bm.bmWidth) * bm.bmHeight * 4u, 0);
+        HDC hdc = GetDC(nullptr);
+        ASSERT_EQ(GetDIBits(hdc, hBmp, 0, static_cast<UINT>(bm.bmHeight), pixels.data(), &bmi, DIB_RGB_COLORS), bm.bmHeight) << label;
+        ReleaseDC(nullptr, hdc);
+
+        int transparentZeroCount = 0;
+        int semiEdgeCount = 0;
+        int whiteFringeCount = 0;
+        for (size_t i = 0; i < pixels.size(); i += 4) {
+            const uint8_t b = pixels[i + 0];
+            const uint8_t g = pixels[i + 1];
+            const uint8_t r = pixels[i + 2];
+            const uint8_t a = pixels[i + 3];
+            if (a == 0u) {
+                ++transparentZeroCount;
+                if (r != 0u || g != 0u || b != 0u) ++whiteFringeCount;
+            } else if (a >= 16u && a <= 239u) {
+                ++semiEdgeCount;
+                if (g > 6u || b > 6u || r < 230u) ++whiteFringeCount;
+            }
+        }
+        EXPECT_GT(transparentZeroCount, 10000) << label;
+        EXPECT_GT(semiEdgeCount, 1000) << label;
+        EXPECT_EQ(whiteFringeCount, 0) << label;
+
+        DeleteObject(hBmp);
+        pThumb->Release();
+        pInitFile->Release();
+    };
+
+    verifyNoWhiteFringe(path8.c_str(), "8-bit transparent PNG");
+    verifyNoWhiteFringe(path16.c_str(), "16-bit transparent PNG");
+
+    DeleteFileW(path8.c_str());
+    DeleteFileW(path16.c_str());
+    pFactory->Release();
+    if (SUCCEEDED(coHr)) CoUninitialize();
 }
