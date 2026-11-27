@@ -14,7 +14,9 @@
 #include "IcoDecoder.h"
 #include "SupportedExtensions.h"
 #include "FileNavigator.h"
+#include "ThumbWorker.h"
 
+#include <atomic>
 #include <cstdio>
 #include <filesystem>
 #include <string>
@@ -250,4 +252,119 @@ TEST(PdfDecoderTest, RendersMultiPagePdfRoiAndInvalidatesCacheOnChange) {
     // Overwriting the PDF with 1 page must invalidate the IPdfDocument cache cleanly
     ASSERT_EQ(hrInvalidated, S_OK);
     EXPECT_EQ(infoAfterModify.pageCount, 1u);
+}
+
+TEST(PdfDecoderTest, ConcurrentFontPdfRenderAndVirtualPathThrottling) {
+    // 1. Verify heavy thumbnail extension detection for multi-page virtual paths vs archive entries
+    EXPECT_TRUE(QuickView::IsHeavyThumbnailExtension(L"C:\\Books\\doc.pdf|3|Page 4"));
+    EXPECT_TRUE(QuickView::IsHeavyThumbnailExtension(L"C:\\Scans\\a.tif|1|Page 2"));
+    EXPECT_FALSE(QuickView::IsHeavyThumbnailExtension(L"C:\\Comics\\a.cbz|0|001.jpg"));
+
+    // 2. Build a synthetic 2-page PDF containing a standard PDF font and text operators
+    //    to exercise DirectWrite/Direct2D multi-threaded text rasterization under windows.data.pdf.
+    const std::string stream0 =
+        "1 0 0 rg 20 20 160 160 re f\n"
+        "BT /F1 24 Tf 0 0 0 rg 30 90 Td (Page0 Test) Tj ET\n";
+    const std::string stream1 =
+        "0 0 1 rg 20 20 160 160 re f\n"
+        "BT /F1 24 Tf 1 1 1 rg 30 90 Td (Page1 Test) Tj ET\n";
+
+    std::vector<std::string> objects;
+    objects.emplace_back("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+    objects.emplace_back("2 0 obj\n<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>\nendobj\n");
+    objects.emplace_back(
+        "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] "
+        "/Resources << /Font << /F1 7 0 R >> >> /Contents 5 0 R >>\nendobj\n");
+    objects.emplace_back(
+        "4 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] "
+        "/Resources << /Font << /F1 7 0 R >> >> /Contents 6 0 R >>\nendobj\n");
+    objects.push_back(
+        "5 0 obj\n<< /Length " + std::to_string(stream0.size()) + " >>\nstream\n" +
+        stream0 + "endstream\nendobj\n");
+    objects.push_back(
+        "6 0 obj\n<< /Length " + std::to_string(stream1.size()) + " >>\nstream\n" +
+        stream1 + "endstream\nendobj\n");
+    objects.emplace_back(
+        "7 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n");
+
+    std::string pdf = "%PDF-1.4\n";
+    std::vector<size_t> offsets;
+    offsets.reserve(objects.size());
+    for (const auto& obj : objects) {
+        offsets.push_back(pdf.size());
+        pdf += obj;
+    }
+    const size_t xrefPos = pdf.size();
+    char hdr[64]{};
+    snprintf(hdr, sizeof(hdr), "xref\n0 %zu\n0000000000 65535 f \n", offsets.size() + 1);
+    pdf += hdr;
+    for (size_t off : offsets) {
+        char entry[32]{};
+        snprintf(entry, sizeof(entry), "%010zu 00000 n \n", off);
+        pdf += entry;
+    }
+    char trl[128]{};
+    snprintf(trl, sizeof(trl), "trailer\n<< /Size %zu /Root 1 0 R >>\nstartxref\n%zu\n%%%%EOF\n",
+             offsets.size() + 1, xrefPos);
+    pdf += trl;
+
+    const auto tempDir = std::filesystem::temp_directory_path();
+    const std::wstring pdfPath = (tempDir / L"qv_pdf_concurrent_font_test.pdf").wstring();
+    struct Cleanup {
+        std::wstring path;
+        ~Cleanup() {
+            QuickView::PdfDecoder::ReleaseResources();
+            std::error_code ec;
+            std::filesystem::remove(path, ec);
+        }
+    } cleanup{ pdfPath };
+
+    ASSERT_TRUE(WriteAllBytes(pdfPath, pdf));
+
+    std::atomic<bool> skipped{false};
+    std::atomic<int> okCount{0};
+    std::atomic<int> failCount{0};
+
+    constexpr int kThreads = 4;
+    constexpr int kItersPerThread = 6;
+    std::vector<std::thread> workers;
+    workers.reserve(kThreads);
+    for (int t = 0; t < kThreads; ++t) {
+        workers.emplace_back([&, t]() {
+            const HRESULT comHr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+            for (int i = 0; i < kItersPerThread; ++i) {
+                const uint32_t pageIdx = static_cast<uint32_t>((t + i) % 2);
+                QuickView::RawImageFrame frame;
+                HRESULT hr = E_FAIL;
+                if ((i % 3) == 0) {
+                    hr = QuickView::PdfDecoder::RenderPage(pdfPath.c_str(), pageIdx, 1024, frame, nullptr, true);
+                } else if ((i % 3) == 1) {
+                    hr = QuickView::PdfDecoder::RenderPage(pdfPath.c_str(), pageIdx, 256, frame, nullptr, false);
+                } else {
+                    hr = QuickView::PdfDecoder::RenderPageRoi(
+                        pdfPath.c_str(), pageIdx, D2D1::RectF(0.1f, 0.1f, 0.9f, 0.9f), 320, 320, frame);
+                }
+                if (hr == HRESULT_FROM_WIN32(ERROR_MOD_NOT_FOUND) ||
+                    hr == HRESULT_FROM_WIN32(ERROR_PROC_NOT_FOUND)) {
+                    skipped.store(true, std::memory_order_relaxed);
+                    break;
+                }
+                if (SUCCEEDED(hr) && frame.IsValid()) {
+                    okCount.fetch_add(1, std::memory_order_relaxed);
+                } else {
+                    failCount.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+            if (SUCCEEDED(comHr)) CoUninitialize();
+        });
+    }
+    for (auto& w : workers) {
+        w.join();
+    }
+
+    if (skipped.load(std::memory_order_relaxed)) {
+        GTEST_SKIP() << "windows.data.pdf.dll unavailable in test environment";
+    }
+    EXPECT_EQ(failCount.load(), 0);
+    EXPECT_EQ(okCount.load(), kThreads * kItersPerThread);
 }

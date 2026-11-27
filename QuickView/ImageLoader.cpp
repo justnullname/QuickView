@@ -6347,9 +6347,59 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize,
   pData->isPremultiplied = true;
   pData->pixels.clear();
 
+  std::wstring pathStr(filePath);
+  const bool isVirtualPath = (pathStr.find(L'|') != std::wstring::npos);
+  std::wstring multiHostPath;
+  uint32_t multiPageIndex = 0;
+  const bool isMultiPageVirtual = isVirtualPath && ResolveMultiPageVirtualPath(filePath, multiHostPath, multiPageIndex);
+
+  auto populatePdfThumbData = [&](const wchar_t* pdfTarget, uint32_t pageIdx, uint64_t knownFileSize) -> HRESULT {
+    if (checkCancel && checkCancel()) {
+      return E_ABORT;
+    }
+    QuickView::PdfDecoder::PdfPageInfo pdfInfo{};
+    QuickView::RawImageFrame pdfThumb;
+    const HRESULT hrPdf = QuickView::PdfDecoder::RenderPage(
+        pdfTarget, pageIdx,
+        static_cast<uint32_t>((std::max)(targetSize, 64)),
+        pdfThumb, &pdfInfo, /*highPriority=*/false);
+    if (checkCancel && checkCancel()) {
+      return E_ABORT;
+    }
+    if (SUCCEEDED(hrPdf) && pdfThumb.pixels && pdfThumb.width > 0 && pdfThumb.height > 0) {
+      pData->width = pdfThumb.width;
+      pData->height = pdfThumb.height;
+      pData->stride = pdfThumb.stride;
+      pData->pixels.assign(pdfThumb.pixels,
+                           pdfThumb.pixels + static_cast<size_t>(pdfThumb.stride) * pdfThumb.height);
+      int logicalW = static_cast<int>(pdfThumb.width);
+      int logicalH = static_cast<int>(pdfThumb.height);
+      if (pdfInfo.pageWidthDip > 0.0f && pdfInfo.pageHeightDip > 0.0f) {
+        const uint32_t baseLong = QuickView::PdfDecoder::GetDefaultBaseLongEdge();
+        const float maxDip = (std::max)(pdfInfo.pageWidthDip, pdfInfo.pageHeightDip);
+        const float scale = static_cast<float>(baseLong) / maxDip;
+        logicalW = (std::max)(logicalW, static_cast<int>(std::lround(pdfInfo.pageWidthDip * scale)));
+        logicalH = (std::max)(logicalH, static_cast<int>(std::lround(pdfInfo.pageHeightDip * scale)));
+      }
+      pData->origWidth = logicalW;
+      pData->origHeight = logicalH;
+      pData->fileSize = (knownFileSize > 0) ? knownFileSize : QuickView::QueryFileSize(pdfTarget);
+      pData->loaderName = L"Windows.Data.Pdf";
+      pData->isValid = true;
+      pData->isPremultiplied = true;
+      return S_OK;
+    }
+    return FAILED(hrPdf) ? hrPdf : E_FAIL;
+  };
+
+  // Multi-page PDF virtual paths cannot exist in Shell thumbcache and do not need PeekHeader.
+  if (isMultiPageVirtual && QuickView::IsDocumentPath(multiHostPath)) {
+    return populatePdfThumbData(multiHostPath.c_str(), multiPageIndex, 0);
+  }
+
   // 0. Highest Priority: Windows Shell Thumbnail Cache (Insanely fast for
   // pre-cached heavy RAWs; bypassed inside --thumb-worker to avoid recursion).
-  if (!skipShellCache && SUCCEEDED(LoadShellThumbnail(filePath, targetSize, pData))) {
+  if (!skipShellCache && !isVirtualPath && SUCCEEDED(LoadShellThumbnail(filePath, targetSize, pData))) {
     pData->fromShellCache = true;
     pData->isPremultiplied = true;
     return S_OK;
@@ -6362,12 +6412,7 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize,
   size_t mappedSize = 0;
   std::unique_ptr<QuickView::MappedFile> mapping;
 
-  std::wstring pathStr(filePath);
-  std::wstring multiHostPath;
-  uint32_t multiPageIndex = 0;
-  const bool isMultiPageVirtual = ResolveMultiPageVirtualPath(filePath, multiHostPath, multiPageIndex);
-
-  if (pathStr.find(L"|") != std::wstring::npos && !isMultiPageVirtual) {
+  if (isVirtualPath && !isMultiPageVirtual) {
     std::wstring archivePath;
     size_t entryIndex;
     if (FileNavigator::ParseVirtualPath(pathStr, archivePath, entryIndex)) {
@@ -6402,32 +6447,15 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize,
   }
 
   const wchar_t* thumbTargetPath = isMultiPageVirtual ? multiHostPath.c_str() : filePath;
-  if (pathStr.find(L"|") == std::wstring::npos || isMultiPageVirtual) {
+  if (!isVirtualPath || isMultiPageVirtual) {
     const bool checkPdfMagic =
         (headerInfo.format == L"PDF") ||
         headerInfo.format.empty() ||
         (headerInfo.format == L"Unknown");
     if (QuickView::IsDocumentPath(thumbTargetPath) ||
         (checkPdfMagic && DetectFormatFromContent(thumbTargetPath) == L"PDF")) {
-      QuickView::RawImageFrame pdfThumb;
-      if (SUCCEEDED(QuickView::PdfDecoder::RenderPage(
-              thumbTargetPath, isMultiPageVirtual ? multiPageIndex : 0u,
-              static_cast<uint32_t>((std::max)(targetSize, 64)), pdfThumb, nullptr)) &&
-          pdfThumb.pixels && pdfThumb.width > 0 && pdfThumb.height > 0) {
-        pData->width = pdfThumb.width;
-        pData->height = pdfThumb.height;
-        pData->stride = pdfThumb.stride;
-        pData->pixels.assign(pdfThumb.pixels,
-                             pdfThumb.pixels + static_cast<size_t>(pdfThumb.stride) * pdfThumb.height);
-        pData->origWidth = pdfThumb.width;
-        pData->origHeight = pdfThumb.height;
-        pData->fileSize = fallbackFileSize;
-        pData->loaderName = L"Windows.Data.Pdf";
-        pData->isValid = true;
-        pData->isPremultiplied = true;
-        return S_OK;
-      }
-      return E_FAIL;
+      return populatePdfThumbData(
+          thumbTargetPath, isMultiPageVirtual ? multiPageIndex : 0u, fallbackFileSize);
     }
   }
 

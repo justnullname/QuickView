@@ -42,12 +42,14 @@ struct PdfPageInfo {
 HRESULT GetDocumentInfo(const wchar_t* filePath, uint32_t pageIndex, PdfPageInfo& outInfo);
 
 // Render a full PDF page into a BGRA8888 RawImageFrame using an isolated,
-// mutex-serialized offscreen D3D11/D2D1 context. Uses active IPdfDocument cache.
+// priority-gated offscreen D3D11/D2D1 context. Uses active IPdfDocument cache.
+// highPriority=true preempts background thumbnail renders for responsive page turns.
 HRESULT RenderPage(const wchar_t* filePath,
                    uint32_t pageIndex,
                    uint32_t maxLongEdge,
                    QuickView::RawImageFrame& outFrame,
-                   PdfPageInfo* outInfo = nullptr);
+                   PdfPageInfo* outInfo = nullptr,
+                   bool highPriority = true);
 
 // Render a crisp cropped ROI vector tile (normalizedSrcRect in [0..1]) into destW x destH.
 HRESULT RenderPageRoi(const wchar_t* filePath,

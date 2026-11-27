@@ -11,6 +11,7 @@
 #include "pch.h"
 #include "PdfDecoder.h"
 
+#include <d3d10.h>
 #include <roapi.h>
 #include <shcore.h>
 #include <windows.data.pdf.h>
@@ -20,9 +21,12 @@
 #include <wrl/wrappers/corewrappers.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <condition_variable>
 #include <cstring>
 #include <mutex>
+#include <new>
 
 #pragma comment(lib, "shcore.lib")
 #pragma comment(lib, "runtimeobject.lib")
@@ -43,15 +47,31 @@ public:
     RoInitGuard() noexcept {
         APTTYPE aptType = APTTYPE_CURRENT;
         APTTYPEQUALIFIER aptQual = APTTYPEQUALIFIER_NONE;
-        if (SUCCEEDED(CoGetApartmentType(&aptType, &aptQual)) && aptType == APTTYPE_MAINSTA) {
-            m_isMainSta = true;
-            return;
+        if (SUCCEEDED(CoGetApartmentType(&aptType, &aptQual))) {
+            if (aptType == APTTYPE_MAINSTA || aptType == APTTYPE_STA) {
+                m_isSta = true;
+                return;
+            }
+            if (aptType == APTTYPE_MTA) {
+                m_alreadyMta = true;
+                return;
+            }
         }
         m_hr = RoInitialize(RO_INIT_MULTITHREADED);
+        if (m_hr == RPC_E_CHANGED_MODE) {
+            APTTYPE postType = APTTYPE_CURRENT;
+            APTTYPEQUALIFIER postQual = APTTYPEQUALIFIER_NONE;
+            if (SUCCEEDED(CoGetApartmentType(&postType, &postQual)) &&
+                (postType == APTTYPE_MTA || postType == APTTYPE_NA)) {
+                m_alreadyMta = true;
+            } else {
+                m_isSta = true;
+            }
+        }
     }
 
     ~RoInitGuard() {
-        if (SUCCEEDED(m_hr)) {
+        if (!m_alreadyMta && SUCCEEDED(m_hr)) {
             RoUninitialize();
         }
     }
@@ -59,22 +79,58 @@ public:
     RoInitGuard(const RoInitGuard&) = delete;
     RoInitGuard& operator=(const RoInitGuard&) = delete;
 
-    bool IsMainSta() const noexcept { return m_isMainSta; }
+    bool IsSta() const noexcept { return m_isSta; }
     bool IsReady() const noexcept {
-        return !m_isMainSta && (SUCCEEDED(m_hr) || m_hr == RPC_E_CHANGED_MODE);
+        return !m_isSta && (m_alreadyMta || SUCCEEDED(m_hr));
     }
 
 private:
     HRESULT m_hr = E_FAIL;
-    bool m_isMainSta = false;
+    bool m_isSta = false;
+    bool m_alreadyMta = false;
 };
 
-struct HandleGuard {
-    HANDLE h = nullptr;
-    explicit HandleGuard(HANDLE handle) noexcept : h(handle) {}
-    ~HandleGuard() { if (h) CloseHandle(h); }
-    HandleGuard(const HandleGuard&) = delete;
-    HandleGuard& operator=(const HandleGuard&) = delete;
+// Intrusive ref-counted async wait state to prevent UAF when WaitForSingleObject times out
+// and the WinRT completion callback arrives later on an arbitrary thread.
+struct AsyncWaitState {
+    std::atomic<uint32_t> refCount{1};
+    HANDLE evt = nullptr;
+    std::atomic<HRESULT> callbackHr{E_FAIL};
+
+    void AddRef() noexcept {
+        refCount.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    void Release() noexcept {
+        if (refCount.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+            if (evt) {
+                CloseHandle(evt);
+                evt = nullptr;
+            }
+            delete this;
+        }
+    }
+};
+
+class WaitStatePtr {
+public:
+    explicit WaitStatePtr(AsyncWaitState* ptr = nullptr) noexcept : m_ptr(ptr) {}
+    WaitStatePtr(const WaitStatePtr& other) noexcept : m_ptr(other.m_ptr) {
+        if (m_ptr) m_ptr->AddRef();
+    }
+    WaitStatePtr(WaitStatePtr&& other) noexcept : m_ptr(other.m_ptr) {
+        other.m_ptr = nullptr;
+    }
+    WaitStatePtr& operator=(const WaitStatePtr&) = delete;
+    WaitStatePtr& operator=(WaitStatePtr&&) = delete;
+    ~WaitStatePtr() {
+        if (m_ptr) m_ptr->Release();
+    }
+
+    AsyncWaitState* Get() const noexcept { return m_ptr; }
+
+private:
+    AsyncWaitState* m_ptr = nullptr;
 };
 
 HRESULT AwaitPdfDocumentAsync(
@@ -85,19 +141,30 @@ HRESULT AwaitPdfDocumentAsync(
 
     HANDLE rawEvt = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     if (!rawEvt) return HRESULT_FROM_WIN32(GetLastError());
-    HandleGuard evtGuard(rawEvt);
 
-    HRESULT callbackHr = E_FAIL;
+    auto* rawState = new(std::nothrow) AsyncWaitState{};
+    if (!rawState) {
+        CloseHandle(rawEvt);
+        return E_OUTOFMEMORY;
+    }
+    rawState->evt = rawEvt;
+    WaitStatePtr state(rawState);
+
     auto handler = Callback<__FIAsyncOperationCompletedHandler_1_Windows__CData__CPdf__CPdfDocument>(
-        [rawEvt, &callbackHr](__FIAsyncOperation_1_Windows__CData__CPdf__CPdfDocument*, AsyncStatus status) -> HRESULT {
-            if (status == Completed) {
-                callbackHr = S_OK;
-            } else if (status == Canceled) {
-                callbackHr = E_ABORT;
-            } else {
-                callbackHr = E_FAIL;
+        [cbState = state](__FIAsyncOperation_1_Windows__CData__CPdf__CPdfDocument*, AsyncStatus status) -> HRESULT {
+            AsyncWaitState* s = cbState.Get();
+            if (s) {
+                HRESULT resHr = E_FAIL;
+                if (status == Completed) {
+                    resHr = S_OK;
+                } else if (status == Canceled) {
+                    resHr = E_ABORT;
+                }
+                s->callbackHr.store(resHr, std::memory_order_release);
+                if (s->evt) {
+                    SetEvent(s->evt);
+                }
             }
-            SetEvent(rawEvt);
             return S_OK;
         });
     if (!handler) return E_OUTOFMEMORY;
@@ -105,12 +172,13 @@ HRESULT AwaitPdfDocumentAsync(
     HRESULT hr = asyncOp->put_Completed(handler.Get());
     if (FAILED(hr)) return hr;
 
-    const DWORD waitRes = WaitForSingleObject(rawEvt, 30000);
+    const DWORD waitRes = WaitForSingleObject(rawState->evt, 30000);
     if (waitRes != WAIT_OBJECT_0) {
         return HRESULT_FROM_WIN32(ERROR_TIMEOUT);
     }
 
-    if (FAILED(callbackHr)) {
+    const HRESULT cbHr = rawState->callbackHr.load(std::memory_order_acquire);
+    if (FAILED(cbHr)) {
         ComPtr<FoundAbi::IAsyncInfo> info;
         if (SUCCEEDED(asyncOp->QueryInterface(IID_PPV_ARGS(&info))) && info) {
             HRESULT errCode = E_FAIL;
@@ -118,15 +186,35 @@ HRESULT AwaitPdfDocumentAsync(
                 return errCode;
             }
         }
-        return callbackHr;
+        return cbHr;
     }
 
     return asyncOp->GetResults(outDoc);
 }
 
+struct RenderTargetSlot {
+    UINT width = 0;
+    UINT height = 0;
+    ComPtr<ID3D11Texture2D> rtTexture;
+    ComPtr<ID3D11Texture2D> stagingTexture;
+    ComPtr<ID2D1Bitmap1> d2dTargetBitmap;
+
+    void Reset() noexcept {
+        d2dTargetBitmap.Reset();
+        stagingTexture.Reset();
+        rtTexture.Reset();
+        width = 0;
+        height = 0;
+    }
+};
+
 struct PdfEngineState {
     std::mutex mutex;
+    std::condition_variable gateCv;
+    bool busy = false;
+    uint32_t highPriorityWaiters = 0;
 
+    CO_MTA_USAGE_COOKIE mtaCookie = nullptr;
     HMODULE pdfDll = nullptr;
     PFN_PDF_CREATE_RENDERER pfnPdfCreateRenderer = nullptr;
 
@@ -138,11 +226,9 @@ struct PdfEngineState {
     ComPtr<ID2D1DeviceContext> d2dContext;
     ComPtr<IPdfRendererNative> pdfRenderer;
 
-    UINT rtWidth = 0;
-    UINT rtHeight = 0;
-    ComPtr<ID3D11Texture2D> rtTexture;
-    ComPtr<ID3D11Texture2D> stagingTexture;
-    ComPtr<ID2D1Bitmap1> d2dTargetBitmap;
+    // Separate slots avoid GPU/staging texture thrashing between main-page and thumbnail renders.
+    RenderTargetSlot mainSlot;
+    RenderTargetSlot thumbSlot;
 
     std::wstring cachedPath;
     FILETIME cachedWriteTime{};
@@ -151,6 +237,12 @@ struct PdfEngineState {
     ComPtr<PdfAbi::IPdfDocument> cachedDoc;
     uint32_t cachedPageCount = 0;
     bool cachedPasswordProtected = false;
+
+    void EnsureMtaAnchored() noexcept {
+        if (!mtaCookie) {
+            (void)CoIncrementMTAUsage(&mtaCookie);
+        }
+    }
 
     void ClearDocumentCache() noexcept {
         cachedPath.clear();
@@ -164,11 +256,8 @@ struct PdfEngineState {
 
     void ResetRenderTargets() noexcept {
         if (d2dContext) d2dContext->SetTarget(nullptr);
-        d2dTargetBitmap.Reset();
-        stagingTexture.Reset();
-        rtTexture.Reset();
-        rtWidth = 0;
-        rtHeight = 0;
+        mainSlot.Reset();
+        thumbSlot.Reset();
     }
 
     void ResetDevice() noexcept {
@@ -185,6 +274,10 @@ struct PdfEngineState {
     void Shutdown() noexcept {
         ClearDocumentCache();
         ResetDevice();
+        if (mtaCookie) {
+            CoDecrementMTAUsage(mtaCookie);
+            mtaCookie = nullptr;
+        }
     }
 
     HRESULT EnsurePdfCreateRenderer() noexcept {
@@ -205,6 +298,7 @@ struct PdfEngineState {
             return S_OK;
         }
         ResetDevice();
+        EnsureMtaAnchored();
 
         HRESULT hr = EnsurePdfCreateRenderer();
         if (FAILED(hr)) return hr;
@@ -226,11 +320,18 @@ struct PdfEngineState {
         }
         if (FAILED(hr) || !d3dDevice || !d3dContext) return FAILED(hr) ? hr : E_FAIL;
 
+        // windows.data.pdf.dll dispatches internal Direct2D/DirectWrite work across threads.
+        // Both D3D11 multithread protection and a multi-threaded D2D1 factory are required.
+        ComPtr<ID3D10Multithread> d3dMultithread;
+        if (SUCCEEDED(d3dDevice.As(&d3dMultithread)) && d3dMultithread) {
+            d3dMultithread->SetMultithreadProtected(TRUE);
+        }
+
         hr = d3dDevice.As(&dxgiDevice);
         if (FAILED(hr) || !dxgiDevice) return hr;
 
         D2D1_FACTORY_OPTIONS opts{};
-        hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, __uuidof(ID2D1Factory1),
+        hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, __uuidof(ID2D1Factory1),
                                &opts, reinterpret_cast<void**>(d2dFactory.GetAddressOf()));
         if (FAILED(hr) || !d2dFactory) return hr;
 
@@ -244,12 +345,14 @@ struct PdfEngineState {
         return hr;
     }
 
-    HRESULT EnsureRenderTargetSize(UINT w, UINT h) noexcept {
+    HRESULT EnsureRenderTargetSize(RenderTargetSlot& slot, UINT w, UINT h) noexcept {
         if (w == 0 || h == 0) return E_INVALIDARG;
-        if (rtTexture && stagingTexture && d2dTargetBitmap && rtWidth == w && rtHeight == h) {
+        if (slot.rtTexture && slot.stagingTexture && slot.d2dTargetBitmap &&
+            slot.width == w && slot.height == h) {
             return S_OK;
         }
-        ResetRenderTargets();
+        if (d2dContext) d2dContext->SetTarget(nullptr);
+        slot.Reset();
 
         D3D11_TEXTURE2D_DESC rtDesc{};
         rtDesc.Width = w;
@@ -261,43 +364,44 @@ struct PdfEngineState {
         rtDesc.Usage = D3D11_USAGE_DEFAULT;
         rtDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
 
-        HRESULT hr = d3dDevice->CreateTexture2D(&rtDesc, nullptr, &rtTexture);
-        if (FAILED(hr) || !rtTexture) return hr;
+        HRESULT hr = d3dDevice->CreateTexture2D(&rtDesc, nullptr, &slot.rtTexture);
+        if (FAILED(hr) || !slot.rtTexture) return hr;
 
         D3D11_TEXTURE2D_DESC stDesc = rtDesc;
         stDesc.Usage = D3D11_USAGE_STAGING;
         stDesc.BindFlags = 0;
         stDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
 
-        hr = d3dDevice->CreateTexture2D(&stDesc, nullptr, &stagingTexture);
-        if (FAILED(hr) || !stagingTexture) {
-            ResetRenderTargets();
+        hr = d3dDevice->CreateTexture2D(&stDesc, nullptr, &slot.stagingTexture);
+        if (FAILED(hr) || !slot.stagingTexture) {
+            slot.Reset();
             return hr;
         }
 
         ComPtr<IDXGISurface> dxgiSurface;
-        hr = rtTexture.As(&dxgiSurface);
+        hr = slot.rtTexture.As(&dxgiSurface);
         if (FAILED(hr) || !dxgiSurface) {
-            ResetRenderTargets();
+            slot.Reset();
             return hr;
         }
 
         const D2D1_BITMAP_PROPERTIES1 bmpProps = D2D1::BitmapProperties1(
             D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
             D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
-        hr = d2dContext->CreateBitmapFromDxgiSurface(dxgiSurface.Get(), &bmpProps, &d2dTargetBitmap);
-        if (FAILED(hr) || !d2dTargetBitmap) {
-            ResetRenderTargets();
+        hr = d2dContext->CreateBitmapFromDxgiSurface(dxgiSurface.Get(), &bmpProps, &slot.d2dTargetBitmap);
+        if (FAILED(hr) || !slot.d2dTargetBitmap) {
+            slot.Reset();
             return hr;
         }
 
-        rtWidth = w;
-        rtHeight = h;
+        slot.width = w;
+        slot.height = h;
         return S_OK;
     }
 
     HRESULT EnsureLoadedDocument(const wchar_t* filePath) {
         if (!filePath || !*filePath) return E_INVALIDARG;
+        EnsureMtaAnchored();
 
         WIN32_FILE_ATTRIBUTE_DATA attr{};
         if (!GetFileAttributesExW(filePath, GetFileExInfoStandard, &attr) ||
@@ -319,7 +423,9 @@ struct PdfEngineState {
         ClearDocumentCache();
 
         ComPtr<IStream> comStream;
-        constexpr uint64_t kMemStreamThreshold = 64ull * 1024ull * 1024ull;
+        // Keep small PDFs in memory so callers/tests can overwrite files without handle locks,
+        // while streaming larger PDFs directly from disk to avoid double-buffer RAM spikes.
+        constexpr uint64_t kMemStreamThreshold = 8ull * 1024ull * 1024ull;
         if (fileSize > 0 && fileSize <= kMemStreamThreshold) {
             HANDLE hFile = CreateFileW(
                 filePath, GENERIC_READ,
@@ -461,13 +567,15 @@ struct PdfEngineState {
         params.DestinationWidth = destW;
         params.DestinationHeight = destH;
 
+        RenderTargetSlot& slot = ((std::max)(destW, destH) <= 512u) ? thumbSlot : mainSlot;
+
         auto renderPass = [&]() -> HRESULT {
             HRESULT rhr = EnsureDeviceAndRenderer();
             if (FAILED(rhr)) return rhr;
-            rhr = EnsureRenderTargetSize(destW, destH);
+            rhr = EnsureRenderTargetSize(slot, destW, destH);
             if (FAILED(rhr)) return rhr;
 
-            d2dContext->SetTarget(d2dTargetBitmap.Get());
+            d2dContext->SetTarget(slot.d2dTargetBitmap.Get());
             d2dContext->BeginDraw();
             d2dContext->SetTransform(D2D1::Matrix3x2F::Identity());
             d2dContext->Clear(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f));
@@ -485,16 +593,16 @@ struct PdfEngineState {
         }
         if (FAILED(hr)) return hr;
 
-        d3dContext->CopyResource(stagingTexture.Get(), rtTexture.Get());
+        d3dContext->CopyResource(slot.stagingTexture.Get(), slot.rtTexture.Get());
         D3D11_MAPPED_SUBRESOURCE mapped{};
-        hr = d3dContext->Map(stagingTexture.Get(), 0, D3D11_MAP_READ, 0, &mapped);
+        hr = d3dContext->Map(slot.stagingTexture.Get(), 0, D3D11_MAP_READ, 0, &mapped);
         if (FAILED(hr) || !mapped.pData) return FAILED(hr) ? hr : E_FAIL;
 
         const uint32_t dstStride = destW * 4u;
         const size_t totalBytes = static_cast<size_t>(dstStride) * destH;
         uint8_t* dst = static_cast<uint8_t*>(_aligned_malloc(totalBytes, 64));
         if (!dst) {
-            d3dContext->Unmap(stagingTexture.Get(), 0);
+            d3dContext->Unmap(slot.stagingTexture.Get(), 0);
             return E_OUTOFMEMORY;
         }
 
@@ -504,7 +612,7 @@ struct PdfEngineState {
                         srcBytes + static_cast<size_t>(row) * mapped.RowPitch,
                         dstStride);
         }
-        d3dContext->Unmap(stagingTexture.Get(), 0);
+        d3dContext->Unmap(slot.stagingTexture.Get(), 0);
 
         outFrame = {};
         outFrame.pixels = dst;
@@ -524,6 +632,40 @@ struct PdfEngineState {
     }
 };
 
+// Priority-preemptive exclusive gate: high-priority page turns and ROI renders
+// always acquire the engine ahead of queued background thumbnail requests.
+class EngineGateGuard {
+public:
+    EngineGateGuard(PdfEngineState& state, bool highPriority) noexcept
+        : m_state(state) {
+        std::unique_lock<std::mutex> lock(m_state.mutex);
+        if (highPriority) {
+            ++m_state.highPriorityWaiters;
+            m_state.gateCv.wait(lock, [this] { return !m_state.busy; });
+            --m_state.highPriorityWaiters;
+        } else {
+            m_state.gateCv.wait(lock, [this] {
+                return !m_state.busy && m_state.highPriorityWaiters == 0;
+            });
+        }
+        m_state.busy = true;
+    }
+
+    ~EngineGateGuard() {
+        {
+            std::lock_guard<std::mutex> lock(m_state.mutex);
+            m_state.busy = false;
+        }
+        m_state.gateCv.notify_all();
+    }
+
+    EngineGateGuard(const EngineGateGuard&) = delete;
+    EngineGateGuard& operator=(const EngineGateGuard&) = delete;
+
+private:
+    PdfEngineState& m_state;
+};
+
 PdfEngineState& GetEngineState() {
     static PdfEngineState s_state;
     return s_state;
@@ -535,11 +677,11 @@ HRESULT GetDocumentInfo(const wchar_t* filePath, uint32_t pageIndex, PdfPageInfo
     outInfo = {};
     RoInitGuard roInit;
     if (!roInit.IsReady()) {
-        return roInit.IsMainSta() ? RPC_E_WRONG_THREAD : E_FAIL;
+        return roInit.IsSta() ? RPC_E_WRONG_THREAD : E_FAIL;
     }
 
     auto& state = GetEngineState();
-    std::lock_guard<std::mutex> lock(state.mutex);
+    EngineGateGuard gate(state, true);
 
     HRESULT hr = state.EnsureLoadedDocument(filePath);
     if (FAILED(hr)) {
@@ -567,15 +709,16 @@ HRESULT RenderPage(const wchar_t* filePath,
                    uint32_t pageIndex,
                    uint32_t maxLongEdge,
                    QuickView::RawImageFrame& outFrame,
-                   PdfPageInfo* outInfo) {
+                   PdfPageInfo* outInfo,
+                   bool highPriority) {
     if (outInfo) *outInfo = {};
     RoInitGuard roInit;
     if (!roInit.IsReady()) {
-        return roInit.IsMainSta() ? RPC_E_WRONG_THREAD : E_FAIL;
+        return roInit.IsSta() ? RPC_E_WRONG_THREAD : E_FAIL;
     }
 
     auto& state = GetEngineState();
-    std::lock_guard<std::mutex> lock(state.mutex);
+    EngineGateGuard gate(state, highPriority);
     return state.RenderInternal(filePath, pageIndex, nullptr, maxLongEdge, 0, outFrame, outInfo);
 }
 
@@ -587,23 +730,23 @@ HRESULT RenderPageRoi(const wchar_t* filePath,
                       QuickView::RawImageFrame& outFrame) {
     RoInitGuard roInit;
     if (!roInit.IsReady()) {
-        return roInit.IsMainSta() ? RPC_E_WRONG_THREAD : E_FAIL;
+        return roInit.IsSta() ? RPC_E_WRONG_THREAD : E_FAIL;
     }
 
     auto& state = GetEngineState();
-    std::lock_guard<std::mutex> lock(state.mutex);
+    EngineGateGuard gate(state, true);
     return state.RenderInternal(filePath, pageIndex, &normalizedSrcRect, destW, destH, outFrame, nullptr);
 }
 
 void ClearDocumentCache() {
     auto& state = GetEngineState();
-    std::lock_guard<std::mutex> lock(state.mutex);
+    EngineGateGuard gate(state, true);
     state.ClearDocumentCache();
 }
 
 void ReleaseResources() {
     auto& state = GetEngineState();
-    std::lock_guard<std::mutex> lock(state.mutex);
+    EngineGateGuard gate(state, true);
     state.Shutdown();
 }
 

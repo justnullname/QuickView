@@ -1258,6 +1258,17 @@ int ImageEngine::FastLane::GetResultsSize() const {
 }
 
 void ImageEngine::FastLane::QueueWorker() {
+    // Keep worker thread bound to MTA for COM/WinRT codecs (WIC, Windows.Data.Pdf).
+    struct ComInitScope {
+        bool succeeded = false;
+        ComInitScope() noexcept {
+            succeeded = SUCCEEDED(CoInitializeEx(nullptr, COINIT_MULTITHREADED));
+        }
+        ~ComInitScope() {
+            if (succeeded) CoUninitialize();
+        }
+    } comScope;
+
     QV_LOG("FastLane_Lifecycle", TraceLoggingString("WorkerStarted", "Action"));
 
     while (!m_stopSignal) {

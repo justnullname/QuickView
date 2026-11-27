@@ -173,9 +173,16 @@ bool TryReadWorkerArgValue(int argc, LPWSTR* argv, LPCWSTR flag, std::wstring* o
 } // namespace
 
 bool IsHeavyThumbnailExtension(std::wstring_view pathOrExt) noexcept {
-    const std::wstring_view ext = (pathOrExt.starts_with(L'.') && pathOrExt.find_first_of(L"\\/|") == std::wstring_view::npos)
+    std::wstring_view ext = (pathOrExt.starts_with(L'.') && pathOrExt.find_first_of(L"\\/|") == std::wstring_view::npos)
         ? pathOrExt
         : ExtensionOf(pathOrExt);
+    // Multi-page virtual paths (e.g. "book.pdf|3|Page 4") store the format extension on the host path.
+    if (ext.empty()) {
+        const size_t pipe = pathOrExt.find(L'|');
+        if (pipe != std::wstring_view::npos && pipe > 0) {
+            ext = ExtensionOf(pathOrExt.substr(0, pipe));
+        }
+    }
     if (ext.empty()) return false;
     if (IsRawExtension(ext) || IsArchiveExtension(ext) || IsDocumentExtension(ext)) return true;
     return ExtEqualsIgnoreCase(ext, L".psd") ||
