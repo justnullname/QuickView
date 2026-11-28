@@ -4,11 +4,11 @@ on:
   issues:
     types: [opened]
   push:
-    branches: [main, dev]
+    branches: ['**']
   release:
     types: [published]
   schedule:
-    - cron: '*/5 * * * *'
+    - cron: '*/15 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -52,6 +52,14 @@ jobs:
               bug: process.env.LABEL_BUG,
               enhancement: process.env.LABEL_ENHANCEMENT,
               documentation: process.env.LABEL_DOCUMENTATION,
+            };
+
+            const PROJECT_STATUS = {
+              todo: 'Todo',
+              inProgress: 'In Progress',
+              implemented: 'Implemented',
+              ideas: 'Ideas',
+              done: 'Done',
             };
 
             let projectMetaCache = null;
@@ -156,15 +164,14 @@ jobs:
 
             async function syncIssueLabels(issue, addLabels, removeLabels) {
               const current = new Set((issue.labels || []).map((l) => l.name));
-              for (const label of addLabels) {
-                if (label && !current.has(label)) {
-                  await github.rest.issues.addLabels({
-                    owner,
-                    repo,
-                    issue_number: issue.number,
-                    labels: [label],
-                  });
-                }
+              const toAdd = addLabels.filter((label) => label && !current.has(label));
+              if (toAdd.length > 0) {
+                await github.rest.issues.addLabels({
+                  owner,
+                  repo,
+                  issue_number: issue.number,
+                  labels: toAdd,
+                });
               }
               for (const label of removeLabels) {
                 if (label && current.has(label)) {
@@ -179,6 +186,26 @@ jobs:
                     core.info(`Failed to remove label "${label}" from #${issue.number}: ${err.message}`);
                   }
                 }
+              }
+            }
+
+            async function ensureComment(issueNumber, matchText, body) {
+              const { data: comments } = await github.rest.issues.listComments({
+                owner,
+                repo,
+                issue_number: issueNumber,
+                per_page: 100,
+              });
+              const alreadyCommented = comments.some(
+                (c) => c.body && c.body.includes(matchText)
+              );
+              if (!alreadyCommented) {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: issueNumber,
+                  body,
+                });
               }
             }
 
@@ -199,7 +226,7 @@ jobs:
             if (eventName === 'issues' && context.payload.action === 'opened') {
               const issue = context.payload.issue;
               if (!issue.pull_request) {
-                await addIssueToProjectAndSetStatus(issue.node_id, 'Todo');
+                await addIssueToProjectAndSetStatus(issue.node_id, PROJECT_STATUS.todo);
                 const title = (issue.title || '').toLowerCase();
                 const labelsToAdd = [];
                 if (title.includes('[bug]') || title.includes('bug:')) {
@@ -222,7 +249,7 @@ jobs:
               }
             }
 
-            // Rule B: Push commits referencing #123 -> mark status: implemented + Project Done
+            // Rule B: Git push commits referencing #123 -> mark status: implemented & Project Implemented (keep issue open)
             else if (eventName === 'push') {
               const commits = context.payload.commits || [];
               const referenced = new Set();
@@ -234,12 +261,16 @@ jobs:
               for (const num of referenced) {
                 const issue = await getIssue(num);
                 if (!issue) continue;
+                if (issue.state === 'closed') {
+                  core.info(`Skipping closed issue #${num} on push.`);
+                  continue;
+                }
                 await syncIssueLabels(
                   issue,
                   [LABELS.implemented],
                   [LABELS.inProgress, LABELS.blocked]
                 );
-                await addIssueToProjectAndSetStatus(issue.node_id, 'Done');
+                await addIssueToProjectAndSetStatus(issue.node_id, PROJECT_STATUS.implemented);
               }
             }
 
@@ -255,57 +286,34 @@ jobs:
                 if (isPrerelease) {
                   await syncIssueLabels(
                     issue,
-                    [LABELS.preRelease],
-                    [LABELS.implemented, LABELS.inProgress, LABELS.blocked]
+                    [LABELS.implemented, LABELS.preRelease],
+                    [LABELS.inProgress, LABELS.blocked]
                   );
-                  await addIssueToProjectAndSetStatus(issue.node_id, 'Done');
-                  const { data: comments } = await github.rest.issues.listComments({
-                    owner,
-                    repo,
-                    issue_number: num,
-                    per_page: 100,
-                  });
-                  const alreadyCommented = comments.some(
-                    (c) => c.body && c.body.includes(tagName)
+                  await addIssueToProjectAndSetStatus(issue.node_id, PROJECT_STATUS.implemented);
+                  await ensureComment(
+                    num,
+                    tagName,
+                    `Included in pre-release **${tagName}**. Please verify and share feedback if anything is still off.`
                   );
-                  if (!alreadyCommented) {
-                    await github.rest.issues.createComment({
-                      owner,
-                      repo,
-                      issue_number: num,
-                      body: `Included in pre-release **${tagName}**. Please verify and share feedback if anything is still off.`,
-                    });
-                  }
                 } else {
                   await syncIssueLabels(
                     issue,
-                    [LABELS.released],
-                    [LABELS.preRelease, LABELS.implemented, LABELS.inProgress, LABELS.blocked]
+                    [LABELS.implemented, LABELS.released],
+                    [LABELS.preRelease, LABELS.inProgress, LABELS.blocked]
                   );
-                  await addIssueToProjectAndSetStatus(issue.node_id, 'Done');
+                  await addIssueToProjectAndSetStatus(issue.node_id, PROJECT_STATUS.done);
                   if (issue.state !== 'closed') {
-                    const { data: comments } = await github.rest.issues.listComments({
-                      owner,
-                      repo,
-                      issue_number: num,
-                      per_page: 100,
-                    });
-                    const alreadyCommented = comments.some(
-                      (c) => c.body && c.body.includes(`officially released in **${tagName}**`)
+                    await ensureComment(
+                      num,
+                      `officially released in **${tagName}**`,
+                      `🚀 This fix/feature has been officially released in **${tagName}**! Closing this issue now—feel free to reopen or open a new one if you still encounter any problems.`
                     );
-                    if (!alreadyCommented) {
-                      await github.rest.issues.createComment({
-                        owner,
-                        repo,
-                        issue_number: num,
-                        body: `🚀 This fix/feature has been officially released in **${tagName}**! Closing this issue now—feel free to reopen or open a new one if you still encounter any problems.`,
-                      });
-                    }
                     await github.rest.issues.update({
                       owner,
                       repo,
                       issue_number: num,
                       state: 'closed',
+                      state_reason: 'completed',
                     });
                   }
                 }
@@ -359,7 +367,7 @@ jobs:
                   if (content.state === 'CLOSED') continue;
 
                   const statusName = item.fieldValueByName?.name;
-                  if (statusName === 'In Progress') {
+                  if (statusName === PROJECT_STATUS.inProgress) {
                     const issue = await getIssue(content.number);
                     if (issue) {
                       await syncIssueLabels(
@@ -368,7 +376,16 @@ jobs:
                         [LABELS.implemented, LABELS.preRelease, LABELS.released, LABELS.blocked]
                       );
                     }
-                  } else if (statusName === 'Todo') {
+                  } else if (statusName === PROJECT_STATUS.implemented) {
+                    const issue = await getIssue(content.number);
+                    if (issue) {
+                      await syncIssueLabels(
+                        issue,
+                        [LABELS.implemented],
+                        [LABELS.inProgress, LABELS.blocked]
+                      );
+                    }
+                  } else if (statusName === PROJECT_STATUS.todo || statusName === PROJECT_STATUS.ideas) {
                     const issue = await getIssue(content.number);
                     if (issue) {
                       await syncIssueLabels(issue, [], [LABELS.inProgress]);
