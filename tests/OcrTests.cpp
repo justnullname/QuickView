@@ -18,6 +18,7 @@
 #include "ToolbarVisibility.h"
 #include "EditState.h"
 #include "Plugin/PluginHost.h"
+#include "ocr_postprocess.h"
 #include "Plugin/PluginRegistry.h"
 #include "Plugin/abi/qvx_analyzer.h"
 #include "SystemInfo.h"
@@ -26,6 +27,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include <thread>
 #include <type_traits>
@@ -33,7 +35,20 @@
 
 namespace {
 
-std::vector<uint8_t> RenderTextCanvasBgra(uint32_t w, uint32_t h, const wchar_t* text, int fontPx) {
+std::wstring FindRepoRoot(const std::wstring& startDir) {
+    std::filesystem::path cur(startDir);
+    for (int i = 0; i < 6; ++i) {
+        if (std::filesystem::exists(cur / L"CMakeLists.txt") &&
+            std::filesystem::exists(cur / L"plugins" / L"plugins_manifest.json")) {
+            return cur.wstring();
+        }
+        if (!cur.has_parent_path()) break;
+        cur = cur.parent_path();
+    }
+    return {};
+}
+
+std::vector<uint8_t> RenderTextCanvasBgra(uint32_t w, uint32_t h, const wchar_t* text, int fontPx, const wchar_t* fontName = L"Arial") {
     std::vector<uint8_t> out(static_cast<size_t>(w) * h * 4, 0xFF);
     BITMAPINFO bmi{};
     bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
@@ -55,8 +70,8 @@ std::vector<uint8_t> RenderTextCanvasBgra(uint32_t w, uint32_t h, const wchar_t*
 
         HFONT hFont = CreateFontW(
             -fontPx, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
-            ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-            ANTIALIASED_QUALITY, FF_SWISS | DEFAULT_PITCH, L"Arial");
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            ANTIALIASED_QUALITY, FF_SWISS | DEFAULT_PITCH, fontName);
         HGDIOBJ oldFont = SelectObject(hdc, hFont);
         SetTextColor(hdc, RGB(0, 0, 0));
         SetBkColor(hdc, RGB(255, 255, 255));
@@ -435,4 +450,380 @@ TEST(OcrTests, OverlaySelectionMathAndLineFallback) {
     EXPECT_EQ(overlay.GetSelectedText(), L"LineOnlyText");
 
     overlay.ClearDocumentKeepHidden();
+}
+
+TEST(OcrTests, PpOcrDbNetUnclipAndTileDedup) {
+    using namespace QuickView::OcrNcnn;
+
+    // 64x64 synthetic probability map with a horizontal text band and a 2x2 isolated noise dot
+    std::vector<float> prob(64 * 64, 0.0f);
+    for (int y = 20; y <= 24; ++y) {
+        for (int x = 10; x <= 40; ++x) {
+            prob[y * 64 + x] = 0.85f;
+        }
+    }
+    // 2x2 noise dot (count=4 < 9 and compW < 3 -> filtered out)
+    prob[5 * 64 + 5] = 0.9f; prob[5 * 64 + 6] = 0.9f;
+    prob[6 * 64 + 5] = 0.9f; prob[6 * 64 + 6] = 0.9f;
+
+    const auto boxes = ExtractDbBoxesFromProbMap(
+        prob.data(), 64, 64, 2.0f, 2.0f, 0.0f, 0.0f, 128.0f, 128.0f,
+        0.30f, 0.55f, 1.60f, 0);
+    ASSERT_EQ(boxes.size(), 1u);
+    // Unclip should expand vertically beyond raw pixels [40..50] to keep stroke margins
+    EXPECT_LT(boxes[0].y0, 40.0f);
+    EXPECT_GT(boxes[0].y1, 50.0f);
+    EXPECT_GE(boxes[0].x0, 0.0f);
+    EXPECT_LE(boxes[0].x1, 128.0f);
+
+    // Cross-tile overlap + duplicate suppression + reading-order sort
+    std::vector<DbBox> raw = {
+        { 100.0f, 80.0f, 300.0f, 110.0f, 0.90f, 1 }, // Row 2 col 1
+        { 10.0f,  80.0f, 120.0f, 110.0f, 0.95f, 0 }, // Row 2 col 0 (overlaps horizontally across tile 0 & 1 -> merge)
+        { 20.0f,  10.0f, 150.0f, 40.0f,  0.80f, 0 }, // Row 1
+        { 22.0f,  11.0f, 148.0f, 39.0f,  0.70f, 0 }, // Duplicate of Row 1 -> suppressed
+    };
+    const auto merged = MergeAndSortDetectedBoxes(std::move(raw));
+    ASSERT_EQ(merged.size(), 2u);
+    EXPECT_NEAR(merged[0].y0, 10.0f, 0.1f); // Row 1 first
+    EXPECT_NEAR(merged[1].x0, 10.0f, 0.1f); // Merged cross-tile Row 2 second
+    EXPECT_NEAR(merged[1].x1, 300.0f, 0.1f);
+}
+
+TEST(OcrTests, PpOcrCtcDecodeSmartSpacingAndBothLayouts) {
+    using namespace QuickView::OcrNcnn;
+
+    // Dict indices: 1="你", 2="好", 3="Q", 4="u", 5="i", 6="c", 7="k", 8="!" -> numClasses = 10 (0=blank, 9=space)
+    const std::vector<std::string> dict = { "\xE4\xBD\xA0", "\xE5\xA5\xBD", "Q", "u", "i", "c", "k", "!" };
+    const int numClasses = static_cast<int>(dict.size()) + 2;
+    const int steps = 11;
+    // Sequence per step (with CTC blanks/repeats): 你 你 blank 好 Q u blank i c k !
+    const int seq[steps] = { 1, 1, 0, 2, 3, 4, 0, 5, 6, 7, 8 };
+
+    // 1. TimeMajor [T=steps, C=numClasses] -> dimW=numClasses, dimH=steps
+    std::vector<float> logitsTC(static_cast<size_t>(steps) * numClasses, -5.0f);
+    for (int t = 0; t < steps; ++t) {
+        logitsTC[t * numClasses + seq[t]] = 6.0f;
+    }
+    const DecodedLine resTC = DecodeCtcLine(logitsTC.data(), numClasses, steps, dict, 0.1f, 0.9f);
+    EXPECT_EQ(resTC.utf8, "\xE4\xBD\xA0\xE5\xA5\xBD Quick!");
+    ASSERT_EQ(resTC.tokens.size(), 4u); // "你", "好", "Quick", "!"
+    EXPECT_EQ(resTC.tokens[2].utf8, "Quick");
+    EXPECT_GT(resTC.tokens[2].confidence, 0.95f);
+    EXPECT_GE(resTC.tokens[0].x0Norm, 0.1f);
+    EXPECT_LE(resTC.tokens[3].x1Norm, 0.9001f);
+
+    // 2. ClassMajor [C=numClasses, T=steps] -> dimW=steps, dimH=numClasses
+    std::vector<float> logitsCT(static_cast<size_t>(numClasses) * steps, -5.0f);
+    for (int t = 0; t < steps; ++t) {
+        logitsCT[seq[t] * steps + t] = 6.0f;
+    }
+    const DecodedLine resCT = DecodeCtcLine(logitsCT.data(), steps, numClasses, dict, 0.1f, 0.9f);
+    EXPECT_EQ(resCT.utf8, "\xE4\xBD\xA0\xE5\xA5\xBD Quick!");
+}
+
+TEST(OcrTests, PpOcrNcnnPluginDiscoveryParamsAndMissingAssetFallback) {
+    const std::wstring pluginQvxSrc = GetExeDirectory() + L"\\plugins\\ocr\\ocr_ppocr_ncnn\\ocr_ppocr_ncnn.qvx";
+    const std::wstring pluginManSrc = GetExeDirectory() + L"\\plugins\\ocr\\ocr_ppocr_ncnn\\manifest.json";
+    if (GetFileAttributesW(pluginQvxSrc.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        GTEST_SKIP() << "ocr_ppocr_ncnn.qvx not found next to QuickViewTests.exe";
+    }
+
+    wchar_t tempPath[MAX_PATH]{};
+    ASSERT_GT(GetTempPathW(MAX_PATH, tempPath), 0u);
+    const std::wstring tempRoot = std::wstring(tempPath) + L"QVX_PpOcrNcnnTest_" + std::to_wstring(GetCurrentProcessId());
+    const std::wstring pluginDir = tempRoot + L"\\ocr_ppocr_ncnn";
+    const std::wstring modelsDir = pluginDir + L"\\models";
+    const std::wstring subPackDir = modelsDir + L"\\custom_pack";
+    ASSERT_TRUE(SystemInfo::EnsureDirectoryRecursive(subPackDir));
+
+    const std::wstring stagedQvx = pluginDir + L"\\ocr_ppocr_ncnn.qvx";
+    const std::wstring stagedMan = pluginDir + L"\\manifest.json";
+    ASSERT_TRUE(CopyFileW(pluginQvxSrc.c_str(), stagedQvx.c_str(), FALSE));
+    ASSERT_TRUE(CopyFileW(pluginManSrc.c_str(), stagedMan.c_str(), FALSE));
+
+    auto& host = QuickView::PluginHost::Instance();
+    host.ResetToDefaults();
+    host.RefreshRegistry(tempRoot);
+
+    const std::string pid = "com.quickview.ocr.ppocr_ncnn";
+    const auto presetsInitial = host.GetPluginPresets(pid);
+    ASSERT_EQ(presetsInitial.size(), 4u);
+    EXPECT_EQ(presetsInitial[0].presetId, "ppocrv5_cjk_en");
+    EXPECT_FALSE(presetsInitial[0].isInstalled);
+    EXPECT_FALSE(presetsInitial[0].assetDownloadUrl.empty());
+
+    const auto params = host.GetPluginParams(pid);
+    ASSERT_EQ(params.size(), 5u);
+    EXPECT_EQ(params[0].id, "use_gpu");
+    EXPECT_EQ(params[1].id, "num_threads");
+    EXPECT_EQ(params[2].id, "det_limit_side");
+    EXPECT_EQ(params[3].id, "box_thresh");
+    EXPECT_EQ(params[4].id, "unclip_ratio");
+
+    // Drop custom flat triplet + custom subdir pack into models/ and verify dynamic discovery
+    WriteUtf8File(modelsDir + L"\\custom_de.param", "7767517\n");
+    WriteUtf8File(modelsDir + L"\\custom_de.bin", "BIN");
+    WriteUtf8File(modelsDir + L"\\custom_de.dict.txt", "a\nb\n");
+    WriteUtf8File(subPackDir + L"\\rec.param", "7767517\n");
+    WriteUtf8File(subPackDir + L"\\rec.bin", "BIN");
+    WriteUtf8File(subPackDir + L"\\dict.txt", "c\nd\n");
+    WriteUtf8File(subPackDir + L"\\model.json", R"({ "display_name": "Deutsch Test Pack", "rec_height": 48 })");
+
+    host.InvalidateModelCache();
+    const auto presetsWithCustom = host.GetPluginPresets(pid);
+    bool foundFlat = false, foundSub = false;
+    for (const auto& p : presetsWithCustom) {
+        if (p.presetId == "custom:custom_de" && p.isInstalled) foundFlat = true;
+        if (p.presetId == "pack:custom_pack" && p.isInstalled && p.displayName == "Deutsch Test Pack") foundSub = true;
+    }
+    EXPECT_TRUE(foundFlat);
+    EXPECT_TRUE(foundSub);
+
+    // Un-downloaded preset must cleanly return QVX_E_MISSING_ASSET
+    host.SetPluginEnabled(pid, true);
+    host.SetPluginActivePreset(pid, "ppocrv5_cjk_en");
+    std::vector<uint8_t> dummyPixels(64 * 64 * 4, 255);
+    QVX_AnalyzerInput rawInput{};
+    rawInput.struct_size = sizeof(QVX_AnalyzerInput);
+    rawInput.pixels = dummyPixels.data();
+    rawInput.width = 64;
+    rawInput.height = 64;
+    rawInput.stride = 64 * 4;
+    rawInput.format = QVX_PIXFMT_BGRA8888;
+    QuickView::Ocr::OcrDocument doc;
+    EXPECT_EQ(host.ExecuteOcrAnalyze(pid, rawInput, doc), QVX_E_MISSING_ASSET);
+
+    // Clean up without calling host.Shutdown()
+    host.SetPluginEnabled(pid, false);
+    host.ReleaseAnalyzerContextNow();
+    host.ResetToDefaults();
+    host.RefreshRegistry();
+    DeleteFileW((subPackDir + L"\\rec.param").c_str());
+    DeleteFileW((subPackDir + L"\\rec.bin").c_str());
+    DeleteFileW((subPackDir + L"\\dict.txt").c_str());
+    DeleteFileW((subPackDir + L"\\model.json").c_str());
+    RemoveDirectoryW(subPackDir.c_str());
+    DeleteFileW((modelsDir + L"\\custom_de.param").c_str());
+    DeleteFileW((modelsDir + L"\\custom_de.bin").c_str());
+    DeleteFileW((modelsDir + L"\\custom_de.dict.txt").c_str());
+    RemoveDirectoryW(modelsDir.c_str());
+    DeleteFileW(stagedMan.c_str());
+    DeleteFileW(stagedQvx.c_str());
+    RemoveDirectoryW(pluginDir.c_str());
+    RemoveDirectoryW(tempRoot.c_str());
+}
+
+TEST(OcrTests, PpOcrNcnnRealModelInferenceCjkAndLatin) {
+    const std::wstring exeDir = GetExeDirectory();
+    const std::wstring pluginQvxSrc = exeDir + L"\\plugins\\ocr\\ocr_ppocr_ncnn\\ocr_ppocr_ncnn.qvx";
+    const std::wstring pluginManSrc = exeDir + L"\\plugins\\ocr\\ocr_ppocr_ncnn\\manifest.json";
+    if (GetFileAttributesW(pluginQvxSrc.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        GTEST_SKIP() << "ocr_ppocr_ncnn.qvx not built";
+    }
+
+    // Resolve repo models directory relative to executable or workspace source
+    const std::wstring repoRoot = FindRepoRoot(exeDir);
+    if (repoRoot.empty()) {
+        GTEST_SKIP() << "Could not locate workspace repo root";
+    }
+    const std::wstring srcModelsDir = repoRoot + L"\\plugins\\ocr\\ocr_ppocr_ncnn\\models";
+    if (GetFileAttributesW((srcModelsDir + L"\\ppocrv5_mobile_det.bin").c_str()) == INVALID_FILE_ATTRIBUTES) {
+        GTEST_SKIP() << "Real PP-OCRv5 models not present in repo tree";
+    }
+
+    wchar_t tempPath[MAX_PATH]{};
+    ASSERT_GT(GetTempPathW(MAX_PATH, tempPath), 0u);
+    const std::wstring tempRoot = std::wstring(tempPath) + L"QVX_PpOcrRealModel_" + std::to_wstring(GetCurrentProcessId());
+    const std::wstring pluginDir = tempRoot + L"\\ocr_ppocr_ncnn";
+    const std::wstring modelsDir = pluginDir + L"\\models";
+    ASSERT_TRUE(SystemInfo::EnsureDirectoryRecursive(modelsDir));
+
+    ASSERT_TRUE(CopyFileW(pluginQvxSrc.c_str(), (pluginDir + L"\\ocr_ppocr_ncnn.qvx").c_str(), FALSE));
+    ASSERT_TRUE(CopyFileW(pluginManSrc.c_str(), (pluginDir + L"\\manifest.json").c_str(), FALSE));
+
+    const wchar_t* modelFiles[] = {
+        L"ppocrv5_mobile_det.param",
+        L"ppocrv5_mobile_det.bin",
+        L"ppocrv5_mobile_cjk_rec.param",
+        L"ppocrv5_mobile_cjk_rec.bin",
+        L"ppocrv5_cjk.dict.txt",
+        L"ppocrv5_mobile_latin_rec.param",
+        L"ppocrv5_mobile_latin_rec.bin",
+        L"ppocrv5_latin.dict.txt"
+    };
+    for (const wchar_t* mf : modelFiles) {
+        ASSERT_TRUE(CopyFileW((srcModelsDir + L"\\" + mf).c_str(), (modelsDir + L"\\" + mf).c_str(), FALSE))
+            << "Missing real model file: " << mf;
+    }
+
+    auto& host = QuickView::PluginHost::Instance();
+    host.ResetToDefaults();
+    host.RefreshRegistry(tempRoot);
+
+    const std::string pid = "com.quickview.ocr.ppocr_ncnn";
+    host.SetPluginEnabled(pid, true);
+    const auto presets = host.GetPluginPresets(pid);
+    ASSERT_GE(presets.size(), 2u);
+    EXPECT_TRUE(presets[0].isInstalled); // ppocrv5_cjk_en
+    EXPECT_TRUE(presets[1].isInstalled); // ppocrv5_latin
+
+    // 1. Test real CJK + English inference (CPU fallback or Vulkan GPU depending on host adapter)
+    {
+        host.SetPluginActivePreset(pid, "ppocrv5_cjk_en");
+        constexpr uint32_t W = 760, H = 180;
+        const std::vector<uint8_t> img = RenderTextCanvasBgra(W, H, L"\x4F60\x597D\x4E16\x754C QuickView", 48, L"Microsoft YaHei UI");
+        QVX_AnalyzerInput rawInput{};
+        rawInput.struct_size = sizeof(QVX_AnalyzerInput);
+        rawInput.pixels = img.data();
+        rawInput.width = W;
+        rawInput.height = H;
+        rawInput.stride = W * 4;
+        rawInput.format = QVX_PIXFMT_BGRA8888;
+        QuickView::Ocr::OcrDocument doc;
+        ASSERT_EQ(host.ExecuteOcrAnalyze(pid, rawInput, doc), QVX_OK);
+        EXPECT_GE(doc.lines.size(), 1u);
+        std::wstring allText;
+        for (const auto& l : doc.lines) {
+            if (!allText.empty()) allText.push_back(L' ');
+            allText.append(l.text);
+        }
+        EXPECT_TRUE(allText.find(L"QuickView") != std::wstring::npos || allText.find(L"\x4F60\x597D") != std::wstring::npos)
+            << "Actual CJK+EN OCR output size=" << allText.size();
+    }
+
+    // 2. Test real Latin inference
+    {
+        host.SetPluginActivePreset(pid, "ppocrv5_latin");
+        constexpr uint32_t W = 680, H = 180;
+        const std::vector<uint8_t> img = RenderTextCanvasBgra(W, H, L"HELLO QUICKVIEW 2026", 48);
+        QVX_AnalyzerInput rawInput{};
+        rawInput.struct_size = sizeof(QVX_AnalyzerInput);
+        rawInput.pixels = img.data();
+        rawInput.width = W;
+        rawInput.height = H;
+        rawInput.stride = W * 4;
+        rawInput.format = QVX_PIXFMT_BGRA8888;
+        QuickView::Ocr::OcrDocument doc;
+        ASSERT_EQ(host.ExecuteOcrAnalyze(pid, rawInput, doc), QVX_OK);
+        EXPECT_GE(doc.lines.size(), 1u);
+        std::wstring allText;
+        for (const auto& l : doc.lines) {
+            if (!allText.empty()) allText.push_back(L' ');
+            allText.append(l.text);
+        }
+        EXPECT_TRUE(allText.find(L"HELLO") != std::wstring::npos && allText.find(L"2026") != std::wstring::npos)
+            << "Actual Latin OCR output size=" << allText.size();
+    }
+
+    host.SetPluginEnabled(pid, false);
+    host.ReleaseAnalyzerContextNow();
+    host.ResetToDefaults();
+    host.RefreshRegistry();
+
+    std::error_code ec;
+    std::filesystem::remove_all(tempRoot, ec);
+}
+
+TEST(OcrTests, AllPluginsEightLanguagesAndSingleSourceVersion) {
+    const std::wstring exeDir = GetExeDirectory();
+    const std::wstring repoRoot = FindRepoRoot(exeDir);
+    if (repoRoot.empty()) {
+        GTEST_SKIP() << "Could not locate workspace repo root";
+    }
+    const std::wstring repoPluginsManifest = repoRoot + L"\\plugins\\plugins_manifest.json";
+
+    auto readFileStr = [](const std::wstring& path) -> std::string {
+        HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h == INVALID_HANDLE_VALUE) return {};
+        LARGE_INTEGER sz{};
+        if (!GetFileSizeEx(h, &sz) || sz.QuadPart <= 0) {
+            CloseHandle(h);
+            return {};
+        }
+        std::string buf(static_cast<size_t>(sz.QuadPart), '\0');
+        DWORD readN = 0;
+        ReadFile(h, buf.data(), static_cast<DWORD>(buf.size()), &readN, nullptr);
+        CloseHandle(h);
+        return buf;
+    };
+
+    const std::string remoteJson = readFileStr(repoPluginsManifest);
+    ASSERT_FALSE(remoteJson.empty());
+
+    struct PluginCheckTarget {
+        const char* id;
+        const wchar_t* manifestRel;
+        const wchar_t* qvxRel;
+    };
+    const PluginCheckTarget targets[] = {
+        { "com.quickview.ocr.ppocr_ncnn", L"plugins\\ocr\\ocr_ppocr_ncnn\\manifest.json", L"plugins\\ocr\\ocr_ppocr_ncnn\\ocr_ppocr_ncnn.qvx" },
+        { "com.quickview.sr.ncnn_vulkan", L"plugins\\sr\\sr_ncnn_vulkan\\manifest.json",  L"plugins\\sr\\sr_ncnn_vulkan\\sr_ncnn_vulkan.qvx" },
+        { "com.quickview.shell.thumb",    L"plugins\\shell\\qv_shell_thumb\\manifest.json", L"plugins\\shell\\qv_shell_thumb\\qv_shell_thumb.qvx" }
+    };
+    const char* kLangs[8] = { "en-US", "zh-CN", "zh-TW", "ja-JP", "ru-RU", "de-DE", "es-ES", "fr-FR" };
+
+    for (const auto& t : targets) {
+        const std::wstring qvxPath = exeDir + L"\\" + t.qvxRel;
+        const std::wstring manPath = repoRoot + L"\\" + t.manifestRel;
+        if (GetFileAttributesW(qvxPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
+            GTEST_SKIP() << "Plugin binary not found: " << t.id;
+        }
+
+        const std::string manJson = readFileStr(manPath);
+        ASSERT_FALSE(manJson.empty()) << t.id;
+        for (const char* lang : kLangs) {
+            EXPECT_NE(manJson.find(std::string("\"") + lang + "\""), std::string::npos)
+                << "manifest.json missing i18n locale " << lang << " for " << t.id;
+        }
+
+        // Load binary directly to verify QVX_PluginHeader single-source version & 8-language QVX parameter localization
+        HMODULE hMod = LoadLibraryW(qvxPath.c_str());
+        ASSERT_NE(hMod, nullptr) << t.id;
+        using InitFn = bool(*)(const QVX_HostServices*, const QVX_PluginHeader**);
+        using ShutFn = void(*)(void);
+        auto initFn = reinterpret_cast<InitFn>(GetProcAddress(hMod, "qvx_init"));
+        auto shutFn = reinterpret_cast<ShutFn>(GetProcAddress(hMod, "qvx_shutdown"));
+        ASSERT_NE(initFn, nullptr);
+
+        QVX_HostServices hostSvc{};
+        hostSvc.struct_size = sizeof(QVX_HostServices);
+        hostSvc.abi_version = QVX_ABI_VERSION;
+        const QVX_PluginHeader* hdr = nullptr;
+        ASSERT_TRUE(initFn(&hostSvc, &hdr));
+        ASSERT_NE(hdr, nullptr);
+        ASSERT_NE(hdr->version_str, nullptr);
+        ASSERT_NE(hdr->set_language, nullptr);
+        ASSERT_NE(hdr->get_param_count, nullptr);
+        ASSERT_NE(hdr->get_param_desc, nullptr);
+
+        // Verify manifest.json version matches compiled header version
+        const std::string verToken = std::string("\"version\": \"") + hdr->version_str + "\"";
+        EXPECT_NE(manJson.find(verToken), std::string::npos)
+            << "Compiled version " << hdr->version_str << " disagrees with manifest.json for " << t.id;
+        // Verify plugins_manifest.json also contains matching plugin id & version
+        const size_t idPos = remoteJson.find(t.id);
+        ASSERT_NE(idPos, std::string::npos);
+        const size_t nextVerPos = remoteJson.find(verToken, idPos);
+        EXPECT_NE(nextVerPos, std::string::npos)
+            << "plugins_manifest.json disagrees with compiled version " << hdr->version_str << " for " << t.id;
+
+        std::vector<std::string> distinctFirstLabels;
+        for (const char* lang : kLangs) {
+            EXPECT_EQ(hdr->set_language(lang), QVX_OK);
+            ASSERT_GT(hdr->get_param_count(), 0u);
+            const QVX_ParamDesc* p0 = hdr->get_param_desc(0);
+            ASSERT_NE(p0, nullptr);
+            ASSERT_NE(p0->label, nullptr);
+            EXPECT_GT(std::strlen(p0->label), 0u);
+            if (std::find(distinctFirstLabels.begin(), distinctFirstLabels.end(), p0->label) == distinctFirstLabels.end()) {
+                distinctFirstLabels.emplace_back(p0->label);
+            }
+        }
+        EXPECT_GE(distinctFirstLabels.size(), 6u)
+            << "Expected rich 8-language param localization for " << t.id;
+
+        if (shutFn) shutFn();
+        FreeLibrary(hMod);
+    }
 }

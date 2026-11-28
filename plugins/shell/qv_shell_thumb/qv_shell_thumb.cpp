@@ -63,7 +63,7 @@ std::atomic<bool> g_grpPdf{false};
 std::atomic<bool> g_syncGalleryCache{true};
 std::atomic<bool> g_respectNativeWic{false};
 std::atomic<int32_t> g_maxFileMb{0};
-std::atomic<bool> g_isZhCn{false};
+std::atomic<uint8_t> g_localeIdx{0}; // 0:en-US, 1:zh-CN, 2:zh-TW, 3:ja-JP, 4:ru-RU, 5:de-DE, 6:es-ES, 7:fr-FR
 
 // Optional isolated extension list override for unit testing registry backup/restore cleanly.
 wchar_t g_testOverrideExts[512]{};
@@ -1250,71 +1250,171 @@ private:
 
 // --- QVX v3 Plugin Interface & Dynamic Parameter Reflection ---
 
+// Locale order: 0:en-US, 1:zh-CN, 2:zh-TW, 3:ja-JP, 4:ru-RU, 5:de-DE, 6:es-ES, 7:fr-FR
 struct ParamText {
-    const char* enLabel;
-    const char* enTooltip;
-    const char* zhLabel;
-    const char* zhTooltip;
+    const char* labels[8];
+    const char* tooltips[8];
 };
 
-constexpr ParamText kParamTexts[] = {
-    {
-        "Modern Formats (JXL / AVIF / SVG / APNG)",
-        "",
-        "现代格式 (JXL / AVIF / SVG / APNG)",
-        ""
+constexpr const char* kMaxFileMbFormats[8] = {
+    "%d MB (0=Off)",
+    "%d MB (0=不限)",
+    "%d MB (0=不限)",
+    "%d MB (0=無制限)",
+    "%d МБ (0=Выкл)",
+    "%d MB (0=Aus)",
+    "%d MB (0=Sin límite)",
+    "%d Mo (0=Désactivé)"
+};
+
+constexpr ParamText kParamTexts[9] = {
+    { // 0: grp_modern
+        {
+            "Modern Formats (JXL / AVIF / SVG / APNG)",
+            "现代格式 (JXL / AVIF / SVG / APNG)",
+            "現代格式 (JXL / AVIF / SVG / APNG)",
+            "次世代フォーマット (JXL / AVIF / SVG / APNG)",
+            "Современные форматы (JXL / AVIF / SVG / APNG)",
+            "Moderne Formate (JXL / AVIF / SVG / APNG)",
+            "Formatos modernos (JXL / AVIF / SVG / APNG)",
+            "Formats modernes (JXL / AVIF / SVG / APNG)"
+        },
+        { "", "", "", "", "", "", "", "" }
     },
-    {
-        "Pro & HDR (PSD / EXR / HDR / TGA / QOI / PNM)",
-        "",
-        "专业与 HDR (PSD / EXR / HDR / TGA / QOI / PNM)",
-        ""
+    { // 1: grp_pro
+        {
+            "Pro & HDR (PSD / EXR / HDR / TGA / QOI / PNM)",
+            "专业与 HDR (PSD / EXR / HDR / TGA / QOI / PNM)",
+            "專業與 HDR (PSD / EXR / HDR / TGA / QOI / PNM)",
+            "プロ・HDR (PSD / EXR / HDR / TGA / QOI / PNM)",
+            "Про и HDR (PSD / EXR / HDR / TGA / QOI / PNM)",
+            "Pro & HDR (PSD / EXR / HDR / TGA / QOI / PNM)",
+            "Profesional y HDR (PSD / EXR / HDR / TGA / QOI / PNM)",
+            "Pro & HDR (PSD / EXR / HDR / TGA / QOI / PNM)"
+        },
+        { "", "", "", "", "", "", "", "" }
     },
-    {
-        "Camera RAW (CR2 / CR3 / NEF / ARW / DNG ...)",
-        "",
-        "相机 RAW 格式 (CR2 / CR3 / NEF / ARW / DNG ...)",
-        ""
+    { // 2: grp_raw
+        {
+            "Camera RAW (CR2 / CR3 / NEF / ARW / DNG ...)",
+            "相机 RAW 格式 (CR2 / CR3 / NEF / ARW / DNG ...)",
+            "相機 RAW 格式 (CR2 / CR3 / NEF / ARW / DNG ...)",
+            "カメラ RAW (CR2 / CR3 / NEF / ARW / DNG ...)",
+            "RAW-снимки камер (CR2 / CR3 / NEF / ARW / DNG ...)",
+            "Kamera-RAW (CR2 / CR3 / NEF / ARW / DNG ...)",
+            "RAW de cámara (CR2 / CR3 / NEF / ARW / DNG ...)",
+            "RAW d'appareil photo (CR2 / CR3 / NEF / ARW / DNG ...)"
+        },
+        { "", "", "", "", "", "", "", "" }
     },
-    {
-        "Comic Archives (CBZ / CBR)",
-        "",
-        "漫画压缩包 (CBZ / CBR)",
-        ""
+    { // 3: grp_comic
+        {
+            "Comic Archives (CBZ / CBR)",
+            "漫画压缩包 (CBZ / CBR)",
+            "漫畫壓縮檔 (CBZ / CBR)",
+            "コミック書庫 (CBZ / CBR)",
+            "Архивы комиксов (CBZ / CBR)",
+            "Comic-Archive (CBZ / CBR)",
+            "Archivos de cómic (CBZ / CBR)",
+            "Archives de BD (CBZ / CBR)"
+        },
+        { "", "", "", "", "", "", "", "" }
     },
-    {
-        "Standard & HEIC/HEIF (JPG / PNG / WebP / HEIC)",
-        "Optional override for Windows-native formats and HEIC/HEIF/HIF (off by default). HEIC/HEIF decoding relies on the Microsoft Store HEVC Video Extension or an optional decoder plugin.",
-        "系统常规与 HEIC/HEIF (JPG / PNG / WebP / HEIC)",
-        "可选接管系统常规格式与 HEIC/HEIF/HIF（默认关闭）。注意：HEIC/HEIF 解码依赖系统 HEVC 视频扩展（商店付费插件）或后续可选解码插件，未安装时建议保持关闭。"
+    { // 4: grp_standard
+        {
+            "Standard & HEIC/HEIF (JPG / PNG / WebP / HEIC)",
+            "系统常规与 HEIC/HEIF (JPG / PNG / WebP / HEIC)",
+            "系統常規與 HEIC/HEIF (JPG / PNG / WebP / HEIC)",
+            "標準・HEIC/HEIF (JPG / PNG / WebP / HEIC)",
+            "Стандартные и HEIC/HEIF (JPG / PNG / WebP / HEIC)",
+            "Standard & HEIC/HEIF (JPG / PNG / WebP / HEIC)",
+            "Estándar y HEIC/HEIF (JPG / PNG / WebP / HEIC)",
+            "Standard & HEIC/HEIF (JPG / PNG / WebP / HEIC)"
+        },
+        {
+            "Optional override for Windows-native formats and HEIC/HEIF/HIF (off by default). HEIC/HEIF decoding relies on the Microsoft Store HEVC Video Extension or an optional decoder plugin.",
+            "可选接管系统常规格式与 HEIC/HEIF/HIF（默认关闭）。注意：HEIC/HEIF 解码依赖系统 HEVC 视频扩展（商店付费插件）或后续可选解码插件，未安装时建议保持关闭。",
+            "可選接管系統常規格式與 HEIC/HEIF/HIF（預設關閉）。注意：HEIC/HEIF 解碼依賴系統 HEVC 視訊擴充功能或後續選配外掛，未安裝時建議保持關閉。",
+            "Windows 標準形式や HEIC/HEIF/HIF を任意で引き受けます（既定オフ）。HEIC/HEIF デコードには Microsoft Store の HEVC ビデオ拡張機能が必要です。",
+            "Необязательный перехват стандартных форматов Windows и HEIC/HEIF/HIF (выкл. по умолчанию). Для HEIC/HEIF требуется расширение HEVC из Microsoft Store.",
+            "Optionale Übernahme für Windows-Standardformate und HEIC/HEIF/HIF (standardmäßig aus). HEIC/HEIF erfordert die HEVC-Videoerweiterung.",
+            "Reemplazo opcional para formatos nativos de Windows y HEIC/HEIF/HIF (desactivado por defecto). HEIC/HEIF requiere la extensión HEVC de Microsoft Store.",
+            "Prise en charge optionnelle des formats natifs Windows et HEIC/HEIF/HIF (désactivé par défaut). HEIC/HEIF nécessite l'extension vidéo HEVC."
+        }
     },
-    {
-        "PDF Documents (.pdf)",
-        "",
-        "PDF 文档 (.pdf)",
-        ""
+    { // 5: grp_pdf
+        {
+            "PDF Documents (.pdf)",
+            "PDF 文档 (.pdf)",
+            "PDF 文件 (.pdf)",
+            "PDF ドキュメント (.pdf)",
+            "Документы PDF (.pdf)",
+            "PDF-Dokumente (.pdf)",
+            "Documentos PDF (.pdf)",
+            "Documents PDF (.pdf)"
+        },
+        { "", "", "", "", "", "", "", "" }
     },
-    {
-        "Persist Gallery Thumbnails to System Cache",
-        "Quietly warm up Windows thumbcache at idle IO priority when browsing folders in QuickView Gallery (zero re-decoding).",
-        "画廊缩略图异步落盘至系统缓存",
-        "在画廊浏览未缓存图片时，于系统空闲低 IO 优先级下自动写回 Windows 缩略图缓存（零二次解码）。"
+    { // 6: sync_gallery_cache
+        {
+            "Persist Gallery Thumbnails to System Cache",
+            "画廊缩略图异步落盘至系统缓存",
+            "畫廊縮圖非同步寫入系統快取",
+            "ギャラリーのサムネイルをシステムキャッシュへ永続化",
+            "Сохранять эскизы галереи в системный кэш",
+            "Galerie-Vorschaubilder im Systemcache speichern",
+            "Guardar miniaturas de galería en caché del sistema",
+            "Persister les miniatures de la galerie dans le cache système"
+        },
+        {
+            "Quietly warm up Windows thumbcache at idle IO priority when browsing folders in QuickView Gallery (zero re-decoding).",
+            "在画廊浏览未缓存图片时，于系统空闲低 IO 优先级下自动写回 Windows 缩略图缓存（零二次解码）。",
+            "於畫廊瀏覽未快取圖片時，在系統閒置低 I/O 優先順序下自動寫回 Windows 縮圖快取（零二次解碼）。",
+            "QuickView ギャラリー閲覧時、アイドル I/O 優先度で Windows サムネイルキャッシュに静かに書き込みます（再デコードなし）。",
+            "Тихо прогревает кэш эскизов Windows с низким приоритетом ввода-вывода при просмотре галереи (без повторного декодирования).",
+            "Schreibt Galerie-Miniaturen bei geringer I/O-Priorität leise in den Windows-Thumbcache (keine Neudecodierung).",
+            "Precalienta silenciosamente la caché de miniaturas de Windows en prioridad de E/S baja al explorar la galería (sin redescargar).",
+            "Précharge discrètement le cache de miniatures Windows en priorité E/S inactive lors de la navigation dans la galerie (sans redécodage)."
+        }
     },
-    {
-        "Cloud-Safe: Keep Native Windows WIC Codecs",
-        "Skip formats already handled by installed Windows/Store WIC decoders so Synology Drive / OneDrive On-Demand folders keep thumbnails. Disable to force QuickView override.",
-        "云盘兼容：保留系统已安装的 WIC 扩展",
-        "自动避让 Windows 已内置或商店安装的 WIC 缩略图扩展（如 JXL/RAW/WebP），防止群晖/OneDrive 按需同步目录缩略图失效；关闭则强制由 QuickView 接管。"
+    { // 7: respect_native_wic
+        {
+            "Cloud-Safe: Keep Native Windows WIC Codecs",
+            "云盘兼容：保留系统已安装的 WIC 扩展",
+            "雲端碟相容：保留系統已安裝的 WIC 擴充",
+            "クラウド互換: 既存の Windows WIC コーデックを優先",
+            "Облачная защита: сохранять системные WIC-кодеки",
+            "Cloud-sicher: Native Windows-WIC-Codecs beibehalten",
+            "Compatible con la nube: mantener códecs WIC nativos",
+            "Compatible cloud : conserver les codecs WIC natifs"
+        },
+        {
+            "Skip formats already handled by installed Windows/Store WIC decoders so Synology Drive / OneDrive On-Demand folders keep thumbnails. Disable to force QuickView override.",
+            "自动避让 Windows 已内置或商店安装的 WIC 缩略图扩展（如 JXL/RAW/WebP），防止群晖/OneDrive 按需同步目录缩略图失效；关闭则强制由 QuickView 接管。",
+            "自動避讓 Windows 已內建或商店安裝的 WIC 縮圖擴充（如 JXL/RAW/WebP），防止 Synology Drive / OneDrive 隨選檔案目錄縮圖失效；關閉則強制由 QuickView 接管。",
+            "Windows やストア製の WIC 拡張が既にある形式をスキップし、Synology Drive / OneDrive オンデマンドのサムネイル欠落を防ぎます。",
+            "Пропускает форматы, уже обслуживаемые системными WIC-декодерами, чтобы папки OneDrive / Synology Drive сохраняли эскизы.",
+            "Überspringt Formate mit installierten Windows-/Store-WIC-Decodern, damit OneDrive/Synology-On-Demand-Ordner Miniaturansichten behalten.",
+            "Omite formatos ya gestionados por códecs WIC de Windows/Store para que OneDrive y Synology Drive conserven sus miniaturas.",
+            "Ignore les formats déjà gérés par les décodeurs WIC Windows/Store pour préserver les miniatures OneDrive / Synology Drive."
+        }
     },
-    {
-        "Max Thumbnail Source Size",
-        "",
-        "缩略图单文件大小上限",
-        ""
+    { // 8: max_file_mb
+        {
+            "Max Thumbnail Source Size",
+            "缩略图单文件大小上限",
+            "縮圖單一檔案大小上限",
+            "サムネイル対象ファイルの最大サイズ",
+            "Макс. размер файла для эскиза",
+            "Max. Quelldateigröße für Miniatur",
+            "Tamaño máximo de origen para miniatura",
+            "Taille max. du fichier pour miniature"
+        },
+        { "", "", "", "", "", "", "", "" }
     }
 };
 
-constexpr const char* kParamIds[] = {
+constexpr const char* kParamIds[9] = {
     "grp_modern",
     "grp_pro",
     "grp_raw",
@@ -1326,13 +1426,13 @@ constexpr const char* kParamIds[] = {
     "max_file_mb"
 };
 
-consteval QVX_ParamDesc BuildStaticParamDesc(uint32_t index, bool zh) noexcept {
+consteval QVX_ParamDesc BuildStaticParamDesc(uint32_t index, size_t loc) noexcept {
     QVX_ParamDesc d{};
     d.struct_size = sizeof(QVX_ParamDesc);
     const ParamText& txt = kParamTexts[index];
     d.id = kParamIds[index];
-    d.label = zh ? txt.zhLabel : txt.enLabel;
-    d.tooltip = zh ? txt.zhTooltip : txt.enTooltip;
+    d.label = txt.labels[loc];
+    d.tooltip = txt.tooltips[loc];
 
     if (index == 8) {
         d.type = QVX_PARAM_TYPE_INT;
@@ -1340,7 +1440,7 @@ consteval QVX_ParamDesc BuildStaticParamDesc(uint32_t index, bool zh) noexcept {
         d.int_param.max_val = 2048;
         d.int_param.step = 64;
         d.int_param.default_val = 0;
-        d.int_param.format_str = zh ? "%d MB (0=\xE4\xB8\x8D\xE9\x99\x90)" : "%d MB (0=Off)";
+        d.int_param.format_str = kMaxFileMbFormats[loc];
     } else {
         d.type = QVX_PARAM_TYPE_BOOL;
         // Disable grp_standard (4), grp_pdf (5), and respect_native_wic (7) by default.
@@ -1349,22 +1449,42 @@ consteval QVX_ParamDesc BuildStaticParamDesc(uint32_t index, bool zh) noexcept {
     return d;
 }
 
-constexpr QVX_ParamDesc kParamDescsEn[9] = {
-    BuildStaticParamDesc(0, false), BuildStaticParamDesc(1, false), BuildStaticParamDesc(2, false),
-    BuildStaticParamDesc(3, false), BuildStaticParamDesc(4, false), BuildStaticParamDesc(5, false),
-    BuildStaticParamDesc(6, false), BuildStaticParamDesc(7, false), BuildStaticParamDesc(8, false)
+constexpr QVX_ParamDesc kParamDescs[8][9] = {
+    { BuildStaticParamDesc(0, 0), BuildStaticParamDesc(1, 0), BuildStaticParamDesc(2, 0), BuildStaticParamDesc(3, 0), BuildStaticParamDesc(4, 0), BuildStaticParamDesc(5, 0), BuildStaticParamDesc(6, 0), BuildStaticParamDesc(7, 0), BuildStaticParamDesc(8, 0) },
+    { BuildStaticParamDesc(0, 1), BuildStaticParamDesc(1, 1), BuildStaticParamDesc(2, 1), BuildStaticParamDesc(3, 1), BuildStaticParamDesc(4, 1), BuildStaticParamDesc(5, 1), BuildStaticParamDesc(6, 1), BuildStaticParamDesc(7, 1), BuildStaticParamDesc(8, 1) },
+    { BuildStaticParamDesc(0, 2), BuildStaticParamDesc(1, 2), BuildStaticParamDesc(2, 2), BuildStaticParamDesc(3, 2), BuildStaticParamDesc(4, 2), BuildStaticParamDesc(5, 2), BuildStaticParamDesc(6, 2), BuildStaticParamDesc(7, 2), BuildStaticParamDesc(8, 2) },
+    { BuildStaticParamDesc(0, 3), BuildStaticParamDesc(1, 3), BuildStaticParamDesc(2, 3), BuildStaticParamDesc(3, 3), BuildStaticParamDesc(4, 3), BuildStaticParamDesc(5, 3), BuildStaticParamDesc(6, 3), BuildStaticParamDesc(7, 3), BuildStaticParamDesc(8, 3) },
+    { BuildStaticParamDesc(0, 4), BuildStaticParamDesc(1, 4), BuildStaticParamDesc(2, 4), BuildStaticParamDesc(3, 4), BuildStaticParamDesc(4, 4), BuildStaticParamDesc(5, 4), BuildStaticParamDesc(6, 4), BuildStaticParamDesc(7, 4), BuildStaticParamDesc(8, 4) },
+    { BuildStaticParamDesc(0, 5), BuildStaticParamDesc(1, 5), BuildStaticParamDesc(2, 5), BuildStaticParamDesc(3, 5), BuildStaticParamDesc(4, 5), BuildStaticParamDesc(5, 5), BuildStaticParamDesc(6, 5), BuildStaticParamDesc(7, 5), BuildStaticParamDesc(8, 5) },
+    { BuildStaticParamDesc(0, 6), BuildStaticParamDesc(1, 6), BuildStaticParamDesc(2, 6), BuildStaticParamDesc(3, 6), BuildStaticParamDesc(4, 6), BuildStaticParamDesc(5, 6), BuildStaticParamDesc(6, 6), BuildStaticParamDesc(7, 6), BuildStaticParamDesc(8, 6) },
+    { BuildStaticParamDesc(0, 7), BuildStaticParamDesc(1, 7), BuildStaticParamDesc(2, 7), BuildStaticParamDesc(3, 7), BuildStaticParamDesc(4, 7), BuildStaticParamDesc(5, 7), BuildStaticParamDesc(6, 7), BuildStaticParamDesc(7, 7), BuildStaticParamDesc(8, 7) }
 };
-constexpr QVX_ParamDesc kParamDescsZh[9] = {
-    BuildStaticParamDesc(0, true), BuildStaticParamDesc(1, true), BuildStaticParamDesc(2, true),
-    BuildStaticParamDesc(3, true), BuildStaticParamDesc(4, true), BuildStaticParamDesc(5, true),
-    BuildStaticParamDesc(6, true), BuildStaticParamDesc(7, true), BuildStaticParamDesc(8, true)
-};
+
+uint8_t ResolveLocaleIndex(const char* bcp47) noexcept {
+    if (!bcp47 || bcp47[0] == '\0') return 0;
+    auto eq2 = [](const char* s, char a, char b) noexcept {
+        auto low = [](char c) noexcept { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c + 32) : c; };
+        return low(s[0]) == a && low(s[1]) == b;
+    };
+    if (eq2(bcp47, 'z', 'h')) {
+        if (_stricmp(bcp47, "zh-TW") == 0 || _stricmp(bcp47, "zh_TW") == 0 ||
+            _stricmp(bcp47, "zh-HK") == 0 || _stricmp(bcp47, "zh_HK") == 0 ||
+            _stricmp(bcp47, "zh-Hant") == 0) {
+            return 2;
+        }
+        return 1;
+    }
+    if (eq2(bcp47, 'j', 'a')) return 3;
+    if (eq2(bcp47, 'r', 'u')) return 4;
+    if (eq2(bcp47, 'd', 'e')) return 5;
+    if (eq2(bcp47, 'e', 's')) return 6;
+    if (eq2(bcp47, 'f', 'r')) return 7;
+    return 0;
+}
 
 int32_t QvxSetLanguage(const char* bcp47) noexcept {
     if (!bcp47) return QVX_E_INVALIDARG;
-    const bool zh = (bcp47[0] == 'z' || bcp47[0] == 'Z') &&
-                    (bcp47[1] == 'h' || bcp47[1] == 'H');
-    g_isZhCn.store(zh, std::memory_order_relaxed);
+    g_localeIdx.store(ResolveLocaleIndex(bcp47), std::memory_order_relaxed);
     return QVX_OK;
 }
 
@@ -1374,7 +1494,8 @@ uint32_t QvxGetParamCount() noexcept {
 
 const QVX_ParamDesc* QvxGetParamDesc(uint32_t index) noexcept {
     if (index >= _countof(kParamIds)) return nullptr;
-    return g_isZhCn.load(std::memory_order_relaxed) ? &kParamDescsZh[index] : &kParamDescsEn[index];
+    const uint8_t loc = g_localeIdx.load(std::memory_order_relaxed);
+    return &kParamDescs[(loc < 8u) ? loc : 0u][index];
 }
 
 int32_t QvxSetParamNumber(const char* paramId, float value) noexcept {
@@ -1750,7 +1871,7 @@ const void* QvxGetInterface(uint32_t interfaceId, uint32_t interfaceVersion) noe
 }
 
 #ifndef QVX_PLUGIN_VERSION_STR
-#define QVX_PLUGIN_VERSION_STR "0.3.0"
+#error "QVX_PLUGIN_VERSION_STR must be injected from manifest.json by CMake"
 #endif
 
 constexpr QVX_PluginHeader g_pluginHeader = {

@@ -1,20 +1,44 @@
 {
   "schema_version": 3,
   "id": "com.quickview.shell.thumb",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "abi_version": "3.0.0",
   "author": "QuickView Core Team",
   "interfaces": ["shell_ext"],
   "entry": "qv_shell_thumb.qvx",
   "arch": "x64",
   "i18n": {
-    "en": {
+    "en-US": {
       "name": "Windows Explorer Thumbnail Provider",
       "desc": "Provides high-speed Explorer thumbnails for JXL, AVIF, SVG, PSD, EXR, RAW, and comic archives via pooled QuickView workers."
     },
     "zh-CN": {
       "name": "系统缩略图扩展插件",
       "desc": "通过池化后台解码进程为资源管理器提供 JXL、AVIF、SVG、PSD、EXR、相机 RAW 与漫画包缩略图。"
+    },
+    "zh-TW": {
+      "name": "系統縮圖擴充外掛",
+      "desc": "透過背景解碼工作進程為檔案總管提供 JXL、AVIF、SVG、PSD、EXR、相機 RAW 與漫畫壓縮檔縮圖。"
+    },
+    "ja-JP": {
+      "name": "Windows エクスプローラー サムネイル拡張",
+      "desc": "プール化されたバックグラウンドワーカーで JXL、AVIF、SVG、PSD、EXR、RAW、コミックアーカイブの高速サムネイルを提供します。"
+    },
+    "ru-RU": {
+      "name": "Поставщик эскизов Проводника Windows",
+      "desc": "Быстрое создание эскизов JXL, AVIF, SVG, PSD, EXR, RAW и архивов комиксов в Проводнике через пул фоновых процессов QuickView."
+    },
+    "de-DE": {
+      "name": "Windows-Explorer-Miniaturansicht",
+      "desc": "Schnelle Explorer-Vorschaubilder für JXL, AVIF, SVG, PSD, EXR, Kamera-RAW und Comic-Archive über gepoolte QuickView-Worker."
+    },
+    "es-ES": {
+      "name": "Proveedor de miniaturas del Explorador",
+      "desc": "Genera miniaturas ultrarrápidas en el Explorador para JXL, AVIF, SVG, PSD, EXR, RAW y archivos de cómic mediante procesos de QuickView."
+    },
+    "fr-FR": {
+      "name": "Fournisseur de miniatures de l'Explorateur",
+      "desc": "Fournit des miniatures rapides dans l'Explorateur pour JXL, AVIF, SVG, PSD, EXR, RAW et archives BD via les processus QuickView."
     }
   }
 }

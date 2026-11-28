@@ -86,7 +86,7 @@ jobs:
           $zipName = "QuickView_${tag}_${archUpper}.zip"
           Compress-Archive -Path $exePath -DestinationPath "Release/dist/$zipName" -Force
 
-          # Package standalone QVX plugin artifact (sr_ncnn_vulkan + models)
+          # Package standalone QVX plugin artifacts
           $pluginDir = "${{ github.workspace }}/out/build/${{ matrix.preset }}/plugins/sr/sr_ncnn_vulkan"
           Write-Host "[CI-Package] Checking plugin directory: $pluginDir"
           if (Test-Path "$pluginDir/sr_ncnn_vulkan.qvx") {
@@ -95,6 +95,25 @@ jobs:
               Compress-Archive -Path "$pluginDir/*" -DestinationPath $pluginZip -Force
           } else {
               Write-Warning "[CI-Package] Warning: sr_ncnn_vulkan.qvx not found at $pluginDir!"
+          }
+
+          $thumbDir = "${{ github.workspace }}/out/build/${{ matrix.preset }}/plugins/shell/qv_shell_thumb"
+          if (Test-Path "$thumbDir/qv_shell_thumb.qvx") {
+              $thumbZip = "Release/dist/qv_shell_thumb_${archUpper}.zip"
+              Write-Host "[CI-Package] Packaging plugin $thumbDir -> $thumbZip"
+              Compress-Archive -Path "$thumbDir/*" -DestinationPath $thumbZip -Force
+          } else {
+              Write-Warning "[CI-Package] Warning: qv_shell_thumb.qvx not found at $thumbDir!"
+          }
+
+          $ocrDir = "${{ github.workspace }}/out/build/${{ matrix.preset }}/plugins/ocr/ocr_ppocr_ncnn"
+          if (Test-Path "$ocrDir/ocr_ppocr_ncnn.qvx") {
+              $ocrZip = "Release/dist/ocr_ppocr_ncnn_${archUpper}.zip"
+              Write-Host "[CI-Package] Packaging plugin $ocrDir -> $ocrZip (excluding models)"
+              $ocrFiles = Get-ChildItem -Path $ocrDir | Where-Object { $_.Name -ne "models" } | ForEach-Object { $_.FullName }
+              Compress-Archive -Path $ocrFiles -DestinationPath $ocrZip -Force
+          } else {
+              Write-Warning "[CI-Package] Warning: ocr_ppocr_ncnn.qvx not found at $ocrDir!"
           }
 
           Write-Host "[CI-Package] Staging contents in Release/dist:"

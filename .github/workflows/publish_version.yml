@@ -3,6 +3,7 @@ name: Update Version JSON
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -14,15 +15,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Generate version.json with Changelog
+      - name: Package Models & Plugins + Generate version.json
         env:
           TAG_NAME: ${{ github.event.release.tag_name }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_BODY: ${{ github.event.release.body }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
-          VERSION=${TAG_NAME#v}
-          DATE=$(date +'%Y-%m-%d')
-          
           mkdir -p public/models
           mkdir -p public/plugins
           if [ -f "docs/privacy.html" ]; then
@@ -47,6 +46,35 @@ jobs:
               fi
             done
           fi
+
+          # Package independent PP-OCRv5 NCNN models to public/models/*.zip for CDN download
+          OCR_MODELS_DIR="plugins/ocr/ocr_ppocr_ncnn/models"
+          if [ -d "$OCR_MODELS_DIR" ]; then
+            echo "Packaging PP-OCRv5 models for GitHub Pages CDN..."
+            if [ -f "${OCR_MODELS_DIR}/ppocrv5_mobile_det.param" ] && [ -f "${OCR_MODELS_DIR}/ppocrv5_mobile_det.bin" ]; then
+              zip -j -9 "public/models/ppocrv5_mobile_det.zip" \
+                "${OCR_MODELS_DIR}/ppocrv5_mobile_det.param" \
+                "${OCR_MODELS_DIR}/ppocrv5_mobile_det.bin"
+              echo "Created public/models/ppocrv5_mobile_det.zip"
+            fi
+            for pack_stem in cjk latin eslav korean; do
+              p_f="${OCR_MODELS_DIR}/ppocrv5_mobile_${pack_stem}_rec.param"
+              b_f="${OCR_MODELS_DIR}/ppocrv5_mobile_${pack_stem}_rec.bin"
+              d_f="${OCR_MODELS_DIR}/ppocrv5_${pack_stem}.dict.txt"
+              if [ -f "$p_f" ] && [ -f "$b_f" ] && [ -f "$d_f" ]; then
+                zip -j -9 "public/models/ppocrv5_mobile_${pack_stem}.zip" "$p_f" "$b_f" "$d_f"
+                echo "Created public/models/ppocrv5_mobile_${pack_stem}.zip"
+              fi
+            done
+          fi
+
+          if [ "$EVENT_NAME" != "release" ] || [ -z "$TAG_NAME" ]; then
+            echo "Workflow triggered manually without release tag; skipping version.json / plugin zip sync."
+            exit 0
+          fi
+
+          VERSION=${TAG_NAME#v}
+          DATE=$(date +'%Y-%m-%d')
           
           # 1. Get all assets in JSON
           ASSETS=$(gh release view "$TAG_NAME" --json assets -q '.assets')
@@ -81,12 +109,14 @@ jobs:
           fi
           
           # Sync plugin zip packages from Release to public/plugins/
-          for p_arch in "AMD64" "ARM64"; do
-            P_NAME=$(echo "$ASSETS" | jq -r --arg a "$p_arch" 'map(select(.name | ascii_downcase | (contains("sr_ncnn_vulkan") and contains($a | ascii_downcase) and test("\\.zip$")))) | .[0].name // ""')
-            if [ -n "$P_NAME" ] && [ "$P_NAME" != "null" ]; then
-              echo "Syncing plugin package $P_NAME to public/plugins/..."
-              gh release download "$TAG_NAME" -p "$P_NAME" -O "public/plugins/${P_NAME}" || true
-            fi
+          for p_prefix in "sr_ncnn_vulkan" "qv_shell_thumb" "ocr_ppocr_ncnn"; do
+            for p_arch in "AMD64" "ARM64"; do
+              P_NAME=$(echo "$ASSETS" | jq -r --arg pre "$p_prefix" --arg a "$p_arch" 'map(select(.name | ascii_downcase | (contains($pre) and contains($a | ascii_downcase) and test("\\.zip$")))) | .[0].name // ""')
+              if [ -n "$P_NAME" ] && [ "$P_NAME" != "null" ]; then
+                echo "Syncing plugin package $P_NAME to public/plugins/..."
+                gh release download "$TAG_NAME" -p "$P_NAME" -O "public/plugins/${P_NAME}" || true
+              fi
+            done
           done
           
           # Fallback URL for legacy clients (pointing to X64)
@@ -146,4 +176,4 @@ jobs:
           force_orphan: false 
           keep_files: true
           publish_branch: gh-pages
-          commit_message: "Auto-update version.json to ${{ github.event.release.tag_name }}"
+          commit_message: "Auto-update GitHub Pages assets/version (${{ github.event.release.tag_name || github.sha }})"

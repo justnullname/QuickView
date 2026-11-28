@@ -10622,6 +10622,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCm
 
     AppStrings::Init();
     AppStrings::SetLanguage((AppStrings::Language)g_config.Language);
+    if (AppStrings::g.CurrentLocale) {
+        QuickView::PluginHost::Instance().SetLanguage(QuickView::WideToUtf8(AppStrings::g.CurrentLocale));
+    }
 
     // [RAW+JPEG Pairing] Capture-time fallback reader (LibRaw for RAW, WIC
     // for HEIF etc.; lives in ImageLoader.cpp -- FileNavigator itself must

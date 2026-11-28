@@ -2234,12 +2234,17 @@ void SettingsOverlay::BuildGeneralTab(SettingsTab& tabGeneral) {
         L"Japanese", 
         L"Russian", 
         L"German", 
-        L"Spanish" 
+        L"Spanish",
+        L"French"
     }; AssignOptions(itemLang, opts); }
     itemLang.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         AppStrings::SetLanguage((AppStrings::Language)g_config.Language);
+        if (AppStrings::g.CurrentLocale) {
+            QuickView::PluginHost::Instance().SetLanguage(QuickView::WideToUtf8(AppStrings::g.CurrentLocale));
+        }
         // Force resource recreation to apply new font size
         overlay->m_brushBg.Reset();
+        overlay->m_pluginsProbeValid = false;
         
         // Defer rebuild to avoid destroying the active item while executing its callback (Use-After-Free fix)
         overlay->m_pendingRebuild = true;
@@ -3971,6 +3976,7 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
     static std::deque<ParamUiBinding> s_paramBindings;
     static std::deque<ActionBinding> s_actionBindings;
     static bool s_probeInitialized = false;
+    static std::string s_lastProbedLang;
 
     auto getOrCreateCardCache = [&](const std::string& id, bool defaultExpanded) -> PluginCardCache& {
         for (auto& c : s_cardCaches) {
@@ -3980,8 +3986,10 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
         return s_cardCaches.back();
     };
 
+    const std::string curLang = pluginHost.GetLanguage();
+    const bool langChanged = (curLang != s_lastProbedLang);
     const bool dlActive = anyDownloadActive();
-    const bool shouldProbe = !s_probeInitialized || (m_activeTab == m_pluginsTabIdx && !m_pluginsProbeValid && !dlActive);
+    const bool shouldProbe = !s_probeInitialized || langChanged || (m_activeTab == m_pluginsTabIdx && !m_pluginsProbeValid && !dlActive);
     if (shouldProbe) {
         pluginHost.RefreshRegistry();
         s_installedRecords = pluginHost.GetInstalledPlugins();
@@ -3991,6 +3999,7 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
             cc.shellRegProbed = false;
         }
         s_probeInitialized = true;
+        s_lastProbedLang = curLang;
         m_pluginsProbeValid = true;
     }
 
@@ -4198,7 +4207,6 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
         tabPlugins.items.push_back(std::move(itemSegment));
     }
 
-    const std::string curLang = pluginHost.GetLanguage();
     const auto remoteManifest = pluginHost.GetCachedRemoteManifest();
 
     if (s_pluginViewMode == 0) {
@@ -5344,7 +5352,11 @@ void SettingsOverlay::BuildAdvancedTab(SettingsTab& tabAdvanced) {
     itemConfigIO.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         if (QuickView::UI::ConfigIO::ImportConfig(overlay->m_hwnd)) {
             AppStrings::SetLanguage((AppStrings::Language)g_config.Language);
+            if (AppStrings::g.CurrentLocale) {
+                QuickView::PluginHost::Instance().SetLanguage(QuickView::WideToUtf8(AppStrings::g.CurrentLocale));
+            }
             overlay->m_brushBg.Reset();
+            overlay->m_pluginsProbeValid = false;
             g_runtime.SyncFrom(g_config);
             ApplyWindowTheme(overlay->m_hwnd);
             SetWindowPos(overlay->m_hwnd, g_config.AlwaysOnTop ? HWND_TOPMOST : HWND_NOTOPMOST,
@@ -6515,7 +6527,35 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                     QuickView::UI::GeekIconRenderer::DrawVectorIcon(
                         pRT, *(isExpanded ? Icons::ComboUp : Icons::Chevron), arrowIconRect, isExpanded ? m_brushAccent.Get() : m_brushTextDim.Get());
 
-                    // 3. Right Toggle Switch
+                    // 3. Right Toggle Switch & Disabled Hint Layout (Strictly left of controlsLeftEdge)
+                    const float titleLeft = contentX + 30.0f * s;
+                    const bool showDisabledHint = hasToggle && item.isDisabled && !item.disabledText.empty();
+                    float disabledLeft = controlsLeftEdge;
+                    if (showDisabledHint) {
+                        const float disabledRight = controlsLeftEdge - 10.0f * s;
+                        const float maxHintW = (std::max)(40.0f * s, (disabledRight - titleLeft) * 0.48f);
+                        float measuredHintW = (std::min)(140.0f * s, maxHintW);
+                        if (m_dwriteFactory && m_textFormatItem) {
+                            ComPtr<IDWriteTextLayout> hintLayout;
+                            if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(
+                                    item.disabledText.c_str(), (UINT32)item.disabledText.length(), m_textFormatItem.Get(),
+                                    maxHintW, headerH, &hintLayout)) && hintLayout) {
+                                DWRITE_TEXT_METRICS hm{};
+                                if (SUCCEEDED(hintLayout->GetMetrics(&hm))) {
+                                    measuredHintW = (std::min)(maxHintW, ceilf(hm.widthIncludingTrailingWhitespace));
+                                }
+                            }
+                        }
+                        disabledLeft = (std::max)(titleLeft + 80.0f * s, disabledRight - measuredHintW - 6.0f * s);
+                        if (disabledRight > disabledLeft + 8.0f * s) {
+                            D2D1_RECT_F textRect = D2D1::RectF(disabledLeft, contentY, disabledRight, contentY + headerH);
+                            m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+                            m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                            pRT->DrawText(item.disabledText.c_str(), (UINT32)item.disabledText.length(), m_textFormatItem.Get(), textRect, m_brushTextDim.Get());
+                            m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                        }
+                    }
+
                     if (hasToggle) {
                         if (item.isDisabled) {
                             ComPtr<ID2D1SolidColorBrush> brushDisabledBg;
@@ -6530,22 +6570,14 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                             if (brushDisabledKnob) {
                                 pRT->FillEllipse(knob, brushDisabledKnob.Get());
                             }
-
-                            if (!item.disabledText.empty()) {
-                                D2D1_RECT_F textRect = D2D1::RectF(contentX + 140.0f * s, contentY, toggleX - 12.0f * s, contentY + headerH);
-                                m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
-                                m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                                pRT->DrawText(item.disabledText.c_str(), (UINT32)item.disabledText.length(), m_textFormatItem.Get(), textRect, m_brushTextDim.Get());
-                                m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-                            }
                         } else {
                             DrawToggle(pRT, toggleRect, isEnabled, item.isHovered2);
                         }
                     }
 
                     // 4. Card Title Text (Item Font Size, Bold)
-                    float titleLeft = contentX + 30.0f * s;
-                    float titleRight = controlsLeftEdge - ((item.isDisabled && !item.disabledText.empty()) ? 180.0f * s : 12.0f * s);
+                    float titleRight = showDisabledHint ? (disabledLeft - 8.0f * s) : (controlsLeftEdge - 12.0f * s);
+                    titleRight = (std::max)(titleLeft + 24.0f * s, titleRight);
                     D2D1_RECT_F titleRect = D2D1::RectF(titleLeft, contentY, titleRight, contentY + headerH);
                     m_textFormatItemBold->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
                     m_textFormatItemBold->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);

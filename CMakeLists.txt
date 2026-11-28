@@ -458,7 +458,7 @@ if(EXISTS "${NCNN_DIR}/include/ncnn")
     file(READ "${_qv_sr_manifest}" _qv_sr_manifest_json)
     string(JSON _qv_sr_version ERROR_VARIABLE _qv_sr_ver_err GET "${_qv_sr_manifest_json}" "version")
     if(NOT _qv_sr_version OR _qv_sr_ver_err)
-        set(_qv_sr_version "0.3.0")
+        message(FATAL_ERROR "Failed to read single-source version from ${_qv_sr_manifest}: ${_qv_sr_ver_err}")
     endif()
     add_library(sr_ncnn_vulkan SHARED plugins/sr/sr_ncnn_vulkan/sr_ncnn_vulkan_engine.cpp)
     set_target_properties(sr_ncnn_vulkan PROPERTIES
@@ -505,6 +505,55 @@ if(EXISTS "${NCNN_DIR}/include/ncnn")
     )
 
     add_dependencies(QuickView sr_ncnn_vulkan)
+
+    # OCR Analyzer Plugin (PP-OCRv5 NCNN Vulkan)
+    set(_qv_ocr_manifest "${CMAKE_CURRENT_SOURCE_DIR}/plugins/ocr/ocr_ppocr_ncnn/manifest.json")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_qv_ocr_manifest}")
+    file(READ "${_qv_ocr_manifest}" _qv_ocr_manifest_json)
+    string(JSON _qv_ocr_version ERROR_VARIABLE _qv_ocr_ver_err GET "${_qv_ocr_manifest_json}" "version")
+    if(NOT _qv_ocr_version OR _qv_ocr_ver_err)
+        message(FATAL_ERROR "Failed to read single-source version from ${_qv_ocr_manifest}: ${_qv_ocr_ver_err}")
+    endif()
+    add_library(ocr_ppocr_ncnn SHARED plugins/ocr/ocr_ppocr_ncnn/ocr_ppocr_ncnn_engine.cpp)
+    set_target_properties(ocr_ppocr_ncnn PROPERTIES
+        SUFFIX ".qvx"
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins/ocr/ocr_ppocr_ncnn"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/plugins/ocr/ocr_ppocr_ncnn"
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/plugins/ocr/ocr_ppocr_ncnn"
+    )
+    target_compile_definitions(ocr_ppocr_ncnn PRIVATE UNICODE _UNICODE QVX_BUILDING_PLUGIN QVX_PLUGIN_VERSION_STR="${_qv_ocr_version}")
+    if(MSVC OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        target_compile_options(ocr_ppocr_ncnn PRIVATE /utf-8 /GS)
+        target_link_options(ocr_ppocr_ncnn PRIVATE /DYNAMICBASE /NXCOMPAT)
+    endif()
+    target_include_directories(ocr_ppocr_ncnn PRIVATE
+        QuickView
+        plugins/ocr/ocr_ppocr_ncnn
+        "${NCNN_DIR}/include"
+        "${NCNN_DIR}/include/ncnn"
+    )
+    target_link_libraries(ocr_ppocr_ncnn PRIVATE
+        shlwapi.lib
+        "${NCNN_DIR}/lib/ncnn.lib"
+        "${NCNN_DIR}/lib/glslang.lib"
+    )
+    add_custom_command(TARGET ocr_ppocr_ncnn POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/plugins/ocr/ocr_ppocr_ncnn/models"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/plugins/ocr/ocr_ppocr_ncnn/README.md"
+            "${CMAKE_BINARY_DIR}/plugins/ocr/ocr_ppocr_ncnn/README.md"
+        COMMAND ${CMAKE_COMMAND}
+            -DIN=${CMAKE_CURRENT_SOURCE_DIR}/plugins/ocr/ocr_ppocr_ncnn/manifest.json
+            -DOUT=${CMAKE_BINARY_DIR}/plugins/ocr/ocr_ppocr_ncnn/manifest.json
+            -DARCH=${NCNN_ARCH}
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/StagePluginManifest.cmake"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/plugins/plugins_manifest.json"
+            "${CMAKE_BINARY_DIR}/plugins/plugins_manifest.json"
+        COMMENT "Deploying isolated ocr_ppocr_ncnn plugin assets, README, & manifest..."
+    )
+    add_dependencies(QuickView ocr_ppocr_ncnn)
 endif()
 
 # ============================================================================
@@ -515,7 +564,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_qv_shell_mani
 file(READ "${_qv_shell_manifest}" _qv_shell_manifest_json)
 string(JSON _qv_shell_version ERROR_VARIABLE _qv_shell_ver_err GET "${_qv_shell_manifest_json}" "version")
 if(NOT _qv_shell_version OR _qv_shell_ver_err)
-    set(_qv_shell_version "0.3.0")
+    message(FATAL_ERROR "Failed to read single-source version from ${_qv_shell_manifest}: ${_qv_shell_ver_err}")
 endif()
 add_library(qv_shell_thumb SHARED
     plugins/shell/qv_shell_thumb/qv_shell_thumb.cpp
@@ -648,6 +697,9 @@ add_executable(QuickViewTests
 if(TARGET sr_ncnn_vulkan)
     add_dependencies(QuickViewTests sr_ncnn_vulkan)
 endif()
+if(TARGET ocr_ppocr_ncnn)
+    add_dependencies(QuickViewTests ocr_ppocr_ncnn)
+endif()
 if(TARGET qv_shell_thumb)
     add_dependencies(QuickViewTests qv_shell_thumb)
 endif()
@@ -683,7 +735,7 @@ target_link_libraries(QuickViewTests PRIVATE
     lcms2::lcms2
     hwy::hwy
 )
-target_include_directories(QuickViewTests PRIVATE QuickView third_party/yyjson third_party/unrar-mini)
+target_include_directories(QuickViewTests PRIVATE QuickView plugins/ocr/ocr_ppocr_ncnn third_party/yyjson third_party/unrar-mini)
 target_compile_definitions(QuickViewTests PRIVATE UNICODE _UNICODE)
 add_test(NAME QuickViewTests COMMAND QuickViewTests)
 

@@ -2,7 +2,7 @@
   "schema_version": 3,
   "abi_version": "3.0.0",
   "id": "com.quickview.sr.ncnn_vulkan",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "author": "QuickView Core Team",
   "entry": "sr_ncnn_vulkan.qvx",
   "arch": "x64",
@@ -23,6 +23,22 @@
     "ja-JP": {
       "name": "Real-ESRGAN NCNN Vulkan 超解像エンジン",
       "desc": "Vulkan Compute ベースの高速インプロセス超解像ニューラルエンジン。"
+    },
+    "ru-RU": {
+      "name": "Real-ESRGAN NCNN Vulkan (Суперразрешение)",
+      "desc": "Высокопроизводительный встроенный нейросетевой движок увеличения разрешения на Vulkan Compute."
+    },
+    "de-DE": {
+      "name": "Real-ESRGAN NCNN Vulkan (Super-Resolution)",
+      "desc": "Leistungsstarke In-Process-KI-Superauflösung auf Basis von Vulkan Compute."
+    },
+    "es-ES": {
+      "name": "Real-ESRGAN NCNN Vulkan (Superresolución)",
+      "desc": "Motor neuronal de superresolución de alto rendimiento en proceso con Vulkan Compute."
+    },
+    "fr-FR": {
+      "name": "Real-ESRGAN NCNN Vulkan (Super-résolution)",
+      "desc": "Moteur neuronal de super-résolution haute performance intégré basé sur Vulkan Compute."
     }
   },
   "interfaces": ["image_processor"],

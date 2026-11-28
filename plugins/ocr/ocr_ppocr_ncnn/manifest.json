@@ -1,0 +1,49 @@
+{
+  "schema_version": 3,
+  "abi_version": "3.0.0",
+  "id": "com.quickview.ocr.ppocr_ncnn",
+  "version": "0.2.0",
+  "author": "QuickView Core Team",
+  "entry": "ocr_ppocr_ncnn.qvx",
+  "arch": "x64",
+  "sandbox_pref": "in_process",
+  "i18n": {
+    "en-US": {
+      "name": "PP-OCRv5 NCNN Vulkan",
+      "desc": "High-accuracy multilingual offline OCR analyzer powered by NCNN & Vulkan (supports curated presets & custom user models)."
+    },
+    "zh-CN": {
+      "name": "PP-OCRv5 NCNN Vulkan 文字识别",
+      "desc": "基于 NCNN 与 Vulkan 的高精度离线多语种 OCR 插件（支持热门语言一键预设与自定义兼容模型直放）。"
+    },
+    "zh-TW": {
+      "name": "PP-OCRv5 NCNN Vulkan 文字辨識",
+      "desc": "基於 NCNN 與 Vulkan 的高精度離線多語系 OCR 外掛（支援熱門語言一鍵預設與自訂相容模型）。"
+    },
+    "ja-JP": {
+      "name": "PP-OCRv5 NCNN Vulkan OCR",
+      "desc": "NCNN + Vulkan による高精度・オフライン多言語 OCR プラグイン（プリセット取得・カスタムモデル対応）。"
+    },
+    "ru-RU": {
+      "name": "PP-OCRv5 NCNN Vulkan OCR",
+      "desc": "Высокоточный офлайн-анализатор текста на NCNN + Vulkan с поддержкой кириллицы, CJK и пользовательских моделей."
+    },
+    "de-DE": {
+      "name": "PP-OCRv5 NCNN Vulkan OCR",
+      "desc": "Hochpräziser Offline-OCR-Analysator mit NCNN & Vulkan (Kuratiert & benutzerdefinierte Modelle)."
+    },
+    "es-ES": {
+      "name": "PP-OCRv5 NCNN Vulkan OCR",
+      "desc": "Analizador OCR offline de alta precisión con NCNN y Vulkan (modelos preestablecidos y personalizados)."
+    },
+    "fr-FR": {
+      "name": "PP-OCRv5 NCNN Vulkan OCR",
+      "desc": "Analyseur OCR hors ligne haute précision avec NCNN et Vulkan (préréglages et modèles personnalisés)."
+    }
+  },
+  "interfaces": ["analyzer"],
+  "analyzer": {
+    "kind": "ocr",
+    "caps": ["ocr", "multi_lang", "gpu"]
+  }
+}

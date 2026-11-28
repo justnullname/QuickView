@@ -457,6 +457,24 @@ void PluginHost::RefreshRegistry(const std::wstring& customRoot) {
     m_customRegistryRoot = customRoot;
     m_registry.Scan(m_customRegistryRoot);
     m_registryScanned = true;
+    for (auto& lp : m_loadedPlugins) {
+        if (!lp || lp->retired) continue;
+        if (const PluginRecord* rec = m_registry.FindById(lp->pluginId)) {
+            if (lp->serviceCtx) {
+                const std::string newPluginDir = NormalizeUtf8Path(rec->pluginDir);
+                const std::string newDataDir = NormalizeUtf8Path(GetWritablePluginDataDirectory(rec->id));
+                if (lp->serviceCtx->pluginDirUtf8 != newPluginDir ||
+                    lp->serviceCtx->dataDirUtf8 != newDataDir) {
+                    ReleasePluginContextLocked(*lp);
+                    lp->serviceCtx->pluginDirUtf8 = newPluginDir;
+                    lp->serviceCtx->dataDirUtf8 = newDataDir;
+                }
+            }
+            if (lp->header && lp->header->notify_assets_changed) {
+                lp->header->notify_assets_changed();
+            }
+        }
+    }
 }
 
 std::vector<PluginRecord> PluginHost::GetInstalledPlugins() const {
