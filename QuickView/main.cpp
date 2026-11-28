@@ -10415,6 +10415,13 @@ static QV_MAIN_OCR_COLD void TriggerOcrOnPrimaryPane(HWND hwnd, bool silentAuto)
     }
 }
 
+void RefreshOcrIfActive(HWND hwnd) {
+    if (!hwnd || !IsWindow(hwnd)) return;
+    if (QuickView::UI::OcrOverlay::Instance().IsActive()) {
+        TriggerOcrOnPrimaryPane(hwnd, false);
+    }
+}
+
 static QV_MAIN_OCR_COLD void HandleOcrDoneMessage(HWND hwnd, WPARAM wParam) {
     KillTimer(hwnd, TIMER_ID_OCR_SCAN);
     QuickView::Ocr::OcrResultPackage pkg;

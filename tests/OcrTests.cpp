@@ -510,8 +510,12 @@ TEST(OcrTests, PpOcrCtcDecodeSmartSpacingAndBothLayouts) {
     ASSERT_EQ(resTC.tokens.size(), 4u); // "你", "好", "Quick", "!"
     EXPECT_EQ(resTC.tokens[2].utf8, "Quick");
     EXPECT_GT(resTC.tokens[2].confidence, 0.95f);
-    EXPECT_GE(resTC.tokens[0].x0Norm, 0.1f);
-    EXPECT_LE(resTC.tokens[3].x1Norm, 0.9001f);
+    EXPECT_FLOAT_EQ(resTC.tokens[0].x0Norm, 0.1f);
+    EXPECT_FLOAT_EQ(resTC.tokens[3].x1Norm, 0.9f);
+    for (size_t i = 0; i + 1 < resTC.tokens.size(); ++i) {
+        EXPECT_FLOAT_EQ(resTC.tokens[i].x1Norm, resTC.tokens[i + 1].x0Norm);
+        EXPECT_LT(resTC.tokens[i].x0Norm, resTC.tokens[i].x1Norm);
+    }
 
     // 2. ClassMajor [C=numClasses, T=steps] -> dimW=steps, dimH=numClasses
     std::vector<float> logitsCT(static_cast<size_t>(numClasses) * steps, -5.0f);
@@ -550,8 +554,15 @@ TEST(OcrTests, PpOcrNcnnPluginDiscoveryParamsAndMissingAssetFallback) {
     const auto presetsInitial = host.GetPluginPresets(pid);
     ASSERT_EQ(presetsInitial.size(), 4u);
     EXPECT_EQ(presetsInitial[0].presetId, "ppocrv5_cjk_en");
-    EXPECT_FALSE(presetsInitial[0].isInstalled);
     EXPECT_FALSE(presetsInitial[0].assetDownloadUrl.empty());
+
+    std::string missingPresetId;
+    for (const auto& p : presetsInitial) {
+        if (!p.isInstalled) {
+            missingPresetId = p.presetId;
+            break;
+        }
+    }
 
     const auto params = host.GetPluginParams(pid);
     ASSERT_EQ(params.size(), 5u);
@@ -580,19 +591,21 @@ TEST(OcrTests, PpOcrNcnnPluginDiscoveryParamsAndMissingAssetFallback) {
     EXPECT_TRUE(foundFlat);
     EXPECT_TRUE(foundSub);
 
-    // Un-downloaded preset must cleanly return QVX_E_MISSING_ASSET
-    host.SetPluginEnabled(pid, true);
-    host.SetPluginActivePreset(pid, "ppocrv5_cjk_en");
-    std::vector<uint8_t> dummyPixels(64 * 64 * 4, 255);
-    QVX_AnalyzerInput rawInput{};
-    rawInput.struct_size = sizeof(QVX_AnalyzerInput);
-    rawInput.pixels = dummyPixels.data();
-    rawInput.width = 64;
-    rawInput.height = 64;
-    rawInput.stride = 64 * 4;
-    rawInput.format = QVX_PIXFMT_BGRA8888;
-    QuickView::Ocr::OcrDocument doc;
-    EXPECT_EQ(host.ExecuteOcrAnalyze(pid, rawInput, doc), QVX_E_MISSING_ASSET);
+    // Un-downloaded preset must cleanly return QVX_E_MISSING_ASSET (independent of models installed in host AppData)
+    if (!missingPresetId.empty()) {
+        host.SetPluginEnabled(pid, true);
+        host.SetPluginActivePreset(pid, missingPresetId);
+        std::vector<uint8_t> dummyPixels(64 * 64 * 4, 255);
+        QVX_AnalyzerInput rawInput{};
+        rawInput.struct_size = sizeof(QVX_AnalyzerInput);
+        rawInput.pixels = dummyPixels.data();
+        rawInput.width = 64;
+        rawInput.height = 64;
+        rawInput.stride = 64 * 4;
+        rawInput.format = QVX_PIXFMT_BGRA8888;
+        QuickView::Ocr::OcrDocument doc;
+        EXPECT_EQ(host.ExecuteOcrAnalyze(pid, rawInput, doc), QVX_E_MISSING_ASSET);
+    }
 
     // Clean up without calling host.Shutdown()
     host.SetPluginEnabled(pid, false);

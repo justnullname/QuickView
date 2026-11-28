@@ -3948,6 +3948,7 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
         std::string paramId;
         QVX_ParamType type = QVX_PARAM_TYPE_BOOL;
         bool isImageProcessor = false;
+        bool isAnalyzer = false;
         float floatDefault = 0.0f;
         int32_t intDefault = 0;
         float fVal = 0.0f;
@@ -4345,6 +4346,10 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
                                 extern HWND g_mainHwnd;
                                 extern void RefreshImageDisplay(HWND hwnd);
                                 if (IsWindow(g_mainHwnd)) RefreshImageDisplay(g_mainHwnd);
+                            } else if (isAnalyzer) {
+                                extern HWND g_mainHwnd;
+                                extern void RefreshOcrIfActive(HWND hwnd);
+                                if (IsWindow(g_mainHwnd)) RefreshOcrIfActive(g_mainHwnd);
                             }
                         }
                     }
@@ -4407,8 +4412,13 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
                                 SaveConfig();
                                 if (overlay) overlay->RequestRebuild();
                                 extern HWND g_mainHwnd;
-                                extern void RefreshImageDisplay(HWND hwnd);
-                                if (IsWindow(g_mainHwnd)) RefreshImageDisplay(g_mainHwnd);
+                                if (cb->isImageProcessor) {
+                                    extern void RefreshImageDisplay(HWND hwnd);
+                                    if (IsWindow(g_mainHwnd)) RefreshImageDisplay(g_mainHwnd);
+                                } else if (cb->isAnalyzer) {
+                                    extern void RefreshOcrIfActive(HWND hwnd);
+                                    if (IsWindow(g_mainHwnd)) RefreshOcrIfActive(g_mainHwnd);
+                                }
                             }
                         }
                     };
@@ -4624,6 +4634,7 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
                     pb.paramId = p.id;
                     pb.type = p.type;
                     pb.isImageProcessor = card.isImageProcessor;
+                    pb.isAnalyzer = card.isAnalyzer;
                     pb.floatDefault = p.floatDefault;
                     pb.intDefault = p.intDefault;
                     pb.label = Utf8ToWide(!p.label.empty() ? p.label : p.id);
@@ -4646,6 +4657,10 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
                                     extern HWND g_mainHwnd;
                                     extern void RefreshImageDisplay(HWND hwnd);
                                     if (IsWindow(g_mainHwnd)) RefreshImageDisplay(g_mainHwnd);
+                                } else if (b->isAnalyzer) {
+                                    extern HWND g_mainHwnd;
+                                    extern void RefreshOcrIfActive(HWND hwnd);
+                                    if (IsWindow(g_mainHwnd)) RefreshOcrIfActive(g_mainHwnd);
                                 }
                             }
                         };
@@ -4666,6 +4681,10 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
                                     extern HWND g_mainHwnd;
                                     extern void RefreshImageDisplay(HWND hwnd);
                                     if (IsWindow(g_mainHwnd)) RefreshImageDisplay(g_mainHwnd);
+                                } else if (b->isAnalyzer) {
+                                    extern HWND g_mainHwnd;
+                                    extern void RefreshOcrIfActive(HWND hwnd);
+                                    if (IsWindow(g_mainHwnd)) RefreshOcrIfActive(g_mainHwnd);
                                 }
                             }
                         };
@@ -4694,6 +4713,10 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
                                     extern HWND g_mainHwnd;
                                     extern void RefreshImageDisplay(HWND hwnd);
                                     if (IsWindow(g_mainHwnd)) RefreshImageDisplay(g_mainHwnd);
+                                } else if (b->isAnalyzer) {
+                                    extern HWND g_mainHwnd;
+                                    extern void RefreshOcrIfActive(HWND hwnd);
+                                    if (IsWindow(g_mainHwnd)) RefreshOcrIfActive(g_mainHwnd);
                                 }
                             }
                         };
@@ -4716,6 +4739,10 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
                                     extern HWND g_mainHwnd;
                                     extern void RefreshImageDisplay(HWND hwnd);
                                     if (IsWindow(g_mainHwnd)) RefreshImageDisplay(g_mainHwnd);
+                                } else if (b->isAnalyzer) {
+                                    extern HWND g_mainHwnd;
+                                    extern void RefreshOcrIfActive(HWND hwnd);
+                                    if (IsWindow(g_mainHwnd)) RefreshOcrIfActive(g_mainHwnd);
                                 }
                             }
                         };
@@ -4732,6 +4759,7 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
                                 const std::string paramId = b->paramId;
                                 const float numVal = *item->pBoolVal ? 1.0f : 0.0f;
                                 const bool isProc = b->isImageProcessor;
+                                const bool isAnalyzer = b->isAnalyzer;
                                 const bool triggersRegistry = (paramId.starts_with("grp_") || paramId == "respect_native_wic");
                                 if (triggersRegistry) {
                                     QuickView::RunDetached([overlay, pluginId, paramId, numVal, isProc]() {
@@ -4747,6 +4775,10 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
                                         extern HWND g_mainHwnd;
                                         extern void RefreshImageDisplay(HWND hwnd);
                                         if (IsWindow(g_mainHwnd)) RefreshImageDisplay(g_mainHwnd);
+                                    } else if (isAnalyzer) {
+                                        extern HWND g_mainHwnd;
+                                        extern void RefreshOcrIfActive(HWND hwnd);
+                                        if (IsWindow(g_mainHwnd)) RefreshOcrIfActive(g_mainHwnd);
                                     }
                                 }
                             }

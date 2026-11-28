@@ -37,7 +37,7 @@
     {
       "id": "com.quickview.ocr.ppocr_ncnn",
       "name": "PP-OCRv5 NCNN Vulkan",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "author": "QuickView Core Team",
       "category": "analyzer",
       "abi_version": "3.0.0",

@@ -52,7 +52,7 @@ std::atomic<bool> g_useGpu{ true };
 std::atomic<int> g_numThreads{ 4 };
 std::atomic<int> g_detLimitSide{ 960 };
 std::atomic<float> g_boxThresh{ 0.55f };
-std::atomic<float> g_unclipRatio{ 1.60f };
+std::atomic<float> g_unclipRatio{ 1.50f };
 std::atomic<size_t> g_localeIdx{ 0 }; // 0:en-US, 1:zh-CN, 2:zh-TW, 3:ja-JP, 4:ru-RU, 5:de-DE, 6:es-ES, 7:fr-FR
 
 std::wstring Utf8ToWideLocal(std::string_view utf8) {
@@ -618,7 +618,11 @@ struct LoadedOcrNets {
     ncnn::Net recNet;
     std::vector<std::string> dict;
     std::string packId;
+    std::wstring detKey;   // Loaded detector .param path (det is shared across language packs)
+    std::wstring recKey;   // Loaded recognizer .param path
+    std::wstring dictKey;  // Loaded dictionary path
     bool usingGpu = false;
+    bool gpuFallbackSticky = false; // Vulkan load failed once: stay on CPU instead of retrying every call
     int gpuIndex = -1;
     int threads = 4;
     bool loaded = false;
@@ -747,11 +751,11 @@ bool EnsureNetsLoaded(
     int gpuIdx = wantGpu ? GetOptimalVulkanGpuIndex() : -1;
     const bool useGpu = wantGpu && (gpuIdx >= 0);
 
-    if (impl.nets.loaded &&
-        impl.nets.packId == meta.packId &&
-        impl.nets.usingGpu == useGpu &&
-        impl.nets.gpuIndex == gpuIdx &&
-        impl.nets.threads == threads) {
+    // Fast path: same pack on the same device config (also covers a previous silent CPU fallback)
+    const bool sameDeviceCfg = impl.nets.loaded && impl.nets.threads == threads &&
+        ((impl.nets.usingGpu == useGpu && impl.nets.gpuIndex == gpuIdx) ||
+         (useGpu && !impl.nets.usingGpu && impl.nets.gpuFallbackSticky));
+    if (sameDeviceCfg && impl.nets.packId == meta.packId) {
         return true;
     }
 
@@ -764,35 +768,49 @@ bool EnsureNetsLoaded(
         return false;
     }
 
-    if (!LoadDictLines(dictPath, impl.nets.dict)) {
-        outErrCode = QVX_E_MISSING_ASSET;
+    if (!sameDeviceCfg || impl.nets.dictKey != dictPath) {
+        if (!LoadDictLines(dictPath, impl.nets.dict)) {
+            impl.nets.loaded = false;
+            outErrCode = QVX_E_MISSING_ASSET;
+            return false;
+        }
+        impl.nets.dictKey = dictPath;
+    }
+
+    // Switching only the language pack keeps the shared detector resident (no det reload / re-upload)
+    const bool needDet = !sameDeviceCfg || impl.nets.detKey != detParam;
+    const bool needRec = !sameDeviceCfg || impl.nets.recKey != recParam;
+
+    bool runGpu = sameDeviceCfg ? impl.nets.usingGpu : useGpu;
+    const int runGpuIdx = runGpu ? gpuIdx : -1;
+    if (runGpu) {
+        impl.EnsurePipelineCache(runGpuIdx);
+    }
+
+    bool ok = true;
+    if (needDet) ok = LoadSingleNcnnNet(impl.nets.detNet, detParam, detBin, runGpu, runGpuIdx, threads, impl.pipelineCache.get());
+    if (ok && needRec) ok = LoadSingleNcnnNet(impl.nets.recNet, recParam, recBin, runGpu, runGpuIdx, threads, impl.pipelineCache.get());
+
+    if (!ok && runGpu) {
+        // Silent CPU fallback if Vulkan load failed; both nets must live on the same device
+        runGpu = false;
+        ok = LoadSingleNcnnNet(impl.nets.detNet, detParam, detBin, false, -1, threads, nullptr) &&
+             LoadSingleNcnnNet(impl.nets.recNet, recParam, recBin, false, -1, threads, nullptr);
+        impl.nets.gpuFallbackSticky = ok;
+    }
+    if (!ok) {
+        impl.nets.loaded = false;
+        impl.nets.detKey.clear();
+        impl.nets.recKey.clear();
+        outErrCode = QVX_E_FAIL;
         return false;
     }
 
-    if (useGpu) {
-        impl.EnsurePipelineCache(gpuIdx);
-    }
-
-    if (!LoadSingleNcnnNet(impl.nets.detNet, detParam, detBin, useGpu, gpuIdx, threads, impl.pipelineCache.get()) ||
-        !LoadSingleNcnnNet(impl.nets.recNet, recParam, recBin, useGpu, gpuIdx, threads, impl.pipelineCache.get())) {
-        if (useGpu) {
-            // Silent CPU fallback if Vulkan load failed
-            if (!LoadSingleNcnnNet(impl.nets.detNet, detParam, detBin, false, -1, threads, nullptr) ||
-                !LoadSingleNcnnNet(impl.nets.recNet, recParam, recBin, false, -1, threads, nullptr)) {
-                outErrCode = QVX_E_FAIL;
-                return false;
-            }
-            impl.nets.usingGpu = false;
-            impl.nets.gpuIndex = -1;
-        } else {
-            outErrCode = QVX_E_FAIL;
-            return false;
-        }
-    } else {
-        impl.nets.usingGpu = useGpu;
-        impl.nets.gpuIndex = gpuIdx;
-    }
-
+    impl.nets.usingGpu = runGpu;
+    impl.nets.gpuIndex = runGpu ? runGpuIdx : -1;
+    if (runGpu) impl.nets.gpuFallbackSticky = false;
+    impl.nets.detKey = detParam;
+    impl.nets.recKey = recParam;
     impl.nets.packId = meta.packId;
     impl.nets.threads = threads;
     impl.nets.loaded = true;
@@ -818,56 +836,56 @@ const QVX_ParamDesc kParamTables[8][5] = {
         qvx::MakeIntSliderParam("num_threads", "CPU Threads", "Thread count for NCNN CPU fallback execution (1-16).", 1, 16, 4, 1, "%d"),
         qvx::MakeIntSliderParam("det_limit_side", "Detection Max Side", "Max long-side dimension per detection pass (multiple of 32). Higher helps tiny text.", 640, 1920, 960, 128, "%d px"),
         qvx::MakeSliderParam("box_thresh", "Detection Box Threshold", "Minimum mean probability required to keep a text box.", 0.30f, 0.85f, 0.55f, 0.05f),
-        qvx::MakeSliderParam("unclip_ratio", "Box Unclip Ratio", "DBNet box expansion ratio to avoid clipping character strokes.", 1.20f, 2.40f, 1.60f, 0.10f)
+        qvx::MakeSliderParam("unclip_ratio", "Box Unclip Ratio", "DBNet box expansion ratio to avoid clipping character strokes.", 1.20f, 2.40f, 1.50f, 0.10f)
     },
     { // 1: zh-CN
         qvx::MakeToggleParam("use_gpu", "启用 Vulkan GPU 加速", "使用 Vulkan 计算加速推理；无支持设备或失败时自动无缝回退至多线程 CPU。", true),
         qvx::MakeIntSliderParam("num_threads", "CPU 推理线程数", "CPU 回退模式或后处理使用的线程数（1~16）。", 1, 16, 4, 1, "%d"),
         qvx::MakeIntSliderParam("det_limit_side", "文本检测边长上限", "单次检测最长边限制（32 对齐）。更高数值可看清微小文字但耗时更长。", 640, 1920, 960, 128, "%d px"),
         qvx::MakeSliderParam("box_thresh", "文本框置信阈值", "过滤低置信度文本框；遇到漏字可适当调低。", 0.30f, 0.85f, 0.55f, 0.05f),
-        qvx::MakeSliderParam("unclip_ratio", "文本框外扩比例 (Unclip)", "DBNet 向外扩展笔画边距比例，防止字边缘被裁切。", 1.20f, 2.40f, 1.60f, 0.10f)
+        qvx::MakeSliderParam("unclip_ratio", "文本框外扩比例 (Unclip)", "DBNet 向外扩展笔画边距比例，防止字边缘被裁切。", 1.20f, 2.40f, 1.50f, 0.10f)
     },
     { // 2: zh-TW
         qvx::MakeToggleParam("use_gpu", "啟用 Vulkan GPU 加速", "使用 Vulkan 計算加速推論；無支援裝置時自動回退至多執行緒 CPU。", true),
         qvx::MakeIntSliderParam("num_threads", "CPU 推論執行緒數", "CPU 回退模式使用的執行緒數（1~16）。", 1, 16, 4, 1, "%d"),
         qvx::MakeIntSliderParam("det_limit_side", "文字偵測邊長上限", "單次偵測最長邊限制（32 對齊）。較高數值可辨識微小文字。", 640, 1920, 960, 128, "%d px"),
         qvx::MakeSliderParam("box_thresh", "文字框置信閾值", "過濾低置信度文字框；漏字時可適度調低。", 0.30f, 0.85f, 0.55f, 0.05f),
-        qvx::MakeSliderParam("unclip_ratio", "文字框外擴比例 (Unclip)", "DBNet 向外擴展邊距比例，避免筆畫邊緣被裁切。", 1.20f, 2.40f, 1.60f, 0.10f)
+        qvx::MakeSliderParam("unclip_ratio", "文字框外擴比例 (Unclip)", "DBNet 向外擴展邊距比例，避免筆畫邊緣被裁切。", 1.20f, 2.40f, 1.50f, 0.10f)
     },
     { // 3: ja-JP
         qvx::MakeToggleParam("use_gpu", "Vulkan GPU アクセラレーション", "Vulkan Compute で高速推論します（非対応環境では自動的に CPU へフォールバック）。", true),
         qvx::MakeIntSliderParam("num_threads", "CPU スレッド数", "CPU フォールバック時に使用するスレッド数（1~16）。", 1, 16, 4, 1, "%d"),
         qvx::MakeIntSliderParam("det_limit_side", "検出最大辺長", "検出時の長辺上限（32 境界）。大きいほど極小文字に強くなります。", 640, 1920, 960, 128, "%d px"),
         qvx::MakeSliderParam("box_thresh", "検出ボックス閾値", "低信頼度の文字領域を除外する閾値です。", 0.30f, 0.85f, 0.55f, 0.05f),
-        qvx::MakeSliderParam("unclip_ratio", "ボックス拡張率 (Unclip)", "文字枠の余白拡張比率（文字欠け防止）。", 1.20f, 2.40f, 1.60f, 0.10f)
+        qvx::MakeSliderParam("unclip_ratio", "ボックス拡張率 (Unclip)", "文字枠の余白拡張比率（文字欠け防止）。", 1.20f, 2.40f, 1.50f, 0.10f)
     },
     { // 4: ru-RU
         qvx::MakeToggleParam("use_gpu", "Ускорение Vulkan GPU", "Ускоряет вывод NCNN через Vulkan GPU с автопереключением на многопоточный CPU.", true),
         qvx::MakeIntSliderParam("num_threads", "Потоки CPU", "Число потоков при выполнении на CPU (1–16).", 1, 16, 4, 1, "%d"),
         qvx::MakeIntSliderParam("det_limit_side", "Макс. сторона детекции", "Ограничение длинной стороны (кратно 32). Выше — лучше распознаёт мелкий текст.", 640, 1920, 960, 128, "%d px"),
         qvx::MakeSliderParam("box_thresh", "Порог уверенности рамки", "Минимальная оценка для сохранения текстовой области.", 0.30f, 0.85f, 0.55f, 0.05f),
-        qvx::MakeSliderParam("unclip_ratio", "Расширение рамки (Unclip)", "Коэффициент расширения контура DBNet во избежание обрезки краёв букв.", 1.20f, 2.40f, 1.60f, 0.10f)
+        qvx::MakeSliderParam("unclip_ratio", "Расширение рамки (Unclip)", "Коэффициент расширения контура DBNet во избежание обрезки краёв букв.", 1.20f, 2.40f, 1.50f, 0.10f)
     },
     { // 5: de-DE
         qvx::MakeToggleParam("use_gpu", "Vulkan-GPU-Beschleunigung", "Beschleunigt die NCNN-Inferenz über Vulkan GPU mit automatischem CPU-Fallback.", true),
         qvx::MakeIntSliderParam("num_threads", "CPU-Threads", "Anzahl der Threads für den CPU-Fallback-Modus (1–16).", 1, 16, 4, 1, "%d"),
         qvx::MakeIntSliderParam("det_limit_side", "Max. Erkennungsseite", "Maximale Seitenlänge pro Durchgang (Vielfaches von 32). Hilft bei sehr kleiner Schrift.", 640, 1920, 960, 128, "%d px"),
         qvx::MakeSliderParam("box_thresh", "Box-Schwellenwert", "Mindestwahrscheinlichkeit zum Beibehalten eines erkannten Textfelds.", 0.30f, 0.85f, 0.55f, 0.05f),
-        qvx::MakeSliderParam("unclip_ratio", "Box-Erweiterung (Unclip)", "DBNet-Erweiterungsfaktor gegen abgeschnittene Zeichenränder.", 1.20f, 2.40f, 1.60f, 0.10f)
+        qvx::MakeSliderParam("unclip_ratio", "Box-Erweiterung (Unclip)", "DBNet-Erweiterungsfaktor gegen abgeschnittene Zeichenränder.", 1.20f, 2.40f, 1.50f, 0.10f)
     },
     { // 6: es-ES
         qvx::MakeToggleParam("use_gpu", "Aceleración GPU Vulkan", "Acelera la inferencia NCNN con Vulkan GPU y respaldo automático en CPU multihilo.", true),
         qvx::MakeIntSliderParam("num_threads", "Hilos de CPU", "Número de hilos para la ejecución alternativa en CPU (1–16).", 1, 16, 4, 1, "%d"),
         qvx::MakeIntSliderParam("det_limit_side", "Lado máx. de detección", "Dimensión máxima del lado largo (múltiplo de 32). Mayor valor ayuda con texto pequeño.", 640, 1920, 960, 128, "%d px"),
         qvx::MakeSliderParam("box_thresh", "Umbral de caja de texto", "Probabilidad media mínima para conservar una caja de texto.", 0.30f, 0.85f, 0.55f, 0.05f),
-        qvx::MakeSliderParam("unclip_ratio", "Expansión de caja (Unclip)", "Factor de expansión DBNet para evitar recortar los trazos del texto.", 1.20f, 2.40f, 1.60f, 0.10f)
+        qvx::MakeSliderParam("unclip_ratio", "Expansión de caja (Unclip)", "Factor de expansión DBNet para evitar recortar los trazos del texto.", 1.20f, 2.40f, 1.50f, 0.10f)
     },
     { // 7: fr-FR
         qvx::MakeToggleParam("use_gpu", "Accélération GPU Vulkan", "Accélère l'inférence NCNN via Vulkan GPU avec repli automatique sur CPU.", true),
         qvx::MakeIntSliderParam("num_threads", "Threads CPU", "Nombre de threads pour l'exécution de secours sur CPU (1–16).", 1, 16, 4, 1, "%d"),
         qvx::MakeIntSliderParam("det_limit_side", "Côté max. de détection", "Dimension maximale du côté long (multiple de 32). Améliore les petits textes.", 640, 1920, 960, 128, "%d px"),
         qvx::MakeSliderParam("box_thresh", "Seuil de confiance boîte", "Probabilité moyenne minimale pour conserver une zone de texte.", 0.30f, 0.85f, 0.55f, 0.05f),
-        qvx::MakeSliderParam("unclip_ratio", "Marge d'expansion (Unclip)", "Ratio d'expansion DBNet pour éviter de rogner les caractères.", 1.20f, 2.40f, 1.60f, 0.10f)
+        qvx::MakeSliderParam("unclip_ratio", "Marge d'expansion (Unclip)", "Ratio d'expansion DBNet pour éviter de rogner les caractères.", 1.20f, 2.40f, 1.50f, 0.10f)
     }
 };
 
@@ -909,7 +927,9 @@ uint32_t OcrNcnn_GetCaps(void) {
 
 uint32_t OcrNcnn_GetPresetCount(void) {
     std::lock_guard<std::mutex> lock(g_catalogMutex);
-    RefreshCatalogLocked();
+    // Avoid rebuilding here (keeps previously returned preset/asset pointers valid);
+    // catalog is refreshed on qvx_init, set_language, and notify_assets_changed.
+    if (g_catalog.empty()) RefreshCatalogLocked();
     return static_cast<uint32_t>(g_catalog.size());
 }
 
@@ -922,7 +942,8 @@ const QVX_AnalyzerPresetInfo* OcrNcnn_GetPresetInfo(uint32_t index) {
 
 uint32_t OcrNcnn_GetAssetCount(void) {
     std::lock_guard<std::mutex> lock(g_catalogMutex);
-    RefreshCatalogLocked();
+    // Do not rebuild here: it would invalidate preset pointers handed out by get_preset_info.
+    if (g_catalog.empty()) RefreshCatalogLocked();
     uint32_t count = 0;
     for (const auto& e : g_catalog) {
         if (!e->assetId.empty()) ++count;
@@ -1079,52 +1100,46 @@ int32_t OcrNcnn_Analyze(
     const char* recInName = ResolveBlobName(meta.recInput, impl->nets.recNet.input_names(), "in0");
     const char* recOutName = ResolveBlobName(meta.recOutput, impl->nets.recNet.output_names(), "out0");
 
-    // 1. Sliding-window DBNet detection across oversized / tall screenshots
-    constexpr uint32_t kTileLimit = 2560u;
+    // 1. Sliding-window DBNet detection across oversized / tall screenshots.
+    // Adaptive tile growth: never collapse a huge image into one heavily-downscaled pass.
     constexpr uint32_t kTileOverlap = 160u;
-    constexpr uint32_t kTileStep = kTileLimit - kTileOverlap;
-    uint32_t tilesX = (fullW <= kTileLimit) ? 1u : (1u + (fullW - kTileLimit + kTileStep - 1u) / kTileStep);
-    uint32_t tilesY = (fullH <= kTileLimit) ? 1u : (1u + (fullH - kTileLimit + kTileStep - 1u) / kTileStep);
-    if (tilesX * tilesY > 12u) {
-        tilesX = 1u;
-        tilesY = 1u;
+    constexpr uint32_t kMaxTiles = 24u;
+    uint32_t tileLimit = 2560u;
+    uint32_t tilesX = 1u;
+    uint32_t tilesY = 1u;
+    for (;;) {
+        const uint32_t step = tileLimit - kTileOverlap;
+        tilesX = (fullW <= tileLimit) ? 1u : (1u + (fullW - tileLimit + step - 1u) / step);
+        tilesY = (fullH <= tileLimit) ? 1u : (1u + (fullH - tileLimit + step - 1u) / step);
+        if (tilesX * tilesY <= kMaxTiles) break;
+        tileLimit += tileLimit / 2u;
     }
+    const uint32_t tileStep = tileLimit - kTileOverlap;
 
     std::vector<DbBox> allBoxes;
-    std::vector<uint8_t> tileRgb;
     int tileCounter = 0;
 
     for (uint32_t ty = 0; ty < tilesY; ++ty) {
-        const uint32_t ty0 = (tilesY == 1u) ? 0u : (ty * kTileStep);
-        const uint32_t ty1 = (tilesY == 1u) ? fullH : (std::min)(fullH, ty0 + kTileLimit);
-        const uint32_t tileH = ty1 - ty0;
+        // Last tile is shifted back so every tile keeps full size (uniform scale, no thin slivers)
+        const uint32_t ty0 = (tilesY == 1u) ? 0u : (std::min)(ty * tileStep, fullH - tileLimit);
+        const uint32_t tileH = (tilesY == 1u) ? fullH : tileLimit;
 
         for (uint32_t tx = 0; tx < tilesX; ++tx) {
             if (IsCancelled(input->cancel)) return QVX_E_ABORT;
 
-            const uint32_t tx0 = (tilesX == 1u) ? 0u : (tx * kTileStep);
-            const uint32_t tx1 = (tilesX == 1u) ? fullW : (std::min)(fullW, tx0 + kTileLimit);
-            const uint32_t tileW = tx1 - tx0;
+            const uint32_t tx0 = (tilesX == 1u) ? 0u : (std::min)(tx * tileStep, fullW - tileLimit);
+            const uint32_t tileW = (tilesX == 1u) ? fullW : tileLimit;
 
             const float ratio = static_cast<float>(detLimit) / static_cast<float>((std::max)(tileW, tileH));
             const float effRatio = (ratio < 1.0f) ? ratio : 1.0f;
             int targetW = (std::max)(32, (static_cast<int>(std::lround(tileW * effRatio)) + 16) / 32 * 32);
             int targetH = (std::max)(32, (static_cast<int>(std::lround(tileH * effRatio)) + 16) / 32 * 32);
 
-            tileRgb.resize(static_cast<size_t>(tileW) * tileH * 3u);
-            for (uint32_t y = 0; y < tileH; ++y) {
-                const uint8_t* srcRow = bgra + static_cast<size_t>(ty0 + y) * stride + static_cast<size_t>(tx0) * 4u;
-                uint8_t* dstRow = tileRgb.data() + static_cast<size_t>(y) * tileW * 3u;
-                for (uint32_t x = 0; x < tileW; ++x) {
-                    dstRow[x * 3 + 0] = srcRow[x * 4 + 2];
-                    dstRow[x * 3 + 1] = srcRow[x * 4 + 1];
-                    dstRow[x * 3 + 2] = srcRow[x * 4 + 0];
-                }
-            }
-
+            // Zero-copy: NCNN converts BGRA->RGB and resizes directly from the strided host frame
+            const uint8_t* tileOrigin = bgra + static_cast<size_t>(ty0) * stride + static_cast<size_t>(tx0) * 4u;
             ncnn::Mat inDet = ncnn::Mat::from_pixels_resize(
-                tileRgb.data(), ncnn::Mat::PIXEL_RGB,
-                static_cast<int>(tileW), static_cast<int>(tileH),
+                tileOrigin, ncnn::Mat::PIXEL_BGRA2RGB,
+                static_cast<int>(tileW), static_cast<int>(tileH), static_cast<int>(stride),
                 targetW, targetH);
             inDet.substract_mean_normalize(meta.detMean, meta.detNorm);
 
@@ -1153,10 +1168,14 @@ int32_t OcrNcnn_Analyze(
 
     auto* store = new (std::nothrow) ResultStorage();
     if (!store) return QVX_E_FAIL;
+    store->lines.reserve(mergedBoxes.size());
+    store->tokens.reserve(mergedBoxes.size() * 8u);
+    store->utf8Pool.reserve(mergedBoxes.size() * 48u);
 
     const float invFullW = 1.0f / static_cast<float>(fullW);
     const float invFullH = 1.0f / static_cast<float>(fullH);
-    std::vector<uint8_t> lineRgb;
+    std::vector<uint8_t> lineRgb; // Reused across horizontal lines for exact sub-pixel bilinear crop
+    std::vector<uint8_t> rotBgra; // Lazily reused only for tall vertical text boxes
 
     auto makeQuad = [&](float x0, float y0, float x1, float y1) noexcept {
         QVX_NormQuad q{};
@@ -1180,12 +1199,45 @@ int32_t OcrNcnn_Analyze(
         }
 
         const DbBox& box = mergedBoxes[i];
-        int lineW = 0;
-        if (!CropAndResizeTextLineBgraToRgb(bgra, fullW, fullH, stride, box, meta.recHeight, lineW, lineRgb)) {
-            continue;
-        }
+        const float boxW = (std::max)(0.0f, box.x1 - box.x0);
+        const float boxH = (std::max)(0.0f, box.y1 - box.y0);
+        if (boxW < 2.0f || boxH < 2.0f) continue;
 
-        ncnn::Mat inRec = ncnn::Mat::from_pixels(lineRgb.data(), ncnn::Mat::PIXEL_RGB, lineW, meta.recHeight);
+        ncnn::Mat inRec;
+        if (boxH > boxW * 1.5f && boxH >= 24.0f) {
+            // Vertical text box: rotate 90 deg CCW so text reads horizontally for the recognizer
+            const int ix0 = std::clamp(static_cast<int>(std::floor(box.x0)), 0, static_cast<int>(fullW) - 1);
+            const int iy0 = std::clamp(static_cast<int>(std::floor(box.y0)), 0, static_cast<int>(fullH) - 1);
+            const int ix1 = std::clamp(static_cast<int>(std::ceil(box.x1)), ix0 + 1, static_cast<int>(fullW));
+            const int iy1 = std::clamp(static_cast<int>(std::ceil(box.y1)), iy0 + 1, static_cast<int>(fullH));
+            const int cropW = ix1 - ix0;
+            const int cropH = iy1 - iy0;
+            const int rotW = cropH;
+            const int rotH = cropW;
+            const int rotStride = rotW * 4;
+            rotBgra.resize(static_cast<size_t>(rotW) * static_cast<size_t>(rotH) * 4u);
+            for (int y = 0; y < cropH; ++y) {
+                const uint32_t* srcRow = reinterpret_cast<const uint32_t*>(
+                    bgra + static_cast<size_t>(iy0 + y) * stride + static_cast<size_t>(ix0) * 4u);
+                for (int x = 0; x < cropW; ++x) {
+                    const int dstY = cropW - 1 - x;
+                    const int dstX = y;
+                    reinterpret_cast<uint32_t*>(rotBgra.data())[static_cast<size_t>(dstY) * rotW + dstX] = srcRow[x];
+                }
+            }
+            int targetW = static_cast<int>(std::lround((static_cast<float>(rotW) * static_cast<float>(meta.recHeight)) / static_cast<float>(rotH)));
+            targetW = (std::clamp(targetW, 16, 2048) + 3) & ~3;
+            inRec = ncnn::Mat::from_pixels_resize(
+                rotBgra.data(), ncnn::Mat::PIXEL_BGRA2RGB,
+                rotW, rotH, rotStride, targetW, meta.recHeight);
+        } else {
+            // Exact floating-point sub-pixel bilinear crop preserves fine punctuation and small glyphs
+            int lineW = 0;
+            if (!CropAndResizeTextLineBgraToRgb(bgra, fullW, fullH, stride, box, meta.recHeight, lineW, lineRgb)) {
+                continue;
+            }
+            inRec = ncnn::Mat::from_pixels(lineRgb.data(), ncnn::Mat::PIXEL_RGB, lineW, meta.recHeight);
+        }
         inRec.substract_mean_normalize(meta.recMean, meta.recNorm);
 
         ncnn::Extractor ex = impl->nets.recNet.create_extractor();

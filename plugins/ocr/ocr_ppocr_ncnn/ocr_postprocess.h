@@ -535,6 +535,20 @@ inline DecodedLine DecodeCtcLine(
         }
     }
 
+    // Expand narrow CTC emission spikes to full visual cell boundaries (Voronoi midpoints + line edges)
+    // so selection highlights cover the full first/last glyphs and leave no half-character gaps.
+    if (!out.tokens.empty()) {
+        out.tokens.front().x0Norm = lineX0Norm;
+        for (size_t i = 0; i + 1 < out.tokens.size(); ++i) {
+            const float mid = std::clamp(
+                (out.tokens[i].x1Norm + out.tokens[i + 1].x0Norm) * 0.5f,
+                lineX0Norm, lineX1Norm);
+            out.tokens[i].x1Norm = mid;
+            out.tokens[i + 1].x0Norm = mid;
+        }
+        out.tokens.back().x1Norm = lineX1Norm;
+    }
+
     for (size_t i = 0; i < out.tokens.size(); ++i) {
         if (i + 1 < out.tokens.size()) {
             const bool explicitOrMixed = out.tokens[i].spaceAfter ||
