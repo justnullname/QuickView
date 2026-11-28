@@ -15,8 +15,10 @@
       "download_url_arm64": "https://justnullname.github.io/QuickView/plugins/sr_ncnn_vulkan_ARM64.zip",
       "file_name": "sr_ncnn_vulkan_AMD64.zip",
       "file_name_arm64": "sr_ncnn_vulkan_ARM64.zip",
-      "file_size": 48184000,
-      "min_app_version": "0.1.0"
+      "file_size": 51826909,
+      "min_app_version": "0.1.0",
+      "sha256_amd64": "360362ae8fd07c04eef6a3502fc3c7ddf1714f9d7a87b036f2fa69d722228a15",
+      "sha256_arm64": "c36deebb6b9951c65ba797fe8e8288c74f7a3ec8e503bc80fd5ef7467e48ae43"
     },
     {
       "id": "com.quickview.shell.thumb",
@@ -31,13 +33,15 @@
       "download_url_arm64": "https://justnullname.github.io/QuickView/plugins/qv_shell_thumb_ARM64.zip",
       "file_name": "qv_shell_thumb_AMD64.zip",
       "file_name_arm64": "qv_shell_thumb_ARM64.zip",
-      "file_size": 95000,
-      "min_app_version": "0.1.0"
+      "file_size": 85318,
+      "min_app_version": "0.1.0",
+      "sha256_amd64": "3979ed53b521d8c629cbe5ba247676a10d8ee2351018e6bbd2a27dd7085acbd2",
+      "sha256_arm64": "00b9fa84c0784398b67c6a1f1316a66c5b835a04171b8242a4712bf2ec7f9a06"
     },
     {
       "id": "com.quickview.ocr.ppocr_ncnn",
       "name": "PP-OCRv5 NCNN Vulkan",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "author": "QuickView Core Team",
       "category": "analyzer",
       "abi_version": "3.0.0",
@@ -47,8 +51,10 @@
       "download_url_arm64": "https://justnullname.github.io/QuickView/plugins/ocr_ppocr_ncnn_ARM64.zip",
       "file_name": "ocr_ppocr_ncnn_AMD64.zip",
       "file_name_arm64": "ocr_ppocr_ncnn_ARM64.zip",
-      "file_size": 2500000,
-      "min_app_version": "6.62.0.0"
+      "file_size": 6818057,
+      "min_app_version": "6.62.0.0",
+      "sha256_amd64": "373787ed397181d3eae51c8e7f277d0f06a2f2e9c8982d40487a2227dd4a68ac",
+      "sha256_arm64": "5f317a94e331d4c3fd18c9e58fa9cb426a1859c0f93cda626a7292100d031d42"
     }
   ]
 }
