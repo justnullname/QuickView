@@ -62,6 +62,14 @@ jobs:
               done: 'Done',
             };
 
+            const ISSUE_STATUS = {
+              backlog: 'Backlog',
+              todo: 'Todo',
+              inProgress: 'In progress',
+              inReview: 'In review',
+              done: 'Done',
+            };
+
             let projectMetaCache = null;
 
             async function getProjectMeta() {
@@ -189,6 +197,22 @@ jobs:
               }
             }
 
+            async function setNativeIssueStatus(issue, statusName) {
+              if (!issue || !statusName) return;
+              if (issue.status?.name === statusName) return;
+              try {
+                await github.request('PATCH /repos/{owner}/{repo}/issues/{issue_number}', {
+                  owner,
+                  repo,
+                  issue_number: issue.number,
+                  status: statusName,
+                });
+                core.info(`Set native issue status to "${statusName}" for #${issue.number}`);
+              } catch (err) {
+                core.warning(`Native issue status update to "${statusName}" failed for #${issue.number}: ${err.message}`);
+              }
+            }
+
             async function ensureComment(issueNumber, matchText, body) {
               const { data: comments } = await github.rest.issues.listComments({
                 owner,
@@ -227,6 +251,7 @@ jobs:
               const issue = context.payload.issue;
               if (!issue.pull_request) {
                 await addIssueToProjectAndSetStatus(issue.node_id, PROJECT_STATUS.todo);
+                await setNativeIssueStatus(issue, ISSUE_STATUS.todo);
                 const title = (issue.title || '').toLowerCase();
                 const labelsToAdd = [];
                 if (title.includes('[bug]') || title.includes('bug:')) {
@@ -271,6 +296,7 @@ jobs:
                   [LABELS.inProgress, LABELS.blocked]
                 );
                 await addIssueToProjectAndSetStatus(issue.node_id, PROJECT_STATUS.implemented);
+                await setNativeIssueStatus(issue, ISSUE_STATUS.inReview);
               }
             }
 
@@ -290,6 +316,7 @@ jobs:
                     [LABELS.inProgress, LABELS.blocked]
                   );
                   await addIssueToProjectAndSetStatus(issue.node_id, PROJECT_STATUS.implemented);
+                  await setNativeIssueStatus(issue, ISSUE_STATUS.inReview);
                   await ensureComment(
                     num,
                     tagName,
@@ -316,6 +343,7 @@ jobs:
                       state_reason: 'completed',
                     });
                   }
+                  await setNativeIssueStatus(issue, ISSUE_STATUS.done);
                 }
               }
             }
@@ -375,6 +403,7 @@ jobs:
                         [LABELS.inProgress],
                         [LABELS.implemented, LABELS.preRelease, LABELS.released, LABELS.blocked]
                       );
+                      await setNativeIssueStatus(issue, ISSUE_STATUS.inProgress);
                     }
                   } else if (statusName === PROJECT_STATUS.implemented) {
                     const issue = await getIssue(content.number);
@@ -384,11 +413,16 @@ jobs:
                         [LABELS.implemented],
                         [LABELS.inProgress, LABELS.blocked]
                       );
+                      await setNativeIssueStatus(issue, ISSUE_STATUS.inReview);
                     }
                   } else if (statusName === PROJECT_STATUS.todo || statusName === PROJECT_STATUS.ideas) {
                     const issue = await getIssue(content.number);
                     if (issue) {
                       await syncIssueLabels(issue, [], [LABELS.inProgress]);
+                      await setNativeIssueStatus(
+                        issue,
+                        statusName === PROJECT_STATUS.ideas ? ISSUE_STATUS.backlog : ISSUE_STATUS.todo
+                      );
                     }
                   }
                 }
