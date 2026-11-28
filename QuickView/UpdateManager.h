@@ -65,7 +65,8 @@ private:
     ~UpdateManager() = default;
 
     void CheckThread(int delaySeconds, bool allowDowngrade, int channel, std::string lastCheckedVer);
-    bool CheckVersion(int initialChannel, std::string_view lastCheckedVer, bool allowDowngrade, VersionInfo& outInfo);
+    bool CheckVersion(int initialChannel, std::string_view lastCheckedVer, bool allowDowngrade,
+                      VersionInfo& outInfo, bool& outFetchError);
     bool DownloadUpdate(const std::string& url, const std::wstring& destPath);
     
     // Helpers

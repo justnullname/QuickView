@@ -5516,7 +5516,7 @@ void SettingsOverlay::BuildAboutTab(SettingsTab& tabAbout) {
         
         // Check Status
         UpdateStatus status = UpdateManager::Get().GetStatus();
-        if (status == UpdateStatus::NewVersionFound || status == UpdateStatus::ReadyToInstall) {
+        if (status == UpdateStatus::NewVersionFound || status == UpdateStatus::Downloading || status == UpdateStatus::ReadyToInstall) {
             std::string v = UpdateManager::Get().GetRemoteVersion().version;
             itemUpdate.buttonText = AppStrings::g.Settings_Action_ViewUpdate;
             itemUpdate.statusText = std::wstring(v.begin(), v.end());
@@ -5525,13 +5525,16 @@ void SettingsOverlay::BuildAboutTab(SettingsTab& tabAbout) {
         } else if (status == UpdateStatus::UpToDate) {
             itemUpdate.buttonText = AppStrings::g.Settings_Action_CheckUpdates;
             itemUpdate.statusText = AppStrings::g.Settings_Status_UpToDate;
+        } else if (status == UpdateStatus::Error) {
+            itemUpdate.buttonText = AppStrings::g.Settings_Action_CheckUpdates;
+            itemUpdate.statusText = L"\u26A0";
         } else {
             itemUpdate.buttonText = AppStrings::g.Settings_Action_CheckUpdates;
         }
 
         itemUpdate.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
              const UpdateStatus curStatus = UpdateManager::Get().GetStatus();
-             if (curStatus == UpdateStatus::NewVersionFound || curStatus == UpdateStatus::ReadyToInstall) {
+             if (curStatus == UpdateStatus::NewVersionFound || curStatus == UpdateStatus::Downloading || curStatus == UpdateStatus::ReadyToInstall) {
                  std::string v = UpdateManager::Get().GetRemoteVersion().version;
                  std::string log = UpdateManager::Get().GetRemoteVersion().changelog;
                  overlay->m_updateVersion = QuickView::Utf8ToWide(v);

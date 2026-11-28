@@ -108,7 +108,8 @@ void UpdateManager::CheckThread(int delaySeconds, bool allowDowngrade, int chann
 
         // 1. Check Version
         VersionInfo candidateInfo;
-        const bool hasUpdate = CheckVersion(channel, lastCheckedVer, allowDowngrade, candidateInfo);
+        bool fetchError = false;
+        const bool hasUpdate = CheckVersion(channel, lastCheckedVer, allowDowngrade, candidateInfo, fetchError);
 
         {
             std::lock_guard<std::mutex> lock(m_pendingMutex);
@@ -116,7 +117,7 @@ void UpdateManager::CheckThread(int delaySeconds, bool allowDowngrade, int chann
                 continue;
             }
             if (!hasUpdate) {
-                m_status.store(UpdateStatus::UpToDate, std::memory_order_release);
+                m_status.store(fetchError ? UpdateStatus::Error : UpdateStatus::UpToDate, std::memory_order_release);
                 m_workerActive = false;
                 activeGuard.armed = false;
                 break;
@@ -264,7 +265,9 @@ void UpdateManager::CheckThread(int delaySeconds, bool allowDowngrade, int chann
     if (m_callback) m_callback(false, VersionInfo(), m_callbackContext);
 }
 
-bool UpdateManager::CheckVersion(int initialChannel, std::string_view lastCheckedVer, bool allowDowngrade, VersionInfo& outInfo) {
+bool UpdateManager::CheckVersion(int initialChannel, std::string_view lastCheckedVer, bool allowDowngrade,
+                                 VersionInfo& outInfo, bool& outFetchError) {
+    outFetchError = false;
     auto fetchChannelInfo = [this](int channel) -> VersionInfo {
         std::time_t now = std::time(nullptr);
         std::wstring jsonName = (channel == 1) ? L"version-prerelease.json" : L"version.json";
@@ -276,7 +279,11 @@ bool UpdateManager::CheckVersion(int initialChannel, std::string_view lastChecke
 
     int effectiveChannel = initialChannel;
     VersionInfo info = fetchChannelInfo(effectiveChannel);
-    if (info.version.empty() || m_cancelCurrentWork.load(std::memory_order_acquire)) return false;
+    if (m_cancelCurrentWork.load(std::memory_order_acquire)) return false;
+    if (info.version.empty()) {
+        outFetchError = true;
+        return false;
+    }
 
     if (!allowDowngrade && effectiveChannel == 0 && !m_currentVersion.empty()) {
         m_channelCalibrationCompleted.store(true, std::memory_order_release);
@@ -284,10 +291,12 @@ bool UpdateManager::CheckVersion(int initialChannel, std::string_view lastChecke
             m_autoSwitchedToPreRelease.store(true, std::memory_order_release);
             effectiveChannel = 1;
             VersionInfo preInfo = fetchChannelInfo(1);
-            if (!preInfo.version.empty() && !m_cancelCurrentWork.load(std::memory_order_acquire)) {
+            if (m_cancelCurrentWork.load(std::memory_order_acquire)) return false;
+            if (!preInfo.version.empty()) {
                 info = std::move(preInfo);
             } else {
-                // Pre-release feed unreachable or canceled; do not offer the older stable build as an update.
+                // Pre-release feed unreachable; report network error rather than UpToDate.
+                outFetchError = true;
                 return false;
             }
         }
