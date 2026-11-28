@@ -198,6 +198,8 @@ void WebViewThumbService::ReleaseWebViewResources() {
     controller_.Reset();
     environment_.Reset();
     wicFactory_.Reset();
+    pendingHtmlUtf8_.clear();
+    pendingHtmlUtf8_.shrink_to_fit();
     navInFlight_ = false;
     if (hiddenHwnd_) {
         DestroyWindow(hiddenHwnd_);
@@ -256,15 +258,21 @@ std::wstring WebViewThumbService::UserDataFolder() const {
     return std::wstring(base) + L"\\QuickView\\" + sub;
 }
 
-std::wstring WebViewThumbService::BuildHtml(const std::vector<uint8_t>& utf8Xml, bool /*highResFill*/) {
-    std::string_view sv(reinterpret_cast<const char*>(utf8Xml.data()), utf8Xml.size());
-    std::wstring wXml = Utf8ToWide(sv);
-    return L"<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
-           L"<style>"
-           L"html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:transparent;}"
-           L"svg{width:100% !important;height:100% !important;display:block;}"
-           L"</style></head><body>" +
-           wXml + L"</body></html>";
+std::string WebViewThumbService::BuildHtmlUtf8(const std::vector<uint8_t>& utf8Xml, bool /*highResFill*/) {
+    static constexpr std::string_view kHead =
+        "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
+        "<style>"
+        "html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:transparent;}"
+        "svg{width:100% !important;height:100% !important;display:block;}"
+        "</style></head><body>";
+    static constexpr std::string_view kTail = "</body></html>";
+
+    std::string html;
+    html.reserve(kHead.size() + utf8Xml.size() + kTail.size());
+    html.append(kHead);
+    html.append(reinterpret_cast<const char*>(utf8Xml.data()), utf8Xml.size());
+    html.append(kTail);
+    return html;
 }
 
 LRESULT CALLBACK WebViewThumbService::HiddenWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -392,8 +400,26 @@ HRESULT WebViewThumbService::EnsureController(DWORD timeoutMs) {
                         if (FAILED(args->get_Request(&req)) || !req) return S_OK;
                         LPWSTR uri = nullptr;
                         if (SUCCEEDED(req->get_Uri(&uri)) && uri) {
-                            const bool allowed = IsSafeInlineUri(uri);
+                            const bool isVirtualSvg = (_wcsnicmp(
+                                uri, kVirtualSvgUrlPrefix, wcslen(kVirtualSvgUrlPrefix)) == 0);
+                            const bool allowed = isVirtualSvg || IsSafeInlineUri(uri);
                             CoTaskMemFree(uri);
+                            if (isVirtualSvg) {
+                                ComPtr<IStream> stream;
+                                const BYTE* dataPtr = pendingHtmlUtf8_.empty()
+                                    ? nullptr
+                                    : reinterpret_cast<const BYTE*>(pendingHtmlUtf8_.data());
+                                stream.Attach(SHCreateMemStream(
+                                    dataPtr, static_cast<UINT>(pendingHtmlUtf8_.size())));
+                                ComPtr<ICoreWebView2WebResourceResponse> okResp;
+                                if (SUCCEEDED(environment_->CreateWebResourceResponse(
+                                        stream.Get(), 200, L"OK",
+                                        L"Content-Type: text/html; charset=utf-8\r\nCache-Control: no-store",
+                                        &okResp)) && okResp) {
+                                    args->put_Response(okResp.Get());
+                                }
+                                return S_OK;
+                            }
                             if (!allowed) {
                                 ComPtr<ICoreWebView2WebResourceResponse> blockedResp;
                                 if (SUCCEEDED(environment_->CreateWebResourceResponse(
@@ -431,7 +457,7 @@ HRESULT WebViewThumbService::EnsureController(DWORD timeoutMs) {
     return S_OK;
 }
 
-HRESULT WebViewThumbService::NavigateAndCapture(const std::wstring& html, int outW, int outH,
+HRESULT WebViewThumbService::NavigateAndCapture(std::string htmlUtf8, int outW, int outH,
                                                 CImageLoader::ThumbData* out, DWORD timeoutMs) {
     if (!controller_ || !webview_ || !out) return E_FAIL;
 
@@ -441,6 +467,10 @@ HRESULT WebViewThumbService::NavigateAndCapture(const std::wstring& html, int ou
     }
 
     const uint32_t jobSerial = currentJobSerial_.fetch_add(1, std::memory_order_acq_rel) + 1u;
+    struct PendingHtmlGuard {
+        std::string& s;
+        ~PendingHtmlGuard() { s.clear(); s.shrink_to_fit(); }
+    } pendingGuard{pendingHtmlUtf8_};
 
     RECT bounds = {0, 0, outW, outH};
     controller_->put_Bounds(bounds);
@@ -453,7 +483,17 @@ HRESULT WebViewThumbService::NavigateAndCapture(const std::wstring& html, int ou
     navDone_.store(false, std::memory_order_release);
     navOk_.store(false, std::memory_order_release);
     navInFlight_ = true;
-    HRESULT hr = webview_->NavigateToString(html.c_str());
+    HRESULT hr = E_FAIL;
+    if (htmlUtf8.size() <= kMaxNavigateToStringUtf8Bytes || !hasWebResToken_) {
+        pendingHtmlUtf8_.clear();
+        const std::wstring html = Utf8ToWide(htmlUtf8);
+        hr = webview_->NavigateToString(html.c_str());
+    } else {
+        pendingHtmlUtf8_ = std::move(htmlUtf8);
+        wchar_t url[96];
+        swprintf_s(url, L"%ls?s=%u", kVirtualSvgUrlPrefix, jobSerial);
+        hr = webview_->Navigate(url);
+    }
     if (FAILED(hr)) {
         navInFlight_ = false;
         return hr;
@@ -535,10 +575,10 @@ HRESULT WebViewThumbService::RunJobOnSta(WebViewThumbJob& job, DWORD timeoutMs) 
         controller_->put_ZoomFactor(zoom);
     }
 
-    const std::wstring html = BuildHtml(job.utf8Xml, job.highResFill);
+    std::string htmlUtf8 = BuildHtmlUtf8(job.utf8Xml, job.highResFill);
     job.out.isValid = false;
     job.out.pixels.clear();
-    hr = NavigateAndCapture(html, outW, outH, &job.out, remTimeout);
+    hr = NavigateAndCapture(std::move(htmlUtf8), outW, outH, &job.out, remTimeout);
     if (SUCCEEDED(hr) && job.out.isValid) {
         job.out.origWidth = static_cast<int>(std::lround(safeW));
         job.out.origHeight = static_cast<int>(std::lround(safeH));

@@ -107,6 +107,9 @@ public:
     bool IsFailed() const;
     bool IsInitializing() const { return initializing_; }
     bool IsSurfaceActive() const { return surfaceActive_; }
+    bool IsSurfaceRevealed() const {
+        return contentReady_ && !pendingReveal_ && surfaceOpacity_ > 0.0f;
+    }
     // Stale WM_TIMER can still dispatch after KillTimer during EnsureReady's
     // message pump — ignore retention teardown while re-entering WebView.
     bool ShouldIgnoreRetentionTimer() const {
@@ -150,9 +153,14 @@ private:
     void KillRetentionTimer();
     void ResetOverscanState();
     void InjectCommittedViewport();
-    static std::wstring BuildComplexSvgHtml(std::string_view utf8Svg, float contentW, float contentH);
+    static std::string BuildComplexSvgHtmlUtf8(std::string_view utf8Svg);
     static std::wstring GetUserDataFolder();
     static std::wstring BuildBlankHtml();
+
+    static constexpr const wchar_t* kVirtualSvgOrigin = L"https://quickview.invalid/*";
+    static constexpr const wchar_t* kVirtualSvgUrlPrefix = L"https://quickview.invalid/svg";
+    // Below this UTF-8 size, UTF-16 conversion stays well under WebView2's 2 MB NavigateToString limit.
+    static constexpr size_t kMaxNavigateToStringUtf8Bytes = 750u * 1024u;
 
     Microsoft::WRL::ComPtr<ICoreWebView2Environment> environment_;
     Microsoft::WRL::ComPtr<ICoreWebView2CompositionController> compositionController_;
@@ -182,6 +190,9 @@ private:
     bool hasNavCompletedToken_ = false;
     EventRegistrationToken webMessageToken_{};
     bool hasWebMessageToken_ = false;
+    EventRegistrationToken webResToken_{};
+    bool hasWebResToken_ = false;
+    std::string pendingHtmlUtf8_;
 
     // Minimap thumb via CapturePreview (one-shot per Present).
     bool minimapCapturePending_ = false;

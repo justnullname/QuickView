@@ -50,20 +50,24 @@ std::wstring WebContentHost::BuildBlankHtml() {
            L"<body style=\"margin:0;padding:0;background:transparent\"></body></html>";
 }
 
-std::wstring WebContentHost::BuildComplexSvgHtml(std::string_view utf8Svg, float contentW, float contentH) {
-    std::wstring wXml = Utf8ToWide(utf8Svg);
-
-    (void)contentW;
-    (void)contentH;
-
+std::string WebContentHost::BuildComplexSvgHtmlUtf8(std::string_view utf8Svg) {
     // Single root <svg> (no nesting). CSS forces it to Bounds (1.5× window).
     // Never assign contentW×contentH as element size — Chromium would raster
     // a full-document layer and freeze on large SVGs.
-    return L"<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
-           L"<style>"
-           L"html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:transparent;}"
-           L"svg{width:100% !important;height:100% !important;display:block;}"
-           L"</style></head><body>" + wXml + L"</body></html>";
+    static constexpr std::string_view kHead =
+        "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
+        "<style>"
+        "html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:transparent;}"
+        "svg{width:100% !important;height:100% !important;display:block;}"
+        "</style></head><body>";
+    static constexpr std::string_view kTail = "</body></html>";
+
+    std::string html;
+    html.reserve(kHead.size() + utf8Svg.size() + kTail.size());
+    html.append(kHead);
+    html.append(utf8Svg);
+    html.append(kTail);
+    return html;
 }
 
 WebContentHost::~WebContentHost() {
@@ -271,10 +275,52 @@ HRESULT WebContentHost::CreateController() {
                 }
                 // Reveal only after the *current* document finishes loading so a
                 // shared host never paints the previous SVG (a→b→c residual).
-                hasNavCompletedToken_ = false;
+                if (hasNavCompletedToken_) {
+                    webview_->remove_NavigationCompleted(navCompletedToken_);
+                    hasNavCompletedToken_ = false;
+                }
                 if (hasWebMessageToken_) {
                     webview_->remove_WebMessageReceived(webMessageToken_);
                     hasWebMessageToken_ = false;
+                }
+                if (hasWebResToken_) {
+                    webview_->remove_WebResourceRequested(webResToken_);
+                    hasWebResToken_ = false;
+                }
+                if (SUCCEEDED(webview_->AddWebResourceRequestedFilter(
+                        kVirtualSvgOrigin, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT))) {
+                    if (SUCCEEDED(webview_->add_WebResourceRequested(
+                            Callback<ICoreWebView2WebResourceRequestedEventHandler>(
+                                [this](ICoreWebView2*, ICoreWebView2WebResourceRequestedEventArgs* args) -> HRESULT {
+                                    if (!args || !environment_) return S_OK;
+                                    ComPtr<ICoreWebView2WebResourceRequest> req;
+                                    if (FAILED(args->get_Request(&req)) || !req) return S_OK;
+                                    LPWSTR uri = nullptr;
+                                    if (SUCCEEDED(req->get_Uri(&uri)) && uri) {
+                                        const bool match = (_wcsnicmp(
+                                            uri, kVirtualSvgUrlPrefix, wcslen(kVirtualSvgUrlPrefix)) == 0);
+                                        CoTaskMemFree(uri);
+                                        if (match) {
+                                            ComPtr<IStream> stream;
+                                            const BYTE* dataPtr = pendingHtmlUtf8_.empty()
+                                                ? nullptr
+                                                : reinterpret_cast<const BYTE*>(pendingHtmlUtf8_.data());
+                                            stream.Attach(SHCreateMemStream(
+                                                dataPtr, static_cast<UINT>(pendingHtmlUtf8_.size())));
+                                            ComPtr<ICoreWebView2WebResourceResponse> resp;
+                                            if (SUCCEEDED(environment_->CreateWebResourceResponse(
+                                                    stream.Get(), 200, L"OK",
+                                                    L"Content-Type: text/html; charset=utf-8\r\nCache-Control: no-store",
+                                                    &resp)) && resp) {
+                                                args->put_Response(resp.Get());
+                                            }
+                                        }
+                                    }
+                                    return S_OK;
+                                }).Get(),
+                            &webResToken_))) {
+                        hasWebResToken_ = true;
+                    }
                 }
                 if (SUCCEEDED(webview_->add_WebMessageReceived(
                         Callback<ICoreWebView2WebMessageReceivedEventHandler>(
@@ -646,11 +692,20 @@ HRESULT WebContentHost::Present(const WebContentPayload& payload, float initialR
     switch (payload.kind) {
     case WebContentKind::ComplexSvg: {
         if (payload.utf8Document.empty()) return E_INVALIDARG;
-        const std::wstring html = BuildComplexSvgHtml(payload.utf8Document, contentW_, contentH_);
+        std::string htmlUtf8 = BuildComplexSvgHtmlUtf8(payload.utf8Document);
         // Invalidate prior navigations (including blank clear from leave).
         pendingNavSerial_ = ++navSerial_;
         contentReady_ = false;
-        return webview_->NavigateToString(html.c_str());
+        if (htmlUtf8.size() <= kMaxNavigateToStringUtf8Bytes || !hasWebResToken_) {
+            pendingHtmlUtf8_.clear();
+            pendingHtmlUtf8_.shrink_to_fit();
+            const std::wstring html = Utf8ToWide(htmlUtf8);
+            return webview_->NavigateToString(html.c_str());
+        }
+        pendingHtmlUtf8_ = std::move(htmlUtf8);
+        wchar_t url[96];
+        swprintf_s(url, L"%ls?s=%u", kVirtualSvgUrlPrefix, pendingNavSerial_);
+        return webview_->Navigate(url);
     }
     case WebContentKind::Pdf:
     case WebContentKind::Markdown:
@@ -806,6 +861,8 @@ void WebContentHost::NotifySurfaceInactive(HWND hwnd, size_t webFriendlyFileCoun
     HideSurface();
 
     // Drop residual SVG from the shared WebView so remount never paints it.
+    pendingHtmlUtf8_.clear();
+    pendingHtmlUtf8_.shrink_to_fit();
     if (webview_) {
         webview_->NavigateToString(BuildBlankHtml().c_str());
     }
@@ -831,6 +888,10 @@ void WebContentHost::KillRetentionTimer() {
 }
 
 void WebContentHost::ResetControllerState() {
+    if (webview_ && hasWebResToken_) {
+        webview_->remove_WebResourceRequested(webResToken_);
+        hasWebResToken_ = false;
+    }
     if (webview_ && hasWebMessageToken_) {
         webview_->remove_WebMessageReceived(webMessageToken_);
         hasWebMessageToken_ = false;
@@ -877,6 +938,8 @@ void WebContentHost::ResetAllState() {
     pendingNavSerial_ = 0;
     minimapCapturePending_ = false;
     minimapPreviewStream_.Reset();
+    pendingHtmlUtf8_.clear();
+    pendingHtmlUtf8_.shrink_to_fit();
     ResetOverscanState();
 }
 
@@ -904,6 +967,8 @@ void WebContentHost::ReleaseRuntime() {
     pendingNavSerial_ = 0;
     minimapCapturePending_ = false;
     minimapPreviewStream_.Reset();
+    pendingHtmlUtf8_.clear();
+    pendingHtmlUtf8_.shrink_to_fit();
     initializing_ = false;
     ResetOverscanState();
 }

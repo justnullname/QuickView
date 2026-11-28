@@ -75,14 +75,17 @@ private:
 
     HRESULT EnsureController(DWORD timeoutMs);
     HRESULT RunJobOnSta(WebViewThumbJob& job, DWORD timeoutMs);
-    HRESULT NavigateAndCapture(const std::wstring& html, int outW, int outH,
+    HRESULT NavigateAndCapture(std::string htmlUtf8, int outW, int outH,
                                CImageLoader::ThumbData* out, DWORD timeoutMs);
     HRESULT PngStreamToThumbData(IStream* stream, int maxDim, CImageLoader::ThumbData* out);
     void ReleaseWebViewResources();
     void StaWorkerLoop();
-    static std::wstring BuildHtml(const std::vector<uint8_t>& utf8Xml, bool highResFill = false);
+    static std::string BuildHtmlUtf8(const std::vector<uint8_t>& utf8Xml, bool highResFill = false);
     std::wstring UserDataFolder() const;
     static LRESULT CALLBACK HiddenWndProc(HWND, UINT, WPARAM, LPARAM);
+
+    static constexpr const wchar_t* kVirtualSvgUrlPrefix = L"https://quickview.invalid/svg";
+    static constexpr size_t kMaxNavigateToStringUtf8Bytes = 750u * 1024u;
 
     HWND hiddenHwnd_ = nullptr;
     std::wstring userDataSubfolder_ = L"WebView2Thumb";
@@ -114,6 +117,7 @@ private:
     bool hasNavToken_ = false;
     EventRegistrationToken webResToken_{};
     bool hasWebResToken_ = false;
+    std::string pendingHtmlUtf8_;
 
     static constexpr DWORD kTimeoutMs = 12000;
     static constexpr ULONGLONG kStaIdleExitMs = 30000;

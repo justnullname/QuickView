@@ -14815,6 +14815,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     case QuickView::WebContentHost::kCommitMessage: {
         // NavigationCompleted + open-R: reveal already applied; flush DComp tree.
         if (g_compEngine) g_compEngine->Commit();
+        if (g_isLoading && g_webContentHost && g_webContentHost->IsSurfaceRevealed()) {
+            g_isLoading = false;
+            SyncDecodeProgressTimer(hwnd);
+            RequestRepaint(PaintLayer::Dynamic);
+        }
         return 0;
     }
 
@@ -19638,6 +19643,11 @@ void ProcessEngineEvents(HWND hwnd) {
                          // Must mark active BEFORE EnsureReady: init pumps messages and a
                          // queued retention WM_TIMER would otherwise ReleaseRuntime mid-create.
                          g_webContentHost->NotifySurfaceActive();
+                         if (!g_webContentHost->IsReady()) {
+                             g_isLoading = true;
+                             SyncDecodeProgressTimer(hwnd);
+                             RequestRepaint(PaintLayer::Dynamic);
+                         }
                          if (g_compEngine &&
                              SUCCEEDED(g_webContentHost->EnsureReady(hwnd, g_compEngine->GetDevice())) &&
                              g_webContentHost->IsReady()) {
@@ -20109,8 +20119,13 @@ void ProcessEngineEvents(HWND hwnd) {
                     PostMessageW(hwnd, WM_DEFERRED_BOOT_HYDRATE, 0, 0);
                 }
 
-                // Cleanup
-                g_isLoading = false;
+                // Cleanup (keep loading indicator active while WebView2 finishes async navigation/reveal)
+                const bool waitingWebViewReveal =
+                    GetPaneContext(PaneSlot::Primary).resource.isWebView &&
+                    g_webContentHost && !g_webContentHost->IsSurfaceRevealed();
+                if (!waitingWebViewReveal) {
+                    g_isLoading = false;
+                }
                 // Initial fullscreen/maximized auto-fit can raise the desired backing-surface
                 // size without any user interaction. Upgrade immediately for non-preview frames.
                 if (!isPreview) {

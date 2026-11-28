@@ -4774,30 +4774,6 @@ static void JxlThumbSampleCallback(void *opaque, size_t x, size_t y,
   }
 }
 
-static bool HasD2dBreakingSvgFeatures(std::string_view xml) noexcept {
-  auto containsCI = [](std::string_view hay, std::string_view needle) -> bool {
-    if (needle.empty() || hay.size() < needle.size())
-      return false;
-    for (size_t i = 0; i + needle.size() <= hay.size(); ++i) {
-      bool ok = true;
-      for (size_t j = 0; j < needle.size(); ++j) {
-        const unsigned char a = static_cast<unsigned char>(hay[i + j]);
-        const unsigned char b = static_cast<unsigned char>(needle[j]);
-        const unsigned char la = (a >= 'A' && a <= 'Z') ? static_cast<unsigned char>(a + 32) : a;
-        const unsigned char lb = (b >= 'A' && b <= 'Z') ? static_cast<unsigned char>(b + 32) : b;
-        if (la != lb) {
-          ok = false;
-          break;
-        }
-      }
-      if (ok)
-        return true;
-    }
-    return false;
-  };
-  return containsCI(xml, "<mask") || containsCI(xml, "<filter");
-}
-
 #if defined(__clang__)
 __attribute__((minsize))
 #endif
@@ -5021,6 +4997,16 @@ HRESULT CImageLoader::RasterizeSvgToPixels(const uint8_t *xmlData, size_t xmlSiz
   const UINT outW = (UINT)(std::max)(1, (int)std::lround(renderW * scale));
   const UINT outH = (UINT)(std::max)(1, (int)std::lround(renderH * scale));
 
+  std::string unwrappedSvg;
+  {
+    const std::string_view initialSv(reinterpret_cast<const char *>(xmlData), xmlSize);
+    if (auto unwrapped = QuickView::OffscreenWebView2::TryUnwrapSimplePatternImageSvg(initialSv)) {
+      unwrappedSvg = std::move(*unwrapped);
+      xmlData = reinterpret_cast<const uint8_t *>(unwrappedSvg.data());
+      xmlSize = unwrappedSvg.size();
+    }
+  }
+
   bool webViewTried = false;
   auto tryWebViewFallback = [&]() -> bool {
     if (!allowWebViewFallback || webViewTried || hasCrop)
@@ -5039,9 +5025,9 @@ HRESULT CImageLoader::RasterizeSvgToPixels(const uint8_t *xmlData, size_t xmlSiz
     if (tryWebViewFallback()) {
       return S_OK;
     }
-    // Never fall back to Direct2D when <mask> or <filter> is present: D2D ignores them
-    // and draws completely garbled overlapping blobs (e.g. gemini.svg).
-    if (HasD2dBreakingSvgFeatures(xmlSv)) {
+    // Never fall back to Direct2D when <mask>, <filter>, or <pattern> is present:
+    // D2D ignores them and draws garbled/black output (e.g. gemini.svg, 222.svg).
+    if (QuickView::OffscreenWebView2::HasD2dBreakingFeatures(xmlSv)) {
       return E_FAIL;
     }
   }
@@ -6085,7 +6071,7 @@ HRESULT CImageLoader::LoadThumbnailFromMappedBuffer(
             pData->isValid = false;
             pData->pixels.clear();
             const std::string_view sv(reinterpret_cast<const char *>(webXml->data()), webXml->size());
-            if (HasD2dBreakingSvgFeatures(sv)) {
+            if (QuickView::OffscreenWebView2::HasD2dBreakingFeatures(sv)) {
               return E_FAIL;
             }
             hr = RasterizeSvgThumbnail(*webXml, pFrame->svg->viewBoxW,
@@ -17177,6 +17163,56 @@ HRESULT CImageLoader::LoadToFrame(
         fileData = std::move(inflated);
       }
 
+      // Unwrap single-image <pattern><image/></pattern> wrappers into direct <image>
+      // so static raster-wrapped SVGs (e.g. Figma/MasterGo exports) hit D2D fast-track.
+      if (!fileData.empty()) {
+        const std::string_view rawSvg(
+            reinterpret_cast<const char *>(fileData.data()), fileData.size());
+        if (auto unwrapped =
+                QuickView::OffscreenWebView2::TryUnwrapSimplePatternImageSvg(rawSvg)) {
+          fileData.assign(unwrapped->begin(), unwrapped->end());
+        }
+      }
+
+      // Check WebView2 routing BEFORE D2D-specific XML sanitization/style inlining
+      // so complex/animated/<pattern> SVGs keep their original XML untouched.
+      if (!fileData.empty()) {
+        const std::string_view rawSvg(
+            reinterpret_cast<const char *>(fileData.data()), fileData.size());
+        if (QuickView::OffscreenWebView2::NeedsFallback(rawSvg)) {
+          float svgW = 512.0f;
+          float svgH = 512.0f;
+          ParseSvgDimensions(rawSvg, svgW, svgH);
+          if (svgW <= 0.0f)
+            svgW = 512.0f;
+          if (svgH <= 0.0f)
+            svgH = 512.0f;
+
+          outFrame->format = PixelFormat::SVG_WEBVIEW;
+          outFrame->width = static_cast<int>(std::lround(svgW));
+          outFrame->height = static_cast<int>(std::lround(svgH));
+          outFrame->stride = 0; // No pixels -- WebView2 renders via DComp composition
+          outFrame->pixels = nullptr;
+
+          outFrame->svg = std::make_unique<RawImageFrame::SvgData>();
+          outFrame->svg->xmlData = std::move(fileData);
+          outFrame->svg->viewBoxW = svgW;
+          outFrame->svg->viewBoxH = svgH;
+
+          if (pLoaderName)
+            *pLoaderName = L"SVG (WebView2 DComp)";
+          if (pMetadata) {
+            pMetadata->LoaderName = L"SVG (WebView2 DComp)";
+            pMetadata->Format = L"SVG";
+            pMetadata->FormatDetails = L"Complex Vector (DComp)";
+            pMetadata->Width = static_cast<UINT>(svgW);
+            pMetadata->Height = static_cast<UINT>(svgH);
+          }
+          outFrame->formatDetails = L"Complex SVG";
+          return S_OK;
+        }
+      }
+
       // Hybrid D2D SVG Path (D3D11 WARP Device Architecture)
       // Debugging: Added detailed HRESULT logs.
 
@@ -17633,33 +17669,7 @@ HRESULT CImageLoader::LoadToFrame(
       if (svgH <= 0)
         svgH = 512;
 
-      // 3. Check for WebView2 DComp Composition (filters, SMIL/CSS animation, script)
-      if (QuickView::OffscreenWebView2::NeedsFallback(svgContent)) {
-          // Tag as SVG_WEBVIEW -- UI thread will route to WebContentHost DComp visual
-          outFrame->format = PixelFormat::SVG_WEBVIEW;
-          outFrame->width = (int)std::lround(svgW);
-          outFrame->height = (int)std::lround(svgH);
-          outFrame->stride = 0; // No pixels -- WebView2 renders via DComp composition
-          outFrame->pixels = nullptr;
-
-          outFrame->svg = std::make_unique<RawImageFrame::SvgData>();
-          outFrame->svg->xmlData.assign(svgContent.begin(), svgContent.end());
-          outFrame->svg->viewBoxW = svgW;
-          outFrame->svg->viewBoxH = svgH;
-
-          if (pLoaderName) *pLoaderName = L"SVG (WebView2 DComp)";
-          if (pMetadata) {
-              pMetadata->LoaderName = L"SVG (WebView2 DComp)";
-              pMetadata->Format = L"SVG";
-              pMetadata->FormatDetails = L"Complex Vector (DComp)";
-              pMetadata->Width = (UINT)svgW;
-              pMetadata->Height = (UINT)svgH;
-          }
-          outFrame->formatDetails = L"Complex SVG";
-          return S_OK;
-      }
-
-      // 4. Native Direct2D SVG Fast-Track
+      // 3. Native Direct2D SVG Fast-Track
       outFrame->format = PixelFormat::SVG_XML;
       outFrame->width = (int)std::lround(svgW);
       outFrame->height = (int)std::lround(svgH);
