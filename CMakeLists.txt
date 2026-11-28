@@ -514,7 +514,74 @@ if(EXISTS "${NCNN_DIR}/include/ncnn")
     if(NOT _qv_ocr_version OR _qv_ocr_ver_err)
         message(FATAL_ERROR "Failed to read single-source version from ${_qv_ocr_manifest}: ${_qv_ocr_ver_err}")
     endif()
-    add_library(ocr_ppocr_ncnn SHARED plugins/ocr/ocr_ppocr_ncnn/ocr_ppocr_ncnn_engine.cpp)
+    set(_qv_zxing_src "${CMAKE_CURRENT_SOURCE_DIR}/third_party/zxing-cpp/core/src")
+    set_source_files_properties("${_qv_zxing_src}/libzueci/zueci.c" PROPERTIES
+        SKIP_PRECOMPILE_HEADERS ON
+        COMPILE_DEFINITIONS "ZUECI_EMBED_NO_TO_ECI"
+    )
+    add_library(ZXingSlim STATIC
+        "${_qv_zxing_src}/Barcode.cpp"
+        "${_qv_zxing_src}/BarcodeFormat.cpp"
+        "${_qv_zxing_src}/BinaryBitmap.cpp"
+        "${_qv_zxing_src}/BitArray.cpp"
+        "${_qv_zxing_src}/BitMatrix.cpp"
+        "${_qv_zxing_src}/BitSource.cpp"
+        "${_qv_zxing_src}/CharacterSet.cpp"
+        "${_qv_zxing_src}/ConcentricFinder.cpp"
+        "${_qv_zxing_src}/Content.cpp"
+        "${_qv_zxing_src}/ECI.cpp"
+        "${_qv_zxing_src}/Error.cpp"
+        "${_qv_zxing_src}/GenericGF.cpp"
+        "${_qv_zxing_src}/GenericGFPoly.cpp"
+        "${_qv_zxing_src}/GlobalHistogramBinarizer.cpp"
+        "${_qv_zxing_src}/GridSampler.cpp"
+        "${_qv_zxing_src}/GTIN.cpp"
+        "${_qv_zxing_src}/HRI.cpp"
+        "${_qv_zxing_src}/HybridBinarizer.cpp"
+        "${_qv_zxing_src}/PerspectiveTransform.cpp"
+        "${_qv_zxing_src}/ReadBarcode.cpp"
+        "${_qv_zxing_src}/ReedSolomonDecoder.cpp"
+        "${_qv_zxing_src}/ResultPoint.cpp"
+        "${_qv_zxing_src}/TextDecoder.cpp"
+        "${_qv_zxing_src}/Utf.cpp"
+        "${_qv_zxing_src}/WhiteRectDetector.cpp"
+        "${_qv_zxing_src}/libzueci/zueci.c"
+        "${_qv_zxing_src}/qrcode/QRBitMatrixParser.cpp"
+        "${_qv_zxing_src}/qrcode/QRCodecMode.cpp"
+        "${_qv_zxing_src}/qrcode/QRDataBlock.cpp"
+        "${_qv_zxing_src}/qrcode/QRDecoder.cpp"
+        "${_qv_zxing_src}/qrcode/QRDetector.cpp"
+        "${_qv_zxing_src}/qrcode/QRErrorCorrectionLevel.cpp"
+        "${_qv_zxing_src}/qrcode/QRFormatInformation.cpp"
+        "${_qv_zxing_src}/qrcode/QRReader.cpp"
+        "${_qv_zxing_src}/qrcode/QRVersion.cpp"
+        "${_qv_zxing_src}/datamatrix/DMBitLayout.cpp"
+        "${_qv_zxing_src}/datamatrix/DMDataBlock.cpp"
+        "${_qv_zxing_src}/datamatrix/DMDecoder.cpp"
+        "${_qv_zxing_src}/datamatrix/DMDetector.cpp"
+        "${_qv_zxing_src}/datamatrix/DMReader.cpp"
+        "${_qv_zxing_src}/datamatrix/DMVersion.cpp"
+        "${_qv_zxing_src}/oned/ODUPCEANCommon.cpp"
+        "${_qv_zxing_src}/oned/ODMultiUPCEANReader.cpp"
+        "${_qv_zxing_src}/oned/ODCode128Patterns.cpp"
+        "${_qv_zxing_src}/oned/ODCode128Reader.cpp"
+        "${_qv_zxing_src}/oned/ODCode39Reader.cpp"
+        plugins/ocr/ocr_ppocr_ncnn/zxing_slim_readers.cpp
+    )
+    set_target_properties(ZXingSlim PROPERTIES
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL"
+        POSITION_INDEPENDENT_CODE ON
+    )
+    target_include_directories(ZXingSlim PUBLIC "${_qv_zxing_src}")
+    target_compile_definitions(ZXingSlim PRIVATE ZXING_READERS UNICODE _UNICODE _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS NOMINMAX)
+    if(MSVC OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        target_compile_options(ZXingSlim PRIVATE /utf-8 /Gw /Gy)
+    endif()
+    target_compile_features(ZXingSlim PUBLIC cxx_std_17)
+
+    add_library(ocr_ppocr_ncnn SHARED
+        plugins/ocr/ocr_ppocr_ncnn/ocr_ppocr_ncnn_engine.cpp
+    )
     set_target_properties(ocr_ppocr_ncnn PROPERTIES
         SUFFIX ".qvx"
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL"
@@ -524,8 +591,11 @@ if(EXISTS "${NCNN_DIR}/include/ncnn")
     )
     target_compile_definitions(ocr_ppocr_ncnn PRIVATE UNICODE _UNICODE QVX_BUILDING_PLUGIN QVX_PLUGIN_VERSION_STR="${_qv_ocr_version}")
     if(MSVC OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-        target_compile_options(ocr_ppocr_ncnn PRIVATE /utf-8 /GS)
-        target_link_options(ocr_ppocr_ncnn PRIVATE /DYNAMICBASE /NXCOMPAT)
+        target_compile_options(ocr_ppocr_ncnn PRIVATE /utf-8 /Gw /Gy /GS)
+        target_link_options(ocr_ppocr_ncnn PRIVATE
+            /DYNAMICBASE /NXCOMPAT
+            $<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:/OPT:REF;/OPT:ICF>
+        )
     endif()
     target_include_directories(ocr_ppocr_ncnn PRIVATE
         QuickView
@@ -535,6 +605,7 @@ if(EXISTS "${NCNN_DIR}/include/ncnn")
     )
     target_link_libraries(ocr_ppocr_ncnn PRIVATE
         shlwapi.lib
+        ZXingSlim
         "${NCNN_DIR}/lib/ncnn.lib"
         "${NCNN_DIR}/lib/glslang.lib"
     )

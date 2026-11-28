@@ -1,0 +1,2 @@
+symbologyIdentifier=]C1
+contentType=GS1

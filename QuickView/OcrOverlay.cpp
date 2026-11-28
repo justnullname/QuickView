@@ -12,6 +12,8 @@
 #include "OcrOverlay.h"
 #include "AppStrings.h"
 #include "ThemePalette.h"
+#include "Plugin/abi/qvx_analyzer.h"
+#include <shellapi.h>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -84,6 +86,79 @@ inline void ScreenToImg(float sx, float sy, const OcrViewportMetrics& vp, float&
     iy = (sy - vp.imgDrawY) * inv;
 }
 
+inline bool IsBarcodeLine(const QuickView::Ocr::OcrLine& line) noexcept {
+    return (line.flags & QVX_ANALYZER_FLAG_BARCODE) != 0u;
+}
+
+inline std::wstring_view TrimWideAsciiWs(std::wstring_view s) noexcept {
+    auto isWs = [](wchar_t ch) noexcept {
+        return ch == L' ' || ch == L'\t' || ch == L'\r' || ch == L'\n';
+    };
+    while (!s.empty() && isWs(s.front())) s.remove_prefix(1);
+    while (!s.empty() && isWs(s.back())) s.remove_suffix(1);
+    return s;
+}
+
+inline bool StartsWithCaseInsensitiveWide(std::wstring_view s, std::wstring_view prefix) noexcept {
+    if (s.size() < prefix.size()) return false;
+    for (size_t i = 0; i < prefix.size(); ++i) {
+        wchar_t a = s[i];
+        wchar_t b = prefix[i];
+        if (a >= L'A' && a <= L'Z') a = static_cast<wchar_t>(a + 32);
+        if (b >= L'A' && b <= L'Z') b = static_cast<wchar_t>(b + 32);
+        if (a != b) return false;
+    }
+    return true;
+}
+
+inline void ComputeBarcodeBadgeLayout(
+    const D2D1_RECT_F& imgRect,
+    const OcrViewportMetrics& vp,
+    float uiScale,
+    D2D1_POINT_2F& outCenter,
+    float& outRadius,
+    D2D1_RECT_F& outScreenRect) noexcept
+{
+    const float sx0 = vp.imgDrawX + imgRect.left * vp.totalScale;
+    const float sy0 = vp.imgDrawY + imgRect.top * vp.totalScale;
+    const float sx1 = vp.imgDrawX + imgRect.right * vp.totalScale;
+    const float sy1 = vp.imgDrawY + imgRect.bottom * vp.totalScale;
+    outScreenRect = D2D1::RectF(sx0, sy0, sx1, sy1);
+
+    const float qrMinSide = (std::min)(sx1 - sx0, sy1 - sy0);
+    const float r = std::clamp(qrMinSide * 0.26f, 13.0f * uiScale, 24.0f * uiScale);
+    outRadius = r;
+    float cx = (sx0 + sx1) * 0.5f;
+    float cy = (sy0 + sy1) * 0.5f;
+    if (vp.winW > r * 2.0f + 8.0f) {
+        cx = std::clamp(cx, r + 4.0f, vp.winW - r - 4.0f);
+    }
+    if (vp.winH > r * 2.0f + 8.0f) {
+        cy = std::clamp(cy, r + 4.0f, vp.winH - r - 4.0f);
+    }
+    outCenter = D2D1::Point2F(cx, cy);
+}
+
+bool WriteTextToClipboardRaw(HWND hwnd, std::wstring_view text) noexcept {
+    if (text.empty() || !OpenClipboard(hwnd)) return false;
+    EmptyClipboard();
+    const size_t bytes = (text.size() + 1u) * sizeof(wchar_t);
+    HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, bytes);
+    if (hMem) {
+        void* dst = GlobalLock(hMem);
+        if (dst) {
+            std::memcpy(dst, text.data(), text.size() * sizeof(wchar_t));
+            static_cast<wchar_t*>(dst)[text.size()] = L'\0';
+            GlobalUnlock(hMem);
+            SetClipboardData(CF_UNICODETEXT, hMem);
+        } else {
+            GlobalFree(hMem);
+        }
+    }
+    CloseClipboard();
+    return true;
+}
+
 } // namespace
 
 void OcrOverlay::Init(ID2D1DeviceContext* dc, HWND hwnd) {
@@ -108,12 +183,18 @@ QV_OCR_UI_COLD void OcrOverlay::CreateDeviceResources(ID2D1DeviceContext* dc) {
         ComPtr<ID2D1SolidColorBrush>* slot;
         D2D1_COLOR_F color;
     };
-    const BrushSpec specs[5] = {
+    const BrushSpec specs[11] = {
         { &m_brushLineFill, lineFill },
         { &m_brushLineHover, lineHover },
         { &m_brushLineBorder, lineBorder },
         { &m_brushSelection, selFill },
         { &m_brushAccent, tp.accentText },
+        { &m_brushBadgeBg, tp.accentFill },
+        { &m_brushBadgeFg, tp.onAccentText },
+        { &m_brushBadgeShadow, D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.28f) },
+        { &m_brushTooltipBg, tp.tooltipBg },
+        { &m_brushTooltipText, tp.text },
+        { &m_brushTooltipBorder, tp.border },
     };
     for (const auto& sp : specs) {
         if (!*sp.slot) {
@@ -123,13 +204,33 @@ QV_OCR_UI_COLD void OcrOverlay::CreateDeviceResources(ID2D1DeviceContext* dc) {
         }
     }
 
-    if (!m_dashedStroke) {
+    if (!m_dwriteFactory) {
+        DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(m_dwriteFactory.GetAddressOf()));
+    }
+    if (m_dwriteFactory && (!m_tooltipFont || std::abs(m_tooltipFontScale - m_uiScale) > 0.01f)) {
+        m_tooltipFont.Reset();
+        if (SUCCEEDED(m_dwriteFactory->CreateTextFormat(
+                L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+                DWRITE_FONT_STRETCH_NORMAL, 12.5f * m_uiScale, L"", &m_tooltipFont))) {
+            m_tooltipFont->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+            m_tooltipFontScale = m_uiScale;
+        }
+    }
+
+    if (!m_dashedStroke || !m_roundStroke) {
         ComPtr<ID2D1Factory> factory;
         dc->GetFactory(&factory);
         if (factory) {
-            D2D1_STROKE_STYLE_PROPERTIES props = D2D1::StrokeStyleProperties();
-            props.dashStyle = D2D1_DASH_STYLE_DASH;
-            factory->CreateStrokeStyle(props, nullptr, 0, &m_dashedStroke);
+            if (!m_dashedStroke) {
+                D2D1_STROKE_STYLE_PROPERTIES props = D2D1::StrokeStyleProperties();
+                props.dashStyle = D2D1_DASH_STYLE_DASH;
+                factory->CreateStrokeStyle(props, nullptr, 0, &m_dashedStroke);
+            }
+            if (!m_roundStroke) {
+                D2D1_STROKE_STYLE_PROPERTIES roundProps = D2D1::StrokeStyleProperties(
+                    D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND, D2D1_LINE_JOIN_ROUND);
+                factory->CreateStrokeStyle(roundProps, nullptr, 0, &m_roundStroke);
+            }
         }
     }
 }
@@ -140,6 +241,7 @@ QV_OCR_UI_COLD void OcrOverlay::BeginScan(uint64_t imageId, uint64_t generationI
     m_silentAuto = silentAuto;
     m_scanStartTickMs = GetTickCount64();
     m_hoverLineIdx = -1;
+    m_hoverBarcodeIdx = -1;
     m_isDraggingStream = false;
     m_isDraggingBox = false;
     m_boxSelectionActive = false;
@@ -193,6 +295,7 @@ QV_OCR_UI_COLD void OcrOverlay::DismissAndCancel() {
     m_isDraggingBox = false;
     m_boxSelectionActive = false;
     m_hoverLineIdx = -1;
+    m_hoverBarcodeIdx = -1;
     m_cachedLineRects.clear();
     m_cachedTokenRects.clear();
     m_cachedSelectionRects.clear();
@@ -221,6 +324,11 @@ QV_OCR_UI_COLD void OcrOverlay::BuildCachedGeometry(float visualW, float visualH
     m_boxSelectionActive = false;
 
     for (auto& line : m_doc.lines) {
+        if (IsBarcodeLine(line)) {
+            line.tokenStart = 0;
+            line.tokenCount = 0;
+            continue;
+        }
         if (line.tokenCount == 0 && !line.text.empty()) {
             const uint32_t tokStart = static_cast<uint32_t>(m_doc.tokens.size());
             const size_t totalChars = line.text.size();
@@ -278,6 +386,7 @@ QV_OCR_UI_COLD OcrTextPosition OcrOverlay::HitTestImageSpace(float imgX, float i
 
     const float pad = 4.0f;
     for (size_t li = 0; li < m_doc.lines.size(); ++li) {
+        if (IsBarcodeLine(m_doc.lines[li])) continue;
         const D2D1_RECT_F& lr = m_cachedLineRects[li];
         if (imgX < lr.left - pad || imgX > lr.right + pad || imgY < lr.top - pad || imgY > lr.bottom + pad) {
             continue;
@@ -404,15 +513,68 @@ QV_OCR_UI_COLD void OcrOverlay::RebuildSelectionRectsFromBox(float imgX0, float 
     }
 }
 
+QV_OCR_UI_COLD bool OcrOverlay::IsSafeHttpUrl(std::wstring_view text) noexcept {
+    for (wchar_t ch : text) {
+        if (ch < 0x20 || ch == 0x7F) return false;
+    }
+    const std::wstring_view trimmed = TrimWideAsciiWs(text);
+    if (trimmed.empty()) return false;
+    if (StartsWithCaseInsensitiveWide(trimmed, L"https://")) {
+        return trimmed.size() > 8u;
+    }
+    if (StartsWithCaseInsensitiveWide(trimmed, L"http://")) {
+        return trimmed.size() > 7u;
+    }
+    return false;
+}
+
+QV_OCR_UI_COLD int OcrOverlay::HitTestBarcodeScreenSpace(float screenX, float screenY, const OcrViewportMetrics& vp) const {
+    if (m_state != OcrOverlayState::Active || !vp.valid) return -1;
+    const size_t n = (std::min)(m_doc.lines.size(), m_cachedLineRects.size());
+    for (size_t i = 0; i < n; ++i) {
+        if (!IsBarcodeLine(m_doc.lines[i])) continue;
+        D2D1_POINT_2F center{};
+        float radius = 0.0f;
+        D2D1_RECT_F screenRect{};
+        ComputeBarcodeBadgeLayout(m_cachedLineRects[i], vp, m_uiScale, center, radius, screenRect);
+        const float dx = screenX - center.x;
+        const float dy = screenY - center.y;
+        const float hitR = radius * 1.25f;
+        if (dx * dx + dy * dy <= hitR * hitR) {
+            return static_cast<int>(i);
+        }
+    }
+    for (size_t i = 0; i < n; ++i) {
+        if (!IsBarcodeLine(m_doc.lines[i])) continue;
+        D2D1_POINT_2F center{};
+        float radius = 0.0f;
+        D2D1_RECT_F screenRect{};
+        ComputeBarcodeBadgeLayout(m_cachedLineRects[i], vp, m_uiScale, center, radius, screenRect);
+        if (screenX >= screenRect.left && screenX <= screenRect.right &&
+            screenY >= screenRect.top && screenY <= screenRect.bottom) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
 QV_OCR_UI_COLD void OcrOverlay::SelectAll() {
     if (m_doc.lines.empty() || m_doc.tokens.empty()) return;
-    const int lastLine = static_cast<int>(m_doc.lines.size()) - 1;
+    int firstLine = -1;
+    int lastLine = -1;
+    for (int i = 0; i < static_cast<int>(m_doc.lines.size()); ++i) {
+        const auto& l = m_doc.lines[i];
+        if (IsBarcodeLine(l) || l.tokenCount == 0) continue;
+        if (firstLine < 0) firstLine = i;
+        lastLine = i;
+    }
+    if (firstLine < 0 || lastLine < 0) return;
+    const int firstTok = static_cast<int>(m_doc.lines[firstLine].tokenStart);
     const auto& ll = m_doc.lines[lastLine];
-    if (ll.tokenCount == 0) return;
-    const int firstTok = static_cast<int>(m_doc.lines.front().tokenStart);
     const int lastTok = static_cast<int>(ll.tokenStart + ll.tokenCount - 1);
+    if (firstTok < 0 || lastTok < 0 || static_cast<size_t>(lastTok) >= m_doc.tokens.size()) return;
     const int lastLen = static_cast<int>(m_doc.tokens[lastTok].text.size());
-    SetStreamSelection({ 0, firstTok, 0 }, { lastLine, lastTok, lastLen });
+    SetStreamSelection({ firstLine, firstTok, 0 }, { lastLine, lastTok, lastLen });
 }
 
 QV_OCR_UI_COLD void OcrOverlay::ClearSelection() {
@@ -528,7 +690,8 @@ QV_OCR_UI_COLD std::wstring OcrOverlay::GetSelectedText() const {
 QV_OCR_UI_COLD std::wstring OcrOverlay::GetAllText() const {
     std::wstring out;
     for (size_t i = 0; i < m_doc.lines.size(); ++i) {
-        if (i > 0) out.append(L"\r\n");
+        if (IsBarcodeLine(m_doc.lines[i])) continue;
+        if (!out.empty()) out.append(L"\r\n");
         out.append(m_doc.lines[i].text);
     }
     return out;
@@ -539,21 +702,7 @@ QV_OCR_UI_COLD bool OcrOverlay::CopySelectionOrAllToClipboard(HWND hwnd, size_t*
     if (text.empty()) return false;
     if (outCharCount) *outCharCount = text.size();
 
-    if (!OpenClipboard(hwnd)) return false;
-    EmptyClipboard();
-    const size_t bytes = (text.size() + 1) * sizeof(wchar_t);
-    HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, bytes);
-    if (hMem) {
-        void* dst = GlobalLock(hMem);
-        if (dst) {
-            std::memcpy(dst, text.c_str(), bytes);
-            GlobalUnlock(hMem);
-            SetClipboardData(CF_UNICODETEXT, hMem);
-        } else {
-            GlobalFree(hMem);
-        }
-    }
-    CloseClipboard();
+    if (!WriteTextToClipboardRaw(hwnd, text)) return false;
 
     if (hwnd && IsWindow(hwnd)) {
         wchar_t msg[128]{};
@@ -596,6 +745,17 @@ QV_OCR_UI_COLD void OcrOverlay::Render(ID2D1DeviceContext* dc, const OcrViewport
 
         for (size_t i = 0; i < m_cachedLineRects.size(); ++i) {
             const D2D1_RECT_F& r = m_cachedLineRects[i];
+            if (i < m_doc.lines.size() && IsBarcodeLine(m_doc.lines[i])) {
+                const bool hovered = (static_cast<int>(i) == m_hoverBarcodeIdx);
+                const D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(r, 6.0f * invScale, 6.0f * invScale);
+                if (hovered) {
+                    dc->FillRoundedRectangle(rr, m_brushLineHover.Get());
+                } else {
+                    dc->FillRoundedRectangle(rr, m_brushLineFill.Get());
+                }
+                dc->DrawRoundedRectangle(rr, m_brushAccent.Get(), (hovered ? 2.4f : 1.6f) * invScale);
+                continue;
+            }
             ID2D1SolidColorBrush* fill = (static_cast<int>(i) == m_hoverLineIdx)
                 ? m_brushLineHover.Get()
                 : m_brushLineFill.Get();
@@ -618,6 +778,101 @@ QV_OCR_UI_COLD void OcrOverlay::Render(ID2D1DeviceContext* dc, const OcrViewport
         }
 
         dc->SetTransform(oldT);
+
+        // Screen-space fixed-size circular arrow badges and hover tooltip for QR codes
+        const size_t lineCount = (std::min)(m_doc.lines.size(), m_cachedLineRects.size());
+        for (size_t i = 0; i < lineCount; ++i) {
+            if (!IsBarcodeLine(m_doc.lines[i])) continue;
+            D2D1_POINT_2F center{};
+            float radius = 0.0f;
+            D2D1_RECT_F screenRect{};
+            ComputeBarcodeBadgeLayout(m_cachedLineRects[i], vp, m_uiScale, center, radius, screenRect);
+
+            const bool hovered = (static_cast<int>(i) == m_hoverBarcodeIdx);
+            const float drawR = hovered ? (radius * 1.12f) : radius;
+            if (m_brushBadgeShadow) {
+                const D2D1_ELLIPSE shadow = D2D1::Ellipse(
+                    D2D1::Point2F(center.x, center.y + 1.5f * m_uiScale),
+                    drawR + 1.0f * m_uiScale, drawR + 1.0f * m_uiScale);
+                dc->FillEllipse(shadow, m_brushBadgeShadow.Get());
+            }
+            const D2D1_ELLIPSE badge = D2D1::Ellipse(center, drawR, drawR);
+            dc->FillEllipse(badge, m_brushBadgeBg.Get());
+            dc->DrawEllipse(badge, m_brushBadgeFg.Get(), 2.0f * m_uiScale);
+
+            // WeChat-style horizontal right arrow inside the circular accent badge
+            const float a = drawR * 0.42f;
+            const float strokeW = 2.4f * m_uiScale;
+            ID2D1StrokeStyle* arrowStyle = m_roundStroke.Get();
+            const D2D1_POINT_2F pStart = D2D1::Point2F(center.x - a, center.y);
+            const D2D1_POINT_2F pTip = D2D1::Point2F(center.x + a, center.y);
+            const D2D1_POINT_2F pHeadTop = D2D1::Point2F(center.x + a * 0.15f, center.y - a * 0.78f);
+            const D2D1_POINT_2F pHeadBot = D2D1::Point2F(center.x + a * 0.15f, center.y + a * 0.78f);
+            dc->DrawLine(pStart, pTip, m_brushBadgeFg.Get(), strokeW, arrowStyle);
+            dc->DrawLine(pHeadTop, pTip, m_brushBadgeFg.Get(), strokeW, arrowStyle);
+            dc->DrawLine(pHeadBot, pTip, m_brushBadgeFg.Get(), strokeW, arrowStyle);
+        }
+
+        if (m_hoverBarcodeIdx >= 0 &&
+            static_cast<size_t>(m_hoverBarcodeIdx) < lineCount &&
+            IsBarcodeLine(m_doc.lines[m_hoverBarcodeIdx]) &&
+            m_dwriteFactory && m_tooltipFont &&
+            m_brushTooltipBg && m_brushTooltipText && m_brushTooltipBorder)
+        {
+            const std::wstring& rawText = m_doc.lines[m_hoverBarcodeIdx].text;
+            if (!rawText.empty()) {
+                constexpr size_t kMaxPreviewChars = 160u;
+                std::wstring preview = (rawText.size() > kMaxPreviewChars)
+                    ? (rawText.substr(0, kMaxPreviewChars - 3u) + L"...")
+                    : rawText;
+
+                D2D1_POINT_2F center{};
+                float radius = 0.0f;
+                D2D1_RECT_F screenRect{};
+                ComputeBarcodeBadgeLayout(m_cachedLineRects[m_hoverBarcodeIdx], vp, m_uiScale, center, radius, screenRect);
+
+                const float maxBubbleW = (std::max)(80.0f, (std::min)(420.0f * m_uiScale, vp.winW - 24.0f));
+                const float padX = 10.0f * m_uiScale;
+                const float padY = 6.0f * m_uiScale;
+                const float maxTextW = (std::max)(40.0f, maxBubbleW - padX * 2.0f);
+
+                ComPtr<IDWriteTextLayout> layout;
+                if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(
+                        preview.data(), static_cast<UINT32>(preview.size()),
+                        m_tooltipFont.Get(), maxTextW, 120.0f * m_uiScale, &layout)) && layout)
+                {
+                    DWRITE_TEXT_METRICS metrics{};
+                    if (SUCCEEDED(layout->GetMetrics(&metrics))) {
+                        const float bubbleW = (std::min)(maxBubbleW, metrics.widthIncludingTrailingWhitespace + padX * 2.0f);
+                        const float bubbleH = metrics.height + padY * 2.0f;
+                        const float gap = 8.0f * m_uiScale;
+                        const float effR = radius * 1.12f;
+
+                        float bx = center.x - bubbleW * 0.5f;
+                        if (vp.winW > bubbleW + 16.0f) {
+                            bx = std::clamp(bx, 8.0f, vp.winW - bubbleW - 8.0f);
+                        } else {
+                            bx = 4.0f;
+                        }
+                        float by = center.y - effR - gap - bubbleH;
+                        if (by < 4.0f) {
+                            by = center.y + effR + gap;
+                        }
+                        if (vp.winH > bubbleH + 8.0f) {
+                            by = std::clamp(by, 4.0f, vp.winH - bubbleH - 4.0f);
+                        }
+
+                        const D2D1_ROUNDED_RECT bubble = D2D1::RoundedRect(
+                            D2D1::RectF(bx, by, bx + bubbleW, by + bubbleH),
+                            6.0f * m_uiScale, 6.0f * m_uiScale);
+                        dc->FillRoundedRectangle(bubble, m_brushTooltipBg.Get());
+                        dc->DrawRoundedRectangle(bubble, m_brushTooltipBorder.Get(), 1.0f * m_uiScale);
+                        dc->DrawTextLayout(D2D1::Point2F(bx + padX, by + padY), layout.Get(), m_brushTooltipText.Get());
+                    }
+                }
+            }
+        }
+
         dc->PopAxisAlignedClip();
     }
 
@@ -644,6 +899,9 @@ QV_OCR_UI_COLD void OcrOverlay::Render(ID2D1DeviceContext* dc, const OcrViewport
 
 QV_OCR_UI_COLD OcrHitZone OcrOverlay::HitTest(float screenX, float screenY, const OcrViewportMetrics& vp) const {
     if (m_state == OcrOverlayState::Active && vp.valid) {
+        if (HitTestBarcodeScreenSpace(screenX, screenY, vp) >= 0) {
+            return OcrHitZone::Barcode;
+        }
         float imgX = 0.0f, imgY = 0.0f;
         ScreenToImg(screenX, screenY, vp, imgX, imgY);
         if (HitTestImageSpace(imgX, imgY).IsValid()) {
@@ -676,9 +934,11 @@ QV_OCR_UI_COLD bool OcrOverlay::OnMouseMove(float screenX, float screenY, const 
     }
 
     if (!shiftDown) {
-        const OcrTextPosition pos = HitTestImageSpace(ix, iy);
-        if (pos.lineIdx != m_hoverLineIdx) {
-            m_hoverLineIdx = pos.lineIdx;
+        const int qrIdx = HitTestBarcodeScreenSpace(screenX, screenY, vp);
+        const int nextLineIdx = (qrIdx >= 0) ? -1 : HitTestImageSpace(ix, iy).lineIdx;
+        if (qrIdx != m_hoverBarcodeIdx || nextLineIdx != m_hoverLineIdx) {
+            m_hoverBarcodeIdx = qrIdx;
+            m_hoverLineIdx = nextLineIdx;
             NotifyRepaint();
         }
     }
@@ -687,6 +947,24 @@ QV_OCR_UI_COLD bool OcrOverlay::OnMouseMove(float screenX, float screenY, const 
 
 QV_OCR_UI_COLD bool OcrOverlay::OnLButtonDown(float screenX, float screenY, const OcrViewportMetrics& vp, bool shiftDown) {
     if (m_state != OcrOverlayState::Active || !vp.valid) return false;
+
+    if (!shiftDown) {
+        const int qrIdx = HitTestBarcodeScreenSpace(screenX, screenY, vp);
+        if (qrIdx >= 0 && static_cast<size_t>(qrIdx) < m_doc.lines.size()) {
+            const auto& line = m_doc.lines[qrIdx];
+            if ((line.flags & QVX_ANALYZER_FLAG_URL) != 0u && IsSafeHttpUrl(line.text)) {
+                const std::wstring url(TrimWideAsciiWs(line.text));
+                ShellExecuteW(m_hwnd, L"open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            } else if (!line.text.empty()) {
+                if (WriteTextToClipboardRaw(m_hwnd, line.text) && m_hwnd && IsWindow(m_hwnd)) {
+                    wchar_t msg[128]{};
+                    swprintf_s(msg, GetOcrOsdLabel(0), line.text.size());
+                    ShowOsd(msg);
+                }
+            }
+            return true;
+        }
+    }
 
     float ix = 0.0f, iy = 0.0f;
     ScreenToImg(screenX, screenY, vp, ix, iy);

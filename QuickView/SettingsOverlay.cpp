@@ -4260,6 +4260,9 @@ void SettingsOverlay::BuildPluginsTab(SettingsTab& tabPlugins) {
                 if (rec.id == "com.quickview.shell.thumb") {
                     // [NEW-Badge] Added in v6.61.0 (Explorer Thumbnail Provider plugin)
                     itemAccordion.isNewOption = true;
+                } else if (rec.id == "com.quickview.ocr.ppocr_ncnn") {
+                    // [NEW-Badge] Updated in v6.63.0 (PP-OCRv5 & QR/Barcode Recognition plugin)
+                    itemAccordion.isNewOption = true;
                 }
                 itemAccordion.headerBtn1Tooltip = AppStrings::g.Settings_Button_OpenModelFolder;
                 itemAccordion.onHeaderBtn1 = [](SettingsOverlay*, SettingsItem* item) {

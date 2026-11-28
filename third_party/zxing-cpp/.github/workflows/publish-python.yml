@@ -1,0 +1,113 @@
+name: publish-python
+
+on:
+  release:
+    types: [published]
+
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish package (y/n)'
+        default: 'n'
+#  push:
+#    branches: [master]
+#    tags: ["v*.*.*"]
+#  pull_request:
+#    branches: [master]
+
+jobs:
+  build-wheels:
+    name: Build wheels on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-13, windows-latest] # at least macos-13 is required to enable c++20 support
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: true
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install cibuildwheel
+      run: python3 -m pip install cibuildwheel==2.22.0
+
+    - name: Build wheels
+      run: python3 -m cibuildwheel --output-dir wheelhouse wrappers/python
+      env:
+        # TODO: setup a "BEFORE" cmake build and link the python module to the prebuild libZXing.a
+        # see https://github.com/YannickJadoul/Parselmouth/blob/523c117aa780184345121f6ff8315670bc7d4d94/.github/workflows/wheels.yml#L120
+        CIBW_BUILD: cp39-* cp310-* cp311-* cp312-* cp313-*
+        CIBW_SKIP: "*musllinux*"
+        # the default maylinux2014 image does not contain a c++20 compiler, see https://github.com/pypa/manylinux
+        CIBW_MANYLINUX_X86_64_IMAGE: quay.io/pypa/manylinux_2_28_x86_64
+        # CIBW_ARCHS_MACOS: "x86_64 arm64"
+        CIBW_ARCHS_MACOS: universal2
+        CIBW_ENVIRONMENT_MACOS: CMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+        # the default macOS target version is 10.9. it might be required to increase that to support c++20 or later features.
+        # MACOSX_DEPLOYMENT_TARGET: "10.15"
+        CIBW_BUILD_VERBOSITY: 1
+
+    - name: Upload wheels
+      uses: actions/upload-artifact@v4
+      with:
+        name: cibw-wheels-${{ matrix.os }}
+        path: ./wheelhouse/*.whl
+
+  build-sdist:
+    name: Build source distribution
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: true
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.13'
+
+    - name: Install dependencies
+      working-directory: wrappers/python
+      run: python -m pip install --upgrade pip setuptools
+
+    - name: Build sdist
+      working-directory: wrappers/python
+      run: python3 setup.py sdist
+
+    - name: Upload sdist
+      uses: actions/upload-artifact@v4
+      with:
+        name: cibw-sdist
+        path: wrappers/python/dist/*.tar.gz
+
+  upload-pypi:
+    name: Upload to PyPI
+    needs: [build-wheels, build-sdist]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/zxing-cpp
+    permissions:
+      id-token: write  # IMPORTANT: this permission is mandatory for trusted publishing
+    # only run if the commit is tagged...
+#    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'release' || github.event.inputs.publish == 'y'
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cibw-*
+          path: dist
+          merge-multiple: true
+
+      - name: List wheels
+        run: ls dist
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+#        with:
+#          repository-url: https://test.pypi.org/legacy/

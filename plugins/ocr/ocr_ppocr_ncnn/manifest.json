@@ -2,7 +2,7 @@
   "schema_version": 3,
   "abi_version": "3.0.0",
   "id": "com.quickview.ocr.ppocr_ncnn",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "author": "QuickView Core Team",
   "entry": "ocr_ppocr_ncnn.qvx",
   "arch": "x64",
@@ -44,6 +44,6 @@
   "interfaces": ["analyzer"],
   "analyzer": {
     "kind": "ocr",
-    "caps": ["ocr", "multi_lang", "gpu"]
+    "caps": ["ocr", "barcode", "multi_lang", "gpu"]
   }
 }

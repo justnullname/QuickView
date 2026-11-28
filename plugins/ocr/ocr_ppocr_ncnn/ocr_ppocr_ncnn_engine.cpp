@@ -12,6 +12,7 @@
 #include "Plugin/qvx_sdk.hpp"
 #include "Plugin/abi/qvx_analyzer.h"
 #include "ocr_postprocess.h"
+#include "qr_detector.h"
 
 #include <windows.h>
 #include <shlwapi.h>
@@ -53,6 +54,7 @@ std::atomic<int> g_numThreads{ 4 };
 std::atomic<int> g_detLimitSide{ 960 };
 std::atomic<float> g_boxThresh{ 0.55f };
 std::atomic<float> g_unclipRatio{ 1.50f };
+std::atomic<bool> g_detectQr{ true };
 std::atomic<size_t> g_localeIdx{ 0 }; // 0:en-US, 1:zh-CN, 2:zh-TW, 3:ja-JP, 4:ru-RU, 5:de-DE, 6:es-ES, 7:fr-FR
 
 std::wstring Utf8ToWideLocal(std::string_view utf8) {
@@ -830,62 +832,70 @@ bool IsCancelled(const QVX_CancelToken& tok) noexcept {
 // ----------------------------------------------------------------------------
 // Localization & Params (0:en-US, 1:zh-CN, 2:zh-TW, 3:ja-JP, 4:ru-RU, 5:de-DE, 6:es-ES, 7:fr-FR)
 // ----------------------------------------------------------------------------
-const QVX_ParamDesc kParamTables[8][5] = {
+const QVX_ParamDesc kParamTables[8][6] = {
     { // 0: en-US
         qvx::MakeToggleParam("use_gpu", "Enable Vulkan GPU Acceleration", "Accelerate NCNN inference via Vulkan GPU with automatic multi-thread CPU fallback.", true),
         qvx::MakeIntSliderParam("num_threads", "CPU Threads", "Thread count for NCNN CPU fallback execution (1-16).", 1, 16, 4, 1, "%d"),
         qvx::MakeIntSliderParam("det_limit_side", "Detection Max Side", "Max long-side dimension per detection pass (multiple of 32). Higher helps tiny text.", 640, 1920, 960, 128, "%d px"),
         qvx::MakeSliderParam("box_thresh", "Detection Box Threshold", "Minimum mean probability required to keep a text box.", 0.30f, 0.85f, 0.55f, 0.05f),
-        qvx::MakeSliderParam("unclip_ratio", "Box Unclip Ratio", "DBNet box expansion ratio to avoid clipping character strokes.", 1.20f, 2.40f, 1.50f, 0.10f)
+        qvx::MakeSliderParam("unclip_ratio", "Box Unclip Ratio", "DBNet box expansion ratio to avoid clipping character strokes.", 1.20f, 2.40f, 1.50f, 0.10f),
+        qvx::MakeToggleParam("detect_qr", "Detect QR Codes", "Also scan for QR codes during OCR analysis and display interactive overlay badges.", true)
     },
     { // 1: zh-CN
         qvx::MakeToggleParam("use_gpu", "启用 Vulkan GPU 加速", "使用 Vulkan 计算加速推理；无支持设备或失败时自动无缝回退至多线程 CPU。", true),
         qvx::MakeIntSliderParam("num_threads", "CPU 推理线程数", "CPU 回退模式或后处理使用的线程数（1~16）。", 1, 16, 4, 1, "%d"),
         qvx::MakeIntSliderParam("det_limit_side", "文本检测边长上限", "单次检测最长边限制（32 对齐）。更高数值可看清微小文字但耗时更长。", 640, 1920, 960, 128, "%d px"),
         qvx::MakeSliderParam("box_thresh", "文本框置信阈值", "过滤低置信度文本框；遇到漏字可适当调低。", 0.30f, 0.85f, 0.55f, 0.05f),
-        qvx::MakeSliderParam("unclip_ratio", "文本框外扩比例 (Unclip)", "DBNet 向外扩展笔画边距比例，防止字边缘被裁切。", 1.20f, 2.40f, 1.50f, 0.10f)
+        qvx::MakeSliderParam("unclip_ratio", "文本框外扩比例 (Unclip)", "DBNet 向外扩展笔画边距比例，防止字边缘被裁切。", 1.20f, 2.40f, 1.50f, 0.10f),
+        qvx::MakeToggleParam("detect_qr", "识别二维码", "在 OCR 分析时同时扫描图中二维码，并显示交互式高亮图标。", true)
     },
     { // 2: zh-TW
         qvx::MakeToggleParam("use_gpu", "啟用 Vulkan GPU 加速", "使用 Vulkan 計算加速推論；無支援裝置時自動回退至多執行緒 CPU。", true),
         qvx::MakeIntSliderParam("num_threads", "CPU 推論執行緒數", "CPU 回退模式使用的執行緒數（1~16）。", 1, 16, 4, 1, "%d"),
         qvx::MakeIntSliderParam("det_limit_side", "文字偵測邊長上限", "單次偵測最長邊限制（32 對齊）。較高數值可辨識微小文字。", 640, 1920, 960, 128, "%d px"),
         qvx::MakeSliderParam("box_thresh", "文字框置信閾值", "過濾低置信度文字框；漏字時可適度調低。", 0.30f, 0.85f, 0.55f, 0.05f),
-        qvx::MakeSliderParam("unclip_ratio", "文字框外擴比例 (Unclip)", "DBNet 向外擴展邊距比例，避免筆畫邊緣被裁切。", 1.20f, 2.40f, 1.50f, 0.10f)
+        qvx::MakeSliderParam("unclip_ratio", "文字框外擴比例 (Unclip)", "DBNet 向外擴展邊距比例，避免筆畫邊緣被裁切。", 1.20f, 2.40f, 1.50f, 0.10f),
+        qvx::MakeToggleParam("detect_qr", "辨識 QR Code", "在 OCR 分析時同時掃描圖片中的 QR Code，並顯示互動式高亮圖示。", true)
     },
     { // 3: ja-JP
         qvx::MakeToggleParam("use_gpu", "Vulkan GPU アクセラレーション", "Vulkan Compute で高速推論します（非対応環境では自動的に CPU へフォールバック）。", true),
         qvx::MakeIntSliderParam("num_threads", "CPU スレッド数", "CPU フォールバック時に使用するスレッド数（1~16）。", 1, 16, 4, 1, "%d"),
         qvx::MakeIntSliderParam("det_limit_side", "検出最大辺長", "検出時の長辺上限（32 境界）。大きいほど極小文字に強くなります。", 640, 1920, 960, 128, "%d px"),
         qvx::MakeSliderParam("box_thresh", "検出ボックス閾値", "低信頼度の文字領域を除外する閾値です。", 0.30f, 0.85f, 0.55f, 0.05f),
-        qvx::MakeSliderParam("unclip_ratio", "ボックス拡張率 (Unclip)", "文字枠の余白拡張比率（文字欠け防止）。", 1.20f, 2.40f, 1.50f, 0.10f)
+        qvx::MakeSliderParam("unclip_ratio", "ボックス拡張率 (Unclip)", "文字枠の余白拡張比率（文字欠け防止）。", 1.20f, 2.40f, 1.50f, 0.10f),
+        qvx::MakeToggleParam("detect_qr", "QR コード検出", "OCR 解析時に画像内の QR コードも同時に検出し、インタラクティブバッジを表示します。", true)
     },
     { // 4: ru-RU
         qvx::MakeToggleParam("use_gpu", "Ускорение Vulkan GPU", "Ускоряет вывод NCNN через Vulkan GPU с автопереключением на многопоточный CPU.", true),
         qvx::MakeIntSliderParam("num_threads", "Потоки CPU", "Число потоков при выполнении на CPU (1–16).", 1, 16, 4, 1, "%d"),
         qvx::MakeIntSliderParam("det_limit_side", "Макс. сторона детекции", "Ограничение длинной стороны (кратно 32). Выше — лучше распознаёт мелкий текст.", 640, 1920, 960, 128, "%d px"),
         qvx::MakeSliderParam("box_thresh", "Порог уверенности рамки", "Минимальная оценка для сохранения текстовой области.", 0.30f, 0.85f, 0.55f, 0.05f),
-        qvx::MakeSliderParam("unclip_ratio", "Расширение рамки (Unclip)", "Коэффициент расширения контура DBNet во избежание обрезки краёв букв.", 1.20f, 2.40f, 1.50f, 0.10f)
+        qvx::MakeSliderParam("unclip_ratio", "Расширение рамки (Unclip)", "Коэффициент расширения контура DBNet во избежание обрезки краёв букв.", 1.20f, 2.40f, 1.50f, 0.10f),
+        qvx::MakeToggleParam("detect_qr", "Распознавание QR-кодов", "Также сканировать QR-коды во время анализа OCR и отображать интерактивные значки.", true)
     },
     { // 5: de-DE
         qvx::MakeToggleParam("use_gpu", "Vulkan-GPU-Beschleunigung", "Beschleunigt die NCNN-Inferenz über Vulkan GPU mit automatischem CPU-Fallback.", true),
         qvx::MakeIntSliderParam("num_threads", "CPU-Threads", "Anzahl der Threads für den CPU-Fallback-Modus (1–16).", 1, 16, 4, 1, "%d"),
         qvx::MakeIntSliderParam("det_limit_side", "Max. Erkennungsseite", "Maximale Seitenlänge pro Durchgang (Vielfaches von 32). Hilft bei sehr kleiner Schrift.", 640, 1920, 960, 128, "%d px"),
         qvx::MakeSliderParam("box_thresh", "Box-Schwellenwert", "Mindestwahrscheinlichkeit zum Beibehalten eines erkannten Textfelds.", 0.30f, 0.85f, 0.55f, 0.05f),
-        qvx::MakeSliderParam("unclip_ratio", "Box-Erweiterung (Unclip)", "DBNet-Erweiterungsfaktor gegen abgeschnittene Zeichenränder.", 1.20f, 2.40f, 1.50f, 0.10f)
+        qvx::MakeSliderParam("unclip_ratio", "Box-Erweiterung (Unclip)", "DBNet-Erweiterungsfaktor gegen abgeschnittene Zeichenränder.", 1.20f, 2.40f, 1.50f, 0.10f),
+        qvx::MakeToggleParam("detect_qr", "QR-Codes erkennen", "Während der OCR-Analyse auch nach QR-Codes suchen und interaktive Markierungen anzeigen.", true)
     },
     { // 6: es-ES
         qvx::MakeToggleParam("use_gpu", "Aceleración GPU Vulkan", "Acelera la inferencia NCNN con Vulkan GPU y respaldo automático en CPU multihilo.", true),
         qvx::MakeIntSliderParam("num_threads", "Hilos de CPU", "Número de hilos para la ejecución alternativa en CPU (1–16).", 1, 16, 4, 1, "%d"),
         qvx::MakeIntSliderParam("det_limit_side", "Lado máx. de detección", "Dimensión máxima del lado largo (múltiplo de 32). Mayor valor ayuda con texto pequeño.", 640, 1920, 960, 128, "%d px"),
         qvx::MakeSliderParam("box_thresh", "Umbral de caja de texto", "Probabilidad media mínima para conservar una caja de texto.", 0.30f, 0.85f, 0.55f, 0.05f),
-        qvx::MakeSliderParam("unclip_ratio", "Expansión de caja (Unclip)", "Factor de expansión DBNet para evitar recortar los trazos del texto.", 1.20f, 2.40f, 1.50f, 0.10f)
+        qvx::MakeSliderParam("unclip_ratio", "Expansión de caja (Unclip)", "Factor de expansión DBNet para evitar recortar los trazos del texto.", 1.20f, 2.40f, 1.50f, 0.10f),
+        qvx::MakeToggleParam("detect_qr", "Detectar códigos QR", "Buscar también códigos QR durante el análisis OCR y mostrar iconos interactivos.", true)
     },
     { // 7: fr-FR
         qvx::MakeToggleParam("use_gpu", "Accélération GPU Vulkan", "Accélère l'inférence NCNN via Vulkan GPU avec repli automatique sur CPU.", true),
         qvx::MakeIntSliderParam("num_threads", "Threads CPU", "Nombre de threads pour l'exécution de secours sur CPU (1–16).", 1, 16, 4, 1, "%d"),
         qvx::MakeIntSliderParam("det_limit_side", "Côté max. de détection", "Dimension maximale du côté long (multiple de 32). Améliore les petits textes.", 640, 1920, 960, 128, "%d px"),
         qvx::MakeSliderParam("box_thresh", "Seuil de confiance boîte", "Probabilité moyenne minimale pour conserver une zone de texte.", 0.30f, 0.85f, 0.55f, 0.05f),
-        qvx::MakeSliderParam("unclip_ratio", "Marge d'expansion (Unclip)", "Ratio d'expansion DBNet pour éviter de rogner les caractères.", 1.20f, 2.40f, 1.50f, 0.10f)
+        qvx::MakeSliderParam("unclip_ratio", "Marge d'expansion (Unclip)", "Ratio d'expansion DBNet pour éviter de rogner les caractères.", 1.20f, 2.40f, 1.50f, 0.10f),
+        qvx::MakeToggleParam("detect_qr", "Détecter les QR codes", "Rechercher également les QR codes lors de l'analyse OCR et afficher des badges interactifs.", true)
     }
 };
 
@@ -922,7 +932,7 @@ void UpdateLocalization(const char* lang) {
 // VTable Callbacks
 // ----------------------------------------------------------------------------
 uint32_t OcrNcnn_GetCaps(void) {
-    return QVX_ANALYZER_CAP_OCR | QVX_ANALYZER_CAP_MULTI_LANG | QVX_ANALYZER_CAP_GPU;
+    return QVX_ANALYZER_CAP_OCR | QVX_ANALYZER_CAP_BARCODE | QVX_ANALYZER_CAP_MULTI_LANG | QVX_ANALYZER_CAP_GPU;
 }
 
 uint32_t OcrNcnn_GetPresetCount(void) {
@@ -989,11 +999,11 @@ int32_t OcrNcnn_SetLanguage(const char* lang_code) {
 }
 
 uint32_t OcrNcnn_GetParamCount(void) {
-    return 5u;
+    return 6u;
 }
 
 const QVX_ParamDesc* OcrNcnn_GetParamDesc(uint32_t index) {
-    if (index >= 5u) return nullptr;
+    if (index >= 6u) return nullptr;
     const size_t rawLoc = g_localeIdx.load(std::memory_order_acquire);
     const size_t loc = (rawLoc < 8u) ? rawLoc : 0u;
     return &kParamTables[loc][index];
@@ -1023,6 +1033,10 @@ int32_t OcrNcnn_SetGlobalParamValue(const char* param_id, float val) {
         g_unclipRatio.store(std::clamp(val, 1.00f, 3.00f), std::memory_order_release);
         return QVX_OK;
     }
+    if (strcmp(param_id, "detect_qr") == 0) {
+        g_detectQr.store(val != 0.0f, std::memory_order_release);
+        return QVX_OK;
+    }
     return QVX_E_INVALIDARG;
 }
 
@@ -1037,6 +1051,7 @@ int32_t OcrNcnn_GetCtxParamValue(QVX_AnalyzerContext, const char* param_id, floa
     if (strcmp(param_id, "det_limit_side") == 0) { *out_val = static_cast<float>(g_detLimitSide.load()); return QVX_OK; }
     if (strcmp(param_id, "box_thresh") == 0) { *out_val = g_boxThresh.load(); return QVX_OK; }
     if (strcmp(param_id, "unclip_ratio") == 0) { *out_val = g_unclipRatio.load(); return QVX_OK; }
+    if (strcmp(param_id, "detect_qr") == 0) { *out_val = g_detectQr.load() ? 1.0f : 0.0f; return QVX_OK; }
     return QVX_E_INVALIDARG;
 }
 
@@ -1059,7 +1074,15 @@ int32_t OcrNcnn_Analyze(
     auto* impl = static_cast<OcrNcnnContextImpl*>(ctx);
     std::lock_guard<std::mutex> ctxLock(impl->mtx);
 
+    std::vector<DetectedQrCode> detectedQrs;
+    if (g_detectQr.load(std::memory_order_acquire)) {
+        detectedQrs = DetectQrCodesBgra(
+            input->pixels, input->width, input->height, input->stride, input->cancel);
+        if (IsCancelled(input->cancel)) return QVX_E_ABORT;
+    }
+
     ModelPackMeta meta{};
+    bool hasCatalogMeta = false;
     {
         std::lock_guard<std::mutex> catLock(g_catalogMutex);
         if (g_catalog.empty()) RefreshCatalogLocked();
@@ -1073,9 +1096,9 @@ int32_t OcrNcnn_Analyze(
         }
         if (!found && !g_catalog.empty()) {
             meta = g_catalog.front()->meta;
-        } else if (!found) {
-            return QVX_E_MISSING_ASSET;
+            found = true;
         }
+        hasCatalogMeta = found;
     }
 
     const bool wantGpu = g_useGpu.load(std::memory_order_acquire);
@@ -1085,7 +1108,9 @@ int32_t OcrNcnn_Analyze(
     const float unclipRatio = g_unclipRatio.load(std::memory_order_acquire);
 
     int32_t loadErr = QVX_OK;
-    if (!EnsureNetsLoaded(*impl, meta, wantGpu, threads, loadErr)) {
+    const bool hasOcrNets = hasCatalogMeta && EnsureNetsLoaded(*impl, meta, wantGpu, threads, loadErr);
+    if (!hasOcrNets && detectedQrs.empty()) {
+        if (!hasCatalogMeta) return QVX_E_MISSING_ASSET;
         return (loadErr != QVX_OK) ? loadErr : QVX_E_MISSING_ASSET;
     }
     if (IsCancelled(input->cancel)) return QVX_E_ABORT;
@@ -1094,86 +1119,103 @@ int32_t OcrNcnn_Analyze(
     const uint32_t fullH = input->height;
     const uint32_t stride = input->stride;
     const uint8_t* bgra = input->pixels;
+    const float invFullW = 1.0f / static_cast<float>(fullW);
+    const float invFullH = 1.0f / static_cast<float>(fullH);
 
-    const char* detInName = ResolveBlobName(meta.detInput, impl->nets.detNet.input_names(), "in0");
-    const char* detOutName = ResolveBlobName(meta.detOutput, impl->nets.detNet.output_names(), "out0");
-    const char* recInName = ResolveBlobName(meta.recInput, impl->nets.recNet.input_names(), "in0");
-    const char* recOutName = ResolveBlobName(meta.recOutput, impl->nets.recNet.output_names(), "out0");
+    std::vector<DbBox> mergedBoxes;
+    if (hasOcrNets) {
+        const char* detInName = ResolveBlobName(meta.detInput, impl->nets.detNet.input_names(), "in0");
+        const char* detOutName = ResolveBlobName(meta.detOutput, impl->nets.detNet.output_names(), "out0");
 
-    // 1. Sliding-window DBNet detection across oversized / tall screenshots.
-    // Adaptive tile growth: never collapse a huge image into one heavily-downscaled pass.
-    constexpr uint32_t kTileOverlap = 160u;
-    constexpr uint32_t kMaxTiles = 24u;
-    uint32_t tileLimit = 2560u;
-    uint32_t tilesX = 1u;
-    uint32_t tilesY = 1u;
-    for (;;) {
-        const uint32_t step = tileLimit - kTileOverlap;
-        tilesX = (fullW <= tileLimit) ? 1u : (1u + (fullW - tileLimit + step - 1u) / step);
-        tilesY = (fullH <= tileLimit) ? 1u : (1u + (fullH - tileLimit + step - 1u) / step);
-        if (tilesX * tilesY <= kMaxTiles) break;
-        tileLimit += tileLimit / 2u;
-    }
-    const uint32_t tileStep = tileLimit - kTileOverlap;
+        // 1. Sliding-window DBNet detection across oversized / tall screenshots.
+        // Adaptive tile growth: never collapse a huge image into one heavily-downscaled pass.
+        constexpr uint32_t kTileOverlap = 160u;
+        constexpr uint32_t kMaxTiles = 24u;
+        uint32_t tileLimit = 2560u;
+        uint32_t tilesX = 1u;
+        uint32_t tilesY = 1u;
+        for (;;) {
+            const uint32_t step = tileLimit - kTileOverlap;
+            tilesX = (fullW <= tileLimit) ? 1u : (1u + (fullW - tileLimit + step - 1u) / step);
+            tilesY = (fullH <= tileLimit) ? 1u : (1u + (fullH - tileLimit + step - 1u) / step);
+            if (tilesX * tilesY <= kMaxTiles) break;
+            tileLimit += tileLimit / 2u;
+        }
+        const uint32_t tileStep = tileLimit - kTileOverlap;
 
-    std::vector<DbBox> allBoxes;
-    int tileCounter = 0;
+        std::vector<DbBox> allBoxes;
+        int tileCounter = 0;
 
-    for (uint32_t ty = 0; ty < tilesY; ++ty) {
-        // Last tile is shifted back so every tile keeps full size (uniform scale, no thin slivers)
-        const uint32_t ty0 = (tilesY == 1u) ? 0u : (std::min)(ty * tileStep, fullH - tileLimit);
-        const uint32_t tileH = (tilesY == 1u) ? fullH : tileLimit;
+        for (uint32_t ty = 0; ty < tilesY; ++ty) {
+            // Last tile is shifted back so every tile keeps full size (uniform scale, no thin slivers)
+            const uint32_t ty0 = (tilesY == 1u) ? 0u : (std::min)(ty * tileStep, fullH - tileLimit);
+            const uint32_t tileH = (tilesY == 1u) ? fullH : tileLimit;
 
-        for (uint32_t tx = 0; tx < tilesX; ++tx) {
-            if (IsCancelled(input->cancel)) return QVX_E_ABORT;
+            for (uint32_t tx = 0; tx < tilesX; ++tx) {
+                if (IsCancelled(input->cancel)) return QVX_E_ABORT;
 
-            const uint32_t tx0 = (tilesX == 1u) ? 0u : (std::min)(tx * tileStep, fullW - tileLimit);
-            const uint32_t tileW = (tilesX == 1u) ? fullW : tileLimit;
+                const uint32_t tx0 = (tilesX == 1u) ? 0u : (std::min)(tx * tileStep, fullW - tileLimit);
+                const uint32_t tileW = (tilesX == 1u) ? fullW : tileLimit;
 
-            const float ratio = static_cast<float>(detLimit) / static_cast<float>((std::max)(tileW, tileH));
-            const float effRatio = (ratio < 1.0f) ? ratio : 1.0f;
-            int targetW = (std::max)(32, (static_cast<int>(std::lround(tileW * effRatio)) + 16) / 32 * 32);
-            int targetH = (std::max)(32, (static_cast<int>(std::lround(tileH * effRatio)) + 16) / 32 * 32);
+                const float ratio = static_cast<float>(detLimit) / static_cast<float>((std::max)(tileW, tileH));
+                const float effRatio = (ratio < 1.0f) ? ratio : 1.0f;
+                int targetW = (std::max)(32, (static_cast<int>(std::lround(tileW * effRatio)) + 16) / 32 * 32);
+                int targetH = (std::max)(32, (static_cast<int>(std::lround(tileH * effRatio)) + 16) / 32 * 32);
 
-            // Zero-copy: NCNN converts BGRA->RGB and resizes directly from the strided host frame
-            const uint8_t* tileOrigin = bgra + static_cast<size_t>(ty0) * stride + static_cast<size_t>(tx0) * 4u;
-            ncnn::Mat inDet = ncnn::Mat::from_pixels_resize(
-                tileOrigin, ncnn::Mat::PIXEL_BGRA2RGB,
-                static_cast<int>(tileW), static_cast<int>(tileH), static_cast<int>(stride),
-                targetW, targetH);
-            inDet.substract_mean_normalize(meta.detMean, meta.detNorm);
+                // Zero-copy: NCNN converts BGRA->RGB and resizes directly from the strided host frame
+                const uint8_t* tileOrigin = bgra + static_cast<size_t>(ty0) * stride + static_cast<size_t>(tx0) * 4u;
+                ncnn::Mat inDet = ncnn::Mat::from_pixels_resize(
+                    tileOrigin, ncnn::Mat::PIXEL_BGRA2RGB,
+                    static_cast<int>(tileW), static_cast<int>(tileH), static_cast<int>(stride),
+                    targetW, targetH);
+                inDet.substract_mean_normalize(meta.detMean, meta.detNorm);
 
-            ncnn::Extractor ex = impl->nets.detNet.create_extractor();
-            ex.input(detInName, inDet);
-            ncnn::Mat probOut;
-            if (ex.extract(detOutName, probOut) == 0 && probOut.w > 2 && probOut.h > 2) {
-                const float sx = static_cast<float>(tileW) / static_cast<float>(probOut.w);
-                const float sy = static_cast<float>(tileH) / static_cast<float>(probOut.h);
-                auto boxes = ExtractDbBoxesFromProbMap(
-                    static_cast<const float*>(probOut.data),
-                    probOut.w, probOut.h,
-                    sx, sy,
-                    static_cast<float>(tx0), static_cast<float>(ty0),
-                    static_cast<float>(fullW), static_cast<float>(fullH),
-                    0.30f, boxThresh, unclipRatio, tileCounter);
-                allBoxes.insert(allBoxes.end(), boxes.begin(), boxes.end());
+                ncnn::Extractor ex = impl->nets.detNet.create_extractor();
+                ex.input(detInName, inDet);
+                ncnn::Mat probOut;
+                if (ex.extract(detOutName, probOut) == 0 && probOut.w > 2 && probOut.h > 2) {
+                    const float sx = static_cast<float>(tileW) / static_cast<float>(probOut.w);
+                    const float sy = static_cast<float>(tileH) / static_cast<float>(probOut.h);
+                    auto boxes = ExtractDbBoxesFromProbMap(
+                        static_cast<const float*>(probOut.data),
+                        probOut.w, probOut.h,
+                        sx, sy,
+                        static_cast<float>(tx0), static_cast<float>(ty0),
+                        static_cast<float>(fullW), static_cast<float>(fullH),
+                        0.30f, boxThresh, unclipRatio, tileCounter);
+                    allBoxes.insert(allBoxes.end(), boxes.begin(), boxes.end());
+                }
+                ++tileCounter;
             }
-            ++tileCounter;
+        }
+
+        if (IsCancelled(input->cancel)) return QVX_E_ABORT;
+
+        mergedBoxes = MergeAndSortDetectedBoxes(std::move(allBoxes));
+        if (!detectedQrs.empty() && !mergedBoxes.empty()) {
+            // Suppress false-positive OCR text boxes whose centers fall inside a decoded QR code
+            std::erase_if(mergedBoxes, [&](const DbBox& b) noexcept {
+                const float cx = (b.x0 + b.x1) * 0.5f * invFullW;
+                const float cy = (b.y0 + b.y1) * 0.5f * invFullH;
+                for (const auto& qr : detectedQrs) {
+                    if (cx >= qr.quad.min_x && cx <= qr.quad.max_x &&
+                        cy >= qr.quad.min_y && cy <= qr.quad.max_y) {
+                        return true;
+                    }
+                }
+                return false;
+            });
         }
     }
 
-    if (IsCancelled(input->cancel)) return QVX_E_ABORT;
-
-    const std::vector<DbBox> mergedBoxes = MergeAndSortDetectedBoxes(std::move(allBoxes));
-
     auto* store = new (std::nothrow) ResultStorage();
     if (!store) return QVX_E_FAIL;
-    store->lines.reserve(mergedBoxes.size());
+    store->lines.reserve(mergedBoxes.size() + detectedQrs.size());
     store->tokens.reserve(mergedBoxes.size() * 8u);
-    store->utf8Pool.reserve(mergedBoxes.size() * 48u);
+    store->utf8Pool.reserve(mergedBoxes.size() * 48u + detectedQrs.size() * 64u);
 
-    const float invFullW = 1.0f / static_cast<float>(fullW);
-    const float invFullH = 1.0f / static_cast<float>(fullH);
+    const char* recInName = hasOcrNets ? ResolveBlobName(meta.recInput, impl->nets.recNet.input_names(), "in0") : nullptr;
+    const char* recOutName = hasOcrNets ? ResolveBlobName(meta.recOutput, impl->nets.recNet.output_names(), "out0") : nullptr;
     std::vector<uint8_t> lineRgb; // Reused across horizontal lines for exact sub-pixel bilinear crop
     std::vector<uint8_t> rotBgra; // Lazily reused only for tall vertical text boxes
 
@@ -1289,7 +1331,23 @@ int32_t OcrNcnn_Analyze(
         }
     }
 
-    impl->PersistPipelineCacheIfGrown();
+    for (const auto& qr : detectedQrs) {
+        const uint32_t qrOff = static_cast<uint32_t>(store->utf8Pool.size());
+        store->utf8Pool.append(qr.utf8Text);
+        QVX_AnalyzerLine ql{};
+        ql.quad = qr.quad;
+        ql.utf8_offset = qrOff;
+        ql.utf8_len = static_cast<uint32_t>(qr.utf8Text.size());
+        ql.token_start = 0;
+        ql.token_count = 0;
+        ql.confidence = 1.0f;
+        ql.flags = QVX_ANALYZER_FLAG_BARCODE | (qr.isUrl ? QVX_ANALYZER_FLAG_URL : 0u);
+        store->lines.push_back(ql);
+    }
+
+    if (hasOcrNets) {
+        impl->PersistPipelineCacheIfGrown();
+    }
 
     out_result->struct_size = sizeof(QVX_AnalyzerResult);
     out_result->text_angle_deg = 0.0f;

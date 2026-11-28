@@ -1,0 +1,29 @@
+[versions]
+androidGradlePlugin = "8.7.3"
+androidCompileSdk = "35"
+androidMinSdk = "21"
+androidTargetSdk = "35"
+androidx-appcompat = "1.7.0"
+androidx-camera = "1.4.1"
+androidx-core = "1.15.0"
+androidx-constraintLayout = "2.2.0"
+android-material = "1.12.0"
+kotlin = "1.9.10"
+zxing-core = "3.5.3"
+
+[libraries]
+androidx-appcompat = { module = "androidx.appcompat:appcompat", version.ref = "androidx-appcompat" }
+androidx-camera-core = { module = "androidx.camera:camera-core", version.ref = "androidx-camera" }
+androidx-camera-camera2 = { module = "androidx.camera:camera-camera2", version.ref = "androidx-camera" }
+androidx-camera-lifecycle = { module = "androidx.camera:camera-lifecycle", version.ref = "androidx-camera" }
+androidx-camera-view = { module = "androidx.camera:camera-view", version.ref = "androidx-camera" }
+androidx-constraintlayout = { module = "androidx.constraintlayout:constraintlayout", version.ref = "androidx-constraintLayout" }
+androidx-core = { module = "androidx.core:core-ktx", version.ref = "androidx-core" }
+android-material = { module = "com.google.android.material:material", version.ref = "android-material" }
+zxing-core = { module = "com.google.zxing:core", version.ref = "zxing-core" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "androidGradlePlugin" }
+android-library = { id = "com.android.library", version.ref = "androidGradlePlugin" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+

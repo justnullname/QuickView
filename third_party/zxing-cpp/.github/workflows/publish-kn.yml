@@ -1,0 +1,77 @@
+name: publish-kn
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish package (y/n)'
+        default: 'n'
+
+jobs:
+  publish:
+    name: Library Publish
+
+    runs-on: macos-13 # at least macos-13 is required to enable c++20 support
+
+    defaults:
+      run:
+        working-directory: ./wrappers/kn
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Checkout toolchain initializer repository
+        uses: actions/checkout@v4
+        with:
+          repository: ISNing/kn-toolchain-initializer
+          path: wrappers/kn/.kn-toolchain-initializer
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Validate Gradle Wrapper
+        uses: gradle/wrapper-validation-action@v2
+
+      - name: Initialize Kotlin/Native toolchain
+        working-directory: wrappers/kn/.kn-toolchain-initializer
+        run: ./gradlew build -DkotlinVersion=1.9.22
+
+      - name: Export Toolchain properties
+        run: |
+          echo -e "konan.dir=$HOME/.konan/kotlin-native-prebuilt-macos-x86_64-1.9.22" > local.properties
+
+      - name: Build Library
+        run: |
+          export PATH="$PATH:$(brew --prefix llvm@15)/bin"
+          ./gradlew assemble
+
+      - name: Run All Library Tests
+        run: |
+          export PATH="$PATH:$(brew --prefix llvm@15)/bin"
+          ./gradlew allTests
+
+      - name: Upload Library Test Reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: allTests-reports
+          path: wrappers/kn/build/reports/tests/allTests
+
+      - name: Publish Library
+        if: ${{ github.event.inputs.publish == 'y' }}
+        env:
+          ORG_GRADLE_PROJECT_signingKey: ${{ secrets.OSSRH_GPG_SECRET_KEY }}
+          ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.OSSRH_GPG_SECRET_KEY_PASSWORD }}
+          ORG_GRADLE_PROJECT_ossrhUsername: ${{ secrets.OSSRH_USERNAME }}
+          ORG_GRADLE_PROJECT_ossrhPassword: ${{ secrets.OSSRH_PASSWORD }}
+        run: |
+          export PATH="$PATH:$(brew --prefix llvm@15)/bin"
+          ./gradlew publishAllPublicationsToSonatypeRepository

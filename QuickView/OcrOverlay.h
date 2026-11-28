@@ -12,8 +12,10 @@
 #include "pch.h"
 #include "OcrTypes.h"
 #include <d2d1_2.h>
+#include <dwrite.h>
 #include <wrl/client.h>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace QuickView::UI {
@@ -39,7 +41,8 @@ enum class OcrOverlayState : uint8_t {
 
 enum class OcrHitZone : uint8_t {
     None = 0,
-    Text
+    Text,
+    Barcode
 };
 
 struct OcrTextPosition {
@@ -114,6 +117,9 @@ public:
     // Pure geometry / selection helpers exposed for deterministic testing
     void BuildCachedGeometry(float visualW, float visualH);
     OcrTextPosition HitTestImageSpace(float imgX, float imgY) const;
+    [[nodiscard]] static bool IsSafeHttpUrl(std::wstring_view text) noexcept;
+    [[nodiscard]] int HitTestBarcodeScreenSpace(float screenX, float screenY, const OcrViewportMetrics& vp) const;
+    [[nodiscard]] int GetHoverBarcodeIndex() const noexcept { return m_hoverBarcodeIdx; }
     void SetStreamSelection(const OcrTextPosition& anchor, const OcrTextPosition& focus);
     void SetBoxSelection(float imgX0, float imgY0, float imgX1, float imgY1);
     [[nodiscard]] const std::vector<D2D1_RECT_F>& GetCachedLineRects() const noexcept { return m_cachedLineRects; }
@@ -154,6 +160,7 @@ private:
 
     // Interaction state
     int m_hoverLineIdx = -1;
+    int m_hoverBarcodeIdx = -1;
     bool m_isDraggingStream = false;
     bool m_isDraggingBox = false;
     bool m_boxSelectionActive = false;
@@ -167,13 +174,23 @@ private:
 
     HostCallbacks m_callbacks{};
 
-    // D2D Resources (only 5 brushes + dashed stroke)
+    // D2D & DirectWrite Resources
     ComPtr<ID2D1SolidColorBrush> m_brushLineFill;
     ComPtr<ID2D1SolidColorBrush> m_brushLineHover;
     ComPtr<ID2D1SolidColorBrush> m_brushLineBorder;
     ComPtr<ID2D1SolidColorBrush> m_brushSelection;
     ComPtr<ID2D1SolidColorBrush> m_brushAccent;
+    ComPtr<ID2D1SolidColorBrush> m_brushBadgeBg;
+    ComPtr<ID2D1SolidColorBrush> m_brushBadgeFg;
+    ComPtr<ID2D1SolidColorBrush> m_brushBadgeShadow;
+    ComPtr<ID2D1SolidColorBrush> m_brushTooltipBg;
+    ComPtr<ID2D1SolidColorBrush> m_brushTooltipText;
+    ComPtr<ID2D1SolidColorBrush> m_brushTooltipBorder;
     ComPtr<ID2D1StrokeStyle> m_dashedStroke;
+    ComPtr<ID2D1StrokeStyle> m_roundStroke;
+    ComPtr<IDWriteFactory> m_dwriteFactory;
+    ComPtr<IDWriteTextFormat> m_tooltipFont;
+    float m_tooltipFontScale = 0.0f;
 };
 
 } // namespace QuickView::UI

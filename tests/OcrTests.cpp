@@ -565,12 +565,13 @@ TEST(OcrTests, PpOcrNcnnPluginDiscoveryParamsAndMissingAssetFallback) {
     }
 
     const auto params = host.GetPluginParams(pid);
-    ASSERT_EQ(params.size(), 5u);
+    ASSERT_EQ(params.size(), 6u);
     EXPECT_EQ(params[0].id, "use_gpu");
     EXPECT_EQ(params[1].id, "num_threads");
     EXPECT_EQ(params[2].id, "det_limit_side");
     EXPECT_EQ(params[3].id, "box_thresh");
     EXPECT_EQ(params[4].id, "unclip_ratio");
+    EXPECT_EQ(params[5].id, "detect_qr");
 
     // Drop custom flat triplet + custom subdir pack into models/ and verify dynamic discovery
     WriteUtf8File(modelsDir + L"\\custom_de.param", "7767517\n");
@@ -839,4 +840,326 @@ TEST(OcrTests, AllPluginsEightLanguagesAndSingleSourceVersion) {
         if (shutFn) shutFn();
         FreeLibrary(hMod);
     }
+}
+
+namespace {
+
+void DrawQr25x25IntoBgra(
+    std::vector<uint8_t>& bgra,
+    uint32_t imgW,
+    uint32_t imgH,
+    uint32_t originX,
+    uint32_t originY,
+    uint32_t modulePx,
+    const uint32_t (&rows)[25],
+    bool inverted = false)
+{
+    const uint8_t dark = inverted ? 255u : 0u;
+    const uint8_t light = inverted ? 0u : 255u;
+    if (inverted) {
+        const uint32_t totalPx = 29u * modulePx;
+        for (uint32_t dy = 0; dy < totalPx && (originY + dy) < imgH; ++dy) {
+            for (uint32_t dx = 0; dx < totalPx && (originX + dx) < imgW; ++dx) {
+                const size_t off = (static_cast<size_t>(originY + dy) * imgW + (originX + dx)) * 4u;
+                bgra[off + 0] = light;
+                bgra[off + 1] = light;
+                bgra[off + 2] = light;
+                bgra[off + 3] = 255u;
+            }
+        }
+    }
+    const uint32_t quiet = 2u * modulePx;
+    for (uint32_t r = 0; r < 25u; ++r) {
+        for (uint32_t c = 0; c < 25u; ++c) {
+            if (((rows[r] >> c) & 1u) == 0u) continue;
+            const uint32_t px0 = originX + quiet + c * modulePx;
+            const uint32_t py0 = originY + quiet + r * modulePx;
+            for (uint32_t dy = 0; dy < modulePx && (py0 + dy) < imgH; ++dy) {
+                for (uint32_t dx = 0; dx < modulePx && (px0 + dx) < imgW; ++dx) {
+                    const size_t off = (static_cast<size_t>(py0 + dy) * imgW + (px0 + dx)) * 4u;
+                    bgra[off + 0] = dark;
+                    bgra[off + 1] = dark;
+                    bgra[off + 2] = dark;
+                    bgra[off + 3] = 255u;
+                }
+            }
+        }
+    }
+}
+
+constexpr uint32_t kQrUrlRows[25] = {
+    0x1FCF27Fu, 0x105DC41u, 0x175975Du, 0x174CE5Du, 0x174E45Du,
+    0x104E241u, 0x1FD557Fu, 0x0017700u, 0x047CDF7u, 0x1040C2Eu,
+    0x1D82251u, 0x083888Du, 0x1A7114Du, 0x1273B28u, 0x1CD5BE5u,
+    0x091F722u, 0x03FCAEDu, 0x1B1CB00u, 0x1B5A37Fu, 0x1310D41u,
+    0x13F115Du, 0x078BA5Du, 0x1115D5Du, 0x0B57141u, 0x18FCF7Fu
+};
+
+constexpr uint32_t kQrTextRows[25] = {
+    0x1FD727Fu, 0x104DC41u, 0x174775Du, 0x175EE5Du, 0x174C45Du,
+    0x105A241u, 0x1FD557Fu, 0x0007700u, 0x0464DF7u, 0x1EF4DBEu,
+    0x1EA2273u, 0x0018889u, 0x18F11D2u, 0x1213BB8u, 0x1BD5E7Du,
+    0x001F692u, 0x11F4DD1u, 0x0714900u, 0x1B5257Fu, 0x0110941u,
+    0x17F115Du, 0x0183A5Du, 0x11EDF5Du, 0x083F341u, 0x181497Fu
+};
+
+struct LoadedQrAnalyzer {
+    HMODULE hMod = nullptr;
+    void (*shutFn)(void) = nullptr;
+    const QVX_Analyzer_VTable* vt = nullptr;
+    QVX_AnalyzerContext ctx = nullptr;
+
+    ~LoadedQrAnalyzer() {
+        if (vt && ctx) vt->destroy_context(ctx);
+        if (shutFn) shutFn();
+        if (hMod) FreeLibrary(hMod);
+    }
+};
+
+bool LoadOcrPluginForQrTests(LoadedQrAnalyzer& out) {
+    const std::wstring qvxPath = GetExeDirectory() + L"\\plugins\\ocr\\ocr_ppocr_ncnn\\ocr_ppocr_ncnn.qvx";
+    if (GetFileAttributesW(qvxPath.c_str()) == INVALID_FILE_ATTRIBUTES) return false;
+    out.hMod = LoadLibraryW(qvxPath.c_str());
+    if (!out.hMod) return false;
+
+    using InitFn = bool(*)(const QVX_HostServices*, const QVX_PluginHeader**);
+    using ShutFn = void(*)(void);
+    auto initFn = reinterpret_cast<InitFn>(GetProcAddress(out.hMod, "qvx_init"));
+    out.shutFn = reinterpret_cast<ShutFn>(GetProcAddress(out.hMod, "qvx_shutdown"));
+    if (!initFn) return false;
+
+    QVX_HostServices hostSvc{};
+    hostSvc.struct_size = sizeof(QVX_HostServices);
+    hostSvc.abi_version = QVX_ABI_VERSION;
+    const QVX_PluginHeader* hdr = nullptr;
+    if (!initFn(&hostSvc, &hdr) || !hdr || !hdr->get_interface) return false;
+
+    out.vt = reinterpret_cast<const QVX_Analyzer_VTable*>(
+        hdr->get_interface(QVX_IFACE_ANALYZER, QVX_ANALYZER_INTERFACE_VERSION));
+    if (!out.vt || !out.vt->create_context || !out.vt->analyze || !out.vt->free_result) return false;
+
+    out.ctx = out.vt->create_context(nullptr);
+    return out.ctx != nullptr;
+}
+
+} // namespace
+
+TEST(QrDetectorTest, DetectsMultipleQrCodesAndDistinguishesUrl) {
+    LoadedQrAnalyzer plugin;
+    if (!LoadOcrPluginForQrTests(plugin)) {
+        GTEST_SKIP() << "ocr_ppocr_ncnn.qvx not available";
+    }
+    EXPECT_TRUE((plugin.vt->get_caps() & QVX_ANALYZER_CAP_BARCODE) != 0u);
+
+    constexpr uint32_t kW = 640u;
+    constexpr uint32_t kH = 360u;
+    std::vector<uint8_t> bgra(static_cast<size_t>(kW) * kH * 4u, 255u);
+    DrawQr25x25IntoBgra(bgra, kW, kH, 40u, 80u, 6u, kQrUrlRows, false);
+    DrawQr25x25IntoBgra(bgra, kW, kH, 380u, 80u, 6u, kQrTextRows, false);
+
+    QVX_AnalyzerInput input{};
+    input.struct_size = sizeof(QVX_AnalyzerInput);
+    input.pixels = bgra.data();
+    input.width = kW;
+    input.height = kH;
+    input.stride = kW * 4u;
+    input.format = QVX_PIXFMT_BGRA8888;
+
+    QVX_AnalyzerResult res{};
+    res.struct_size = sizeof(QVX_AnalyzerResult);
+    ASSERT_EQ(plugin.vt->analyze(plugin.ctx, &input, &res), QVX_OK);
+
+    bool foundUrl = false;
+    bool foundText = false;
+    for (uint32_t i = 0; i < res.line_count; ++i) {
+        const auto& l = res.lines[i];
+        if ((l.flags & QVX_ANALYZER_FLAG_BARCODE) == 0u) continue;
+        const std::string text(res.utf8_pool + l.utf8_offset, l.utf8_len);
+        if (text == "https://example.com") {
+            foundUrl = true;
+            EXPECT_TRUE((l.flags & QVX_ANALYZER_FLAG_URL) != 0u);
+            EXPECT_LT((l.quad.min_x + l.quad.max_x) * 0.5f, 0.5f);
+        } else if (text == "QuickView-QR-Test") {
+            foundText = true;
+            EXPECT_TRUE((l.flags & QVX_ANALYZER_FLAG_URL) == 0u);
+            EXPECT_GT((l.quad.min_x + l.quad.max_x) * 0.5f, 0.5f);
+        }
+    }
+    plugin.vt->free_result(plugin.ctx, &res);
+    EXPECT_TRUE(foundUrl);
+    EXPECT_TRUE(foundText);
+}
+
+TEST(QrDetectorTest, DetectsInvertedPolarityQrCode) {
+    LoadedQrAnalyzer plugin;
+    if (!LoadOcrPluginForQrTests(plugin)) {
+        GTEST_SKIP() << "ocr_ppocr_ncnn.qvx not available";
+    }
+
+    constexpr uint32_t kW = 320u;
+    constexpr uint32_t kH = 320u;
+    std::vector<uint8_t> bgra(static_cast<size_t>(kW) * kH * 4u, 255u);
+    DrawQr25x25IntoBgra(bgra, kW, kH, 60u, 60u, 6u, kQrUrlRows, true);
+
+    QVX_AnalyzerInput input{};
+    input.struct_size = sizeof(QVX_AnalyzerInput);
+    input.pixels = bgra.data();
+    input.width = kW;
+    input.height = kH;
+    input.stride = kW * 4u;
+    input.format = QVX_PIXFMT_BGRA8888;
+
+    QVX_AnalyzerResult res{};
+    res.struct_size = sizeof(QVX_AnalyzerResult);
+    ASSERT_EQ(plugin.vt->analyze(plugin.ctx, &input, &res), QVX_OK);
+
+    bool foundUrl = false;
+    for (uint32_t i = 0; i < res.line_count; ++i) {
+        const auto& l = res.lines[i];
+        if ((l.flags & QVX_ANALYZER_FLAG_BARCODE) == 0u) continue;
+        const std::string text(res.utf8_pool + l.utf8_offset, l.utf8_len);
+        if (text == "https://example.com") {
+            foundUrl = true;
+            EXPECT_TRUE((l.flags & QVX_ANALYZER_FLAG_URL) != 0u);
+        }
+    }
+    plugin.vt->free_result(plugin.ctx, &res);
+    EXPECT_TRUE(foundUrl);
+}
+
+TEST(OcrOverlayQrTest, SafeHttpUrlWhitelist) {
+    using QuickView::UI::OcrOverlay;
+    EXPECT_TRUE(OcrOverlay::IsSafeHttpUrl(L"https://example.com/path?a=1"));
+    EXPECT_TRUE(OcrOverlay::IsSafeHttpUrl(L"  HTTP://example.org  "));
+    EXPECT_FALSE(OcrOverlay::IsSafeHttpUrl(L"https://"));
+    EXPECT_FALSE(OcrOverlay::IsSafeHttpUrl(L"http://"));
+    EXPECT_FALSE(OcrOverlay::IsSafeHttpUrl(L"file:///C:/Windows/System32/calc.exe"));
+    EXPECT_FALSE(OcrOverlay::IsSafeHttpUrl(L"javascript:alert(1)"));
+    EXPECT_FALSE(OcrOverlay::IsSafeHttpUrl(L"cmd.exe"));
+    EXPECT_FALSE(OcrOverlay::IsSafeHttpUrl(L"https://example.com\r\n"));
+}
+
+TEST(OcrOverlayQrTest, IsolatesBarcodeFromTextSelectionAndHitsBadge) {
+    auto& overlay = QuickView::UI::OcrOverlay::Instance();
+    overlay.ClearDocumentKeepHidden();
+    overlay.SetUIScale(1.0f);
+
+    QuickView::Ocr::OcrDocument doc;
+    doc.imageId = 42;
+    doc.generationId = 1;
+    doc.sourceVisualW = 1000;
+    doc.sourceVisualH = 800;
+
+    QuickView::Ocr::OcrLine textLine;
+    textLine.quad = { {0.1f, 0.2f, 0.2f, 0.1f}, {0.1f, 0.1f, 0.15f, 0.15f}, 0.1f, 0.1f, 0.2f, 0.15f };
+    textLine.text = L"Hello";
+    doc.lines.push_back(textLine);
+
+    QuickView::Ocr::OcrLine qrLine;
+    qrLine.quad = { {0.4f, 0.6f, 0.6f, 0.4f}, {0.3f, 0.3f, 0.55f, 0.55f}, 0.4f, 0.3f, 0.6f, 0.55f };
+    qrLine.text = L"https://example.com";
+    qrLine.flags = QVX_ANALYZER_FLAG_BARCODE | QVX_ANALYZER_FLAG_URL;
+    doc.lines.push_back(qrLine);
+
+    overlay.SetDocument(std::move(doc), 1000.0f, 800.0f);
+    ASSERT_TRUE(overlay.IsActive());
+
+    overlay.SelectAll();
+    EXPECT_EQ(overlay.GetSelectedText(), L"Hello");
+    EXPECT_EQ(overlay.GetAllText(), L"Hello");
+
+    QuickView::UI::OcrViewportMetrics vp{};
+    vp.imgDrawX = 0.0f;
+    vp.imgDrawY = 0.0f;
+    vp.totalScale = 1.0f;
+    vp.visualW = 1000.0f;
+    vp.visualH = 800.0f;
+    vp.winW = 1000.0f;
+    vp.winH = 800.0f;
+    vp.valid = true;
+
+    // Circular arrow badge is centered inside the QR rect at (500, 340)
+    EXPECT_EQ(overlay.HitTest(500.0f, 340.0f, vp), QuickView::UI::OcrHitZone::Barcode);
+    EXPECT_EQ(overlay.HitTestBarcodeScreenSpace(500.0f, 340.0f, vp), 1);
+    EXPECT_EQ(overlay.HitTest(420.0f, 260.0f, vp), QuickView::UI::OcrHitZone::Barcode);
+    EXPECT_EQ(overlay.HitTest(150.0f, 100.0f, vp), QuickView::UI::OcrHitZone::Text);
+
+    overlay.OnMouseMove(500.0f, 340.0f, vp, false);
+    EXPECT_EQ(overlay.GetHoverBarcodeIndex(), 1);
+
+    overlay.ClearDocumentKeepHidden();
+}
+
+TEST(QrDetectorTest, DetectsCode128LinearBarcode) {
+    LoadedQrAnalyzer plugin;
+    if (!LoadOcrPluginForQrTests(plugin)) {
+        GTEST_SKIP() << "ocr_ppocr_ncnn.qvx not available";
+    }
+
+    // Code 128B encoding of "QV-2026":
+    // StartB(104), 'Q'(49), 'V'(54), '-'(13), '2'(18), '0'(16), '2'(18), '6'(22), Checksum(96), Stop(106)+2
+    static constexpr int kSeq[][6] = {
+        { 2, 1, 1, 2, 1, 4 }, // 104: Start B
+        { 2, 1, 1, 3, 3, 1 }, // 49: 'Q'
+        { 3, 1, 1, 1, 2, 3 }, // 54: 'V'
+        { 1, 2, 2, 1, 3, 2 }, // 13: '-'
+        { 2, 2, 3, 2, 1, 1 }, // 18: '2'
+        { 1, 2, 3, 1, 2, 2 }, // 16: '0'
+        { 2, 2, 3, 2, 1, 1 }, // 18: '2'
+        { 2, 2, 3, 1, 1, 2 }, // 22: '6'
+        { 1, 1, 4, 3, 1, 1 }, // 96: Checksum
+        { 2, 3, 3, 1, 1, 1 }  // 106: Stop
+    };
+
+    constexpr uint32_t kModPx = 3u;
+    constexpr uint32_t kQuiet = 36u;
+    constexpr uint32_t kW = kQuiet * 2u + (11u * 10u + 2u) * kModPx;
+    constexpr uint32_t kH = 120u;
+    std::vector<uint8_t> bgra(static_cast<size_t>(kW) * kH * 4u, 255u);
+
+    uint32_t curX = kQuiet;
+    auto paintBar = [&](uint32_t widthPx) {
+        for (uint32_t y = 20u; y < 100u; ++y) {
+            for (uint32_t x = curX; x < curX + widthPx && x < kW; ++x) {
+                const size_t off = (static_cast<size_t>(y) * kW + x) * 4u;
+                bgra[off + 0] = 0u;
+                bgra[off + 1] = 0u;
+                bgra[off + 2] = 0u;
+                bgra[off + 3] = 255u;
+            }
+        }
+    };
+    for (const auto& pat : kSeq) {
+        for (int j = 0; j < 6; ++j) {
+            const uint32_t runPx = static_cast<uint32_t>(pat[j]) * kModPx;
+            if ((j & 1) == 0) paintBar(runPx);
+            curX += runPx;
+        }
+    }
+    paintBar(2u * kModPx); // Stop termination bar
+
+    QVX_AnalyzerInput input{};
+    input.struct_size = sizeof(QVX_AnalyzerInput);
+    input.pixels = bgra.data();
+    input.width = kW;
+    input.height = kH;
+    input.stride = kW * 4u;
+    input.format = QVX_PIXFMT_BGRA8888;
+
+    QVX_AnalyzerResult res{};
+    res.struct_size = sizeof(QVX_AnalyzerResult);
+    ASSERT_EQ(plugin.vt->analyze(plugin.ctx, &input, &res), QVX_OK);
+
+    bool foundCode128 = false;
+    for (uint32_t i = 0; i < res.line_count; ++i) {
+        const auto& l = res.lines[i];
+        if ((l.flags & QVX_ANALYZER_FLAG_BARCODE) == 0u) continue;
+        const std::string text(res.utf8_pool + l.utf8_offset, l.utf8_len);
+        if (text == "QV-2026") {
+            foundCode128 = true;
+            EXPECT_TRUE((l.flags & QVX_ANALYZER_FLAG_URL) == 0u);
+        }
+    }
+    plugin.vt->free_result(plugin.ctx, &res);
+    EXPECT_TRUE(foundCode128);
 }

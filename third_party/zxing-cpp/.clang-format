@@ -1,0 +1,43 @@
+---
+Language: Cpp
+Standard: c++17
+BasedOnStyle: LLVM
+
+IndentWidth: 4
+TabWidth: 4
+UseTab: ForContinuationAndIndentation # ForIndentation
+
+AccessModifierOffset: -4
+ColumnLimit: 135
+
+#AlignConsecutiveAssignments: true
+AlignConsecutiveBitFields: true
+AlignEscapedNewlines: DontAlign
+AlignTrailingComments: true
+
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortFunctionsOnASingleLine: Inline
+#AllowShortLambdasOnASingleLine: Inline
+AllowShortEnumsOnASingleLine: true
+AllowAllArgumentsOnNextLine: true
+AllowAllParametersOfDeclarationOnNextLine: true
+
+AlwaysBreakAfterDefinitionReturnType: None
+AlwaysBreakTemplateDeclarations: Yes
+BreakBeforeBraces: Custom
+BraceWrapping:
+    AfterClass: true
+    AfterEnum: true
+    AfterStruct: true
+    AfterUnion: true
+    AfterFunction: true
+    SplitEmptyFunction: false
+BreakBeforeBinaryOperators: NonAssignment
+BreakBeforeTernaryOperators: true
+ConstructorInitializerAllOnOneLineOrOnePerLine: true
+FixNamespaceComments: true
+IncludeBlocks: Regroup
+KeepEmptyLinesAtTheStartOfBlocks: false
+PointerAlignment: Left
+ReflowComments: true
+SortIncludes: true

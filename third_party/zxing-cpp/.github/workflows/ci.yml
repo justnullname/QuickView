@@ -1,0 +1,303 @@
+name: CI
+
+# Controls when the action will run. Triggers the workflow on push or pull request
+# events but only for the master branch
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+env:
+  # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
+  BUILD_TYPE: Release
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-13]
+      # don't cancel all jobs just because one of them failed
+      fail-fast: false
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Python 3
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+
+    - name: Configure
+      run: >
+        cmake -S . -B build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DBUILD_SHARED_LIBS=ON
+        -DZXING_READERS=ON -DZXING_WRITERS=ON
+        -DZXING_BLACKBOX_TESTS=ON -DZXING_UNIT_TESTS=ON -DZXING_PYTHON_MODULE=ON -DZXING_C_API=ON
+
+    - name: Build
+      run: cmake --build build -j8 --config ${{env.BUILD_TYPE}}
+
+    # - name: Set PATH for Tests
+    #   shell: bash # to make the $GITHUB_PATH update work
+    #   if: runner.os == 'Windows'
+    #   run: |
+    #     echo "${GITHUB_WORKSPACE}/build/core/${BUILD_TYPE}" >> $GITHUB_PATH
+    #     echo "${GITHUB_WORKSPACE}/build/lib/${BUILD_TYPE}" >> $GITHUB_PATH
+
+    - name: Test
+      if: runner.os != 'Windows' # need to disable ctest on Windows when build as shared library for now
+      run: ctest --test-dir build -V -C ${{env.BUILD_TYPE}}
+
+    - name: Install
+      run: |
+        cmake -E make_directory install
+        cmake --install build --config ${{env.BUILD_TYPE}} --prefix ${{github.workspace}}/install
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: ${{matrix.os}}-artifacts
+        path: install
+
+  build-experimental:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-13]
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: true
+
+    - name: Configure
+      run: >
+        cmake -S . -B build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DBUILD_SHARED_LIBS=ON
+        -DZXING_READERS=ON -DZXING_WRITERS=NEW -DZXING_EXPERIMENTAL_API=ON
+        -DZXING_BLACKBOX_TESTS=ON -DZXING_UNIT_TESTS=OFF -DZXING_PYTHON_MODULE=OFF -DZXING_C_API=ON
+
+    - name: Build
+      run: cmake --build build -j8 --config ${{env.BUILD_TYPE}}
+
+    - name: Test
+      if: runner.os != 'Windows' # need to disable ctest on Windows when build as shared library for now
+      run: ctest --test-dir build -V -C ${{env.BUILD_TYPE}}
+
+    - name: Install
+      run: |
+        cmake -E make_directory install
+        cmake --install build --config ${{env.BUILD_TYPE}} --prefix ${{github.workspace}}/install
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: ${{matrix.os}}-exp-artifacts
+        path: install
+
+  build-ubuntu-sanitize:
+    runs-on: ubuntu-20.04 # see https://github.com/quantumlib/Stim/issues/717#issuecomment-2002623560
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Configure
+      run: >
+        cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
+        -DZXING_READERS=ON -DZXING_WRITERS=ON
+        -DZXING_BLACKBOX_TESTS=ON -DZXING_UNIT_TESTS=ON -DZXING_PYTHON_MODULE=OFF -DZXING_C_API=OFF
+        -DCMAKE_CXX_COMPILER=clang++
+        -DCMAKE_CXX_FLAGS="-march=native -fsanitize=address,undefined -fno-optimize-sibling-calls -fsanitize-address-use-after-scope -fno-omit-frame-pointer"
+        -DCMAKE_C_COMPILER=clang
+        -DCMAKE_C_FLAGS="-march=native -fsanitize=address,undefined -fno-optimize-sibling-calls -fsanitize-address-use-after-scope -fno-omit-frame-pointer"
+
+    - name: Build
+      run: cmake --build build -j8
+
+    - name: Test
+      run: ctest -V --test-dir build
+
+  build-ios:
+    runs-on: macos-13
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: true
+
+    - name: Build the swift package
+      run: swift build
+
+    - name: Build the demo app
+      working-directory: wrappers/ios/demo
+      run: xcodebuild build -scheme demo -sdk "iphonesimulator"
+
+    - name: Validate the Pod
+      run: pod lib lint --allow-warnings
+
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    - name: Build the lib/app
+      working-directory: wrappers/android
+      run: ./gradlew assembleRelease
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: android-artifacts
+        path: "wrappers/android/zxingcpp/build/outputs/aar/zxingcpp-release.aar"
+
+    - name: Publish Library Snapshot
+      if: github.repository == 'zxing-cpp/zxing-cpp' && github.event_name != 'pull_request'
+      working-directory: wrappers/android
+      env:
+        ORG_GRADLE_PROJECT_publishSnapshot: true
+        ORG_GRADLE_PROJECT_signingKey: ${{ secrets.OSSRH_GPG_SECRET_KEY }}
+        ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.OSSRH_GPG_SECRET_KEY_PASSWORD }}
+        ORG_GRADLE_PROJECT_ossrhUsername: ${{ secrets.OSSRH_USERNAME }}
+        ORG_GRADLE_PROJECT_ossrhPassword: ${{ secrets.OSSRH_PASSWORD }}
+      run: ./gradlew publishReleasePublicationToSonatypeRepository
+
+  build-kn:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: wrappers/kn
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: true
+
+    - name: Checkout toolchain initializer repository
+      uses: actions/checkout@v4
+      with:
+        repository: ISNing/kn-toolchain-initializer
+        path: wrappers/kn/.kn-toolchain-initializer
+
+    - name: Set up JDK
+      uses: actions/setup-java@v4
+      with:
+        java-version: 17
+        distribution: temurin
+
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v3
+
+    - name: Validate Gradle Wrapper
+      uses: gradle/wrapper-validation-action@v2
+
+    - name: Initialize Kotlin/Native toolchain
+      working-directory: wrappers/kn/.kn-toolchain-initializer
+      run: ./gradlew build -DkotlinVersion=1.9.22
+
+    - name: Run test for linuxX64 target
+      run: |
+        echo -e "konan.dir=$HOME/.konan/kotlin-native-prebuilt-linux-x86_64-1.9.22" > local.properties
+        ./gradlew linuxX64Test
+
+  build-python:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        python-version: ['3.12']
+        os: [ubuntu-latest, macos-13, windows-latest]
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: true
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip setuptools
+        python -m pip install numpy pillow
+
+    - name: Build module
+      working-directory: wrappers/python
+      run: python -m pip -v install -e .
+
+    - name: Test module
+      working-directory: wrappers/python
+      run: python -m unittest -v
+
+  build-rust:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-13, windows-latest]
+    defaults:
+      run:
+        working-directory: wrappers/rust
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: true
+
+    - name: Lint
+      run: |
+        cargo fmt --check
+        cargo clippy -- -Dwarnings
+
+    - name: Build
+      run: cargo build --release --verbose --all-features --examples
+
+    - name: Test
+      run: cargo test --release --all-features
+
+    - name: Package
+      # --allow-dirty is required on the windows build (but not the ubuntu build?!)
+      run: cargo package --verbose --allow-dirty --all-features
+
+  build-wasm:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: mymindstorm/setup-emsdk@v14
+
+    - name: Configure
+      run: emcmake cmake -Swrappers/wasm -Bbuild
+
+    - name: Build
+      run: cmake --build build -j4
+
+#    - name: Test
+#      run: node build/EmGlueTests.js
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: wasm-artifacts
+        path: |
+            build/zxing*
+            build/demo*
+
+  build-winrt:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Configure
+      shell: cmd # powershell messes up the arguments containing a '.' ?!?
+      run: >
+        cmake -S wrappers/winrt -B build -A ARM64
+        -DCMAKE_SYSTEM_NAME=WindowsStore -DCMAKE_SYSTEM_VERSION=10.0 -DCMAKE_BUILD_TYPE=Release
+        -DBUILD_WINRT_LIB=ON -DZXING_EXAMPLES=OFF -DZXING_BLACKBOX_TESTS=OFF -DZXING_C_API=OFF
+        -DEXTENSION_SDK_OUTPUT=dist/UAP/v0.8.0.0/ExtensionSDKs/ZXingWinRT/1.0.0.0
+
+    - name: Build
+      run: cmake --build build -j8 --config Release
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: winrt-ARM64-artifacts
+        path: build/dist

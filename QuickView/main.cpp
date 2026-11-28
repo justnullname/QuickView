@@ -10490,8 +10490,11 @@ static QV_MAIN_OCR_COLD bool HandleOcrInputMessage(HWND hwnd, UINT msg, WPARAM w
         const bool shiftDown = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
         const bool ocrDragging = ocr.OnMouseMove(static_cast<float>(pt.x), static_cast<float>(pt.y), ovp, shiftDown);
         const auto zone = ocr.HitTest(static_cast<float>(pt.x), static_cast<float>(pt.y), ovp);
-        if (ocrDragging || zone == QuickView::UI::OcrHitZone::Text) {
-            g_currentCursor = LoadCursor(nullptr, (zone == QuickView::UI::OcrHitZone::Text && !shiftDown) ? IDC_IBEAM : IDC_ARROW);
+        if (ocrDragging || zone == QuickView::UI::OcrHitZone::Text || zone == QuickView::UI::OcrHitZone::Barcode) {
+            LPCWSTR cursorId = IDC_ARROW;
+            if (zone == QuickView::UI::OcrHitZone::Barcode) cursorId = IDC_HAND;
+            else if (zone == QuickView::UI::OcrHitZone::Text && !shiftDown) cursorId = IDC_IBEAM;
+            g_currentCursor = LoadCursor(nullptr, cursorId);
             SetCursor(g_currentCursor);
             return true;
         }
@@ -19667,8 +19670,10 @@ void ProcessEngineEvents(HWND hwnd) {
                                  GetPaneContext(PaneSlot::Primary).currentFrame = evt.rawFrame;
 
                                  // Best-effort D2D SVG document for minimap/UI overlays.
-                                 // foreignObject/filter may be incomplete, but beats an empty navigator.
-                                 if (!xml.empty() && g_renderEngine) {
+                                 // Skip when SVG uses features D2D silently drops/renders black (<mask>/<filter>/<pattern>).
+                                 if (!xml.empty() && g_renderEngine &&
+                                     !QuickView::OffscreenWebView2::HasD2dBreakingFeatures(
+                                         std::string_view(reinterpret_cast<const char*>(xml.data()), xml.size()))) {
                                      CreateSvgDocumentFromMemory(
                                          g_renderEngine->GetDeviceContext(),
                                          xml.data(), xml.size(),
