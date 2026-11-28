@@ -592,12 +592,15 @@ endif()
 target_include_directories(qv_shell_thumb PRIVATE QuickView)
 target_link_libraries(qv_shell_thumb PRIVATE shell32.lib shlwapi.lib ole32.lib propsys.lib advapi32.lib gdi32.lib)
 add_custom_command(TARGET qv_shell_thumb POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/plugins/shell/qv_shell_thumb/README.md"
+        "${CMAKE_BINARY_DIR}/plugins/shell/qv_shell_thumb/README.md"
     COMMAND ${CMAKE_COMMAND}
         -DIN=${CMAKE_CURRENT_SOURCE_DIR}/plugins/shell/qv_shell_thumb/manifest.json
         -DOUT=${CMAKE_BINARY_DIR}/plugins/shell/qv_shell_thumb/manifest.json
         -DARCH=${NCNN_ARCH}
         -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/StagePluginManifest.cmake"
-    COMMENT "Deploying qv_shell_thumb manifest..."
+    COMMENT "Deploying qv_shell_thumb README & manifest..."
 )
 add_dependencies(QuickView qv_shell_thumb)
 

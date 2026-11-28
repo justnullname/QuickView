@@ -108,16 +108,31 @@ jobs:
              SHA_ARM64=$(sha256sum arm64_pkg | awk '{print $1}')
           fi
           
-          # Sync plugin zip packages from Release to public/plugins/
+          # Sync plugin zip packages from Release to public/plugins/ and auto-populate SHA-256 + size
           for p_prefix in "sr_ncnn_vulkan" "qv_shell_thumb" "ocr_ppocr_ncnn"; do
             for p_arch in "AMD64" "ARM64"; do
               P_NAME=$(echo "$ASSETS" | jq -r --arg pre "$p_prefix" --arg a "$p_arch" 'map(select(.name | ascii_downcase | (contains($pre) and contains($a | ascii_downcase) and test("\\.zip$")))) | .[0].name // ""')
               if [ -n "$P_NAME" ] && [ "$P_NAME" != "null" ]; then
                 echo "Syncing plugin package $P_NAME to public/plugins/..."
-                gh release download "$TAG_NAME" -p "$P_NAME" -O "public/plugins/${P_NAME}" || true
+                if gh release download "$TAG_NAME" -p "$P_NAME" -O "public/plugins/${P_NAME}" && [ -f "public/plugins_manifest.json" ]; then
+                  P_SHA=$(sha256sum "public/plugins/${P_NAME}" | awk '{print $1}')
+                  P_SIZE=$(wc -c < "public/plugins/${P_NAME}" | tr -d ' ')
+                  SHA_KEY=$([ "$p_arch" = "AMD64" ] && echo "sha256_amd64" || echo "sha256_arm64")
+                  FILE_KEY=$([ "$p_arch" = "AMD64" ] && echo "file_name" || echo "file_name_arm64")
+                  jq --arg fn "$P_NAME" --arg fk "$FILE_KEY" --arg sk "$SHA_KEY" --arg sha "$P_SHA" --argjson sz "$P_SIZE" --arg arch "$p_arch" '
+                    .plugins |= map(
+                      if .[$fk] == $fn then
+                        .[$sk] = $sha | (if $arch == "AMD64" then .file_size = $sz else . end)
+                      else . end
+                    )
+                  ' public/plugins_manifest.json > public/plugins_manifest.json.tmp && mv public/plugins_manifest.json.tmp public/plugins_manifest.json
+                fi
               fi
             done
           done
+          if [ -f "public/plugins_manifest.json" ]; then
+            cp public/plugins_manifest.json public/plugins/plugins_manifest.json
+          fi
           
           # Fallback URL for legacy clients (pointing to X64)
           URL=$URL_X64

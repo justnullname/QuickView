@@ -397,11 +397,11 @@ TEST_F(PluginHostTests, VersionComparisonAndNativeZipExtraction) {
 TEST_F(PluginHostTests, SecurityAndAbiRegressionGuards) {
     auto& host = QuickView::PluginHost::Instance();
 
-    // 1. DownloadPluginPackage must reject missing/invalid SHA-256 and path traversal filenames without network I/O
+    // 1. DownloadPluginPackage must reject malformed non-empty SHA-256 and path traversal filenames without network I/O
     const std::string validHex(64, 'a');
     EXPECT_FALSE(host.DownloadPluginPackage(
         "com.test.security", L"pkg.zip",
-        "https://justnullname.github.io/QuickView/plugins/nonexistent.zip", "", nullptr));
+        "https://justnullname.github.io/QuickView/plugins/nonexistent.zip", "invalid_not_64_hex", nullptr));
     EXPECT_FALSE(host.DownloadPluginPackage(
         "com.test.security", L"..\\..\\escape.dll",
         "https://justnullname.github.io/QuickView/plugins/nonexistent.dll", validHex, nullptr));

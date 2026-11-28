@@ -1215,17 +1215,10 @@ bool PluginHost::DownloadPluginPackage(
         return false;
     }
 
-#ifndef QUICKVIEW_ALLOW_UNSIGNED_PLUGIN_DEV
-    if (!IsValidSha256Hex(expectedSha256)) {
-        if (onProgress) onProgress(0.0f, true, false, userData);
-        return false;
-    }
-#else
     if (!expectedSha256.empty() && !IsValidSha256Hex(expectedSha256)) {
         if (onProgress) onProgress(0.0f, true, false, userData);
         return false;
     }
-#endif
 
     const std::string dlKey = "pkg:" + pluginId;
     {
