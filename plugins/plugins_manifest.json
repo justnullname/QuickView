@@ -1,11 +1,11 @@
 {
   "schema_version": "3.0",
-  "updated_at": "2026-11-26",
+  "updated_at": "2026-11-27",
   "plugins": [
     {
       "id": "com.quickview.sr.ncnn_vulkan",
       "name": "Real-ESRGAN NCNN Vulkan",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "author": "QuickView Core Team",
       "category": "image_processor",
       "abi_version": "3.0.0",
@@ -21,7 +21,7 @@
     {
       "id": "com.quickview.shell.thumb",
       "name": "Windows Explorer Thumbnail Provider",
-      "version": "0.3.0",
+      "version": "0.3.2",
       "author": "QuickView Core Team",
       "category": "shell_ext",
       "abi_version": "3.0.0",
@@ -33,6 +33,22 @@
       "file_name_arm64": "qv_shell_thumb_ARM64.zip",
       "file_size": 95000,
       "min_app_version": "0.1.0"
+    },
+    {
+      "id": "com.quickview.ocr.ppocr_ncnn",
+      "name": "PP-OCRv5 NCNN Vulkan",
+      "version": "0.2.0",
+      "author": "QuickView Core Team",
+      "category": "analyzer",
+      "abi_version": "3.0.0",
+      "description": "High-accuracy multilingual offline OCR analyzer powered by NCNN & Vulkan.",
+      "download_url": "https://justnullname.github.io/QuickView/plugins/ocr_ppocr_ncnn_AMD64.zip",
+      "download_url_amd64": "https://justnullname.github.io/QuickView/plugins/ocr_ppocr_ncnn_AMD64.zip",
+      "download_url_arm64": "https://justnullname.github.io/QuickView/plugins/ocr_ppocr_ncnn_ARM64.zip",
+      "file_name": "ocr_ppocr_ncnn_AMD64.zip",
+      "file_name_arm64": "ocr_ppocr_ncnn_ARM64.zip",
+      "file_size": 2500000,
+      "min_app_version": "6.62.0.0"
     }
   ]
 }
